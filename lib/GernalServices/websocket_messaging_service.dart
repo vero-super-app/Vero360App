@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:vero360_app/GeneralModels/messaging_models.dart';
+import 'package:vero360_app/utils/app_logger.dart';
 
 // Forward declaration to avoid circular dependency
 typedef OnReconnectCallback = Future<void> Function();
@@ -129,11 +130,10 @@ class WebSocketMessagingService {
       _isConnected = true;
       _reconnectAttempts = 0;
       _emitStatus('connected');
-      print('[WebSocket] Connected to messaging server');
     } catch (e) {
       _isConnected = false;
       _emitStatus('error');
-      print('[WebSocket] Connection error');
+      AppLogger.d('[WebSocket] Connection error', e);
       if (!_disposed && !_manualDisconnect) {
         _scheduleReconnect();
       }
@@ -153,7 +153,6 @@ class WebSocketMessagingService {
   void _setupEventListeners(IO.Socket socket) {
     socket.on('connect', (_) async {
       if (_disposed) return;
-      print('[WebSocket] Connected to messaging server');
       _isConnected = true;
       _reconnectAttempts = 0;
       _reconnectScheduled = false;
@@ -163,8 +162,8 @@ class WebSocketMessagingService {
       if (_onReconnectCallback != null) {
         try {
           await _onReconnectCallback!();
-        } catch (_) {
-          print('[WebSocket] Error during reconnect callback');
+        } catch (e) {
+          AppLogger.d('[WebSocket] Error during reconnect callback', e);
         }
       }
     });
@@ -173,8 +172,8 @@ class WebSocketMessagingService {
       try {
         final message = Message.fromJson(data as Map<String, dynamic>);
         if (!_messageController.isClosed) _messageController.add(message);
-      } catch (_) {
-        print('[WebSocket] Error parsing message');
+      } catch (e) {
+        AppLogger.d('[WebSocket] Error parsing message', e);
       }
     });
 
@@ -183,8 +182,8 @@ class WebSocketMessagingService {
         final typing = TypingIndicator.fromJson(data as Map<String, dynamic>);
         _handleTypingIndicator(typing);
         if (!_typingController.isClosed) _typingController.add(typing);
-      } catch (_) {
-        print('[WebSocket] Error parsing typing indicator');
+      } catch (e) {
+        AppLogger.d('[WebSocket] Error parsing typing indicator', e);
       }
     });
 
@@ -193,8 +192,8 @@ class WebSocketMessagingService {
         final status = UserStatus.fromJson(data as Map<String, dynamic>);
         _onlineUsers[status.userId] = status.isOnline;
         if (!_userStatusController.isClosed) _userStatusController.add(status);
-      } catch (_) {
-        print('[WebSocket] Error parsing user status');
+      } catch (e) {
+        AppLogger.d('[WebSocket] Error parsing user status', e);
       }
     });
 
@@ -205,14 +204,13 @@ class WebSocketMessagingService {
         if (!_readReceiptController.isClosed) {
           _readReceiptController.add(receipt);
         }
-      } catch (_) {
-        print('[WebSocket] Error parsing read receipt');
+      } catch (e) {
+        AppLogger.d('[WebSocket] Error parsing read receipt', e);
       }
     });
 
     socket.on('disconnect', (_) {
       if (_disposed || _manualDisconnect) return;
-      print('[WebSocket] Disconnected from messaging server');
       _isConnected = false;
       _emitStatus('disconnected');
       _scheduleReconnect();
@@ -220,7 +218,6 @@ class WebSocketMessagingService {
 
     socket.on('error', (_) {
       if (_disposed || _manualDisconnect) return;
-      print('[WebSocket] Error');
       _isConnected = false;
       _emitStatus('error');
       // disconnect usually follows; avoid double-scheduling here
@@ -246,7 +243,7 @@ class WebSocketMessagingService {
     if (_reconnectScheduled) return;
 
     if (_reconnectAttempts >= _maxReconnectAttempts) {
-      print('[WebSocket] Max reconnection attempts reached');
+      AppLogger.d('[WebSocket] Max reconnection attempts reached');
       _emitStatus('failed');
       return;
     }
@@ -254,10 +251,6 @@ class WebSocketMessagingService {
     _reconnectScheduled = true;
     _reconnectAttempts++;
     final delay = _reconnectDelay * _reconnectAttempts;
-    print(
-      '[WebSocket] Attempting reconnect in ${delay.inSeconds}s '
-      '(attempt $_reconnectAttempts)',
-    );
 
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(delay, () async {
@@ -404,10 +397,7 @@ class WebSocketMessagingService {
 
   /// Subscribe to typing indicators in a chat
   void subscribeToTypingIndicators(String chatId) {
-    if (!isConnected) {
-      print('[WebSocket] Not connected, cannot subscribe to typing indicators');
-      return;
-    }
+    if (!isConnected) return;
     _socket!.emit('typing:subscribe', {'chatId': chatId});
   }
 

@@ -15,6 +15,7 @@ import 'package:vero360_app/features/Accomodation/Presentation/pages/Accomodatio
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourierMerchant/courier_merchant_dashboard.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/forgot_password_screen.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
+import 'package:vero360_app/utils/app_logger.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/oauth_buttons.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
@@ -270,9 +271,6 @@ class _LoginScreenState extends State<LoginScreen> {
     await prefs.setString('user_role', role);
     await prefs.setBool('is_merchant', role == 'merchant');
     await loadDriverStatusFromPrefs();
-    
-    print('🔐 Login: user=$user');
-    print('🔐 Login: role=$role');
 
     final uid = user['uid']?.toString() ??
         user['id']?.toString() ??
@@ -407,7 +405,7 @@ class _LoginScreenState extends State<LoginScreen> {
         }
       }
     } catch (e) {
-      print('Error fetching merchant service from Firebase: $e');
+      AppLogger.d('[Login] merchant service lookup failed', e);
     }
     return null;
   }
@@ -424,7 +422,7 @@ class _LoginScreenState extends State<LoginScreen> {
         profile = Map<String, dynamic>.from(snap.data()!);
       }
     } catch (e) {
-      print('Failed to load Firebase profile: $e');
+      AppLogger.d('[Login] Firebase profile load failed', e);
     }
 
     // Ensure at least a basic profile exists

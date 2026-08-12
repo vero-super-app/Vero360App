@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "accommodation_reviews",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "merchantId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

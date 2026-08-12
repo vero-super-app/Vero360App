@@ -68,6 +68,17 @@ service cloud.firestore {
       }
     }
 
+    // "X people added this to cart" — any signed-in buyer can bump unique counts.
+    match /item_cart_stats/{itemId} {
+      allow read: if true;
+      allow create, update: if isSignedIn();
+
+      match /adders/{uid} {
+        allow read: if true;
+        allow create, update: if isSignedIn() && request.auth.uid == uid;
+      }
+    }
+
     // Other app collections (chat, notifications, etc.) — signed-in users only.
     match /{document=**} {
       allow read, write: if isSignedIn();

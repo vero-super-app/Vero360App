@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'package:vero360_app/utils/app_logger.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
@@ -407,7 +408,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         profile = Map<String, dynamic>.from(snap.data()!);
       }
     } catch (e) {
-      print('Failed to load Firebase profile: $e');
+      AppLogger.d('[Register] Firebase profile load failed', e);
     }
 
     if (profile.isEmpty) {

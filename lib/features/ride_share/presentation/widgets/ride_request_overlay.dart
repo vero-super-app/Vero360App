@@ -11,6 +11,7 @@ import 'package:vero360_app/features/ride_share/presentation/pages/driver_ride_e
 import 'package:vero360_app/GernalServices/driver_request_service.dart';
 import 'package:vero360_app/GernalServices/driver_messaging_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
+import 'package:vero360_app/utils/app_logger.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 
 class RideRequestOverlay extends ConsumerStatefulWidget {
@@ -39,8 +40,7 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
         try {
           ref.read(driverRideRequestsInitProvider);
         } catch (e) {
-          debugPrint(
-              '[RideRequestOverlay] Error initializing driver requests: $e');
+          AppLogger.d('[RideRequestOverlay] Error initializing driver requests', e);
         }
       }
     });
@@ -58,11 +58,7 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
       driverRideRequestsStreamProvider,
       (prev, next) {
         if (!mounted) return;
-        if (!rideNotificationsEnabled) {
-          debugPrint(
-              '[RideRequestOverlay] Skipping request — not a driver session');
-          return;
-        }
+        if (!rideNotificationsEnabled) return;
         try {
           next.whenData((request) {
             if (!mounted) return;
@@ -74,8 +70,7 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
             }
           });
         } catch (e) {
-          debugPrint(
-              '[RideRequestOverlay] Error handling WebSocket request: $e');
+          AppLogger.d('[RideRequestOverlay] Error handling WebSocket request', e);
         }
       },
     );
@@ -84,11 +79,7 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
       combinedDriverRideRequestsProvider,
       (prev, next) {
         if (!mounted) return;
-        if (!rideNotificationsEnabled) {
-          debugPrint(
-              '[RideRequestOverlay] Skipping combined — not a driver session');
-          return;
-        }
+        if (!rideNotificationsEnabled) return;
         try {
           next.whenData((combined) {
             if (!mounted) return;
@@ -120,7 +111,7 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
             }
           });
         } catch (e) {
-          debugPrint('[RideRequestOverlay] Error handling ride request: $e');
+          AppLogger.d('[RideRequestOverlay] Error handling ride request', e);
         }
       },
     );
@@ -162,7 +153,7 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
       await DriverRequestService.rejectRideRequest(rideId);
       ref.read(rideNotificationServiceProvider).removeNotification(rideId);
     } catch (e) {
-      debugPrint('[RideRequestOverlay] Decline failed: $e');
+      AppLogger.d('[RideRequestOverlay] Decline failed', e);
     }
   }
 
@@ -219,7 +210,7 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
           message: '$driverName accepted your ride request',
         );
       } catch (e) {
-        debugPrint('[RideRequestOverlay] Messaging setup warning: $e');
+        AppLogger.d('[RideRequestOverlay] Messaging setup warning', e);
       }
 
       ref.read(rideNotificationServiceProvider).removeNotification(request.id);
@@ -242,7 +233,7 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
         ),
       );
     } catch (e) {
-      debugPrint('[RideRequestOverlay] Accept failed: $e');
+      AppLogger.d('[RideRequestOverlay] Accept failed', e);
       _forgetShownRequest(request.id);
       if (navigatorContext.mounted) {
         ScaffoldMessenger.of(navigatorContext).showSnackBar(
@@ -298,23 +289,19 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
         if (mounted) _showNotification(driverRequest);
       });
     } catch (e) {
-      debugPrint('[RideRequestOverlay] Error processing WebSocket request: $e');
+      AppLogger.d('[RideRequestOverlay] Error processing WebSocket request', e);
     }
   }
 
   void _showNotification(DriverRideRequest request) {
     if (!mounted) return;
     try {
-      if (!ref.read(driverRideNotificationsEnabledProvider)) {
-        debugPrint(
-            '[RideRequestOverlay] Blocking notification — not a driver session');
-        return;
-      }
+      if (!ref.read(driverRideNotificationsEnabledProvider)) return;
 
       ref.read(rideNotificationServiceProvider).addNotification(request);
       setState(() => _activeRequest = request);
     } catch (e) {
-      debugPrint('[RideRequestOverlay] Error showing notification: $e');
+      AppLogger.d('[RideRequestOverlay] Error showing notification', e);
     }
   }
 
@@ -368,7 +355,7 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
             ),
           );
         } catch (e) {
-          debugPrint('[RideRequestOverlay] Error showing accept dialog: $e');
+          AppLogger.d('[RideRequestOverlay] Error showing accept dialog', e);
         }
       });
     });

@@ -32,6 +32,7 @@ import 'package:vero360_app/utils/app_wallet_pin.dart';
 import 'package:vero360_app/Home/homepage.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
+import 'package:vero360_app/utils/app_logger.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
@@ -2767,20 +2768,49 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
 
   Future<void> _loadReviews() async {
     try {
-      final snapshot = await _firestore
-          .collection('accommodation_reviews')
-          .where('merchantId', isEqualTo: _uid)
-          .orderBy('createdAt', descending: true)
-          .limit(5)
-          .get();
-      
+      QuerySnapshot<Map<String, dynamic>> snapshot;
+      try {
+        snapshot = await _firestore
+            .collection('accommodation_reviews')
+            .where('merchantId', isEqualTo: _uid)
+            .orderBy('createdAt', descending: true)
+            .limit(5)
+            .get();
+      } on FirebaseException catch (e) {
+        // Missing composite index — fall back until indexes are deployed.
+        if (e.code != 'failed-precondition') rethrow;
+        AppLogger.d(
+          '[AccommodationMerchant] reviews index missing; using unordered fallback',
+        );
+        snapshot = await _firestore
+            .collection('accommodation_reviews')
+            .where('merchantId', isEqualTo: _uid)
+            .limit(20)
+            .get();
+      }
+
+      final reviews = snapshot.docs.map((doc) => doc.data()).toList();
+      reviews.sort((a, b) {
+        final aTs = a['createdAt'];
+        final bTs = b['createdAt'];
+        final aMs = aTs is Timestamp
+            ? aTs.millisecondsSinceEpoch
+            : DateTime.tryParse(aTs?.toString() ?? '')?.millisecondsSinceEpoch ??
+                0;
+        final bMs = bTs is Timestamp
+            ? bTs.millisecondsSinceEpoch
+            : DateTime.tryParse(bTs?.toString() ?? '')?.millisecondsSinceEpoch ??
+                0;
+        return bMs.compareTo(aMs);
+      });
+
       if (mounted) {
         setState(() {
-          _reviews = snapshot.docs.map((doc) => doc.data()).toList();
+          _reviews = reviews.take(5).toList();
         });
       }
     } catch (e) {
-      print('Error loading reviews: $e');
+      AppLogger.d('[AccommodationMerchant] Error loading reviews', e);
     }
   }
 

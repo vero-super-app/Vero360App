@@ -27,6 +27,7 @@ import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodatio
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_cart_social_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
@@ -1082,6 +1083,15 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       final url = await _resolveImageUrl(item);
       final cartItem = _toCartModel(item, url ?? item.image);
       await _cartService.addToCart(cartItem);
+      final uid = _auth.currentUser?.uid;
+      if (uid != null && uid.isNotEmpty) {
+        unawaited(
+          MarketplaceCartSocialService.recordAdd(
+            itemDocId: item.id,
+            uid: uid,
+          ),
+        );
+      }
       if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
@@ -1123,6 +1133,15 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       final url = await _resolveImageUrl(item);
       final cartItem = _toCartModel(item, url ?? item.image);
       await _cartService.addToCart(cartItem);
+      final uid = _auth.currentUser?.uid;
+      if (uid != null && uid.isNotEmpty) {
+        unawaited(
+          MarketplaceCartSocialService.recordAdd(
+            itemDocId: item.id,
+            uid: uid,
+          ),
+        );
+      }
       if (!mounted) return;
       Navigator.push(
         context,

@@ -52,6 +52,14 @@ class AccommodationOccupancyService {
     return out;
   }
 
+  /// Checkout morning frees the listing (check-out day is not a slept night).
+  static bool stayHasCheckedOut(DateTime checkOut, {DateTime? now}) {
+    final n = now ?? DateTime.now();
+    final today = DateTime(n.year, n.month, n.day);
+    final out = DateTime(checkOut.year, checkOut.month, checkOut.day);
+    return !out.isAfter(today);
+  }
+
   /// Capacity for inventory: single-unit types = 1; hotel/lodge = [roomsAvailable].
   static int capacityForType({
     required String accommodationType,
@@ -76,6 +84,9 @@ class AccommodationOccupancyService {
   }
 
   /// Mirror night totals onto the parent doc so Discover can show "Booked today" globally.
+  ///
+  /// Nested `counts` must use [FieldValue.delete] for freed nights — a merged
+  /// map write does not remove old date keys, which left "Booked" stuck forever.
   void _txWriteParentCounts(
     Transaction tx, {
     required int accommodationId,
@@ -94,26 +105,40 @@ class AccommodationOccupancyService {
     final today = dayKey(DateTime.now());
     final tonight = existing[today] ?? 0;
     final cap = capacity < 1 ? 1 : capacity;
+    final payload = <String, dynamic>{
+      'capacityHint': cap,
+      'bookedToday': tonight >= cap,
+      'tonightCount': tonight,
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+    for (final e in nightUpdates.entries) {
+      if (e.value <= 0) {
+        payload['counts.${e.key}'] = FieldValue.delete();
+      } else {
+        payload['counts.${e.key}'] = e.value;
+      }
+    }
     tx.set(
       _root(accommodationId),
-      {
-        'capacityHint': cap,
-        'counts': existing,
-        'bookedToday': tonight >= cap,
-        'tonightCount': tonight,
-        'updatedAt': FieldValue.serverTimestamp(),
-      },
+      payload,
       SetOptions(merge: true),
     );
   }
 
   /// Night counts for one listing (parent mirror, then nights subcollection).
+  ///
+  /// Set [prune] false for fast calendar opens — pruning walks every stay and
+  /// made check-in/out feel like it needed two taps.
   Future<Map<String, int>> fetchNightCounts(
     int accommodationId, {
     bool fromServer = false,
+    bool prune = true,
   }) async {
     if (accommodationId <= 0) return {};
     try {
+      if (prune) {
+        await pruneCompletedStays(accommodationId);
+      }
       final getOpts = fromServer
           ? const GetOptions(source: Source.server)
           : const GetOptions(source: Source.serverAndCache);
@@ -158,12 +183,11 @@ class AccommodationOccupancyService {
           final data = doc.data();
           final counts = _parseCountsMap(data['counts']);
           var n = counts[today] ?? 0;
-          if (n <= 0) {
+          // Legacy docs with no `counts` map. Do not trust stale bookedToday /
+          // tonightCount — those flags do not roll over to a new calendar day.
+          if (n <= 0 && counts.isEmpty) {
             final tc = data['tonightCount'];
             n = tc is num ? tc.toInt() : int.tryParse('$tc') ?? 0;
-          }
-          if (n <= 0 && data['bookedToday'] == true) {
-            n = 1;
           }
           if (n > 0) out[id] = n;
         }
@@ -322,6 +346,14 @@ class AccommodationOccupancyService {
     final ref = sanitizeBookingRef(bookingRef);
     if (accommodationId <= 0 || ref.isEmpty) return;
 
+    if (stayHasCheckedOut(checkOut)) {
+      await releaseCompletedStay(
+        accommodationId: accommodationId,
+        bookingRef: ref,
+      );
+      return;
+    }
+
     final nights = nightsInRange(checkIn, checkOut);
     if (nights.isEmpty) return;
     final cap = capacity < 1 ? 1 : capacity;
@@ -451,6 +483,121 @@ class AccommodationOccupancyService {
   Future<void> releaseStay({
     required int accommodationId,
     required String bookingRef,
+  }) =>
+      _releaseStayInternal(
+        accommodationId: accommodationId,
+        bookingRef: bookingRef,
+        allowPaid: false,
+        requireCheckedOut: false,
+      );
+
+  /// Frees calendar nights after the guest's check-out morning (paid stays included).
+  Future<void> releaseCompletedStay({
+    required int accommodationId,
+    required String bookingRef,
+  }) =>
+      _releaseStayInternal(
+        accommodationId: accommodationId,
+        bookingRef: bookingRef,
+        allowPaid: true,
+        requireCheckedOut: true,
+      );
+
+  /// Drops occupancy for stays whose check-out date has arrived, then refreshes
+  /// Discover's "Booked today" flags for this listing.
+  Future<void> pruneCompletedStays(int accommodationId) async {
+    if (accommodationId <= 0) return;
+    try {
+      final snap = await _stays(accommodationId).get();
+      for (final doc in snap.docs) {
+        final st = (doc.data()['status'] ?? '').toString();
+        if (st != statusPaid && st != statusReserved) continue;
+        await releaseCompletedStay(
+          accommodationId: accommodationId,
+          bookingRef: doc.id,
+        );
+      }
+      await _refreshParentTonightFlags(accommodationId);
+    } catch (e) {
+      if (kDebugMode) {
+        print('[AccommodationOccupancy] pruneCompletedStays: $e');
+      }
+    }
+  }
+
+  Future<void> _refreshParentTonightFlags(int accommodationId) async {
+    try {
+      final staySnap = await _stays(accommodationId).get();
+      final aggregated = <String, int>{};
+      var cap = 1;
+      for (final doc in staySnap.docs) {
+        final data = doc.data();
+        final st = (data['status'] ?? '').toString();
+        if (st != statusPaid && st != statusReserved) continue;
+        final cin = _parseDayKey(data['checkIn']?.toString() ?? '');
+        var cout = _parseDayKey(data['checkOut']?.toString() ?? '');
+        if (cin != null && cout == null) {
+          cout = cin.add(const Duration(days: 1));
+        }
+        if (cin == null || cout == null) continue;
+        if (stayHasCheckedOut(cout)) continue;
+        final roomsRaw = data['rooms'];
+        final need = roomsRaw is num
+            ? roomsRaw.toInt()
+            : int.tryParse('$roomsRaw') ?? 1;
+        final capRaw = data['capacity'];
+        final stayCap = capRaw is num
+            ? capRaw.toInt()
+            : int.tryParse('$capRaw') ?? 1;
+        if (stayCap > cap) cap = stayCap;
+        for (final n in nightsInRange(cin, cout)) {
+          final key = dayKey(n);
+          aggregated[key] = (aggregated[key] ?? 0) + need;
+        }
+      }
+
+      final today = dayKey(DateTime.now());
+      final kept = <String, int>{};
+      for (final e in aggregated.entries) {
+        if (e.key.compareTo(today) >= 0 && e.value > 0) {
+          kept[e.key] = e.value;
+        }
+      }
+      final safeCap = cap < 1 ? 1 : cap;
+      final tonight = kept[today] ?? 0;
+      final payload = {
+        'capacityHint': safeCap,
+        'counts': kept,
+        'bookedToday': tonight >= safeCap,
+        'tonightCount': tonight,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+      final parent = await _root(accommodationId).get();
+      if (parent.exists) {
+        await _root(accommodationId).update(payload);
+      } else if (kept.isNotEmpty) {
+        await _root(accommodationId).set(payload);
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[AccommodationOccupancy] refreshParentTonightFlags: $e');
+      }
+    }
+  }
+
+  DateTime? _parseDayKey(String s) {
+    try {
+      return _dayFmt.parseStrict(s.trim());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _releaseStayInternal({
+    required int accommodationId,
+    required String bookingRef,
+    required bool allowPaid,
+    required bool requireCheckedOut,
   }) async {
     final ref = sanitizeBookingRef(bookingRef);
     if (accommodationId <= 0 || ref.isEmpty) return;
@@ -464,8 +611,9 @@ class AccommodationOccupancyService {
         if (!staySnap.exists) return;
         final data = staySnap.data() ?? {};
         final st = (data['status'] ?? '').toString();
-        if (st == statusPaid || st == statusReleased) return;
-        if (st != statusReserved) return;
+        if (st == statusReleased) return;
+        if (st == statusPaid && !allowPaid) return;
+        if (st != statusReserved && st != statusPaid) return;
 
         final checkInRaw = data['checkIn']?.toString() ?? '';
         final checkOutRaw = data['checkOut']?.toString() ?? '';
@@ -478,16 +626,14 @@ class AccommodationOccupancyService {
             ? capRaw.toInt()
             : int.tryParse('$capRaw') ?? 1;
 
-        DateTime? parseDay(String s) {
-          try {
-            return _dayFmt.parseStrict(s.trim());
-          } catch (_) {
-            return null;
-          }
+        var cin = _parseDayKey(checkInRaw);
+        var cout = _parseDayKey(checkOutRaw);
+        if (cin != null && cout == null) {
+          cout = cin.add(const Duration(days: 1));
         }
-
-        final cin = parseDay(checkInRaw);
-        final cout = parseDay(checkOutRaw);
+        if (requireCheckedOut) {
+          if (cout == null || !stayHasCheckedOut(cout)) return;
+        }
         if (cin == null || cout == null) {
           tx.set(stayRef, {
             'status': statusReleased,

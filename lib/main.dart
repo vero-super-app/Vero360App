@@ -3,7 +3,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart'
-    show kIsWeb, defaultTargetPlatform, TargetPlatform;
+    show kIsWeb, kReleaseMode, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -205,6 +205,11 @@ Future<bool> _ensureFirebaseHealthy({
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Release builds must not echo debug logs (PII, tokens, session JSON) to logcat.
+  if (kReleaseMode) {
+    debugPrint = (String? message, {int? wrapWidth}) {};
+  }
+
   // Cap decoded-image cache — Redmi 8A / 2GB Adreno dies on GPU texture OOM.
   if (LowRamAndroid.isAndroid) {
     PaintingBinding.instance.imageCache.maximumSize = LowRamAndroid.imageCacheCount;
@@ -215,21 +220,50 @@ Future<void> main() async {
     PaintingBinding.instance.imageCache.maximumSizeBytes = 48 << 20;
   }
 
-  // Start Firebase self-heal immediately, but do not block first paint.
-  unawaited(_ensureFirebaseHealthy(quiet: true));
+  void launchApp() {
+    // Cap decoded-image cache — Redmi 8A / 2GB Adreno dies on GPU texture OOM.
+    if (LowRamAndroid.isAndroid) {
+      PaintingBinding.instance.imageCache.maximumSize =
+          LowRamAndroid.imageCacheCount;
+      PaintingBinding.instance.imageCache.maximumSizeBytes =
+          LowRamAndroid.imageCacheBytes;
+    } else {
+      PaintingBinding.instance.imageCache.maximumSize = 60;
+      PaintingBinding.instance.imageCache.maximumSizeBytes = 48 << 20;
+    }
 
-  runApp(
-    ScreenUtilInit(
-      designSize: const Size(390, 844),
-      minTextAdapt: true,
-      splitScreenMode: true,
-      builder: (_, child) => ColoredBox(
-        color: const Color(0xFFFFFBF6),
-        child: child ?? const AppBootstrap(),
+    // Start Firebase self-heal immediately, but do not block first paint.
+    unawaited(_ensureFirebaseHealthy(quiet: true));
+
+    runApp(
+      ScreenUtilInit(
+        designSize: const Size(390, 844),
+        minTextAdapt: true,
+        splitScreenMode: true,
+        builder: (_, child) => ColoredBox(
+          color: const Color(0xFFFFFBF6),
+          child: child ?? const AppBootstrap(),
+        ),
+        child: const AppBootstrap(),
       ),
-      child: const AppBootstrap(),
-    ),
-  );
+    );
+  }
+
+  if (kReleaseMode) {
+    runZonedGuarded(
+      launchApp,
+      (error, stack) {
+        FlutterError.presentError(
+          FlutterErrorDetails(exception: error, stack: stack),
+        );
+      },
+      zoneSpecification: ZoneSpecification(
+        print: (_, __, ___, ____) {},
+      ),
+    );
+  } else {
+    launchApp();
+  }
 }
 
 // ───────────────────────────────────────────────

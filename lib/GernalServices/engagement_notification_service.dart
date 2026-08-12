@@ -56,10 +56,8 @@ class EngagementNotificationService {
 
       if (user != null && masterOn && engagementOn) {
         await messaging.subscribeToTopic(fcmTopic);
-        if (kDebugMode) debugPrint('Subscribed to FCM topic $fcmTopic');
       } else {
         await messaging.unsubscribeFromTopic(fcmTopic);
-        if (kDebugMode) debugPrint('Unsubscribed from FCM topic $fcmTopic');
       }
     } catch (e) {
       if (kDebugMode) debugPrint('Engagement topic sync failed: $e');

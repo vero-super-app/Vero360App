@@ -159,6 +159,8 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   String _ownerPhotoUrl = '';
   Map<String, int> _nightCounts = {};
   bool _paymentSucceeded = false;
+  /// Prevents double-open while a check-in / check-out dialog is showing.
+  bool _datePickerOpen = false;
 
   List<Widget> get _heroPages {
     final pages = <Widget>[];
@@ -262,11 +264,15 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
         roomsAvailable: widget.roomsAvailable,
       );
 
-  Future<void> _loadOccupancy({bool fromServer = false}) async {
+  Future<void> _loadOccupancy({
+    bool fromServer = false,
+    bool prune = true,
+  }) async {
     if (widget.accommodationId <= 0) return;
     final counts = await _occupancy.fetchNightCounts(
       widget.accommodationId,
       fromServer: fromServer,
+      prune: prune,
     );
     if (!mounted) return;
     setState(() => _nightCounts = counts);
@@ -286,20 +292,6 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     final first = DateTime(today.year, today.month, today.day);
     if (d.isBefore(first)) return false;
     return !_isNightBooked(d);
-  }
-
-  /// Check-out day is exclusive; require all slept nights before it to have room.
-  bool _isCheckOutSelectable(DateTime day) {
-    final d = DateTime(day.year, day.month, day.day);
-    final minOut = DateTime(_checkIn.year, _checkIn.month, _checkIn.day)
-        .add(const Duration(days: 1));
-    if (d.isBefore(minOut)) return false;
-    return _occupancy.isRangeAvailable(
-      nightCounts: _nightCounts,
-      checkIn: _checkIn,
-      checkOut: d,
-      capacity: _inventoryCapacity,
-    );
   }
 
   void _snapDatesToAvailable() {
@@ -882,89 +874,141 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   }
 
   Future<void> _pickCheckIn() async {
-    await _loadOccupancy(fromServer: true);
-    if (!mounted) return;
-    final first = DateTime.now();
-    final firstDay = DateTime(first.year, first.month, first.day);
-    var initial = _checkIn.isBefore(firstDay) ? firstDay : _checkIn;
-    if (!_isCheckInSelectable(initial)) {
-      initial = firstDay;
-      var guard = 0;
-      while (!_isCheckInSelectable(initial) && guard < 400) {
-        initial = initial.add(const Duration(days: 1));
-        guard++;
+    if (_datePickerOpen || _submitting) return;
+    _datePickerOpen = true;
+    // Soft refresh in background — do not block the calendar open.
+    unawaited(_loadOccupancy(fromServer: true, prune: false));
+
+    try {
+      if (!mounted) return;
+      final countsSnap = Map<String, int>.from(_nightCounts);
+      final capacity = _inventoryCapacity;
+      bool isBooked(DateTime day) => _occupancy.isNightFull(
+            nightCounts: countsSnap,
+            night: day,
+            capacity: capacity,
+          );
+      bool isSelectable(DateTime day) {
+        final d = DateTime(day.year, day.month, day.day);
+        final today = DateTime.now();
+        final first = DateTime(today.year, today.month, today.day);
+        if (d.isBefore(first)) return false;
+        return !isBooked(d);
       }
-    }
-    final picked = await showDialog<DateTime>(
-      context: context,
-      builder: (ctx) => _BookedAwareDatePickerDialog(
-        title: 'Check-in',
-        helpText: 'Red days means booked that day or night.',
-        initialDate: initial,
-        firstDate: firstDay,
-        lastDate: firstDay.add(const Duration(days: 365 * 2)),
-        isBooked: _isNightBooked,
-        isSelectable: _isCheckInSelectable,
-      ),
-    );
-    if (picked == null || !mounted) return;
-    setState(() {
-      _checkIn = picked;
-      if (!_checkOut.isAfter(_checkIn)) {
-        _checkOut = _checkIn.add(const Duration(days: 1));
-      }
-      if (!_occupancy.isRangeAvailable(
-        nightCounts: _nightCounts,
-        checkIn: _checkIn,
-        checkOut: _checkOut,
-        capacity: _inventoryCapacity,
-      )) {
-        var cout = _checkIn.add(const Duration(days: 1));
+
+      final first = DateTime.now();
+      final firstDay = DateTime(first.year, first.month, first.day);
+      var initial = _checkIn.isBefore(firstDay) ? firstDay : _checkIn;
+      if (!isSelectable(initial)) {
+        initial = firstDay;
         var guard = 0;
-        while (!_occupancy.isRangeAvailable(
-              nightCounts: _nightCounts,
-              checkIn: _checkIn,
-              checkOut: cout,
-              capacity: _inventoryCapacity,
-            ) &&
-            guard < 400) {
-          cout = cout.add(const Duration(days: 1));
+        while (!isSelectable(initial) && guard < 400) {
+          initial = initial.add(const Duration(days: 1));
           guard++;
         }
-        _checkOut = cout;
       }
-    });
+
+      final picked = await showDialog<DateTime>(
+        context: context,
+        barrierDismissible: true,
+        builder: (ctx) => _BookedAwareDatePickerDialog(
+          title: 'Check-in',
+          helpText: 'Red days are already booked. Tap a free day, then Confirm.',
+          initialDate: initial,
+          firstDate: firstDay,
+          lastDate: firstDay.add(const Duration(days: 365 * 2)),
+          isBooked: isBooked,
+          isSelectable: isSelectable,
+        ),
+      );
+      if (picked == null || !mounted) return;
+      setState(() {
+        _checkIn = picked;
+        if (!_checkOut.isAfter(_checkIn)) {
+          _checkOut = _checkIn.add(const Duration(days: 1));
+        }
+        if (!_occupancy.isRangeAvailable(
+          nightCounts: _nightCounts,
+          checkIn: _checkIn,
+          checkOut: _checkOut,
+          capacity: _inventoryCapacity,
+        )) {
+          var cout = _checkIn.add(const Duration(days: 1));
+          var guard = 0;
+          while (!_occupancy.isRangeAvailable(
+                nightCounts: _nightCounts,
+                checkIn: _checkIn,
+                checkOut: cout,
+                capacity: _inventoryCapacity,
+              ) &&
+              guard < 400) {
+            cout = cout.add(const Duration(days: 1));
+            guard++;
+          }
+          _checkOut = cout;
+        }
+      });
+    } finally {
+      _datePickerOpen = false;
+    }
   }
 
   Future<void> _pickCheckOut() async {
-    await _loadOccupancy(fromServer: true);
-    if (!mounted) return;
-    final minOut = DateTime(_checkIn.year, _checkIn.month, _checkIn.day)
-        .add(const Duration(days: 1));
-    var initial = _checkOut.isBefore(minOut) ? minOut : _checkOut;
-    if (!_isCheckOutSelectable(initial)) {
-      initial = minOut;
-      var guard = 0;
-      while (!_isCheckOutSelectable(initial) && guard < 400) {
-        initial = initial.add(const Duration(days: 1));
-        guard++;
+    if (_datePickerOpen || _submitting) return;
+    _datePickerOpen = true;
+    unawaited(_loadOccupancy(fromServer: true, prune: false));
+
+    try {
+      if (!mounted) return;
+      final countsSnap = Map<String, int>.from(_nightCounts);
+      final capacity = _inventoryCapacity;
+      final checkInSnap = DateTime(_checkIn.year, _checkIn.month, _checkIn.day);
+      bool isBooked(DateTime day) => _occupancy.isNightFull(
+            nightCounts: countsSnap,
+            night: day,
+            capacity: capacity,
+          );
+      bool isSelectable(DateTime day) {
+        final d = DateTime(day.year, day.month, day.day);
+        final minOut = checkInSnap.add(const Duration(days: 1));
+        if (d.isBefore(minOut)) return false;
+        return _occupancy.isRangeAvailable(
+          nightCounts: countsSnap,
+          checkIn: checkInSnap,
+          checkOut: d,
+          capacity: capacity,
+        );
       }
+
+      final minOut = checkInSnap.add(const Duration(days: 1));
+      var initial = _checkOut.isBefore(minOut) ? minOut : _checkOut;
+      if (!isSelectable(initial)) {
+        initial = minOut;
+        var guard = 0;
+        while (!isSelectable(initial) && guard < 400) {
+          initial = initial.add(const Duration(days: 1));
+          guard++;
+        }
+      }
+
+      final picked = await showDialog<DateTime>(
+        context: context,
+        barrierDismissible: true,
+        builder: (ctx) => _BookedAwareDatePickerDialog(
+          title: 'Check-out',
+          helpText: 'Red days are booked. Tap a free day, then Confirm.',
+          initialDate: initial,
+          firstDate: minOut,
+          lastDate: checkInSnap.add(const Duration(days: 365 * 2)),
+          isBooked: isBooked,
+          isSelectable: isSelectable,
+        ),
+      );
+      if (picked == null || !mounted) return;
+      setState(() => _checkOut = picked);
+    } finally {
+      _datePickerOpen = false;
     }
-    final picked = await showDialog<DateTime>(
-      context: context,
-      builder: (ctx) => _BookedAwareDatePickerDialog(
-        title: 'Check-out',
-        helpText:
-            'Red means booked that day or night.',
-        initialDate: initial,
-        firstDate: minOut,
-        lastDate: _checkIn.add(const Duration(days: 365 * 2)),
-        isBooked: _isNightBooked,
-        isSelectable: _isCheckOutSelectable,
-      ),
-    );
-    if (picked == null || !mounted) return;
-    setState(() => _checkOut = picked);
   }
 
   Future<String?> _resolveHostMerchantUidForAlerts({
@@ -2264,13 +2308,24 @@ class _DateTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 6),
-              Text(
-                value,
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xFF16284C),
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      value,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF16284C),
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    Icons.calendar_today_rounded,
+                    size: 16,
+                    color: Colors.grey.shade600,
+                  ),
+                ],
               ),
             ],
           ),
@@ -2280,7 +2335,7 @@ class _DateTile extends StatelessWidget {
   }
 }
 
-/// Custom month calendar: booked nights are red with "Booked" label for all guests.
+/// Custom month calendar: booked nights are red. Stable one-tap select + Confirm.
 class _BookedAwareDatePickerDialog extends StatefulWidget {
   final String title;
   final String helpText;
@@ -2311,6 +2366,7 @@ class _BookedAwareDatePickerDialogState
   static const _navy = Color(0xFF16284C);
   late DateTime _visibleMonth;
   late DateTime _selected;
+  bool _closing = false;
 
   @override
   void initState() {
@@ -2339,6 +2395,31 @@ class _BookedAwareDatePickerDialogState
     setState(() => _visibleMonth = next);
   }
 
+  void _close([DateTime? result]) {
+    if (_closing || !mounted) return;
+    _closing = true;
+    Navigator.of(context).pop(result);
+  }
+
+  void _selectDay(DateTime day) {
+    if (_closing) return;
+    if (!widget.isSelectable(day)) return;
+    final d = DateTime(day.year, day.month, day.day);
+    if (d.isBefore(DateTime(
+          widget.firstDate.year,
+          widget.firstDate.month,
+          widget.firstDate.day,
+        )) ||
+        d.isAfter(DateTime(
+          widget.lastDate.year,
+          widget.lastDate.month,
+          widget.lastDate.day,
+        ))) {
+      return;
+    }
+    setState(() => _selected = d);
+  }
+
   @override
   Widget build(BuildContext context) {
     final firstWeekday = _monthStart.weekday % 7; // Sun=0
@@ -2350,188 +2431,230 @@ class _BookedAwareDatePickerDialogState
     for (var d = 1; d <= daysInMonth; d++) {
       cells.add(DateTime(_visibleMonth.year, _visibleMonth.month, d));
     }
+    while (cells.length % 7 != 0) {
+      cells.add(null);
+    }
+
+    final canConfirm = widget.isSelectable(_selected);
 
     return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 28),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: 400,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              widget.title,
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w900,
-                color: _navy,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              widget.helpText,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey.shade700,
-                height: 1.3,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                IconButton(
-                  onPressed: () => _shiftMonth(-1),
-                  icon: const Icon(Icons.chevron_left_rounded),
-                ),
-                Expanded(
-                  child: Text(
-                    DateFormat.yMMMM().format(_visibleMonth),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 15,
-                      color: _navy,
-                    ),
-                  ),
-                ),
-                IconButton(
-                  onPressed: () => _shiftMonth(1),
-                  icon: const Icon(Icons.chevron_right_rounded),
-                ),
-              ],
-            ),
-            Row(
-              children: const [
-                Expanded(child: Center(child: Text('S', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
-                Expanded(child: Center(child: Text('M', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
-                Expanded(child: Center(child: Text('T', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
-                Expanded(child: Center(child: Text('W', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
-                Expanded(child: Center(child: Text('T', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
-                Expanded(child: Center(child: Text('F', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
-                Expanded(child: Center(child: Text('S', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
-              ],
-            ),
-            const SizedBox(height: 6),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: cells.length,
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 7,
-                mainAxisSpacing: 4,
-                crossAxisSpacing: 4,
-              ),
-              itemBuilder: (context, i) {
-                final day = cells[i];
-                if (day == null) return const SizedBox.shrink();
-
-                final booked = widget.isBooked(day);
-                final selectable = widget.isSelectable(day);
-                final selected = _sameDay(day, _selected);
-                final beforeFirst = day.isBefore(
-                  DateTime(
-                    widget.firstDate.year,
-                    widget.firstDate.month,
-                    widget.firstDate.day,
-                  ),
-                );
-                final afterLast = day.isAfter(
-                  DateTime(
-                    widget.lastDate.year,
-                    widget.lastDate.month,
-                    widget.lastDate.day,
-                  ),
-                );
-                final outOfRange = beforeFirst || afterLast;
-
-                Color bg;
-                Color fg;
-                if (booked) {
-                  bg = Colors.red.shade600;
-                  fg = Colors.white;
-                } else if (selected) {
-                  bg = _orange;
-                  fg = Colors.white;
-                } else if (!selectable || outOfRange) {
-                  bg = Colors.grey.shade200;
-                  fg = Colors.grey.shade500;
-                } else {
-                  bg = Colors.grey.shade100;
-                  fg = _navy;
-                }
-
-                return Material(
-                  color: bg,
-                  borderRadius: BorderRadius.circular(10),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(10),
-                    onTap: (selectable && !outOfRange)
-                        ? () => setState(() => _selected = day)
-                        : null,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            '${day.day}',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 13,
-                              color: fg,
-                            ),
-                          ),
-                          if (booked)
-                            Text(
-                              'Booked',
-                              maxLines: 1,
-                              overflow: TextOverflow.clip,
-                              style: TextStyle(
-                                fontSize: 7.5,
-                                fontWeight: FontWeight.w800,
-                                color: fg,
-                                height: 1.1,
-                              ),
-                            ),
-                        ],
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 8, 4, 0),
+              child: Row(
+                children: [
+                  const SizedBox(width: 40),
+                  Expanded(
+                    child: Text(
+                      widget.title,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        color: _navy,
                       ),
                     ),
                   ),
-                );
-              },
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    color: Colors.red.shade600,
-                    borderRadius: BorderRadius.circular(2),
+                  IconButton(
+                    tooltip: 'Close',
+                    onPressed: () => _close(),
+                    icon: const Icon(Icons.close_rounded),
                   ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text(
+                widget.helpText,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey.shade700,
+                  height: 1.3,
                 ),
-                const SizedBox(width: 6),
-                const Text(
-                  'Booked on this day',
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  IconButton(
+                    onPressed: () => _shiftMonth(-1),
+                    icon: const Icon(Icons.chevron_left_rounded),
+                  ),
+                  Expanded(
+                    child: Text(
+                      DateFormat.yMMMM().format(_visibleMonth),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15,
+                        color: _navy,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => _shiftMonth(1),
+                    icon: const Icon(Icons.chevron_right_rounded),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                children: const [
+                  Expanded(child: Center(child: Text('S', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
+                  Expanded(child: Center(child: Text('M', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
+                  Expanded(child: Center(child: Text('T', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
+                  Expanded(child: Center(child: Text('W', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
+                  Expanded(child: Center(child: Text('T', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
+                  Expanded(child: Center(child: Text('F', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
+                  Expanded(child: Center(child: Text('S', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 11)))),
+                ],
+              ),
+            ),
+            const SizedBox(height: 4),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                child: GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: cells.length,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 7,
+                    mainAxisSpacing: 6,
+                    crossAxisSpacing: 6,
+                    childAspectRatio: 0.92,
+                  ),
+                  itemBuilder: (context, i) {
+                    final day = cells[i];
+                    if (day == null) return const SizedBox.shrink();
+
+                    final booked = widget.isBooked(day);
+                    final selectable = widget.isSelectable(day);
+                    final selected = _sameDay(day, _selected);
+                    final beforeFirst = day.isBefore(
+                      DateTime(
+                        widget.firstDate.year,
+                        widget.firstDate.month,
+                        widget.firstDate.day,
+                      ),
+                    );
+                    final afterLast = day.isAfter(
+                      DateTime(
+                        widget.lastDate.year,
+                        widget.lastDate.month,
+                        widget.lastDate.day,
+                      ),
+                    );
+                    final outOfRange = beforeFirst || afterLast;
+                    final enabled = selectable && !outOfRange;
+
+                    Color bg;
+                    Color fg;
+                    if (booked) {
+                      bg = Colors.red.shade600;
+                      fg = Colors.white;
+                    } else if (selected) {
+                      bg = _orange;
+                      fg = Colors.white;
+                    } else if (!enabled) {
+                      bg = Colors.grey.shade200;
+                      fg = Colors.grey.shade500;
+                    } else {
+                      bg = Colors.grey.shade100;
+                      fg = _navy;
+                    }
+
+                    return Material(
+                      color: bg,
+                      borderRadius: BorderRadius.circular(12),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        // Larger, clearer hit target — select only, never auto-close.
+                        onTap: enabled ? () => _selectDay(day) : null,
+                        child: Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                '${day.day}',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 14,
+                                  color: fg,
+                                ),
+                              ),
+                              if (booked) ...[
+                                const SizedBox(height: 2),
+                                Container(
+                                  width: 5,
+                                  height: 5,
+                                  decoration: BoxDecoration(
+                                    color: fg.withValues(alpha: 0.9),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
-                const Spacer(),
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancel'),
-                ),
-                const SizedBox(width: 4),
-                FilledButton(
-                  onPressed: widget.isSelectable(_selected)
-                      ? () => Navigator.pop(context, _selected)
-                      : null,
-                  style: FilledButton.styleFrom(backgroundColor: _orange),
-                  child: const Text('OK'),
-                ),
-              ],
+              ),
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+              child: Row(
+                children: [
+                  Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade600,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  const Expanded(
+                    child: Text(
+                      'Booked',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => _close(),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 6),
+                  FilledButton(
+                    onPressed: canConfirm ? () => _close(_selected) : null,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _orange,
+                      disabledBackgroundColor: Colors.grey.shade300,
+                      minimumSize: const Size(96, 44),
+                    ),
+                    child: const Text('Confirm'),
+                  ),
+                ],
+              ),
             ),
           ],
         ),

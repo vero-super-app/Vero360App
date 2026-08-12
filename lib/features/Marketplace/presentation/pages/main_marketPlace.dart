@@ -46,6 +46,8 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovid
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/serviceprovider_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_moderation.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_cart_social_service.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_browse_location.dart';
 import 'package:vero360_app/utils/profile_open_helper.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
 import 'package:vero360_app/config/api_config.dart';
@@ -254,6 +256,8 @@ class MarketplaceDetailModel {
   final Uint8List? imageBytes;
   final String? description;
   final String? location;
+  final double? latitude;
+  final double? longitude;
   final bool isActive;
   final DateTime? createdAt;
   final String? merchantId;
@@ -271,11 +275,14 @@ class MarketplaceDetailModel {
   final int? merchantBackendId;
   /// Available units from supplier. Null = legacy/unlimited (cap at 99).
   final int? stockQuantity;
+  /// Unique people who added this listing to cart (social proof).
+  final int peopleAddedCount;
 
   MarketplaceDetailModel({
     required this.id, required this.name, required this.category,
     required this.price, required this.image,
     this.sqlItemId, this.imageBytes, this.description, this.location,
+    this.latitude, this.longitude,
     this.isActive = true, this.createdAt, this.gallery = const [],
     this.sellerBusinessName, this.sellerOpeningHours, this.sellerStatus,
     this.sellerBusinessDescription, this.sellerRating, this.sellerLogoUrl,
@@ -283,6 +290,7 @@ class MarketplaceDetailModel {
     this.merchantName, this.serviceType = 'marketplace',
     this.merchantBackendId,
     this.stockQuantity,
+    this.peopleAddedCount = 0,
   });
 
   bool get hasValidSqlItemId => sqlItemId != null && sqlItemId! > 0;
@@ -296,6 +304,39 @@ class MarketplaceDetailModel {
   int get maxOrderQty {
     if (stockQuantity == null) return 99999;
     return stockQuantity!.clamp(0, 99999);
+  }
+
+  MarketplaceDetailModel copyWith({int? peopleAddedCount}) {
+    return MarketplaceDetailModel(
+      id: id,
+      sqlItemId: sqlItemId,
+      name: name,
+      category: category,
+      price: price,
+      image: image,
+      imageBytes: imageBytes,
+      description: description,
+      location: location,
+      latitude: latitude,
+      longitude: longitude,
+      isActive: isActive,
+      createdAt: createdAt,
+      gallery: gallery,
+      sellerBusinessName: sellerBusinessName,
+      sellerOpeningHours: sellerOpeningHours,
+      sellerStatus: sellerStatus,
+      sellerBusinessDescription: sellerBusinessDescription,
+      sellerRating: sellerRating,
+      sellerLogoUrl: sellerLogoUrl,
+      serviceProviderId: serviceProviderId,
+      sellerUserId: sellerUserId,
+      merchantId: merchantId,
+      merchantName: merchantName,
+      serviceType: serviceType,
+      merchantBackendId: merchantBackendId,
+      stockQuantity: stockQuantity,
+      peopleAddedCount: peopleAddedCount ?? this.peopleAddedCount,
+    );
   }
 
   factory MarketplaceDetailModel.fromFirestore(DocumentSnapshot doc) {
@@ -316,6 +357,11 @@ class MarketplaceDetailModel {
     if (p is num) price = p.toDouble();
     else if (p != null) price = double.tryParse(p.toString()) ?? 0;
     int? parseInt(dynamic v) { if (v == null) return null; if (v is num) return v.toInt(); return int.tryParse(v.toString().replaceAll(RegExp(r'[^\d]'), '')); }
+    double? parseDouble(dynamic v) {
+      if (v == null) return null;
+      if (v is num) return v.toDouble();
+      return double.tryParse(v.toString().trim());
+    }
     final rawSql = data['sqlItemId'] ?? data['backendId'] ?? data['itemId'] ?? data['id'];
     final sqlId = parseInt(rawSql);
     final cat = (data['category'] ?? '').toString().toLowerCase();
@@ -336,6 +382,8 @@ class MarketplaceDetailModel {
       id: doc.id, name: (data['name'] ?? '').toString(), category: cat, price: price,
       image: rawImage, imageBytes: bytes, description: data['description']?.toString(),
       location: data['location']?.toString(),
+      latitude: parseDouble(data['latitude'] ?? data['lat']),
+      longitude: parseDouble(data['longitude'] ?? data['lng']),
       isActive: MarketplaceModeration.isPubliclyVisible(data),
       createdAt: created, sqlItemId: sqlId, gallery: gallery,
       sellerBusinessName: data['sellerBusinessName']?.toString(), sellerOpeningHours: data['sellerOpeningHours']?.toString(),
@@ -470,6 +518,11 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   bool _comfortableView = false;
   bool _forYouMode = true;
   int _suggestionIndex = 0;
+  /// Facebook-style location chip (city) + optional GPS near-me ranking.
+  String? _browseCity;
+  bool _nearMeMode = true;
+  double? _userLat;
+  double? _userLng;
   static const List<String> _searchSuggestions = [
     'iphone 13 near me', 'nike shoes size 42', 'ps5 controller',
     'laptop under 500k', 'kitchen blender', 'office chair',
@@ -662,11 +715,277 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     return copy;
   }
 
+  Future<List<MarketplaceDetailModel>> _attachSocialCounts(
+    List<MarketplaceDetailModel> items,
+  ) async {
+    if (items.isEmpty) return items;
+    final counts = await MarketplaceCartSocialService.fetchPeopleCounts(
+      items.map((e) => e.id),
+    );
+    if (counts.isEmpty) return items;
+    return items
+        .map((e) => e.copyWith(peopleAddedCount: counts[e.id] ?? e.peopleAddedCount))
+        .toList();
+  }
+
+  List<MarketplaceDetailModel> _prioritizeByLocation(
+    List<MarketplaceDetailModel> items,
+  ) {
+    if (items.length < 2) return items;
+    final city = (_browseCity ?? '').trim().toLowerCase();
+    final lat = _userLat;
+    final lng = _userLng;
+    final useNearMe = _nearMeMode && lat != null && lng != null;
+
+    double? distOf(MarketplaceDetailModel i) {
+      if (!useNearMe) return null;
+      if (i.latitude != null && i.longitude != null) {
+        return MarketplaceBrowseLocation.distanceKm(
+          lat,
+          lng,
+          i.latitude,
+          i.longitude,
+        );
+      }
+      // Soft fallback: distance to city center if listing only has a city string.
+      final loc = (i.location ?? '').toLowerCase();
+      for (final e in MarketplaceBrowseLocation.cityCoords.entries) {
+        if (loc.contains(e.key.toLowerCase())) {
+          return MarketplaceBrowseLocation.distanceKm(
+            lat,
+            lng,
+            e.value[0],
+            e.value[1],
+          );
+        }
+      }
+      return null;
+    }
+
+    int cityHit(MarketplaceDetailModel i) {
+      if (city.isEmpty) return 0;
+      final loc = (i.location ?? '').toLowerCase();
+      return loc.contains(city) ? 1 : 0;
+    }
+
+    final ranked = List<MarketplaceDetailModel>.from(items);
+    ranked.sort((a, b) {
+      final ca = cityHit(a);
+      final cb = cityHit(b);
+      if (ca != cb) return cb.compareTo(ca);
+      final da = distOf(a);
+      final db = distOf(b);
+      if (da != null && db != null) {
+        final byDist = da.compareTo(db);
+        if (byDist != 0) return byDist;
+      } else if (da != null) {
+        return -1;
+      } else if (db != null) {
+        return 1;
+      }
+      final tb = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final ta = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return tb.compareTo(ta);
+    });
+    return ranked;
+  }
+
+  Future<List<MarketplaceDetailModel>> _finishFeed(
+    List<MarketplaceDetailModel> items,
+  ) async {
+    var list = _forYouMode
+        ? await _rankByPersonalization(items)
+        : await _sortByNewest(items);
+    list = _prioritizeByLocation(list);
+    list = await _attachSocialCounts(list);
+    _setSuggestionsFromItems(list);
+    return list;
+  }
+
+  Future<void> _initBrowseLocation() async {
+    _nearMeMode = await MarketplaceBrowseLocation.loadNearMe();
+    _browseCity = await MarketplaceBrowseLocation.loadSavedCity();
+    if (!mounted) return;
+    setState(() {});
+
+    if (!_nearMeMode && _browseCity != null) return;
+
+    try {
+      final detected = await MarketplaceBrowseLocation.detect();
+      if (!mounted) return;
+      setState(() {
+        _userLat = detected.lat;
+        _userLng = detected.lng;
+        if (_nearMeMode) {
+          _browseCity = detected.city ?? _browseCity;
+        }
+      });
+      if (_nearMeMode && detected.city != null) {
+        await MarketplaceBrowseLocation.save(
+          city: detected.city,
+          nearMe: true,
+        );
+      }
+      // Re-rank current feed with location once GPS/city is ready.
+      if (_lastQuery.trim().isEmpty) {
+        setState(() {
+          _future = _loadAll(category: _selectedCategory);
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _openLocationPicker() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.white,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        final mq = MediaQuery.of(ctx);
+        // Leave room for status/nav bars and never exceed usable height.
+        final maxH = (mq.size.height
+                - mq.padding.vertical
+                - mq.viewInsets.bottom
+                - 12)
+            .clamp(220.0, mq.size.height * 0.78);
+
+        return Padding(
+          padding: EdgeInsets.only(bottom: mq.viewInsets.bottom),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxH),
+            child: ListView(
+              shrinkWrap: true,
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: _kCreamDark,
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'Shopping location',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: _kInk,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Prioritize goods near you by default.',
+                  style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+                ),
+                const SizedBox(height: 8),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  visualDensity: VisualDensity.compact,
+                  leading: const Icon(
+                    Icons.my_location_rounded,
+                    color: _kAmber,
+                  ),
+                  title: const Text(
+                    'Near me',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  subtitle: const Text('Use current GPS location'),
+                  selected: _nearMeMode,
+                  onTap: () => Navigator.pop(ctx, '__near_me__'),
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  visualDensity: VisualDensity.compact,
+                  leading: const Icon(
+                    Icons.public_rounded,
+                    color: _kInkMid,
+                  ),
+                  title: const Text(
+                    'All Malawi',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  onTap: () => Navigator.pop(ctx, '__all__'),
+                ),
+                const Divider(height: 16),
+                for (final city in MarketplaceBrowseLocation.cities)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    visualDensity: VisualDensity.compact,
+                    leading: Icon(
+                      Icons.location_city_rounded,
+                      color: _browseCity == city && !_nearMeMode
+                          ? _kAmber
+                          : _kInkLight,
+                    ),
+                    title: Text(
+                      city,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: _browseCity == city && !_nearMeMode
+                            ? _kAmber
+                            : _kInk,
+                      ),
+                    ),
+                    trailing: _browseCity == city && !_nearMeMode
+                        ? const Icon(Icons.check_rounded, color: _kAmber)
+                        : null,
+                    onTap: () => Navigator.pop(ctx, city),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (selected == null || !mounted) return;
+
+    if (selected == '__near_me__') {
+      setState(() => _nearMeMode = true);
+      await MarketplaceBrowseLocation.save(city: _browseCity, nearMe: true);
+      await _initBrowseLocation();
+    } else if (selected == '__all__') {
+      setState(() {
+        _nearMeMode = false;
+        _browseCity = null;
+      });
+      await MarketplaceBrowseLocation.save(city: null, nearMe: false);
+    } else {
+      setState(() {
+        _nearMeMode = false;
+        _browseCity = selected;
+        final coords = MarketplaceBrowseLocation.cityCoords[selected];
+        if (coords != null) {
+          _userLat = coords[0];
+          _userLng = coords[1];
+        }
+      });
+      await MarketplaceBrowseLocation.save(city: selected, nearMe: false);
+    }
+    if (!mounted) return;
+    setState(() {
+      _future = _lastQuery.trim().isNotEmpty
+          ? _searchByName(_lastQuery)
+          : _loadAll(category: _selectedCategory);
+    });
+  }
+
   @override
   void initState() {
     super.initState();
     _future = _loadAll();
     _searchCtrl.addListener(_onSearchChanged);
+    unawaited(_initBrowseLocation());
 
     _fadeCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 600));
     _fadeAnim = CurvedAnimation(parent: _fadeCtrl, curve: Curves.easeOut);
@@ -839,20 +1158,12 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
           .toList(),
     );
     if (category == null || category.isEmpty) {
-      final result = _forYouMode
-          ? await _rankByPersonalization(all)
-          : await _sortByNewest(all);
-      _setSuggestionsFromItems(result);
-      return result;
+      return _finishFeed(all);
     }
     final c = category.toLowerCase();
     final filtered =
         all.where((item) => item.category.toLowerCase() == c).toList();
-    final result = _forYouMode
-        ? await _rankByPersonalization(filtered)
-        : await _sortByNewest(filtered);
-    _setSuggestionsFromItems(result);
-    return result;
+    return _finishFeed(filtered);
   }
 
   Future<List<MarketplaceDetailModel>> _loadAll({String? category}) async {
@@ -922,8 +1233,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       }
       if (_aiSearchMode && matches.isNotEmpty) _aiSummary = _buildAiSummary(q, matches);
       else _aiSummary = '';
-      final result = _forYouMode ? await _rankByPersonalization(matches) : await _sortByNewest(matches);
-      _setSuggestionsFromItems(result); return result;
+      return _finishFeed(matches);
     } finally { if (mounted) setState(() => _loading = false); }
   }
 
@@ -1162,6 +1472,12 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       // Local cart write returns immediately; Firestore/API sync in background.
       await widget.cartService.addToCart(cartItem);
       unawaited(_trackInteraction(item, weight: 3.0));
+      unawaited(
+        MarketplaceCartSocialService.recordAdd(
+          itemDocId: item.id,
+          uid: userId,
+        ),
+      );
 
       if (cancelled || !mounted) return;
       dismissDialog();
@@ -1528,6 +1844,27 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                         style: const TextStyle(fontSize: 10, color: _kInkMid))),
                     ]),
                   ],
+                  if (item.peopleAddedCount > 0) ...[
+                    const SizedBox(height: 4),
+                    Row(children: [
+                      Icon(Icons.people_alt_rounded, size: 11, color: Colors.blueGrey.shade600),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          item.peopleAddedCount == 1
+                              ? '1 person added this to cart'
+                              : '${item.peopleAddedCount} people added this to cart',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.blueGrey.shade700,
+                          ),
+                        ),
+                      ),
+                    ]),
+                  ],
                   if (merchant.isNotEmpty) ...[
                     const SizedBox(height: 3),
                     Row(children: [
@@ -1870,6 +2207,10 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
             selectedCategory: _selectedCategory,
             photoMode: _photoMode,
             categories: _kCategories,
+            locationLabel: _nearMeMode
+                ? (_browseCity == null ? 'Near me' : 'Near · $_browseCity')
+                : (_browseCity ?? 'All Malawi'),
+            onLocationTap: _openLocationPicker,
             onAiToggle: (ai) {
               setState(() { _aiSearchMode = ai; if (!ai) _aiSummary = ''; _future = _lastQuery.isNotEmpty ? _searchByName(_lastQuery) : _loadAll(category: _selectedCategory); });
             },
@@ -2172,6 +2513,8 @@ class _FilterRow extends StatelessWidget {
   final bool aiSearchMode, forYouMode, comfortableView, photoMode;
   final String? selectedCategory;
   final List<String> categories;
+  final String locationLabel;
+  final VoidCallback onLocationTap;
   final ValueChanged<bool> onAiToggle;
   final VoidCallback onFeedToggle, onViewToggle;
   final ValueChanged<String?> onCategoryTap;
@@ -2180,6 +2523,7 @@ class _FilterRow extends StatelessWidget {
   const _FilterRow({
     required this.aiSearchMode, required this.forYouMode, required this.comfortableView,
     required this.selectedCategory, required this.photoMode, required this.categories,
+    required this.locationLabel, required this.onLocationTap,
     required this.onAiToggle, required this.onFeedToggle, required this.onViewToggle,
     required this.onCategoryTap, required this.titleCase,
   });
@@ -2215,6 +2559,14 @@ class _FilterRow extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
           scrollDirection: Axis.horizontal,
           children: [
+            _chip(
+              label: locationLabel,
+              selected: true,
+              onTap: onLocationTap,
+              icon: Icons.location_on_rounded,
+              activeColor: const Color(0xFF2E7D32),
+            ),
+            const SizedBox(width: 7),
             _chip(label: 'All', selected: !aiSearchMode, onTap: () => onAiToggle(false), icon: Icons.grid_view_rounded),
             const SizedBox(width: 7),
             _chip(label: '✦ VeroAI', selected: aiSearchMode, onTap: () => onAiToggle(true), icon: Icons.auto_awesome_rounded, activeColor: _kBlue),

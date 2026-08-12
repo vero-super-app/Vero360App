@@ -230,15 +230,23 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
         roomsAvailable: 1,
       );
       try {
-        await _occupancy.publishPaidStay(
-          accommodationId: accId,
-          bookingRef: b.bookingNumber?.trim().isNotEmpty == true
-              ? b.bookingNumber!.trim()
-              : b.id,
-          checkIn: checkIn,
-          checkOut: checkOut,
-          capacity: capacity,
-        );
+        final ref = b.bookingNumber?.trim().isNotEmpty == true
+            ? b.bookingNumber!.trim()
+            : b.id;
+        if (AccommodationOccupancyService.stayHasCheckedOut(checkOut)) {
+          await _occupancy.releaseCompletedStay(
+            accommodationId: accId,
+            bookingRef: ref,
+          );
+        } else {
+          await _occupancy.publishPaidStay(
+            accommodationId: accId,
+            bookingRef: ref,
+            checkIn: checkIn,
+            checkOut: checkOut,
+            capacity: capacity,
+          );
+        }
       } catch (_) {}
     }
     if (!mounted) return;
@@ -1303,7 +1311,8 @@ class _AccommodationCard extends StatelessWidget {
   final bool highlight;
   final bool authReady;
   final bool isLoggedIn;
-  /// Paid stay covers **today** for this listing — freeze Book now.
+  /// Paid stay covers **today** for this listing — badge on the photo only.
+  /// Guests can still tap Book now and pick another date.
   final bool bookedToday;
   final bool isOpening;
   final String? hostelGender;
@@ -1434,7 +1443,8 @@ class _AccommodationCard extends StatelessWidget {
       if (v == null || v.isEmpty) return null;
       return '${v[0].toUpperCase()}${v.substring(1)} room';
     })();
-    final isHostelBooked = bookedToday || (hostelAvailable == false);
+    final hostelClosedByHost = isHostel && hostelAvailable == false;
+    final isHostelBooked = hostelClosedByHost;
 
     final owner = accommodation.owner;
     final rating = (owner?.averageRating ?? 0).toDouble();
@@ -1762,7 +1772,7 @@ class _AccommodationCard extends StatelessWidget {
                                   accommodation.id <= 0 ||
                                   (authReady &&
                                       isLoggedIn &&
-                                      isHostelBooked)
+                                      hostelClosedByHost)
                               ? null
                               : () => onBookStay(accommodation),
                           icon: isOpening
@@ -1775,7 +1785,7 @@ class _AccommodationCard extends StatelessWidget {
                                   ),
                                 )
                               : Icon(
-                                  isHostelBooked
+                                  hostelClosedByHost
                                       ? Icons.lock_clock_rounded
                                       : authReady && isLoggedIn
                                           ? Icons.event_available_rounded
@@ -1786,12 +1796,8 @@ class _AccommodationCard extends StatelessWidget {
                           label: Text(
                             isOpening
                                 ? 'Opening...'
-                                : isHostelBooked
-                                ? (isHostel
-                                    ? 'Booked / unavailable'
-                                    : (isHotelOrLodge
-                                        ? 'Fully booked today'
-                                        : 'Booked today'))
+                                : hostelClosedByHost
+                                ? 'Booked / unavailable'
                                 : authReady
                                     ? 'Book now'
                                     : 'Book',
@@ -1801,7 +1807,7 @@ class _AccommodationCard extends StatelessWidget {
                             ),
                           ),
                           style: FilledButton.styleFrom(
-                            backgroundColor: bookedToday
+                            backgroundColor: hostelClosedByHost
                                 ? Colors.grey.shade500
                                 : _brandOrange,
                             foregroundColor: Colors.white,

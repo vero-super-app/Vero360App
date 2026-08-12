@@ -119,15 +119,12 @@ class NotificationService {
     final androidPlugin = _localNotifications.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
     if (androidPlugin != null) {
-      final granted = await androidPlugin.requestNotificationsPermission();
-      if (kDebugMode) {
-        debugPrint('Android notification permission granted: $granted');
-      }
+      await androidPlugin.requestNotificationsPermission();
     }
 
     // 2. Request FCM notification permissions (mainly for iOS)
     final messaging = FirebaseMessaging.instance;
-    final permission = await messaging.requestPermission(
+    await messaging.requestPermission(
       alert: true,
       announcement: false,
       badge: true,
@@ -136,11 +133,6 @@ class NotificationService {
       provisional: false,
       sound: true,
     );
-
-    if (kDebugMode) {
-      debugPrint(
-          'Notification permission: ${permission.authorizationStatus.name}');
-    }
 
     // 3. Foreground message handler
     FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
@@ -154,22 +146,13 @@ class NotificationService {
       _handleInitialMessage(initial);
     }
 
-    // 6. FCM token: register with backend (if user logged in)
+    // 6. FCM token: register with backend (if user logged in). Never log token material.
     final token = await messaging.getToken();
     if (token != null) {
-      if (kDebugMode) {
-        // Avoid logging the raw FCM token; just log a non-sensitive summary.
-        debugPrint(
-            "FCM token acquired (length=${token.length}, hash=${token.hashCode})");
-      }
       await _registerTokenWithBackend(token);
     }
 
     messaging.onTokenRefresh.listen((newToken) async {
-      if (kDebugMode) {
-        debugPrint(
-            "FCM token refreshed (length=${newToken.length}, hash=${newToken.hashCode})");
-      }
       await _registerTokenWithBackend(newToken);
     });
 
@@ -375,14 +358,14 @@ class NotificationService {
       );
 
       if (res.statusCode >= 200 && res.statusCode < 300) {
-        if (kDebugMode) debugPrint("FCM token registered with backend ✅");
+        // Success — no console log (avoids leaking push-registration state).
       } else if (res.statusCode == 409) {
-        if (kDebugMode) debugPrint("FCM token already registered ✅");
+        // Already registered — silent.
       } else if (kDebugMode) {
-        debugPrint("FCM token register failed: ${res.statusCode}");
+        debugPrint('FCM token register failed: ${res.statusCode}');
       }
-    } catch (e) {
-      if (kDebugMode) debugPrint("FCM token register error");
+    } catch (_) {
+      // Silent — avoid leaking auth/network details to logcat.
     }
   }
 

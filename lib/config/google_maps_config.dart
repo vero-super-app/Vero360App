@@ -1,5 +1,6 @@
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter/foundation.dart';
+import 'package:vero360_app/utils/app_logger.dart';
 
 /// Google Maps API Configuration
 class GoogleMapsConfig {
@@ -8,34 +9,32 @@ class GoogleMapsConfig {
   /// Initialize configuration from .env file or dart-define
   static Future<void> initialize() async {
     // First try to get from dart-define
-    const String dartDefineKey = String.fromEnvironment('GOOGLE_MAPS_API_KEY', defaultValue: '');
-    
+    const String dartDefineKey =
+        String.fromEnvironment('GOOGLE_MAPS_API_KEY', defaultValue: '');
+
     if (dartDefineKey.isNotEmpty) {
       apiKey = dartDefineKey;
-      if (kDebugMode) {
-        debugPrint('[GoogleMapsConfig] API key loaded from dart-define');
-      }
       return;
     }
 
-    // Bundled env template (always present in git / CI). Prefer dart-define above.
+    // Prefer local .env; fall back to committed .env.example (CI / missing local file).
     try {
-      await dotenv.load(fileName: '.env.example');
+      try {
+        await dotenv.load(fileName: '.env');
+      } catch (_) {
+        await dotenv.load(fileName: '.env.example');
+      }
       apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
-
-      if (apiKey.isNotEmpty && kDebugMode) {
-        debugPrint('[GoogleMapsConfig] API key loaded from .env.example');
-      }
     } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[GoogleMapsConfig] Error loading .env.example: $e');
-      }
+      AppLogger.d('[GoogleMapsConfig] Error loading env', e);
       apiKey = '';
     }
-    
+
     if (kDebugMode && !isConfigured) {
-      debugPrint('[GoogleMapsConfig] ⚠️ WARNING: No Google Maps API key found!');
-      debugPrint('[GoogleMapsConfig] Please add GOOGLE_MAPS_API_KEY to .env or run with --dart-define');
+      AppLogger.w(
+        '[GoogleMapsConfig] No Google Maps API key found. '
+        'Add GOOGLE_MAPS_API_KEY to .env or use --dart-define.',
+      );
     }
   }
 

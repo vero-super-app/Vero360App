@@ -1830,8 +1830,27 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
   bool _leaving = false;
 
+  /// True when the signed-in user owns this shop / is the merchant in the thread.
+  bool _iAmTheMerchantForRating() {
+    final myUid = FirebaseAuth.instance.currentUser?.uid?.trim() ?? '';
+    final merchantRef = (widget.peerMerchantId ??
+            widget.resolveMerchantId ??
+            widget.productContext?.merchantId ??
+            '')
+        .trim();
+    if (myUid.isNotEmpty && merchantRef.isNotEmpty && myUid == merchantRef) {
+      return true;
+    }
+    // Merchant reading a customer enquiry about their listing.
+    if (_isMerchantViewingEnquiry) return true;
+    return false;
+  }
+
   /// Facebook-style: only prompt after a real two-way conversation.
+  /// Only buyers rate merchants — never the reverse.
   bool _eligibleForChatRating() {
+    if (_iAmTheMerchantForRating()) return false;
+
     final myId = _myUserId;
     if (myId == null) return false;
 
@@ -1873,6 +1892,9 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
             ? 'chat:$_chatId'
             : 'chat_peer:${backendId ?? merchantRef}';
 
+        // Prefer Firebase shop UID. Do not trust peerUserId as merchantBackendId —
+        // when a merchant opens the thread, peerUserId is the customer and the
+        // API rejects with "Reviews can only be left for merchants".
         await MerchantReviewPrompt.maybeShow(
           context,
           merchantName: widget.peerName,
@@ -1881,7 +1903,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
           merchantRef: merchantRef.isEmpty ? null : merchantRef,
           serviceProviderId: widget.resolveServiceProviderId,
           sellerUserId: widget.resolveSellerUserId,
-          merchantBackendId: backendId,
+          merchantBackendId: merchantRef.isEmpty ? backendId : null,
         );
       }
     } finally {

@@ -34,7 +34,7 @@ class AppWalletPin {
       counterText: '',
       filled: true,
       fillColor: _dialogFieldFill,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       border: OutlineInputBorder(borderRadius: r),
       enabledBorder: OutlineInputBorder(
         borderRadius: r,
@@ -54,7 +54,7 @@ class AppWalletPin {
   }) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
@@ -66,14 +66,14 @@ class AppWalletPin {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.22),
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(14),
             ),
-            child: Icon(icon, color: Colors.white, size: 26),
+            child: Icon(icon, color: Colors.white, size: 22),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -83,22 +83,133 @@ class AppWalletPin {
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w900,
-                    fontSize: 20,
+                    fontSize: 18,
                     letterSpacing: -0.35,
                     height: 1.15,
                   ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 4),
                 Text(
                   subtitle,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: Colors.white.withValues(alpha: 0.92),
-                    fontSize: 13.5,
+                    fontSize: 13,
                     fontWeight: FontWeight.w600,
-                    height: 1.35,
+                    height: 1.3,
                   ),
                 ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Keyboard-safe dialog shell: scrolls as one unit so tiny heights never overflow.
+  static Widget _keyboardSafePinDialog({
+    required BuildContext context,
+    required Widget header,
+    required Widget body,
+    required Widget footer,
+  }) {
+    final mq = MediaQuery.of(context);
+    final kb = mq.viewInsets.bottom;
+    // Usable height above keyboard. Prefer MediaQuery.size; don't pad kb twice.
+    final usable = mq.size.height - kb;
+    final maxH = usable > 200 ? (usable - 24).clamp(200.0, usable) : usable.clamp(120.0, usable);
+
+    return AnimatedPadding(
+      padding: EdgeInsets.only(bottom: kb),
+      duration: const Duration(milliseconds: 100),
+      curve: Curves.easeOut,
+      child: Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 22, vertical: 8),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 400,
+            maxHeight: maxH,
+          ),
+          child: Material(
+            color: Colors.white,
+            elevation: 18,
+            shadowColor: Colors.black.withValues(alpha: 0.2),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+            ),
+            clipBehavior: Clip.antiAlias,
+            // One scroll view — never a flex Column that can overflow at ~165px.
+            child: SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  header,
+                  body,
+                  const Divider(height: 1, thickness: 1),
+                  footer,
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  static Widget _dialogActions({
+    required VoidCallback onCancel,
+    required VoidCallback onConfirm,
+    required String confirmLabel,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton(
+              onPressed: onCancel,
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                side: BorderSide(color: Colors.grey.shade300),
+              ),
+              child: Text(
+                'Cancel',
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: Colors.grey.shade800,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            flex: 2,
+            child: FilledButton(
+              onPressed: onConfirm,
+              style: FilledButton.styleFrom(
+                backgroundColor: _brandOrange,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                elevation: 0,
+              ),
+              child: Text(
+                confirmLabel,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 16,
+                ),
+              ),
             ),
           ),
         ],
@@ -255,179 +366,104 @@ class AppWalletPin {
       barrierColor: Colors.black.withValues(alpha: 0.45),
       builder: (dialogContext) => StatefulBuilder(
         builder: (ctx, setLocal) {
-          final kb = MediaQuery.viewInsetsOf(ctx).bottom;
-          return Dialog(
-            backgroundColor: Colors.transparent,
-            insetPadding:
-                const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 400),
-              child: Material(
-                color: Colors.white,
-                elevation: 18,
-                shadowColor: Colors.black.withValues(alpha: 0.2),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _pinDialogHeader(
-                      icon: Icons.lock_rounded,
-                      title: title,
-                      subtitle: subtitle,
+          return _keyboardSafePinDialog(
+            context: ctx,
+            header: _pinDialogHeader(
+              icon: Icons.lock_rounded,
+              title: title,
+              subtitle: subtitle,
+            ),
+            body: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                  child: Text(
+                    'Password',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.grey.shade700,
+                      letterSpacing: 0.4,
                     ),
-                    Padding(
-                      padding: EdgeInsets.only(bottom: kb),
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
-                              child: Text(
-                                'Password',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w800,
-                                  color: Colors.grey.shade700,
-                                  letterSpacing: 0.4,
-                                ),
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                              child: TextField(
-                                controller: controller,
-                                autofocus: true,
-                                obscureText: true,
-                                keyboardType: TextInputType.number,
-                                maxLength: 6,
-                                onChanged: (_) {
-                                  if (shortPinHint != null) {
-                                    setLocal(() => shortPinHint = null);
-                                  }
-                                },
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 2,
-                                ),
-                                decoration:
-                                    _pinFieldDecoration('4–6 digit password'),
-                              ),
-                            ),
-                            if (shortPinHint != null)
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                    20, 0, 20, 12),
-                                child: Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 14, vertical: 10),
-                                  decoration: BoxDecoration(
-                                    color: _brandOrange.withValues(alpha: 0.1),
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: _brandOrange
-                                          .withValues(alpha: 0.35),
-                                    ),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        Icons.info_outline_rounded,
-                                        color:
-                                            _brandNavy.withValues(alpha: 0.9),
-                                        size: 22,
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: Text(
-                                          shortPinHint!,
-                                          style: TextStyle(
-                                            color: Colors.grey.shade900,
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 13,
-                                            height: 1.35,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                          ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                  child: TextField(
+                    controller: controller,
+                    autofocus: true,
+                    obscureText: true,
+                    keyboardType: TextInputType.number,
+                    maxLength: 6,
+                    onChanged: (_) {
+                      if (shortPinHint != null) {
+                        setLocal(() => shortPinHint = null);
+                      }
+                    },
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 2,
+                    ),
+                    decoration: _pinFieldDecoration('4–6 digit password'),
+                  ),
+                ),
+                if (shortPinHint != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _brandOrange.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: _brandOrange.withValues(alpha: 0.35),
                         ),
                       ),
-                    ),
-                    const Divider(height: 1, thickness: 1),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
                       child: Row(
                         children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: () =>
-                                  Navigator.of(dialogContext).pop(null),
-                              style: OutlinedButton.styleFrom(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                side: BorderSide(color: Colors.grey.shade300),
-                              ),
-                              child: Text(
-                                'Cancel',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.grey.shade800,
-                                ),
-                              ),
-                            ),
+                          Icon(
+                            Icons.info_outline_rounded,
+                            color: _brandNavy.withValues(alpha: 0.9),
+                            size: 22,
                           ),
-                          const SizedBox(width: 12),
+                          const SizedBox(width: 10),
                           Expanded(
-                            flex: 2,
-                            child: FilledButton(
-                              onPressed: () {
-                                final pin = controller.text.trim();
-                                if (pin.length < 4) {
-                                  setLocal(() => shortPinHint =
-                                      'Enter at least 4 digits to continue.');
-                                  return;
-                                }
-                                Navigator.of(dialogContext).pop(pin);
-                              },
-                              style: FilledButton.styleFrom(
-                                backgroundColor: _brandOrange,
-                                foregroundColor: Colors.white,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                elevation: 0,
-                              ),
-                              child: const Text(
-                                'Unlock',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 16,
-                                ),
+                            child: Text(
+                              shortPinHint!,
+                              style: TextStyle(
+                                color: Colors.grey.shade900,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13,
+                                height: 1.35,
                               ),
                             ),
                           ),
                         ],
                       ),
                     ),
-                  ],
-                ),
-              ),
+                  ),
+              ],
+            ),
+            footer: _dialogActions(
+              onCancel: () => Navigator.of(dialogContext).pop(null),
+              confirmLabel: 'Unlock',
+              onConfirm: () {
+                final pin = controller.text.trim();
+                if (pin.length < 4) {
+                  setLocal(
+                    () => shortPinHint =
+                        'Enter at least 4 digits to continue.',
+                  );
+                  return;
+                }
+                Navigator.of(dialogContext).pop(pin);
+              },
             ),
           );
         },
@@ -446,219 +482,137 @@ class AppWalletPin {
       barrierColor: Colors.black.withValues(alpha: 0.45),
       builder: (dialogContext) => StatefulBuilder(
         builder: (ctx, setLocal) {
-          final kb = MediaQuery.viewInsetsOf(ctx).bottom;
-          return Dialog(
-            backgroundColor: Colors.transparent,
-            insetPadding:
-                const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 400),
-              child: Material(
-                color: Colors.white,
-                elevation: 18,
-                shadowColor: Colors.black.withValues(alpha: 0.2),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _pinDialogHeader(
-                      icon: Icons.pin_rounded,
-                      title: 'Set wallet PIN',
-                      subtitle:
-                          'Choose a 4–6 digit PIN. You’ll use it here and to unlock your wallet.',
+          return _keyboardSafePinDialog(
+            context: ctx,
+            header: _pinDialogHeader(
+              icon: Icons.pin_rounded,
+              title: 'Set wallet PIN',
+              subtitle:
+                  'Choose a 4–6 digit PIN. You’ll use it here and to unlock your wallet.',
+            ),
+            body: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                  child: Text(
+                    'New PIN',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.grey.shade700,
+                      letterSpacing: 0.4,
                     ),
-                    Padding(
-                      padding: EdgeInsets.only(bottom: kb),
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Padding(
-                              padding:
-                                  const EdgeInsets.fromLTRB(20, 20, 20, 0),
-                              child: Text(
-                                'New PIN',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w800,
-                                  color: Colors.grey.shade700,
-                                  letterSpacing: 0.4,
-                                ),
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
-                              child: TextField(
-                                controller: p1,
-                                autofocus: true,
-                                obscureText: true,
-                                keyboardType: TextInputType.number,
-                                maxLength: 6,
-                                onChanged: (_) {
-                                  if (err != null) {
-                                    setLocal(() => err = null);
-                                  }
-                                },
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 2,
-                                ),
-                                decoration: _pinFieldDecoration('4–6 digits'),
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-                              child: Text(
-                                'Confirm PIN',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w800,
-                                  color: Colors.grey.shade700,
-                                  letterSpacing: 0.4,
-                                ),
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                              child: TextField(
-                                controller: p2,
-                                obscureText: true,
-                                keyboardType: TextInputType.number,
-                                maxLength: 6,
-                                onChanged: (_) {
-                                  if (err != null) {
-                                    setLocal(() => err = null);
-                                  }
-                                },
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 2,
-                                ),
-                                decoration: _pinFieldDecoration('Re-enter PIN'),
-                              ),
-                            ),
-                            if (err != null)
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                    20, 0, 20, 8),
-                                child: Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 14, vertical: 12),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFFFEBEE),
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: const Color(0xFFEF9A9A)
-                                          .withValues(alpha: 0.6),
-                                    ),
-                                  ),
-                                  child: Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      const Icon(
-                                        Icons.error_outline_rounded,
-                                        color: Color(0xFFC62828),
-                                        size: 22,
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: Text(
-                                          err!,
-                                          style: const TextStyle(
-                                            color: Color(0xFFB71C1C),
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 13,
-                                            height: 1.35,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                          ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                  child: TextField(
+                    controller: p1,
+                    autofocus: true,
+                    obscureText: true,
+                    keyboardType: TextInputType.number,
+                    maxLength: 6,
+                    onChanged: (_) {
+                      if (err != null) setLocal(() => err = null);
+                    },
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 2,
+                    ),
+                    decoration: _pinFieldDecoration('4–6 digits'),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+                  child: Text(
+                    'Confirm PIN',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.grey.shade700,
+                      letterSpacing: 0.4,
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+                  child: TextField(
+                    controller: p2,
+                    obscureText: true,
+                    keyboardType: TextInputType.number,
+                    maxLength: 6,
+                    onChanged: (_) {
+                      if (err != null) setLocal(() => err = null);
+                    },
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 2,
+                    ),
+                    decoration: _pinFieldDecoration('Re-enter PIN'),
+                  ),
+                ),
+                if (err != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFEBEE),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color:
+                              const Color(0xFFEF9A9A).withValues(alpha: 0.6),
                         ),
                       ),
-                    ),
-                    const Divider(height: 1, thickness: 1),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
                       child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: () =>
-                                  Navigator.of(dialogContext).pop(null),
-                              style: OutlinedButton.styleFrom(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                side: BorderSide(color: Colors.grey.shade300),
-                              ),
-                              child: Text(
-                                'Cancel',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.grey.shade800,
-                                ),
-                              ),
-                            ),
+                          const Icon(
+                            Icons.error_outline_rounded,
+                            color: Color(0xFFC62828),
+                            size: 22,
                           ),
-                          const SizedBox(width: 12),
+                          const SizedBox(width: 10),
                           Expanded(
-                            flex: 2,
-                            child: FilledButton(
-                              onPressed: () {
-                                final a = p1.text.trim();
-                                final b = p2.text.trim();
-
-                                if (a.length < 4) {
-                                  setLocal(() =>
-                                      err = 'PIN must be at least 4 digits.');
-                                  return;
-                                }
-                                if (a != b) {
-                                  setLocal(() => err = 'PINs do not match.');
-                                  return;
-                                }
-                                Navigator.of(dialogContext).pop(a);
-                              },
-                              style: FilledButton.styleFrom(
-                                backgroundColor: _brandOrange,
-                                foregroundColor: Colors.white,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                elevation: 0,
-                              ),
-                              child: const Text(
-                                'Save PIN',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 16,
-                                ),
+                            child: Text(
+                              err!,
+                              style: const TextStyle(
+                                color: Color(0xFFB71C1C),
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13,
+                                height: 1.35,
                               ),
                             ),
                           ),
                         ],
                       ),
                     ),
-                  ],
-                ),
-              ),
+                  ),
+              ],
+            ),
+            footer: _dialogActions(
+              onCancel: () => Navigator.of(dialogContext).pop(null),
+              confirmLabel: 'Save PIN',
+              onConfirm: () {
+                final a = p1.text.trim();
+                final b = p2.text.trim();
+                if (a.length < 4) {
+                  setLocal(() => err = 'PIN must be at least 4 digits.');
+                  return;
+                }
+                if (a != b) {
+                  setLocal(() => err = 'PINs do not match.');
+                  return;
+                }
+                Navigator.of(dialogContext).pop(a);
+              },
             ),
           );
         },

@@ -21,10 +21,8 @@ import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
-import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/utils/session_local_cache.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
-import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/account_data_purge.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/password_reset_verification_service.dart';
@@ -1230,6 +1228,40 @@ class AuthService {
 
   // -------------------- Logout --------------------
 
+  /// Best-effort network/driver/FCM cleanup — never blocks logout longer than [budget].
+  Future<void> _logoutRemoteCleanup({
+    required String? token,
+    Duration budget = const Duration(milliseconds: 1600),
+  }) async {
+    Future<void> raced(Future<void> Function() fn) async {
+      try {
+        await fn().timeout(budget);
+      } catch (_) {}
+    }
+
+    await Future.wait<void>([
+      raced(() async {
+        // Stop location broadcast + mark current taxi offline (if any).
+        await DriverOnlineSessionNotifier.forceOfflineGlobally();
+      }),
+      raced(() async {
+        if (token == null || token.isEmpty) return;
+        await ApiClient.post(
+          '/auth/logout',
+          headers: {'Authorization': 'Bearer $token'},
+          body: jsonEncode({}),
+          timeout: budget,
+        );
+      }),
+      raced(() async {
+        await NotificationService.instance.clearSessionOnLogout();
+      }),
+      raced(() async {
+        await _google.signOut();
+      }),
+    ]).timeout(budget, onTimeout: () => <void>[]);
+  }
+
   Future<bool> logout({BuildContext? context}) async {
     String? token;
     try {
@@ -1240,76 +1272,24 @@ class AuthService {
           sp.getString('jwt');
     } catch (_) {}
 
-    // Step 1: Stop local online session + set all driver taxis unavailable
-    try {
-      await DriverOnlineSessionNotifier.forceOfflineGlobally();
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('Error stopping driver online session on logout: $e');
-      }
-    }
-    try {
-      final driverService = DriverService();
-      final driver = await driverService.getMyDriverProfile();
-      final taxis = driver['taxis'];
-      if (taxis is List && taxis.isNotEmpty) {
-        for (final taxi in taxis) {
-          try {
-            final id = taxi is Map ? taxi['id'] : null;
-            if (id == null) continue;
-            await driverService.setTaxiAvailability(id as int, false);
-          } catch (e) {
-            if (kDebugMode) debugPrint('Error setting taxi unavailable: $e');
-          }
-        }
-      }
-    } catch (e) {
-      if (kDebugMode) debugPrint('Error getting driver profile for logout: $e');
-    }
+    // Cap remote work so Settings logout feels instant even on slow networks.
+    // Skip getMyDriverProfile + per-taxi loops (those alone could hang for seconds).
+    await _logoutRemoteCleanup(token: token);
 
-    // Step 2: Call backend logout endpoint to clean up FCM tokens and mark driver inactive
-    if (token != null && token.isNotEmpty) {
-      try {
-        await ApiClient.post(
-          '/auth/logout',
-          headers: {'Authorization': 'Bearer $token'},
-          body: jsonEncode({}),
-        );
-      } catch (e) {
-        if (kDebugMode) debugPrint(' logout call failed: $e');
-      }
-    }
-
-    // Step 3: Google sign out
-    try {
-      await _google.signOut();
-    } catch (_) {}
-
-    // Step 4: Detach FCM + clear in-app notifications WHILE still authenticated
-    // so the leaving account no longer targets this device.
-    try {
-      await NotificationService.instance.clearSessionOnLogout();
-    } catch (_) {
-      try {
-        await NotificationStore.instance.clearForLogout();
-      } catch (_) {}
-    }
-
-    // Step 5: Firebase sign out
+    // Local sign-out must complete even if remote cleanup timed out.
     try {
       await _firebaseAuth.signOut();
     } catch (_) {}
 
-    // Step 5b: Clear in-memory messaging state + socket (deleted-chat prefs stay on disk).
     try {
       BackendChatService.clearAuthCache();
-      await BackendMessagingSocket.disconnect();
+      // Don't await socket teardown — local session clear is enough for UX.
+      unawaited(BackendMessagingSocket.disconnect());
     } catch (_) {}
 
-    // Step 6: Clear local session
     final ok = await _clearLocalSession();
     if (context != null) {
-      _toast(context, ok ? 'Signed out' : 'Signed out', ok: ok);
+      _toast(context, 'Signed out', ok: ok);
     }
     return ok;
   }
@@ -1317,7 +1297,7 @@ class AuthService {
   Future<bool> _clearLocalSession() async {
     try {
       final sp = await SharedPreferences.getInstance();
-      for (final k in const [
+      const keys = <String>[
         'token',
         'jwt_token',
         'authToken',
@@ -1342,9 +1322,8 @@ class AuthService {
         'phone',
         'address',
         'profilepicture',
-      ]) {
-        await sp.remove(k);
-      }
+      ];
+      await Future.wait(keys.map(sp.remove));
       resetDriverSessionCache();
       // Marketplace / cart device caches must not follow the next account.
       await SessionLocalCache.clearOnLogout();

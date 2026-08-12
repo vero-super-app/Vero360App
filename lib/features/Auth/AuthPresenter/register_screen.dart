@@ -26,6 +26,7 @@ import 'package:vero360_app/features/Auth/AuthServices/registration_verification
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
+import 'package:vero360_app/settings/Settings.dart' show PolicyPage;
 
 class AppColors {
   static const brandOrange = Color(0xFFFF8A00);
@@ -1101,37 +1102,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  // ---------- Terms & Conditions (aligned with Settings) ----------
+  // ---------- Terms & Conditions ----------
 
-  static const String _termsConditionsText =
-      'By using Vero360, you agree to the following terms:\n\n'
-      '• Use the app in a lawful and responsible manner.\n'
-      '• Do not upload or share illegal, harmful, or misleading content.\n'
-      '• Respect other users, merchants, and service providers.\n'
-      '• The system holds money until both parties are satisfied with the business.\n'
-      '• Merchants are responsible for the accuracy of their products and services.\n'
-      '• Vero360 acts as a technology platform and is not the direct provider of services.\n\n'
-      'We reserve the right to update these terms and policies as the platform evolves. '
-      'Continued use of the app indicates acceptance of any updates.';
-
-  void _showTermsAndConditionsDialog() {
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Terms & Conditions'),
-        content: SingleChildScrollView(
-          child: Text(
-            _termsConditionsText,
-            style: const TextStyle(height: 1.35),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
+  void _openTermsAndConditionsPage() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const PolicyPage()),
     );
   }
 
@@ -1562,7 +1537,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 ),
                                 Expanded(
                                   child: GestureDetector(
-                                    onTap: _showTermsAndConditionsDialog,
+                                    onTap: _openTermsAndConditionsPage,
                                     child: const Text.rich(
                                       TextSpan(
                                         text: 'I agree to the ',

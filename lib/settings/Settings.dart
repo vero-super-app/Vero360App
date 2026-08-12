@@ -1637,25 +1637,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
     setState(() => _refreshing = true);
     try {
+      // AuthService clears tokens + prefs; don't duplicate slow sequential removes here.
       await AuthService().logout(context: context);
-
-      final prefs = await SharedPreferences.getInstance();
-      for (final k in [
-        'fullName',
-        'name',
-        'email',
-        'phone',
-        'address',
-        'profilepicture',
-        'uid',
-        'role',
-        'user_role',
-        'merchant_service',
-        'business_name',
-        'business_address',
-      ]) {
-        await prefs.remove(k);
-      }
     } finally {
       if (!mounted) return;
       setState(() => _refreshing = false);
@@ -2352,7 +2335,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
               ]),
               const SizedBox(height: 14),
-              _sectionTitle(_t('About', 'Za')),
+              _sectionTitle(_t('About', 'Za ife')),
               _card([
                 _SettingsTile(
                   compact: _compactMode,
@@ -2790,6 +2773,11 @@ class PolicyPage extends StatelessWidget {
   static const String _merchantTermsAsset =
       'assets/documents/Vero360_Merchant_Terms_Conditions.pdf';
 
+  static const Color _cream = Color(0xFFFFFBF6);
+  static const Color _ink = Color(0xFF101010);
+  static const Color _muted = Color(0xFF6B6B6B);
+  static const Color _escrowRed = Color(0xFFC62828);
+
   void _openAssetPdf(
     BuildContext context, {
     required String assetPath,
@@ -2806,6 +2794,26 @@ class PolicyPage extends StatelessWidget {
     );
   }
 
+  Widget _sectionCard({required Widget child}) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE8E4DE)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+
   Widget _docTile(
     BuildContext context, {
     required IconData icon,
@@ -2813,159 +2821,274 @@ class PolicyPage extends StatelessWidget {
     required String subtitle,
     required String assetPath,
   }) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: kBrandOrange.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(12),
+    return Material(
+      color: const Color(0xFFFFF8F0),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => _openAssetPdf(
+          context,
+          assetPath: assetPath,
+          title: title,
         ),
-        child: Icon(icon, color: kBrandOrange),
-      ),
-      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
-      subtitle: Text(subtitle),
-      trailing: const Icon(Icons.open_in_new_rounded),
-      onTap: () => _openAssetPdf(
-            context,
-            assetPath: assetPath,
-            title: title,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: kBrandOrange.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: kBrandOrange),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14.5,
+                        color: _ink,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        color: _muted,
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: kBrandOrange,
+                  borderRadius: BorderRadius.circular(99),
+                ),
+                child: const Text(
+                  'Read more',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ],
           ),
+        ),
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF4F5F7),
+      backgroundColor: _cream,
       appBar: AppBar(
         backgroundColor: kBrandOrange,
         foregroundColor: Colors.white,
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: const [
-            Icon(Icons.privacy_tip_rounded, size: 22, color: Colors.white),
-            SizedBox(width: 8),
-            Text(
-              'Privacy & Terms',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w900,
-                color: Colors.white,
-              ),
-            ),
-          ],
+        elevation: 0,
+        title: const Text(
+          'Terms & Privacy',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w900,
+            color: Colors.white,
+          ),
         ),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.black12),
-          ),
-          child: SingleChildScrollView(
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+        children: [
+          _sectionCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // ================= PRIVACY POLICY =================
-                Text(
-                  'Privacy Policy',
+                const Text(
+                  'Before you continue',
                   style: TextStyle(
                     fontWeight: FontWeight.w900,
-                    fontSize: 16,
+                    fontSize: 18,
+                    color: _ink,
+                    letterSpacing: -0.3,
                   ),
                 ),
-                SizedBox(height: 8),
-                Text(
-                  'Your privacy matters to us. Vero360 collects only the information necessary to operate and improve the app.',
-                  style: TextStyle(height: 1.35),
+                const SizedBox(height: 8),
+                const Text(
+                  'Please review how Vero360 protects payments and your data. '
+                  'Full legal documents are available below.',
+                  style: TextStyle(height: 1.4, color: _muted, fontSize: 14),
                 ),
-                SizedBox(height: 10),
-                Text(
-                  '• Basic account details such as name, email, phone number, and address.\n'
-                  '• Google and apple Login and authentication data .\n'
-                  '• Order, booking, and service history for app functionality.\n'
-                  '• Chat messages required for communication between users and merchants.\n'
-                  '• App usage data for performance and security improvements.\n',
-                  style: TextStyle(height: 1.35),
-                ),
-                SizedBox(height: 8),
-                Text(
-                  'We do not sell or rent your personal data. Payments are handled securely by trusted third-party providers, and Vero360 does not store your payment credentials.',
-                  style: TextStyle(height: 1.35),
-                ),
-                SizedBox(height: 8),
-                Text(
-                  'You may clear cached data, update your information, or request account deletion at any time through the Settings section.',
-                  style: TextStyle(height: 1.35),
-                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
 
-                SizedBox(height: 18),
-
-                // ================= TERMS & CONDITIONS =================
-                Text(
-                  'Terms & Conditions',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16,
+          // Escrow highlight
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFEBEE),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: _escrowRed.withValues(alpha: 0.45)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: _escrowRed.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.account_balance_wallet_rounded,
+                    color: _escrowRed,
+                    size: 22,
                   ),
                 ),
-                SizedBox(height: 8),
-                Text(
-                  'By using Vero360, you agree to the following terms:',
-                  style: TextStyle(height: 1.35),
-                ),
-                SizedBox(height: 10),
-                Text.rich(
-                  TextSpan(
-                    style: TextStyle(height: 1.35),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      TextSpan(
-                        text:
-                            '• Use the app in a lawful and responsible manner.\n'
-                            '• Do not upload or share illegal, harmful, or misleading content.\n'
-                            '• Respect other users, merchants, and service providers.\n',
-                      ),
-                      TextSpan(
-                        text:
-                            '• The system holds Money untill both parties are satisified with the business.\n',
+                      Text(
+                        'Payment protection',
                         style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.red,
+                          color: _escrowRed,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 15,
                         ),
                       ),
-                      TextSpan(
-                        text:
-                            '• Merchants are responsible for the accuracy of their products and services.\n'
-                            '• Vero360 acts as a technology platform and is not the direct provider of services.\n',
+                      SizedBox(height: 6),
+                      Text(
+                        'The system holds money for 7 days until both parties are satisfied with the business.',
+                        style: TextStyle(
+                          color: _escrowRed,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 14,
+                          height: 1.4,
+                        ),
                       ),
                     ],
                   ),
                 ),
-                SizedBox(height: 8),
-                Text(
-                  'We reserve the right to update these terms and policies as the platform evolves. Continued use of the app indicates acceptance of any updates.',
-                  style: TextStyle(height: 1.35),
-                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
 
-                SizedBox(height: 18),
-                Text(
-                  'Documents',
+          _sectionCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Terms & Conditions',
                   style: TextStyle(
                     fontWeight: FontWeight.w900,
                     fontSize: 16,
+                    color: _ink,
                   ),
                 ),
-                SizedBox(height: 8),
-                Text(
-                  'Tap to open legal documents:',
-                  style: TextStyle(height: 1.35),
+                const SizedBox(height: 8),
+                const Text(
+                  'By using Vero360, you agree to the following:',
+                  style: TextStyle(height: 1.35, color: _muted),
                 ),
-                SizedBox(height: 10),
+                const SizedBox(height: 12),
+                const Text(
+                  '• Use the app in a lawful and responsible manner.\n'
+                  '• Do not upload or share illegal, harmful, or misleading content.\n'
+                  '• Respect other users, merchants, and service providers.',
+                  style: TextStyle(height: 1.45, color: _ink, fontSize: 14),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  '• The system holds money for 7 days until both parties are satisfied with the business.',
+                  style: TextStyle(
+                    height: 1.45,
+                    color: _escrowRed,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  '• Merchants are responsible for the accuracy of their products and services.\n'
+                  '• Vero360 acts as a technology platform and is not the direct provider of services.',
+                  style: TextStyle(height: 1.45, color: _ink, fontSize: 14),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'We may update these terms as the platform evolves. Continued use means you accept the updates.',
+                  style: TextStyle(height: 1.4, color: _muted, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          _sectionCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Privacy Policy',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                    color: _ink,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Vero360 collects only what is needed to run and improve the app: account details, '
+                  'login data, orders/bookings, chat for buyer and seller communication, and usage for security.',
+                  style: TextStyle(height: 1.4, color: _muted, fontSize: 14),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'We do not sell your personal data. Payments are handled by trusted providers  '
+                  'Vero360 does not store your card credentials.',
+                  style: TextStyle(height: 1.4, color: _ink, fontSize: 14),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          _sectionCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Legal documents',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                    color: _ink,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Tap Read more to open the full PDF.',
+                  style: TextStyle(height: 1.35, color: _muted, fontSize: 13),
+                ),
+                const SizedBox(height: 14),
                 _docTile(
                   context,
                   icon: Icons.description_outlined,
@@ -2973,6 +3096,7 @@ class PolicyPage extends StatelessWidget {
                   subtitle: 'Vero360 platform agreement (PDF)',
                   assetPath: _platformAgreementAsset,
                 ),
+                const SizedBox(height: 10),
                 _docTile(
                   context,
                   icon: Icons.privacy_tip_outlined,
@@ -2980,6 +3104,7 @@ class PolicyPage extends StatelessWidget {
                   subtitle: 'Vero360 privacy policy (PDF)',
                   assetPath: _privacyPolicyAsset,
                 ),
+                const SizedBox(height: 10),
                 _docTile(
                   context,
                   icon: Icons.storefront_outlined,
@@ -2987,22 +3112,20 @@ class PolicyPage extends StatelessWidget {
                   subtitle: 'Merchant terms (PDF)',
                   assetPath: _merchantTermsAsset,
                 ),
-
-                SizedBox(height: 18),
-
-                // ================= FOOTER =================
-                Text(
-                  'Last updated: July 2026',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.black54,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
               ],
             ),
           ),
-        ),
+          const SizedBox(height: 16),
+          const Text(
+            'Last updated: July 2026',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.black54,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
       ),
     );
   }

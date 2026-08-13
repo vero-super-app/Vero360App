@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
+import 'package:vero360_app/features/ride_share/core/fleet_date_picker.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
@@ -44,10 +45,8 @@ class _EditDriverDetailsScreenState
     _bankCodeController =
         TextEditingController(text: (d['bankCode'] ?? '').toString());
 
-    final expiry = d['licenseExpiry'];
-    if (expiry is String && expiry.isNotEmpty) {
-      _licenseExpiry = DateTime.tryParse(expiry);
-    }
+    final expiry = tryParseFleetDate(d['licenseExpiry']);
+    _licenseExpiry = (expiry != null && expiry.year > 1901) ? expiry : null;
   }
 
   @override
@@ -62,11 +61,11 @@ class _EditDriverDetailsScreenState
 
   Future<void> _pickLicenseExpiry() async {
     final now = DateTime.now();
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _licenseExpiry ?? now.add(const Duration(days: 365)),
-      firstDate: now,
-      lastDate: DateTime(now.year + 20),
+    final picked = await showFleetDatePicker(
+      context,
+      current: _licenseExpiry ?? now.add(const Duration(days: 365)),
+      firstDate: DateTime(now.year, now.month, now.day),
+      lastDate: DateTime(now.year + 20, now.month, now.day),
     );
     if (picked != null) {
       setState(() => _licenseExpiry = picked);
@@ -84,8 +83,7 @@ class _EditDriverDetailsScreenState
       final payload = <String, dynamic>{
         'bio': _bioController.text.trim(),
         'licenseNumber': _licenseController.text.trim(),
-        if (_licenseExpiry != null)
-          'licenseExpiry': DateFormat('yyyy-MM-dd').format(_licenseExpiry!),
+        if (_licenseExpiry != null) 'licenseExpiry': fleetDateIso(_licenseExpiry!),
         'bankAccountName': _bankNameController.text.trim(),
         'bankAccountNumber': _bankNumberController.text.trim(),
         'bankCode': _bankCodeController.text.trim(),

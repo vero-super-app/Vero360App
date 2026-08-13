@@ -111,8 +111,13 @@ class RideHistoryStatusChip extends StatelessWidget {
 
 class RideHistoryPaymentChip extends StatelessWidget {
   final bool pending;
+  final String? pendingLabel;
 
-  const RideHistoryPaymentChip({required this.pending, super.key});
+  const RideHistoryPaymentChip({
+    required this.pending,
+    this.pendingLabel,
+    super.key,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -125,7 +130,7 @@ class RideHistoryPaymentChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
-        pending ? 'Payment Pending' : 'Paid',
+        pending ? (pendingLabel ?? 'Payment Pending') : 'Paid',
         style: TextStyle(
           color: pending
               ? const Color(0xFFC62828)
@@ -293,6 +298,7 @@ class RideHistoryTripCard extends StatelessWidget {
 
   String _plainStatus(Ride ride, {required bool pending}) {
     if (ride.isCancelled) return 'Cancelled';
+    if (ride.isCashPayment && !ride.isPaid) return 'Cash pending';
     if (pending) return 'Pay now';
     if (ride.isCompleted) return 'Completed';
     final s = ride.status.replaceAll('_', ' ').toLowerCase();
@@ -302,6 +308,9 @@ class RideHistoryTripCard extends StatelessWidget {
 
   Color _statusColor(Ride ride, {required bool pending}) {
     if (ride.isCancelled) return const Color(0xFFC62828);
+    if (ride.isCashPayment && !ride.isPaid) {
+      return RideShareColors.primaryDeep;
+    }
     if (pending) return RideShareColors.primaryDeep;
     if (ride.isCompleted) return const Color(0xFF2E7D32);
     return RideShareColors.onSurfaceVariant;
@@ -316,7 +325,9 @@ class RideHistoryTripCard extends StatelessWidget {
             ride.resolvedFare)
         : (summary?.fare ?? ride.resolvedFare);
     final when = ride.endTime ?? ride.createdAt;
-    final pending = ridePaymentPending(ride);
+    final pending = isDriver
+        ? ride.isSettlementPending
+        : ride.needsPayment;
     final counterpart = rideCounterpartName(ride, isDriver: isDriver);
     final pickup = summary?.pickup ?? ride.pickupAddress ?? 'Pickup';
     final dropoff = summary?.dropoff ?? ride.dropoffAddress ?? 'Dropoff';
@@ -355,6 +366,8 @@ class RideHistoryTripCard extends StatelessWidget {
     final to = _shortPlace(dropoff, 'Drop-off');
     final status = _plainStatus(ride, pending: pending);
     final statusColor = _statusColor(ride, pending: pending);
+    final highlight =
+        pending || (ride.isCashPayment && !ride.isPaid);
 
     return Material(
       color: Colors.white,
@@ -367,7 +380,7 @@ class RideHistoryTripCard extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: pending
+              color: highlight
                   ? RideShareColors.primary.withValues(alpha: 0.45)
                   : const Color(0xFFE8E4E0),
             ),
@@ -636,7 +649,12 @@ class RideHistoryTripCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       if (ride.isCompleted && pending)
-                        const RideHistoryPaymentChip(pending: true)
+                        RideHistoryPaymentChip(
+                          pending: true,
+                          pendingLabel: ride.isCashPayment
+                              ? 'Cash pending'
+                              : 'Payment pending',
+                        )
                       else
                         RideHistoryStatusChip(
                           status: ride.status,

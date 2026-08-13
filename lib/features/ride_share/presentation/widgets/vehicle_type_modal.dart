@@ -297,18 +297,23 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
     final unpaid = _unpaidRide ??
         await ref.read(rideShareHttpServiceProvider).findUnpaidCompletedRide();
     if (!mounted || unpaid == null) return;
-    await Navigator.of(context).push(
+    await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => RideCompletionScreen(
           ride: unpaid,
-          onDone: () => Navigator.of(context).pop(),
+          onDone: () {},
         ),
       ),
     );
     if (!mounted) return;
+    final stillUnpaid =
+        await ref.read(rideShareHttpServiceProvider).findUnpaidCompletedRide();
+    if (!mounted) return;
     setState(() {
-      _errorMessage = null;
-      _unpaidRide = null;
+      _unpaidRide = stillUnpaid;
+      if (stillUnpaid == null) {
+        _errorMessage = null;
+      }
     });
   }
 

@@ -289,6 +289,7 @@ class Ride {
   final double? platformFee;
   final double? driverEarnings;
   final String? paymentStatus;
+  final String? paymentChannel;
   final String? paymentTxRef;
   final DateTime? paidAt;
   final String status;
@@ -321,6 +322,7 @@ class Ride {
     this.platformFee,
     this.driverEarnings,
     this.paymentStatus,
+    this.paymentChannel,
     this.paymentTxRef,
     this.paidAt,
     required this.status,
@@ -410,6 +412,7 @@ class Ride {
             ? parseDouble(json['driverEarnings'])
             : null,
         paymentStatus: json['paymentStatus'] as String?,
+        paymentChannel: json['paymentChannel'] as String?,
         paymentTxRef: json['paymentTxRef'] as String?,
         paidAt: json['paidAt'] != null ? parseDateTime(json['paidAt']) : null,
         status: json['status'] as String? ?? 'REQUESTED',
@@ -468,18 +471,29 @@ class Ride {
   bool get isCompleted => status == RideStatus.completed;
   bool get isCancelled => status == RideStatus.cancelled;
 
-  /// Completed trip still awaiting passenger payment (blocks new bookings).
+  /// Completed trip still awaiting passenger digital payment (blocks new bookings).
+  /// Cash selected by the passenger does not block — the driver confirms separately.
   bool get needsPayment {
-    if (!isCompleted) return false;
+    if (!isCompleted || isPaid) return false;
+    return !isCashPayment;
+  }
+
+  /// Driver/history: trip is completed but not fully settled yet.
+  bool get isSettlementPending => isCompleted && !isPaid;
+
+  bool get isPaid {
     final status =
         (paymentStatus ?? tripSummary?.paymentStatus ?? 'pending')
             .toLowerCase()
             .trim();
-    return status != 'paid' &&
-        status != 'completed' &&
-        status != 'success' &&
-        status != 'settled';
+    return status == 'paid' ||
+        status == 'completed' ||
+        status == 'success' ||
+        status == 'settled';
   }
+
+  bool get isCashPayment =>
+      (paymentChannel ?? '').toLowerCase().trim() == 'cash';
 
   String get fareDisplay => 'MK${estimatedFare.toStringAsFixed(2)}';
   String get distanceDisplay => '${estimatedDistance.toStringAsFixed(1)} km';

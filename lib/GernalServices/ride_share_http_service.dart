@@ -339,6 +339,18 @@ class RideShareHttpService {
     return headers;
   }
 
+  String? _apiErrorMessage(String body) {
+    try {
+      final errorData = jsonDecode(body);
+      final raw = errorData is Map ? errorData['message'] : null;
+      if (raw is String && raw.trim().isNotEmpty) return raw.trim();
+      if (raw is List && raw.isNotEmpty) {
+        return raw.map((e) => e.toString()).join(', ');
+      }
+    } catch (_) {}
+    return null;
+  }
+
   RideHistoryPage _parseRideHistoryResponse(dynamic data) {
     if (data is Map<String, dynamic>) {
       return RideHistoryPage.fromJson(data);
@@ -402,12 +414,32 @@ class RideShareHttpService {
     }
   }
 
-  /// Newest completed trip that still needs payment, if any.
+  /// Newest completed trip that still blocks booking, if any.
   Future<Ride?> findUnpaidCompletedRide() async {
+    try {
+      final token = await _getAuthToken();
+      final response = await http.get(
+        ApiConfig.endpoint('/ride-share/rides/unpaid-completed'),
+        headers: _authHeaders(token),
+      );
+      if (response.statusCode == 200) {
+        final body = response.body.trim();
+        if (body.isEmpty || body == 'null') return null;
+        final data = jsonDecode(body);
+        if (data is Map<String, dynamic>) {
+          final ride = Ride.fromJson(data);
+          return ride.needsPayment ? ride : null;
+        }
+        return null;
+      }
+    } catch (e) {
+      print('Error fetching unpaid completed ride: $e');
+    }
+
     final page = await getPassengerRideHistory(
       status: 'COMPLETED',
       page: 1,
-      limit: 20,
+      limit: 50,
     );
     for (final ride in page.rides) {
       if (ride.needsPayment) return ride;
@@ -604,6 +636,48 @@ class RideShareHttpService {
     }
   }
 
+  /// Passenger selects cash for a completed ride.
+  Future<Ride> selectCashPayment(int rideId) async {
+    try {
+      final token = await _getAuthToken();
+      final response = await http.patch(
+        ApiConfig.endpoint('/ride-share/rides/$rideId/payment/cash'),
+        headers: _authHeaders(token),
+      );
+
+      if (response.statusCode == 200) {
+        return Ride.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+      }
+      throw Exception(
+        'Failed to select cash payment: ${response.statusCode} - ${response.body}',
+      );
+    } catch (e) {
+      print('Error selecting cash payment');
+      rethrow;
+    }
+  }
+
+  /// Driver confirms cash was received.
+  Future<Ride> confirmCashPayment(int rideId) async {
+    try {
+      final token = await _getAuthToken();
+      final response = await http.patch(
+        ApiConfig.endpoint('/ride-share/rides/$rideId/payment/cash/confirm'),
+        headers: _authHeaders(token),
+      );
+
+      if (response.statusCode == 200) {
+        return Ride.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+      }
+      throw Exception(
+        'Failed to confirm cash payment: ${response.statusCode} - ${response.body}',
+      );
+    } catch (e) {
+      print('Error confirming cash payment');
+      rethrow;
+    }
+  }
+
   /// Confirm passenger payment for a completed ride
   Future<Ride> confirmRidePayment(int rideId, String txRef) async {
     try {
@@ -618,7 +692,8 @@ class RideShareHttpService {
         return Ride.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
       }
       throw Exception(
-        'Failed to confirm ride payment: ${response.statusCode} - ${response.body}',
+        _apiErrorMessage(response.body) ??
+            'Failed to confirm ride payment (${response.statusCode})',
       );
     } catch (e) {
       print('Error confirming ride payment');

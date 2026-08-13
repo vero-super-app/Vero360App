@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
@@ -11,12 +12,12 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
-import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 
-class RideCompletionScreen extends StatefulWidget {
+class RideCompletionScreen extends ConsumerStatefulWidget {
   final Ride ride;
   final VoidCallback onDone;
 
@@ -27,14 +28,20 @@ class RideCompletionScreen extends StatefulWidget {
   });
 
   @override
-  State<RideCompletionScreen> createState() => _RideCompletionScreenState();
+  ConsumerState<RideCompletionScreen> createState() =>
+      _RideCompletionScreenState();
 }
 
-class _RideCompletionScreenState extends State<RideCompletionScreen>
+enum _PayMethod { digital, cash }
+
+class _RideCompletionScreenState extends ConsumerState<RideCompletionScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _animController;
   late Animation<double> _scaleAnimation;
   bool _isProcessingPayment = false;
+  _PayMethod _payMethod = _PayMethod.digital;
+  String? _pendingTxRef;
+  String? _pendingCheckoutUrl;
   static const Color primaryColor = Color(0xFFFF8A00);
 
   @override
@@ -69,6 +76,41 @@ class _RideCompletionScreenState extends State<RideCompletionScreen>
     final e = widget.ride.endTime;
     if (s != null && e != null) return e.difference(s).inMinutes;
     return 0;
+  }
+
+  Future<void> _handlePayCash() async {
+    if (!mounted) return;
+    final navigator = Navigator.of(context);
+    final scaffold = ScaffoldMessenger.of(context);
+    final onDone = widget.onDone;
+
+    setState(() => _isProcessingPayment = true);
+    try {
+      await ref
+          .read(rideShareHttpServiceProvider)
+          .selectCashPayment(widget.ride.id);
+      if (!mounted) return;
+      onDone();
+      scaffold.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Pay the driver in cash. You can book another ride now.',
+          ),
+          backgroundColor: primaryColor,
+        ),
+      );
+      if (navigator.canPop()) navigator.pop(true);
+    } catch (e) {
+      if (mounted) setState(() => _isProcessingPayment = false);
+      scaffold.showSnackBar(
+        SnackBar(
+          content: Text(
+            UserFacingError.from(e, fallback: 'Could not select cash payment'),
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   Future<void> _handleProceedToPayment() async {
@@ -108,89 +150,117 @@ class _RideCompletionScreenState extends State<RideCompletionScreen>
     }
 
     try {
-      final txRef = 'ride_${ride.id}_${const Uuid().v4()}';
-      final nameParts = (user.displayName ?? 'Passenger').split(' ');
-      final firstName = nameParts.first;
-      final lastName = nameParts.length > 1 ? nameParts.sublist(1).join(' ') : '';
+      // Reuse the same txRef so a successful PayChangu charge can still settle
+      // after a false WebView result or a slow verify.
+      if (_pendingTxRef != null &&
+          await _tryConfirmPending(ride.id, retries: 2)) {
+        await _finishDigitalPayment(
+          ride: ride,
+          navigator: navigator,
+          scaffold: scaffold,
+          onDone: onDone,
+        );
+        return;
+      }
 
-      final response = await http
-          .post(
-            PayChanguConfig.paymentUri,
-            headers: PayChanguConfig.authHeaders,
-            body: json.encode({
-              'tx_ref': txRef,
-              'first_name': firstName,
-              'last_name': lastName,
-              'email': user.email ?? '',
-              'phone_number': user.phoneNumber ?? '',
-              'currency': 'MWK',
-              'amount': totalFare.round().toString(),
-              'payment_methods': ['card', 'mobile_money', 'bank'],
-              'callback_url': PayChanguConfig.callbackUrl,
-              'return_url': PayChanguConfig.returnUrl,
-              'customization': {
-                'title': 'Vero Ride Payment',
-                'description': 'Ride #${ride.id} • $distanceStr km',
-              },
-            }),
-          )
-          .timeout(const Duration(seconds: 30));
+      if (_pendingCheckoutUrl == null || _pendingTxRef == null) {
+        final txRef = 'ride_${ride.id}_${const Uuid().v4()}';
+        final nameParts = (user.displayName ?? 'Passenger').split(' ');
+        final firstName = nameParts.first;
+        final lastName =
+            nameParts.length > 1 ? nameParts.sublist(1).join(' ') : '';
+
+        final response = await http
+            .post(
+              PayChanguConfig.paymentUri,
+              headers: PayChanguConfig.authHeaders,
+              body: json.encode({
+                'tx_ref': txRef,
+                'first_name': firstName,
+                'last_name': lastName,
+                'email': user.email ?? '',
+                'phone_number': user.phoneNumber ?? '',
+                'currency': 'MWK',
+                'amount': totalFare.round().toString(),
+                'payment_methods': ['card', 'mobile_money', 'bank'],
+                'callback_url': PayChanguConfig.callbackUrl,
+                'return_url': PayChanguConfig.returnUrl,
+                'customization': {
+                  'title': 'Vero Ride Payment',
+                  'description': 'Ride #${ride.id} • $distanceStr km',
+                },
+              }),
+            )
+            .timeout(const Duration(seconds: 30));
+
+        if (!mounted) return;
+
+        if (response.statusCode != 200 && response.statusCode != 201) {
+          throw Exception('HTTP ${response.statusCode}: ${response.body}');
+        }
+
+        final responseJson =
+            json.decode(response.body) as Map<String, dynamic>;
+        final status = (responseJson['status'] ?? '').toString().toLowerCase();
+        if (status != 'success') {
+          throw Exception(
+            responseJson['message'] ?? 'Payment initiation failed',
+          );
+        }
+
+        _pendingTxRef = txRef;
+        _pendingCheckoutUrl =
+            responseJson['data']['checkout_url'] as String;
+      }
+
+      final paymentResult = await navigator.push<bool>(
+        MaterialPageRoute(
+          builder: (_) => _RidePaymentWebView(
+            checkoutUrl: _pendingCheckoutUrl!,
+            txRef: _pendingTxRef!,
+          ),
+        ),
+      );
 
       if (!mounted) return;
 
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final responseJson = json.decode(response.body) as Map<String, dynamic>;
-        final status = (responseJson['status'] ?? '').toString().toLowerCase();
-
-        if (status == 'success') {
-          final checkoutUrl = responseJson['data']['checkout_url'] as String;
-
-          final paymentResult = await navigator.push<bool>(
-            MaterialPageRoute(
-              builder: (_) => _RidePaymentWebView(
-                checkoutUrl: checkoutUrl,
-                txRef: txRef,
-              ),
-            ),
-          );
-
-          if (paymentResult == true) {
-            await _recordRidePaymentOnBackend(ride.id, txRef);
-            await _creditDriverWallet(ride);
-            onDone();
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              try {
-                scaffold.showSnackBar(
-                  const SnackBar(
-                    content: Text('Payment successful!'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-                navigator.pop();
-              } catch (_) {}
-            });
-          } else {
-            if (mounted) setState(() => _isProcessingPayment = false);
-            scaffold.showSnackBar(
-              const SnackBar(
-                content: Text('Payment was not completed. You can try again.'),
-                backgroundColor: Colors.orange,
-              ),
-            );
-          }
-        } else {
-          throw Exception(responseJson['message'] ?? 'Payment initiation failed');
-        }
-      } else {
-        throw Exception('HTTP ${response.statusCode}: ${response.body}');
+      final confirmed = await _tryConfirmPending(
+        ride.id,
+        retries: paymentResult == true ? 3 : 1,
+      );
+      if (confirmed) {
+        await _finishDigitalPayment(
+          ride: ride,
+          navigator: navigator,
+          scaffold: scaffold,
+          onDone: onDone,
+        );
+        return;
       }
+
+      if (mounted) setState(() => _isProcessingPayment = false);
+      scaffold.showSnackBar(
+        SnackBar(
+          content: Text(
+            paymentResult == true
+                ? 'Payment is still confirming. Tap Pay again, or choose Cash to book another ride.'
+                : 'Payment was not completed. Try again or pay cash.',
+          ),
+          backgroundColor: Colors.orange,
+        ),
+      );
     } catch (e) {
       if (kDebugMode) debugPrint('[RidePayment] Error: $e');
       if (mounted) setState(() => _isProcessingPayment = false);
       try {
         scaffold.showSnackBar(
           SnackBar(
-            content: Text(UserFacingError.from(e, fallback: 'Payment failed')),
+            content: Text(
+              UserFacingError.from(
+                e,
+                fallback: 'Payment failed. Try again or pay cash.',
+              ),
+            ),
             backgroundColor: Colors.red,
           ),
         );
@@ -198,16 +268,56 @@ class _RideCompletionScreenState extends State<RideCompletionScreen>
     }
   }
 
-  Future<void> _recordRidePaymentOnBackend(int rideId, String txRef) async {
-    try {
-      final http = RideShareHttpService();
-      await http.confirmRidePayment(rideId, txRef);
-      http.dispose();
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[RidePayment] Backend payment record failed: $e');
+  Future<bool> _tryConfirmPending(int rideId, {required int retries}) async {
+    final txRef = _pendingTxRef;
+    if (txRef == null) return false;
+    Object? lastError;
+    for (var attempt = 0; attempt < retries; attempt++) {
+      try {
+        await ref
+            .read(rideShareHttpServiceProvider)
+            .confirmRidePayment(rideId, txRef);
+        return true;
+      } catch (e) {
+        lastError = e;
+        if (kDebugMode) {
+          debugPrint('[RidePayment] Backend confirm attempt ${attempt + 1}: $e');
+        }
+        if (attempt < retries - 1) {
+          await Future<void>.delayed(
+            Duration(milliseconds: 1200 * (attempt + 1)),
+          );
+        }
       }
     }
+    if (kDebugMode && lastError != null) {
+      debugPrint('[RidePayment] Confirm still pending: $lastError');
+    }
+    return false;
+  }
+
+  Future<void> _finishDigitalPayment({
+    required Ride ride,
+    required NavigatorState navigator,
+    required ScaffoldMessengerState scaffold,
+    required VoidCallback onDone,
+  }) async {
+    try {
+      await _creditDriverWallet(ride);
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[RidePayment] Wallet credit failed after paid: $e');
+      }
+    }
+    onDone();
+    if (!mounted) return;
+    scaffold.showSnackBar(
+      const SnackBar(
+        content: Text('Payment successful!'),
+        backgroundColor: Colors.green,
+      ),
+    );
+    if (navigator.canPop()) navigator.pop(true);
   }
 
   Future<void> _creditDriverWallet(Ride ride) async {
@@ -416,7 +526,49 @@ class _RideCompletionScreenState extends State<RideCompletionScreen>
                 ),
                 const SizedBox(height: 32),
 
-                // Payment method info
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'How will you pay?',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.grey[800],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _payMethodChip(
+                        label: 'Digital',
+                        icon: Icons.phone_android_outlined,
+                        selected: _payMethod == _PayMethod.digital,
+                        onTap: _isProcessingPayment
+                            ? null
+                            : () => setState(
+                                  () => _payMethod = _PayMethod.digital,
+                                ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _payMethodChip(
+                        label: 'Cash',
+                        icon: Icons.payments_outlined,
+                        selected: _payMethod == _PayMethod.cash,
+                        onTap: _isProcessingPayment
+                            ? null
+                            : () => setState(
+                                  () => _payMethod = _PayMethod.cash,
+                                ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
@@ -427,17 +579,22 @@ class _RideCompletionScreenState extends State<RideCompletionScreen>
                     ),
                   ),
                   child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(
-                        Icons.security,
+                      Icon(
+                        _payMethod == _PayMethod.cash
+                            ? Icons.payments_outlined
+                            : Icons.security,
                         color: RideShareColors.primaryDeep,
                         size: 20,
                       ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          'Secure payment via Airtel Money, TNM Mpamba, or card',
-                          style: TextStyle(
+                          _payMethod == _PayMethod.cash
+                              ? 'Pay the driver in cash. They will confirm when they receive it. Platform commission is settled from the driver.'
+                              : 'Secure payment via Airtel Money, TNM Mpamba, or card',
+                          style: const TextStyle(
                             fontSize: 13,
                             color: RideShareColors.primaryDeep,
                           ),
@@ -452,10 +609,15 @@ class _RideCompletionScreenState extends State<RideCompletionScreen>
                   width: double.infinity,
                   height: 52,
                   child: ElevatedButton.icon(
-                    onPressed:
-                        _isProcessingPayment ? null : _handleProceedToPayment,
+                    onPressed: _isProcessingPayment
+                        ? null
+                        : (_payMethod == _PayMethod.cash
+                            ? _handlePayCash
+                            : _handleProceedToPayment),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: primaryColor,
+                      disabledBackgroundColor:
+                          primaryColor.withValues(alpha: 0.5),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
@@ -470,44 +632,24 @@ class _RideCompletionScreenState extends State<RideCompletionScreen>
                                   AlwaysStoppedAnimation<Color>(Colors.white),
                             ),
                           )
-                        : const Icon(Icons.payment, color: Colors.white),
+                        : Icon(
+                            _payMethod == _PayMethod.cash
+                                ? Icons.payments_outlined
+                                : Icons.payment,
+                            color: Colors.white,
+                          ),
                     label: Text(
                       _isProcessingPayment
-                          ? 'Initiating Payment...'
-                          : 'Pay MK${_totalFare.toStringAsFixed(0)}',
+                          ? (_payMethod == _PayMethod.cash
+                              ? 'Confirming cash…'
+                              : 'Initiating Payment...')
+                          : (_payMethod == _PayMethod.cash
+                              ? 'Continue with cash'
+                              : 'Pay MK${_totalFare.toStringAsFixed(0)}'),
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
                         color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: OutlinedButton(
-                    onPressed: _isProcessingPayment
-                        ? null
-                        : () {
-                            final nav = Navigator.of(context);
-                            widget.onDone();
-                            nav.pop();
-                          },
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: primaryColor),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: const Text(
-                      'Pay Later',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: primaryColor,
                       ),
                     ),
                   ),
@@ -532,6 +674,51 @@ class _RideCompletionScreenState extends State<RideCompletionScreen>
                 fontWeight: FontWeight.w600,
                 color: Colors.black87)),
       ],
+    );
+  }
+
+  Widget _payMethodChip({
+    required String label,
+    required IconData icon,
+    required bool selected,
+    VoidCallback? onTap,
+  }) {
+    return Material(
+      color: selected
+          ? RideShareColors.primarySoft
+          : Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selected ? primaryColor : Colors.grey[300]!,
+              width: selected ? 1.6 : 1,
+            ),
+          ),
+          child: Column(
+            children: [
+              Icon(
+                icon,
+                size: 22,
+                color: selected ? primaryColor : Colors.grey[600],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  color: selected ? primaryColor : Colors.grey[700],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -585,15 +772,13 @@ class _RidePaymentWebViewState extends State<_RidePaymentWebView> {
             final uri = Uri.tryParse(req.url);
 
             if (uri?.scheme == 'vero360' && uri?.host == 'payment-complete') {
-              final s = (uri!.queryParameters['status'] ?? '').toLowerCase();
-              _handleResult(s != 'failed' && s != 'cancelled');
+              _considerUrlStatus(uri!.queryParameters['status']);
               return NavigationDecision.prevent;
             }
 
             if (url.contains('/vero/payments/callback') ||
                 url.contains('/vero/payments/return')) {
-              final s = (uri?.queryParameters['status'] ?? '').toLowerCase();
-              _handleResult(s != 'failed' && s != 'cancelled');
+              _considerUrlStatus(uri?.queryParameters['status']);
               return NavigationDecision.prevent;
             }
 
@@ -611,8 +796,7 @@ class _RidePaymentWebViewState extends State<_RidePaymentWebView> {
             if (lower.contains('/vero/payments/callback') ||
                 lower.contains('/vero/payments/return')) {
               final uri = Uri.tryParse(url);
-              final s = (uri?.queryParameters['status'] ?? '').toLowerCase();
-              _handleResult(s != 'failed' && s != 'cancelled');
+              _considerUrlStatus(uri?.queryParameters['status']);
             }
           },
         ),
@@ -662,6 +846,17 @@ class _RidePaymentWebViewState extends State<_RidePaymentWebView> {
         }
       }
     } catch (_) {}
+  }
+
+  void _considerUrlStatus(String? rawStatus) {
+    final s = (rawStatus ?? '').toLowerCase().trim();
+    if (s == 'failed' || s == 'cancelled') {
+      _handleResult(false);
+      return;
+    }
+    if ({'successful', 'success', 'paid', 'completed'}.contains(s)) {
+      _handleResult(true);
+    }
   }
 
   void _handleResult(bool success) {

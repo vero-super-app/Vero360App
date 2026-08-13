@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
+import 'package:vero360_app/features/ride_share/core/fleet_date_picker.dart';
 import 'package:vero360_app/features/ride_share/core/fleet_image_compressor.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 
@@ -107,10 +108,23 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
     if (license.isNotEmpty) _licenseNumber.text = license;
     final nid = (profile['nationalId']?.toString() ?? '').trim();
     if (nid.isNotEmpty) _nationalId.text = nid;
-    final dob = DateTime.tryParse(profile['dateOfBirth']?.toString() ?? '');
-    if (dob != null) _dateOfBirth = dob;
-    final lex = DateTime.tryParse(profile['licenseExpiry']?.toString() ?? '');
-    if (lex != null) _licenseExpiry = lex;
+
+    final dob = tryParseFleetDate(profile['dateOfBirth']);
+    final lex = tryParseFleetDate(profile['licenseExpiry']);
+    final today = fleetDateOnly(DateTime.now());
+    final adultCutoff = DateTime(today.year - 18, today.month, today.day);
+    final hasIdentity = license.isNotEmpty || nid.isNotEmpty;
+    // Backend auto-creates driver rows with placeholder dates (today historically,
+    // or 1900-01-01). Treat those and under-18 DOBs as unset so the picker works.
+    final dobIsPlaceholder = dob == null ||
+        dob.year <= 1901 ||
+        dob.isAfter(adultCutoff) ||
+        (!hasIdentity && lex != null && dob == lex);
+    final lexIsPlaceholder = lex == null ||
+        lex.year <= 1901 ||
+        (!hasIdentity && !lex.isAfter(today));
+    _dateOfBirth = dobIsPlaceholder ? null : dob;
+    _licenseExpiry = lexIsPlaceholder ? null : lex;
 
     if (taxi != null) {
       _make.text = taxi['make']?.toString() ?? '';
@@ -119,9 +133,8 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
       _color.text = taxi['color']?.toString() ?? '';
       _seats.text = '${taxi['seats'] ?? 4}';
       _year = (taxi['year'] as num?)?.toInt();
-      _insuranceExpiry =
-          DateTime.tryParse(taxi['insuranceExpiry']?.toString() ?? '');
-      _cofExpiry = DateTime.tryParse(taxi['cofExpiry']?.toString() ?? '');
+      _insuranceExpiry = tryParseFleetDate(taxi['insuranceExpiry']);
+      _cofExpiry = tryParseFleetDate(taxi['cofExpiry']);
     }
 
     _OnboardingPhase next;
@@ -231,8 +244,8 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
       final payload = <String, dynamic>{
         'licenseNumber': _licenseNumber.text.trim(),
         'licenseImageUrl': licenseUrl,
-        'licenseExpiry': _licenseExpiry!.toIso8601String(),
-        'dateOfBirth': _dateOfBirth!.toIso8601String(),
+        'licenseExpiry': fleetDateIso(_licenseExpiry!),
+        'dateOfBirth': fleetDateIso(_dateOfBirth!),
         'nationalId': _nationalId.text.trim(),
         if (nidUrl != null) 'nationalIdImageUrl': nidUrl,
       };
@@ -360,9 +373,9 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
         'imageUrl': vehicleUrl,
         'registrationImageUrl': regUrl,
         'insuranceImageUrl': insUrl,
-        'insuranceExpiry': _insuranceExpiry!.toIso8601String(),
+        'insuranceExpiry': fleetDateIso(_insuranceExpiry!),
         'cofImageUrl': cofUrl,
-        'cofExpiry': _cofExpiry!.toIso8601String(),
+        'cofExpiry': fleetDateIso(_cofExpiry!),
         'features': ['AC'],
       };
 
@@ -407,13 +420,18 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
     required DateTime lastDate,
     required ValueChanged<DateTime> onPicked,
   }) async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: current ?? lastDate,
-      firstDate: firstDate,
-      lastDate: lastDate,
-    );
-    if (picked != null) onPicked(picked);
+    try {
+      final picked = await showFleetDatePicker(
+        context,
+        current: current,
+        firstDate: firstDate,
+        lastDate: lastDate,
+      );
+      if (picked != null) onPicked(picked);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = 'Could not open the date picker. Please try again.');
+    }
   }
 
   String _fmt(DateTime? d) =>
@@ -565,18 +583,29 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
     required DateTime? value,
     required VoidCallback onTap,
   }) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      title: Text(label, style: const TextStyle(fontSize: 13)),
-      subtitle: Text(
-        _fmt(value),
-        style: const TextStyle(
-          fontWeight: FontWeight.w600,
-          color: RideShareColors.titleText,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: InputDecorator(
+            decoration: _fieldDecoration(label).copyWith(
+              suffixIcon: const Icon(Icons.calendar_today_outlined, size: 18),
+            ),
+            child: Text(
+              _fmt(value),
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: value == null
+                    ? RideShareColors.bodyText
+                    : RideShareColors.titleText,
+              ),
+            ),
+          ),
         ),
       ),
-      trailing: const Icon(Icons.calendar_today_outlined, size: 18),
-      onTap: onTap,
     );
   }
 
@@ -696,7 +725,7 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
                 value: _dateOfBirth,
                 onTap: () => _pickDate(
                   current: _dateOfBirth,
-                  firstDate: DateTime(now.year - 80),
+                  firstDate: DateTime(now.year - 100, now.month, now.day),
                   lastDate: DateTime(now.year - 18, now.month, now.day),
                   onPicked: (d) => setState(() => _dateOfBirth = d),
                 ),
@@ -706,8 +735,8 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
                 value: _licenseExpiry,
                 onTap: () => _pickDate(
                   current: _licenseExpiry,
-                  firstDate: now,
-                  lastDate: DateTime(now.year + 20),
+                  firstDate: DateTime(now.year, now.month, now.day),
+                  lastDate: DateTime(now.year + 20, now.month, now.day),
                   onPicked: (d) => setState(() => _licenseExpiry = d),
                 ),
               ),
@@ -834,8 +863,8 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
               value: _insuranceExpiry,
               onTap: () => _pickDate(
                 current: _insuranceExpiry,
-                firstDate: now,
-                lastDate: DateTime(now.year + 10),
+                firstDate: DateTime(now.year, now.month, now.day),
+                lastDate: DateTime(now.year + 10, now.month, now.day),
                 onPicked: (d) => setState(() => _insuranceExpiry = d),
               ),
             ),
@@ -844,8 +873,8 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
               value: _cofExpiry,
               onTap: () => _pickDate(
                 current: _cofExpiry,
-                firstDate: now,
-                lastDate: DateTime(now.year + 10),
+                firstDate: DateTime(now.year, now.month, now.day),
+                lastDate: DateTime(now.year + 10, now.month, now.day),
                 onPicked: (d) => setState(() => _cofExpiry = d),
               ),
             ),

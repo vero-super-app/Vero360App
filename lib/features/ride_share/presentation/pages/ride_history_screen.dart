@@ -85,8 +85,8 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
     return fields.any((f) => f.toLowerCase().contains(q));
   }
 
-  void _openDetail(Ride ride) {
-    Navigator.push(
+  Future<void> _openDetail(Ride ride) async {
+    await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => RideHistoryDetailScreen(
@@ -97,6 +97,8 @@ class _RideHistoryScreenState extends State<RideHistoryScreen> {
         ),
       ),
     );
+    if (!mounted) return;
+    _reload();
   }
 
   @override

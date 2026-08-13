@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'dart:async';
+
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
+import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/map_view_widget.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_in_ride_ui.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_messaging_sheet.dart';
@@ -470,11 +474,26 @@ class _DriverRideCompletionScreenState
     with SingleTickerProviderStateMixin {
   late AnimationController _animController;
   late Animation<double> _scaleAnimation;
+  Timer? _pollTimer;
+  Ride? _ride;
   bool _finishing = false;
+  bool _confirmingCash = false;
+  String? _actionError;
+
+  Ride _resolveRide(RideLifecycleState lifecycle) {
+    final fromLifecycle =
+        lifecycle is RideCompleted && lifecycle.ride.id == widget.ride.id
+            ? lifecycle.ride
+            : null;
+    final local = _ride;
+    if (local != null && (local.isPaid || local.isCashPayment)) return local;
+    return fromLifecycle ?? local ?? widget.ride;
+  }
 
   @override
   void initState() {
     super.initState();
+    _ride = widget.ride;
     _animController = AnimationController(
       duration: const Duration(milliseconds: 800),
       vsync: this,
@@ -483,16 +502,65 @@ class _DriverRideCompletionScreenState
       CurvedAnimation(parent: _animController, curve: Curves.elasticOut),
     );
     _animController.forward();
+    _pollTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      unawaited(_refreshRide());
+    });
+    unawaited(_refreshRide());
   }
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
     _animController.dispose();
     super.dispose();
   }
 
+  RideShareHttpService get _http => ref.read(rideShareHttpServiceProvider);
+
+  Future<void> _refreshRide() async {
+    try {
+      final fresh = await _http.getRideDetails(widget.ride.id);
+      if (!mounted) return;
+      setState(() => _ride = fresh);
+    } catch (_) {}
+  }
+
+  Future<void> _confirmCash() async {
+    if (_confirmingCash) return;
+    setState(() {
+      _confirmingCash = true;
+      _actionError = null;
+    });
+    try {
+      final updated = await _http.confirmCashPayment(widget.ride.id);
+      if (!mounted) return;
+      setState(() {
+        _ride = updated;
+        _confirmingCash = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Cash confirmed — commission added to your settlement balance.',
+          ),
+          backgroundColor: RideShareColors.primary,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _confirmingCash = false;
+        _actionError = UserFacingError.from(
+          e,
+          fallback: 'Could not confirm cash payment',
+        );
+      });
+    }
+  }
+
   void _handleDone() {
-    if (_finishing) return;
+    final ride = _resolveRide(ref.read(rideLifecycleProvider));
+    if (!ride.isPaid || _finishing) return;
     setState(() => _finishing = true);
 
     // Capture navigator before callbacks that may dispose this route.
@@ -511,9 +579,13 @@ class _DriverRideCompletionScreenState
 
   @override
   Widget build(BuildContext context) {
-    final r = widget.ride;
+    final lifecycle = ref.watch(rideLifecycleProvider);
+    final r = _resolveRide(lifecycle);
     final totalFare = r.actualFare ?? r.estimatedFare;
     final distance = r.actualDistance ?? r.estimatedDistance;
+    final platformFee = r.platformFee ?? (totalFare * 0.025);
+    final paid = r.isPaid;
+    final cash = r.isCashPayment;
     return Scaffold(
       backgroundColor: RideShareColors.background,
       body: SafeArea(
@@ -609,13 +681,62 @@ class _DriverRideCompletionScreenState
                             ),
                             const Divider(height: 28),
                             _summaryRow(
-                              'Earnings',
+                              paid && cash ? 'Fare collected' : 'Fare',
                               'MK${totalFare.toStringAsFixed(0)}',
-                              emphasize: true,
+                              emphasize: !cash,
                             ),
+                            if (paid && cash) ...[
+                              const SizedBox(height: 8),
+                              _summaryRow(
+                                'Platform commission',
+                                'MK${platformFee.toStringAsFixed(0)}',
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                'Commission was added to your settlement balance. The passenger paid you in cash.',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ),
+                      if (!paid) ...[
+                        const SizedBox(height: 16),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: RideShareColors.primarySoft,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: RideShareColors.primary
+                                  .withValues(alpha: 0.35),
+                            ),
+                          ),
+                          child: Text(
+                            cash
+                                ? 'Passenger chose cash. Confirm when you have received MK${totalFare.toStringAsFixed(0)}.'
+                                : 'Waiting for digital payment, or confirm cash if the passenger paid you directly.',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: RideShareColors.primaryDeep,
+                            ),
+                          ),
+                        ),
+                        if (_actionError != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            _actionError!,
+                            style: const TextStyle(
+                              color: Color(0xFFB91C1C),
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ],
                     ],
                   ),
                 ),
@@ -625,38 +746,79 @@ class _DriverRideCompletionScreenState
             // (also clear of the system gesture inset via SafeArea).
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 8, 24, 16),
-              child: SizedBox(
-                width: double.infinity,
-                height: 54,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: RideShareColors.primary,
-                    disabledBackgroundColor:
-                        RideShareColors.primary.withValues(alpha: 0.5),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                  ),
-                  onPressed: _finishing ? null : _handleDone,
-                  child: _finishing
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.5,
-                            valueColor:
-                                AlwaysStoppedAnimation<Color>(Colors.white),
-                          ),
-                        )
-                      : const Text(
-                          'Done',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 16,
+              child: Column(
+                children: [
+                  if (!paid)
+                    SizedBox(
+                      width: double.infinity,
+                      height: 54,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: RideShareColors.primary,
+                          disabledBackgroundColor:
+                              RideShareColors.primary.withValues(alpha: 0.5),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
                           ),
                         ),
-                ),
+                        onPressed: _confirmingCash ? null : _confirmCash,
+                        child: _confirmingCash
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.5,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.white,
+                                  ),
+                                ),
+                              )
+                            : const Text(
+                                'Confirm cash received',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 16,
+                                ),
+                              ),
+                      ),
+                    )
+                  else
+                    SizedBox(
+                      width: double.infinity,
+                      height: 54,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: RideShareColors.primary,
+                          disabledBackgroundColor:
+                              RideShareColors.primary.withValues(alpha: 0.5),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        onPressed: _finishing ? null : _handleDone,
+                        child: _finishing
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.5,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.white,
+                                  ),
+                                ),
+                              )
+                            : const Text(
+                                'Done',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 16,
+                                ),
+                              ),
+                      ),
+                    ),
+                ],
               ),
             ),
           ],

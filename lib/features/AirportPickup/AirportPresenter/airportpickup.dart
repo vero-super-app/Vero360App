@@ -613,6 +613,7 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
               children: [
                 GoogleMap(
                   initialCameraPosition: _initialCamera,
+                  mapType: MapType.hybrid,
                   myLocationEnabled: true,
                   myLocationButtonEnabled: true,
                   markers: _markers,

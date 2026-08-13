@@ -51,8 +51,6 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
   late Set<Marker> _markers;
   late Set<Polyline> _polylines;
   late CameraPosition _initialCameraPosition;
-  final MapType _mapType = MapType.normal;
-  String? _mapStyleJson;
   late BitmapDescriptor _taxiMarkerIcon;
 
   bool get _nearbyEnabled => !widget.trackingMode && widget.showNearbyVehicles;
@@ -95,9 +93,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
     try {
       final styleString = await MapStyleConstants.loadMapStyle();
       if (styleString.isNotEmpty && mounted) {
-        setState(() {
-          _mapStyleJson = styleString;
-        });
+        setState(() {});
         if (kDebugMode) {
           debugPrint('[MapViewWidget] Map style loaded successfully');
         }
@@ -536,8 +532,10 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
       initialCameraPosition: _initialCameraPosition,
       markers: _markers,
       polylines: _polylines,
-      mapType: LowRamAndroid.isAndroid ? MapType.normal : MapType.hybrid,
-      style: _mapStyleJson,
+      mapType: MapType.hybrid,
+      style: MapStyleConstants.mapStyle.isNotEmpty
+          ? MapStyleConstants.mapStyle
+          : null,
       myLocationEnabled: true,
       myLocationButtonEnabled: true,
       zoomControlsEnabled: !LowRamAndroid.isAndroid,

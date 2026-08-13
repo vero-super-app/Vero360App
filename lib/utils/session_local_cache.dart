@@ -11,6 +11,7 @@ import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchan
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
+import 'package:vero360_app/GernalServices/chat_outbox.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
 import 'package:vero360_app/GernalServices/local_message_database.dart';
@@ -105,6 +106,9 @@ class SessionLocalCache {
       } else {
         await BackendMessagingCache.clearSessionThreads();
       }
+    } catch (_) {}
+    try {
+      await ChatOutbox.clearAll();
     } catch (_) {}
 
     try {

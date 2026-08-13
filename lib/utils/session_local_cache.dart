@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
@@ -56,33 +58,34 @@ class SessionLocalCache {
     MerchantProductsPage.clearSessionCaches();
     MarketplaceMerchantDashboard.clearSessionCaches();
     BackendChatService.clearAuthCache();
+    BlockedMerchantService.clearSessionCache();
+
+    // Fire-and-forget socket close — do not block Settings logout.
+    unawaited(
+      BackendMessagingSocket.disconnect().catchError((_) {}),
+    );
+
     try {
-      await BackendMessagingSocket.disconnect();
+      await ProfilePhotoCache.clear();
     } catch (_) {}
-    await ProfilePhotoCache.clear();
     try {
       await GuestBookingLocalCache.clearOnLogout();
     } catch (_) {}
-    BlockedMerchantService.clearSessionCache();
 
-    // In-app notification list must not follow the next account.
     try {
       await NotificationStore.instance.clearForLogout();
     } catch (_) {}
 
     try {
       final sp = await SharedPreferences.getInstance();
-      for (final k in _exactKeys) {
-        await sp.remove(k);
-      }
-      // Legacy unscoped guest booking cache.
-      await sp.remove('guest_paid_stay_bookings_v1');
-      await sp.remove('vero360_notifications');
-      for (final key in sp.getKeys().toList()) {
-        if (_prefixes.any(key.startsWith)) {
-          await sp.remove(key);
-        }
-      }
+      final toRemove = <String>[
+        ..._exactKeys,
+        'guest_paid_stay_bookings_v1',
+        'vero360_notifications',
+        for (final key in sp.getKeys())
+          if (_prefixes.any(key.startsWith)) key,
+      ];
+      await Future.wait(toRemove.toSet().map(sp.remove));
     } catch (_) {}
   }
 }

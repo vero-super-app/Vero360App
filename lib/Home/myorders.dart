@@ -443,7 +443,10 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
         merchantRef: (o.merchantUid ?? '').trim().isNotEmpty
             ? o.merchantUid
             : (o.merchantId > 0 ? '${o.merchantId}' : null),
-        merchantBackendId: o.merchantId > 0 ? o.merchantId : null,
+        // Prefer Firebase merchantUid resolution; only fall back to Nest id.
+        merchantBackendId: (o.merchantUid ?? '').trim().isEmpty && o.merchantId > 0
+            ? o.merchantId
+            : null,
       );
     } catch (e) {
       if (!mounted) return;

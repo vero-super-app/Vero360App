@@ -35,6 +35,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_m
 
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_seller_loader.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_id_resolver.dart';
 import 'package:vero360_app/GernalServices/profile_photo_cache.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
@@ -376,36 +377,44 @@ class _MarketplaceMerchantDashboardState
     required Widget body,
     required Widget footer,
   }) {
-    final viewInsets = MediaQuery.viewInsetsOf(context);
-    final maxHeight = MediaQuery.sizeOf(context).height - viewInsets.vertical - 24;
+    final mq = MediaQuery.of(context);
+    final kb = mq.viewInsets.bottom;
+    final usable = mq.size.height - kb;
+    final maxHeight =
+        usable > 200 ? (usable - 24).clamp(200.0, usable) : usable.clamp(120.0, usable);
 
-    return Dialog(
-      backgroundColor: Colors.transparent,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: 340,
-          maxHeight: maxHeight,
-        ),
-        child: Material(
-          color: Colors.white,
-          elevation: 18,
-          shadowColor: Colors.black.withValues(alpha: 0.2),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
+    return AnimatedPadding(
+      padding: EdgeInsets.only(bottom: kb),
+      duration: const Duration(milliseconds: 100),
+      curve: Curves.easeOut,
+      child: Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 340,
+            maxHeight: maxHeight,
           ),
-          clipBehavior: Clip.antiAlias,
-          child: SingleChildScrollView(
-            padding: EdgeInsets.only(bottom: viewInsets.bottom),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                header,
-                body,
-                const Divider(height: 1, thickness: 1),
-                footer,
-              ],
+          child: Material(
+            color: Colors.white,
+            elevation: 18,
+            shadowColor: Colors.black.withValues(alpha: 0.2),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  header,
+                  body,
+                  const Divider(height: 1, thickness: 1),
+                  footer,
+                ],
+              ),
             ),
           ),
         ),
@@ -812,6 +821,11 @@ class _MarketplaceMerchantDashboardState
       Future<void>.delayed(const Duration(seconds: 2), () {
         if (!mounted) return;
         unawaited(_syncBackendUserIdToFirestore());
+        unawaited(
+          MerchantReviewIdResolver.ensureCurrentUserNestMerchantRole(
+            merchantService: 'marketplace',
+          ),
+        );
       });
     });
 

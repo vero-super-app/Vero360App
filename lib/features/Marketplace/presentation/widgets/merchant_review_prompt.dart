@@ -69,6 +69,9 @@ class MerchantReviewPrompt {
         sellerUserId: sellerUserId,
         preResolvedBackendId: merchantBackendId,
       );
+      await MerchantReviewIdResolver.ensureMerchantEligibleForReview(
+        resolvedMerchantId,
+      );
       final customerId = await MerchantReviewIdResolver.resolveCustomerId();
 
       await _service.createReview(
@@ -85,7 +88,17 @@ class MerchantReviewPrompt {
       return true;
     } catch (e) {
       if (!context.mounted) return false;
-      final msg = e is ApiException ? e.message : 'Could not save rating.';
+      var msg = e is ApiException ? e.message : 'Could not save rating.';
+      final lower = msg.toLowerCase();
+      if (lower.contains('only be left for merchants')) {
+        msg =
+            'This seller is not marked as a merchant on the server yet. '
+            'Ask them to open their Merchant dashboard once, then try again.';
+      } else if (lower.contains('log in again') ||
+          lower.contains('resolve your account')) {
+        msg =
+            'Could not verify your account for reviews. Pull to refresh, or sign out and back in.';
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(msg),

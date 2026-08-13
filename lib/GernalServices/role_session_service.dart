@@ -35,20 +35,58 @@ class RoleSyncResult {
 class RoleSessionService {
   const RoleSessionService._();
 
+  static const intendedRoleKey = 'session_intended_role';
+  static const intendedServiceKey = 'session_intended_merchant_service';
+  static const intendedUidKey = 'session_intended_uid';
+
   static String? readToken(SharedPreferences prefs) =>
       prefs.getString('jwt_token') ??
       prefs.getString('token') ??
       prefs.getString('authToken');
 
   static String readCachedRole(SharedPreferences prefs) =>
-      (prefs.getString('user_role') ?? prefs.getString('role') ?? '')
-          .toLowerCase()
-          .trim();
+      RoleHelper.normalizeAccountRole(
+        prefs.getString('user_role') ?? prefs.getString('role'),
+      ) ??
+      '';
+
+  static Future<void> clearRoleKeys(SharedPreferences prefs) async {
+    await prefs.remove('user_role');
+    await prefs.remove('role');
+    await prefs.remove('is_merchant');
+    await prefs.remove('merchant_service');
+    await prefs.remove('business_name');
+    await prefs.remove('business_address');
+    await prefs.remove(intendedRoleKey);
+    await prefs.remove(intendedServiceKey);
+    await prefs.remove(intendedUidKey);
+  }
+
+  /// Remember the role the user just chose this session (signup), scoped to uid.
+  static Future<void> lockIntendedRole({
+    required SharedPreferences prefs,
+    required String role,
+    String? merchantService,
+    String? uid,
+  }) async {
+    final r = RoleHelper.normalizeAccountRole(role) ?? RoleHelper.customer;
+    await prefs.setString(intendedRoleKey, r);
+    final service = normalizeMerchantServiceKey(merchantService);
+    if (r == RoleHelper.merchant && service != null && service.isNotEmpty) {
+      await prefs.setString(intendedServiceKey, service);
+    } else {
+      await prefs.remove(intendedServiceKey);
+    }
+    final id = (uid ?? '').trim();
+    if (id.isNotEmpty) {
+      await prefs.setString(intendedUidKey, id);
+    }
+  }
 
   static Future<RoleSyncResult?> syncFromServer({
     required SharedPreferences prefs,
     required String token,
-    Duration timeout = const Duration(seconds: 6),
+    Duration timeout = const Duration(seconds: 8),
   }) async {
     final fetched = await _fetchCurrentUser(token, timeout);
     if (fetched.isUnauthorized) {
@@ -60,33 +98,69 @@ class RoleSessionService {
       return null;
     }
 
-    final backendRole = (user['role'] ?? '').toString().toLowerCase();
-    final cachedRole = readCachedRole(prefs);
+    var backendRole = RoleHelper.roleFromUserMap(user);
+    final fbUid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    final intendedRole = RoleHelper.normalizeAccountRole(
+      prefs.getString(intendedRoleKey),
+    );
+    final intendedUid = (prefs.getString(intendedUidKey) ?? '').trim();
+    final intendedMatchesThisUser =
+        intendedRole != null &&
+        intendedRole != RoleHelper.customer &&
+        fbUid.isNotEmpty &&
+        intendedUid == fbUid;
 
-    if (cachedRole.isNotEmpty &&
-        cachedRole != 'customer' &&
-        backendRole == 'customer') {
-      return _repairRoleMismatch(
-        prefs: prefs,
-        token: token,
-        correctRole: cachedRole,
-        fallbackUser: user,
-        timeout: timeout,
-      );
+    // Signup race only: this uid just registered as driver/merchant, API still
+    // returns customer. Retry PUT. Never copy a *previous* account's prefs.
+    if (intendedMatchesThisUser && backendRole == RoleHelper.customer) {
+      await _putRoleToBackend(token, intendedRole, timeout);
+      if (intendedRole == RoleHelper.merchant) {
+        final service = prefs.getString(intendedServiceKey);
+        if (service != null && service.isNotEmpty) {
+          try {
+            await http
+                .put(
+                  ApiConfig.endpoint('/users/me'),
+                  headers: {
+                    'Authorization': 'Bearer $token',
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                  },
+                  body: json.encode({'merchantService': service}),
+                )
+                .timeout(timeout);
+          } catch (_) {}
+        }
+      }
+      final refreshed = await _fetchCurrentUser(token, timeout);
+      final resolved = Map<String, dynamic>.from(refreshed.user ?? user);
+      if (RoleHelper.roleFromUserMap(resolved) == RoleHelper.customer) {
+        resolved['role'] = intendedRole;
+      }
+      if (intendedRole == RoleHelper.merchant &&
+          (resolved['merchantService'] == null ||
+              resolved['merchantService'].toString().trim().isEmpty)) {
+        final service = prefs.getString(intendedServiceKey);
+        if (service != null && service.isNotEmpty) {
+          resolved['merchantService'] = service;
+        }
+      }
+      await persistUserToPrefs(prefs, resolved);
+      return RoleSyncResult.user(resolved);
     }
 
-    if (backendRole == 'customer') {
-      final firestoreRole = await _getRoleFromFirestore();
+    // Firestore is a backup if API role is missing/customer but this uid is
+    // already a driver/merchant there — still never use leftover prefs.
+    if (backendRole == RoleHelper.customer) {
+      final firestoreRole = RoleHelper.normalizeAccountRole(
+        await _getRoleFromFirestore(),
+      );
       if (firestoreRole != null &&
-          firestoreRole != 'customer' &&
-          firestoreRole != backendRole) {
-        return _repairRoleMismatch(
-          prefs: prefs,
-          token: token,
-          correctRole: firestoreRole,
-          fallbackUser: user,
-          timeout: timeout,
-        );
+          firestoreRole != RoleHelper.customer &&
+          (intendedMatchesThisUser || fbUid.isNotEmpty)) {
+        final corrected = Map<String, dynamic>.from(user)..['role'] = firestoreRole;
+        await persistUserToPrefs(prefs, corrected);
+        return RoleSyncResult.user(corrected);
       }
     }
 
@@ -118,50 +192,54 @@ class RoleSessionService {
     await prefs.setString('phone', phone);
     await prefs.setString('profilepicture', pic);
 
-    final isMerchant = RoleHelper.isMerchant(user);
-    final isDriver = !isMerchant && RoleHelper.isDriver(user);
+    final uid = (user['uid'] ?? user['firebaseUid'] ?? user['id'] ?? '')
+        .toString()
+        .trim();
+    if (uid.isNotEmpty) {
+      await prefs.setString('uid', uid);
+    }
 
-    if (isMerchant) {
-      await prefs.setString('user_role', 'merchant');
-      await prefs.setString('role', 'merchant');
-      await persistMerchantServiceFromApi(
-        prefs,
-        user['merchantService']?.toString() ??
-            user['serviceType']?.toString() ??
-            user['merchant_service']?.toString(),
-      );
-    } else if (isDriver) {
-      await prefs.setString('user_role', 'driver');
-      await prefs.setString('role', 'driver');
+    final fbUid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    final lookupUid = fbUid.isNotEmpty ? fbUid : uid;
+
+    final role = RoleHelper.roleFromUserMap(user);
+    await prefs.setString('user_role', role);
+    await prefs.setString('role', role);
+    await prefs.setBool('is_merchant', role == RoleHelper.merchant);
+
+    if (role == RoleHelper.merchant) {
+      final intendedUid = (prefs.getString(intendedUidKey) ?? '').trim();
+      final intendedService =
+          (lookupUid.isNotEmpty && intendedUid == lookupUid)
+              ? normalizeMerchantServiceKey(prefs.getString(intendedServiceKey))
+              : null;
+      var service = intendedService ??
+          normalizeMerchantServiceKey(
+            user['merchantService']?.toString() ??
+                user['serviceType']?.toString() ??
+                user['merchant_service']?.toString(),
+          );
+      if (lookupUid.isNotEmpty &&
+          (service == null ||
+              service.isEmpty ||
+              service == 'marketplace')) {
+        final discovered = await resolveMerchantServiceForUid(lookupUid);
+        if (discovered != null &&
+            discovered.isNotEmpty &&
+            (service == null ||
+                service.isEmpty ||
+                (service == 'marketplace' && discovered != 'marketplace'))) {
+          service = discovered;
+        }
+      }
+      if (service != null && service.isNotEmpty) {
+        await persistMerchantServiceFromApi(prefs, service);
+      }
     } else {
-      await prefs.setString('user_role', 'customer');
-      await prefs.setString('role', 'customer');
+      await prefs.remove('merchant_service');
+      await prefs.remove('business_name');
+      await prefs.remove('business_address');
     }
-  }
-
-  static Future<RoleSyncResult> _repairRoleMismatch({
-    required SharedPreferences prefs,
-    required String token,
-    required String correctRole,
-    required Map<String, dynamic> fallbackUser,
-    required Duration timeout,
-  }) async {
-    final correctedUser = Map<String, dynamic>.from(fallbackUser)
-      ..['role'] = correctRole;
-
-    await _putRoleToBackend(token, correctRole, timeout);
-
-    final refreshed = await _fetchCurrentUser(token, timeout);
-    var resolvedUser = refreshed.user ?? correctedUser;
-    final resolvedRole =
-        (resolvedUser['role'] ?? '').toString().toLowerCase();
-    if (resolvedRole != correctRole) {
-      resolvedUser = Map<String, dynamic>.from(resolvedUser)
-        ..['role'] = correctRole;
-    }
-
-    await persistUserToPrefs(prefs, resolvedUser);
-    return RoleSyncResult.user(resolvedUser);
   }
 
   static Future<void> _putRoleToBackend(
@@ -193,7 +271,7 @@ class RoleSessionService {
           .doc(fbUser.uid)
           .get();
       if (doc.exists && doc.data() != null) {
-        return (doc.data()!['role'] ?? '').toString().toLowerCase();
+        return RoleHelper.roleFromUserMap(doc.data()!);
       }
     } catch (_) {}
     return null;

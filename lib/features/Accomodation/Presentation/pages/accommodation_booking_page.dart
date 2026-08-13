@@ -9,8 +9,12 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_amenities.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_share_link.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_booking_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/accommodation_occupancy_service.dart';
@@ -52,6 +56,7 @@ class AccommodationBookingPage extends StatefulWidget {
 
   final String? hostMerchantUid;
   final String? hostDisplayName;
+  final List<String>? amenities;
 
   final AccommodationAfterPayCallback? afterSuccessfulPayment;
 
@@ -68,6 +73,7 @@ class AccommodationBookingPage extends StatefulWidget {
     this.memoryHeroBytes,
     this.hostMerchantUid,
     this.hostDisplayName,
+    this.amenities,
     this.afterSuccessfulPayment,
   });
 
@@ -118,6 +124,7 @@ class AccommodationBookingPage extends StatefulWidget {
       memoryHeroBytes: a.imageBytes,
       hostMerchantUid: a.hostMerchantUid,
       hostDisplayName: a.owner?.name,
+      amenities: List<String>.from(a.amenities),
       afterSuccessfulPayment: afterSuccessfulPayment,
     );
   }
@@ -132,7 +139,6 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   static const Color _brandNavy = Color(0xFF16284C);
   static const Color _surface = Color(0xFFF4F6FA);
 
-  final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
@@ -145,7 +151,6 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   DateTime _checkOut = DateTime.now().add(const Duration(days: 2));
 
   bool _submitting = false;
-  bool _authReady = false;
   bool _isLoggedIn = false;
   int _heroIndex = 0;
   bool _showSwipeHint = false;
@@ -158,6 +163,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   String _ownerPhone = '';
   String _ownerPhotoUrl = '';
   Map<String, int> _nightCounts = {};
+  List<String> _amenities = const [];
   bool _paymentSucceeded = false;
   /// Prevents double-open while a check-in / check-out dialog is showing.
   bool _datePickerOpen = false;
@@ -174,7 +180,13 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
           accListingLooksLikeBase64(url)) {
         continue;
       }
-      pages.add(accImageFromAnySource(url, fit: BoxFit.cover));
+      pages.add(
+        accImageFromAnySource(
+          url,
+          fit: BoxFit.cover,
+          memCacheWidth: 1200,
+        ),
+      );
     }
     if (pages.isEmpty) {
       pages.add(
@@ -193,6 +205,8 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   void initState() {
     super.initState();
     _heroController = PageController();
+    _amenities = List<String>.from(widget.amenities ?? const []);
+    _isLoggedIn = FirebaseAuth.instance.currentUser != null;
     WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrap());
   }
 
@@ -237,25 +251,22 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   }
 
   Future<void> _bootstrap() async {
-    await Future.wait([
-      _loadOwnerProfile(),
-      _loadOccupancy(),
-    ]);
+    unawaited(_loadOwnerProfile());
+    unawaited(_loadAmenitiesFromFirestore());
+    unawaited(_loadOccupancy().then((_) {
+      if (!mounted) return;
+      if (_isMonthlyRent) {
+        _applyMonthlyStayWindow();
+      } else {
+        _snapDatesToAvailable();
+      }
+    }));
     final ok = await AuthHandler.isAuthenticated();
     if (!mounted) return;
-    setState(() {
-      _isLoggedIn = ok;
-      _authReady = true;
-    });
-    if (ok) await _prefillFromAccount();
+    setState(() => _isLoggedIn = ok);
+    if (ok) unawaited(_prefillFromAccount());
     if (!mounted) return;
-    if (_isMonthlyRent) {
-      _applyMonthlyStayWindow();
-    } else {
-      _snapDatesToAvailable();
-    }
-    final pageCount = _heroPages.length;
-    _scheduleSwipeHint(pageCount);
+    _scheduleSwipeHint(_heroPages.length);
     _startHeroAutoplay();
   }
 
@@ -644,6 +655,105 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
       if (email.isNotEmpty) _emailController.text = email;
       _phoneController.text = safePhone;
     });
+  }
+
+  Future<void> _loadAmenitiesFromFirestore() async {
+    if (widget.accommodationId <= 0) return;
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('accommodation_rooms')
+          .where('apiAccommodationId', isEqualTo: widget.accommodationId)
+          .limit(5)
+          .get();
+      final found = <String>[];
+      for (final doc in snap.docs) {
+        final d = doc.data();
+        found.addAll(
+          parseAccommodationAmenities(
+            d['amenities'] ?? d['servicesOffered'] ?? d['facilities'],
+          ),
+        );
+      }
+      if (found.isEmpty && widget.hostMerchantUid != null) {
+        final mid = widget.hostMerchantUid!.trim();
+        if (mid.isNotEmpty) {
+          final m = await FirebaseFirestore.instance
+              .collection('accommodation_merchants')
+              .doc(mid)
+              .get();
+          found.addAll(
+            parseAccommodationAmenities(
+              m.data()?['servicesOffered'] ?? m.data()?['amenities'],
+            ),
+          );
+        }
+      }
+      if (!mounted || found.isEmpty) return;
+      final merged = <String>[..._amenities];
+      for (final a in found) {
+        if (!merged.contains(a)) merged.add(a);
+      }
+      setState(() => _amenities = merged);
+    } catch (_) {}
+  }
+
+  Future<void> _shareStay() async {
+    final loc = widget.location.trim();
+    final name = widget.propertyName.trim();
+    final price =
+        NumberFormat('#,##0').format(widget.pricePerNight.round());
+    final url = accommodationShareUrl(
+      id: widget.accommodationId,
+      name: name,
+      location: loc,
+    );
+    final buf = StringBuffer(
+      'Check out this stay on Vero360 — $name',
+    );
+    if (loc.isNotEmpty) buf.write('\n$loc');
+    buf.write('\nMWK $price${_effectivePricePeriod.uiSuffix}');
+    if (_amenities.isNotEmpty) {
+      buf.write('\nOffers: ${_amenities.join(', ')}');
+    }
+    buf.write('\n$url');
+    if (name.isNotEmpty) {
+      buf.write(
+        '\n\nOpen in Vero360, or search “$name” under Accommodation.',
+      );
+    } else {
+      buf.write('\n\nOpen the link in Vero360 to find and book this property.');
+    }
+    await SharePlus.instance.share(
+      ShareParams(
+        text: buf.toString(),
+        subject: name.isEmpty ? 'Vero360 stay' : name,
+      ),
+    );
+  }
+
+  Future<void> _openMaps() async {
+    final loc = widget.location.trim();
+    if (loc.isEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'No location listed for this stay.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    final uri = Uri.parse(
+      'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(loc)}',
+    );
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok && mounted) {
+      ToastHelper.showCustomToast(
+        context,
+        'Could not open maps.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+    }
   }
 
   String _firstNonEmpty(List<String?> parts) {
@@ -1072,7 +1182,20 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
       return;
     }
 
-    if (!_formKey.currentState!.validate()) return;
+    await _prefillFromAccount();
+    if (!mounted) return;
+    final name = _nameController.text.trim();
+    final email = _emailController.text.trim();
+    final phone = _phoneController.text.trim();
+    if (name.length < 2 || email.isEmpty || !email.contains('@') || phone.length < 6) {
+      ToastHelper.showCustomToast(
+        context,
+        'Your account is missing name, email, or phone. Update them in Settings, then try again.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
     if (widget.accommodationId <= 0) {
       ToastHelper.showCustomToast(
         context,
@@ -1127,7 +1250,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
         bookingDate: dateStr,
         price: _totalMwk,
         bookingFee: 0,
-        phoneNumber: _phoneController.text.trim(),
+        phoneNumber: phone,
         checkOut: checkOutStr,
         nights: _nights,
       );
@@ -1159,7 +1282,6 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
 
       await InternetAddress.lookup('api.paychangu.com');
 
-      final name = _nameController.text.trim();
       final parts = name.split(RegExp(r'\s+'));
       final firstName = parts.isNotEmpty ? parts.first : 'Guest';
       final lastName =
@@ -1176,8 +1298,8 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
               'tx_ref': txRef,
               'first_name': firstName,
               'last_name': lastName,
-              'email': _emailController.text.trim(),
-              'phone_number': _phoneController.text.trim(),
+              'email': email,
+              'phone_number': phone,
               'currency': 'MWK',
               'amount': _totalMwk.round().toString(),
               'payment_methods': ['card', 'mobile_money', 'bank'],
@@ -1228,9 +1350,9 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
         checkIn: _checkIn,
         checkOut: _checkOut,
         totalMwk: _totalMwk,
-        guestName: _nameController.text.trim(),
-        guestEmail: _emailController.text.trim(),
-        guestPhone: _phoneController.text.trim(),
+        guestName: name,
+        guestEmail: email,
+        guestPhone: phone,
       );
 
       if (!mounted) return;
@@ -1357,50 +1479,15 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     }
   }
 
-  InputDecoration _fieldDeco(String label, IconData icon, {String? hint}) {
-    final r = BorderRadius.circular(16);
-    return InputDecoration(
-      labelText: label,
-      hintText: hint,
-      prefixIcon: Icon(icon, color: _brandOrange.withValues(alpha: 0.9), size: 22),
-      filled: true,
-      fillColor: Colors.white,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      border: OutlineInputBorder(borderRadius: r),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: r,
-        borderSide: BorderSide(color: Colors.grey.shade200),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: r,
-        borderSide: const BorderSide(color: _brandOrange, width: 2),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final dateFmt = DateFormat.yMMMd();
     final pages = _heroPages;
 
-    if (!_authReady) {
-      return Scaffold(
-        backgroundColor: _surface,
-        appBar: AppBar(
-          backgroundColor: _brandNavy,
-          foregroundColor: Colors.white,
-          title: const Text('Book stay'),
-        ),
-        body: const Center(child: CircularProgressIndicator(color: _brandOrange)),
-      );
-    }
-
     return Scaffold(
       backgroundColor: _surface,
-      body: Form(
-        key: _formKey,
-        child: CustomScrollView(
-          slivers: [
+      body: CustomScrollView(
+        slivers: [
             SliverAppBar(
               expandedHeight: 288,
               pinned: true,
@@ -1413,6 +1500,11 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                 style: const TextStyle(fontWeight: FontWeight.w800),
               ),
               actions: [
+                IconButton(
+                  tooltip: 'Share stay',
+                  onPressed: _shareStay,
+                  icon: const Icon(Icons.ios_share_rounded),
+                ),
                 if (!_isLoggedIn)
                   Padding(
                     padding: const EdgeInsets.only(right: 8, top: 8, bottom: 8),
@@ -1663,6 +1755,55 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                   ),
                 ),
               ),
+              if (_amenities.isNotEmpty ||
+                  widget.location.trim().isNotEmpty)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                    child: _SectionCard(
+                      icon: Icons.spa_outlined,
+                      title: 'What this place offers',
+                      subtitle: widget.location.trim().isNotEmpty
+                          ? widget.location.trim()
+                          : null,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (_amenities.isNotEmpty)
+                            AccommodationAmenityChips(amenities: _amenities)
+                          else
+                            Text(
+                              'The host has not listed amenities yet.',
+                              style: TextStyle(
+                                color: Colors.grey.shade700,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          if (widget.location.trim().isNotEmpty) ...[
+                            const SizedBox(height: 14),
+                            OutlinedButton.icon(
+                              onPressed: _openMaps,
+                              icon: const Icon(Icons.map_outlined),
+                              label: const Text('Show map / directions'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: _brandNavy,
+                                side: BorderSide(
+                                  color: _brandOrange.withValues(alpha: 0.55),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
@@ -1839,68 +1980,6 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
               ),
               SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
-                  child: _SectionCard(
-                    icon: Icons.person_rounded,
-                    title: 'Your details',
-                    subtitle:
-                        'Prefilled from your account and saved profile. Edit anything before you pay.',
-                    child: Column(
-                      children: [
-                        TextFormField(
-                          controller: _nameController,
-                          textCapitalization: TextCapitalization.words,
-                          decoration: _fieldDeco(
-                            'Full name',
-                            Icons.badge_outlined,
-                            hint: 'Enter your full name',
-                          ),
-                          validator: (v) {
-                            if (v == null || v.trim().length < 2) {
-                              return 'Enter your name';
-                            }
-                            return null;
-                          },
-                        ),
-                        const SizedBox(height: 14),
-                        TextFormField(
-                          controller: _emailController,
-                          keyboardType: TextInputType.emailAddress,
-                          autocorrect: false,
-                          decoration: _fieldDeco(
-                            'Email',
-                            Icons.alternate_email_rounded,
-                          ),
-                          validator: (v) {
-                            final s = v?.trim() ?? '';
-                            if (s.isEmpty) return 'Enter your email';
-                            if (!s.contains('@')) return 'Enter a valid email';
-                            return null;
-                          },
-                        ),
-                        const SizedBox(height: 14),
-                        TextFormField(
-                          controller: _phoneController,
-                          keyboardType: TextInputType.phone,
-                          decoration: _fieldDeco(
-                            'Phone',
-                            Icons.phone_iphone_rounded,
-                            hint: 'Enter your phone number',
-                          ),
-                          validator: (v) {
-                            if (v == null || v.trim().length < 6) {
-                              return 'Enter a phone number';
-                            }
-                            return null;
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              SliverToBoxAdapter(
-                child: Padding(
                   padding: const EdgeInsets.fromLTRB(20, 22, 20, 32),
                   child: FilledButton(
                     onPressed: _submitting ? null : _submit,
@@ -1935,7 +2014,6 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
             ],
           ],
         ),
-      ),
     );
   }
 }
@@ -1991,7 +2069,7 @@ class _SignInRequiredCard extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            'Only signed-in guests can book a stay and pay securely. Your name, email, and phone will be filled from your account and profile after you sign in.',
+            'Only signed-in guests can book a stay and pay securely. We’ll use your account name, email, and phone automatically.',
             style: TextStyle(
               fontSize: 14,
               height: 1.45,

@@ -450,6 +450,31 @@ class LocalMessageDatabase {
     }
   }
 
+  /// Opens Hive boxes if needed and wipes them. Safe to call from logout/delete
+  /// without a Riverpod instance — these boxes are not scoped per user.
+  static Future<void> clearAllBoxes() async {
+    try {
+      if (!Hive.isAdapterRegistered(10)) {
+        Hive.registerAdapter(LocalMessageAdapter());
+      }
+      if (!Hive.isAdapterRegistered(11)) {
+        Hive.registerAdapter(LocalChatThreadAdapter());
+      }
+      final messages = await Hive.openBox<LocalMessage>(_messagesBoxName);
+      final threads = await Hive.openBox<LocalChatThread>(_threadsBoxName);
+      final queue = await Hive.openBox(_queueBoxName);
+      final config = await Hive.openBox<Map>(_configBoxName);
+      await Future.wait<void>([
+        messages.clear(),
+        threads.clear(),
+        queue.clear(),
+        config.clear(),
+      ]);
+    } catch (e) {
+      print('[LocalMessageDatabase] clearAllBoxes: $e');
+    }
+  }
+
   /// Close all boxes
   Future<void> close() async {
     try {

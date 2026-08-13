@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
+import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 
 // ==================== SERVICES ====================
@@ -124,11 +125,11 @@ const _hasDriverProfileKey = 'has_driver_profile';
 Future<bool?> loadDriverStatusFromPrefs() async {
   try {
     final prefs = await SharedPreferences.getInstance();
-    final role = (prefs.getString('user_role') ??
-            prefs.getString('role') ??
-            '')
-        .toLowerCase();
-    final value = role == 'driver';
+    final role = RoleHelper.normalizeAccountRole(
+          prefs.getString('user_role') ?? prefs.getString('role'),
+        ) ??
+        '';
+    final value = role == RoleHelper.driver;
     _isDriverCachedValue = value;
     return value;
   } catch (_) {
@@ -162,12 +163,13 @@ final hasDriverProfileProvider = Provider<bool?>((ref) {
 final syncDriverStatusProvider = FutureProvider<bool>((ref) async {
   try {
     final prefs = await SharedPreferences.getInstance();
-    final sessionRole = (prefs.getString('user_role') ??
-            prefs.getString('role') ??
-            '')
-        .toLowerCase();
+    final sessionRole = RoleHelper.normalizeAccountRole(
+          prefs.getString('user_role') ?? prefs.getString('role'),
+        ) ??
+        '';
     // Never infer session role from driver API — only explicit driver login counts.
-    if (sessionRole == 'merchant' || sessionRole == 'customer') {
+    if (sessionRole == RoleHelper.merchant ||
+        sessionRole == RoleHelper.customer) {
       await _saveDriverProfileAvailability(false);
       return false;
     }

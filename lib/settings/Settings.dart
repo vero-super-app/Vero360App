@@ -17,7 +17,6 @@ import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/account_data_purge.dart';
-import 'package:vero360_app/utils/session_local_cache.dart';
 
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/config/api_config.dart';
@@ -2108,10 +2107,12 @@ class _SettingsPageState extends State<SettingsPage> {
       final verified = await _promptDeleteAuthMethod(currentUser);
       if (!verified) return;
 
-      // 1) Wipe customer + merchant data (Firestore, Storage, API) while still signed in.
-      await AccountDataPurge.purgeCurrentUser();
+      // Remote wipe while still signed in (capped — do not hang Settings).
+      // Purge clears local chats/rides/hive first, then deletes API + Firestore.
+      await AccountDataPurge.purgeCurrentUser(
+        budget: const Duration(seconds: 6),
+      );
 
-      // 2) Delete Firebase Auth user (with re-auth if required)
       final u = _auth.currentUser;
       if (u != null) {
         final deleted = await _deleteFirebaseUserWithReauth(u);
@@ -2125,9 +2126,7 @@ class _SettingsPageState extends State<SettingsPage> {
         }
       }
 
-      // 3) Clear leftover local session (purge already cleared marketplace caches)
-      await SessionLocalCache.clearOnLogout();
-      await AuthService().logout(context: context);
+      await AuthService().logout();
 
       ToastHelper.showCustomToast(context, _t('Account deleted', 'Akaunti yachotsedwa'),
           isSuccess: true, errorMessage: '');

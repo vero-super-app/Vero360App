@@ -182,6 +182,8 @@ class GuestBookingLocalCache {
       m['accommodationLocation'] = propertyLocation!.trim();
     }
     m['bookingDate'] = DateFormat('yyyy-MM-dd').format(checkIn);
+    m['createdAt'] = DateTime.now().toIso8601String();
+    m['transactionDate'] = DateTime.now().toIso8601String();
     if (checkOut != null) {
       m['checkOut'] = DateFormat('yyyy-MM-dd').format(checkOut);
     }
@@ -205,6 +207,10 @@ class GuestBookingLocalCache {
         'id': b.id,
         if (b.bookingDate != null)
           'bookingDate': b.bookingDate!.toIso8601String(),
+        if (b.transactionDate != null)
+          'createdAt': b.transactionDate!.toIso8601String(),
+        if (b.transactionDate != null)
+          'transactionDate': b.transactionDate!.toIso8601String(),
         'price': b.price,
         'bookingFee': b.bookingFee,
         'status': 'booked',

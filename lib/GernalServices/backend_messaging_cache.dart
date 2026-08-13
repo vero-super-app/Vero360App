@@ -322,6 +322,36 @@ class BackendMessagingCache {
     await _box!.deleteAll(keys);
   }
 
+  /// Drop cached threads/messages for every account. Keeps deleted-thread
+  /// markers so the same user can log back in without resurrecting hidden chats.
+  static Future<void> clearSessionThreads() async {
+    await initialize();
+    if (_box == null) return;
+    try {
+      final keys = _box!.keys
+          .where((k) => !k.toString().startsWith('deleted_threads_'))
+          .toList();
+      await _box!.deleteAll(keys);
+      _warmedUrls.clear();
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[BackendMessagingCache] clearSessionThreads: $e');
+      }
+    }
+  }
+
+  /// Full wipe including deleted-thread markers. Use on account deletion.
+  static Future<void> clearAll() async {
+    await initialize();
+    _warmedUrls.clear();
+    if (_box == null) return;
+    try {
+      await _box!.clear();
+    } catch (e) {
+      if (kDebugMode) debugPrint('[BackendMessagingCache] clearAll: $e');
+    }
+  }
+
   static Iterable<String> _imageUrlsFromThreads(
     List<BackendChatThread> threads,
   ) sync* {

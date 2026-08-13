@@ -34,6 +34,7 @@ import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/utils/app_logger.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_amenities.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/Accomodation_service.dart';
@@ -105,6 +106,7 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
   bool _submitting = false;
   _PropertyMedia? _cover;
   final List<_PropertyMedia> _gallery = [];
+  final Set<String> _selectedAmenities = {};
 
   bool get _isMultiRoomType =>
       _selectedType == 'hotel' || _selectedType == 'lodge';
@@ -645,10 +647,33 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                     maxLines: 5,
                     decoration: _fieldDecoration(
                       label: 'Description',
-                      hint:
-                          'Amenities, house rules, what makes it special…',
+                      hint: 'House rules, what makes it special…',
                       alignLabelWithHint: true,
                     ),
+                  ),
+                  const SizedBox(height: 16),
+                  _sectionHeader(
+                    'What this place offers',
+                    Icons.spa_outlined,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Tap everything guests will find here',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey.shade600,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  AccommodationAmenityPicker(
+                    selected: _selectedAmenities,
+                    onChanged: (next) =>
+                        setState(() {
+                          _selectedAmenities
+                            ..clear()
+                            ..addAll(next);
+                        }),
                   ),
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 20),
@@ -800,6 +825,8 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                                         _isHostelType ? _hostelIsAvailable : true,
                                     'coverUrl': coverUrl,
                                     'galleryUrls': galleryUrls,
+                                    'amenities':
+                                        _selectedAmenities.toList(growable: false),
                                   },
                                 );
                               } catch (e) {
@@ -1807,6 +1834,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
               ?.map((e) => e.toString())
               .toList() ??
           <String>[];
+      final amenities = parseAccommodationAmenities(payload['amenities']);
       final newId = (created is Map && created['id'] != null)
           ? created['id'].toString()
           : 'api-${DateTime.now().millisecondsSinceEpoch}';
@@ -1829,6 +1857,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         'image': coverUrl,
         'imageUrl': coverUrl,
         'galleryUrls': galleryUrls,
+        if (amenities.isNotEmpty) 'amenities': amenities,
       };
       final apiNumeric = created is Map
           ? () {
@@ -1853,6 +1882,10 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                 'hostelGender': hostelGender,
               if (roomType != null && roomType.isNotEmpty) 'roomType': roomType,
               'isAvailable': isAvailable,
+              if (amenities.isNotEmpty) 'amenities': amenities,
+              if (name.isNotEmpty) 'name': name,
+              if (location.isNotEmpty) 'location': location,
+              if (desc.isNotEmpty) 'description': desc,
             },
             SetOptions(merge: true),
           ),
@@ -1926,6 +1959,9 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
       roomType = 'single';
     }
     var isAvailable = (room['isAvailable'] as bool?) ?? true;
+    final selectedAmenities = parseAccommodationAmenities(
+      room['amenities'] ?? room['servicesOffered'] ?? room['facilities'],
+    ).toSet();
 
     String existingCoverUrl =
         (room['image'] ?? room['imageUrl'] ?? '').toString().trim();
@@ -2493,6 +2529,29 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                             alignLabelWithHint: true,
                           ),
                         ),
+                        const SizedBox(height: 16),
+                        _addPropertySheetSectionHeader(
+                          'What this place offers',
+                          Icons.spa_outlined,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Tap everything guests will find here',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        AccommodationAmenityPicker(
+                          selected: selectedAmenities,
+                          onChanged: (next) => setLocal(() {
+                            selectedAmenities
+                              ..clear()
+                              ..addAll(next);
+                          }),
+                        ),
                         Padding(
                           padding: const EdgeInsets.symmetric(vertical: 20),
                           child: Divider(
@@ -2658,6 +2717,13 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                               'isAvailable': selectedType == 'hostel'
                                                   ? isAvailable
                                                   : true,
+                                              'amenities':
+                                                  selectedAmenities.toList(),
+                                              'name': name,
+                                              'location': location,
+                                              'description':
+                                                  descriptionController.text
+                                                      .trim(),
                                             },
                                             SetOptions(merge: true),
                                           ),
@@ -2681,6 +2747,8 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                         updated['hostelGender'] = hostelGender;
                                         updated['roomType'] = roomType;
                                       }
+                                      updated['amenities'] =
+                                          selectedAmenities.toList();
                                       updated['isAvailable'] = selectedType == 'hostel'
                                           ? isAvailable
                                           : true;
@@ -4706,12 +4774,14 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   Widget _veroGuestBookingCard(BookingItem b) {
     final name = (b.accommodationName ?? 'Property').trim();
     final loc = (b.accommodationLocation ?? '').trim();
-    final dateStr = b.bookingDate != null
-        ? DateFormat.yMMMd().format(b.bookingDate!)
-        : '—';
+    final dateStr = formatStayReceiptDate(b.bookingDate);
+    final txDateStr = formatStayReceiptDate(
+      b.transactionDate ?? b.bookingDate,
+    );
     final currency = NumberFormat('#,##0', 'en');
     final statusLabel = _veroBookingStatusLabel(b.status);
     final guestName = (b.guestName ?? '').trim();
+    final guestPhone = (b.guestPhone ?? '').trim();
     final statusBg = _getBookingStatusColor(_veroStatusKeyForColor(b.status));
     final statusFg = _veroBookingStatusForeground(b.status);
 
@@ -4818,7 +4888,9 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                     ),
                   ],
                 ),
-                if (guestName.isNotEmpty) ...[
+                if (guestName.isNotEmpty ||
+                    (b.guestEmail ?? '').trim().isNotEmpty ||
+                    guestPhone.isNotEmpty) ...[
                   const SizedBox(height: 14),
                   Container(
                     width: double.infinity,
@@ -4843,17 +4915,19 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                             color: _brandOrange.withValues(alpha: 0.85),
                           ),
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          guestName,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 15,
-                            color: Color(0xFF1A1D26),
+                        if (guestName.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            guestName,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 15,
+                              color: Color(0xFF1A1D26),
+                            ),
                           ),
-                        ),
+                        ],
                         if ((b.guestEmail ?? '').trim().isNotEmpty) ...[
                           const SizedBox(height: 4),
                           Text(
@@ -4867,10 +4941,10 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                             ),
                           ),
                         ],
-                        if ((b.guestPhone ?? '').trim().isNotEmpty) ...[
+                        if (guestPhone.isNotEmpty) ...[
                           const SizedBox(height: 2),
                           Text(
-                            b.guestPhone!.trim(),
+                            guestPhone,
                             style: TextStyle(
                               fontSize: 13,
                               color: Colors.grey.shade700,
@@ -4892,8 +4966,20 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                   ),
                 _veroBookingInfoLine(
                   Icons.calendar_today_outlined,
-                  'Booking date',
+                  'Check-in',
                   dateStr,
+                  iconColor: _brandOrange,
+                ),
+                _veroBookingInfoLine(
+                  Icons.receipt_long_outlined,
+                  'Transaction date',
+                  txDateStr,
+                  iconColor: _brandOrange,
+                ),
+                _veroBookingInfoLine(
+                  Icons.phone_iphone_outlined,
+                  'Booker phone',
+                  guestPhone.isNotEmpty ? guestPhone : '—',
                   iconColor: _brandOrange,
                 ),
                 _veroBookingInfoLine(
@@ -5053,13 +5139,14 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
 
   void _showVeroBookingDetailSheet(BookingItem b) {
     final currency = NumberFormat('#,##0', 'en');
-    final dateStr = b.bookingDate != null
-        ? DateFormat.yMMMd().format(b.bookingDate!)
-        : '—';
+    final dateStr = formatStayReceiptDate(b.bookingDate);
+    final txDateStr = formatStayReceiptDate(
+      b.transactionDate ?? b.bookingDate,
+    );
+    final guestPhone = (b.guestPhone ?? '').trim();
     final guestLines = <String>[
       if ((b.guestName ?? '').trim().isNotEmpty) b.guestName!.trim(),
       if ((b.guestEmail ?? '').trim().isNotEmpty) b.guestEmail!.trim(),
-      if ((b.guestPhone ?? '').trim().isNotEmpty) b.guestPhone!.trim(),
     ];
     showModalBottomSheet<void>(
       context: context,
@@ -5131,7 +5218,12 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                   const Divider(height: 24),
                 ],
                 _veroDetailRow('Status', _veroBookingStatusLabel(b.status)),
-                _veroDetailRow('Booking date', dateStr),
+                _veroDetailRow('Check-in', dateStr),
+                _veroDetailRow('Transaction date', txDateStr),
+                _veroDetailRow(
+                  'Booker phone',
+                  guestPhone.isNotEmpty ? guestPhone : '—',
+                ),
                 _veroDetailRow(
                   'Price',
                   'MWK ${currency.format(b.price.round())}',

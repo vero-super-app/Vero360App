@@ -13,6 +13,7 @@ import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchan
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_merchant_dashboard.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourierMerchant/courier_merchant_dashboard.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/auth_ui.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/forgot_password_screen.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
 import 'package:vero360_app/utils/app_logger.dart';
@@ -24,13 +25,15 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/firebaseAuth.dart';
 import 'package:vero360_app/features/Auth/AuthServices/recent_login_storage.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
+import 'package:vero360_app/GernalServices/role_helper.dart';
+import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 
 class AppColors {
-  static const brandOrange = Color(0xFFFF8A00);
-  static const title = Color(0xFF101010);
-  static const body = Color(0xFF6B6B6B);
-  static const fieldFill = Color(0xFFF7F7F9);
+  static const brandOrange = AuthPalette.orange;
+  static const title = AuthPalette.ink;
+  static const body = AuthPalette.muted;
+  static const fieldFill = AuthPalette.field;
 }
 
 /// Google/Apple: [providerSheet] = system account picker is open;
@@ -53,6 +56,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _identifier = TextEditingController();
   final _password = TextEditingController();
   bool _obscure = true;
+  bool _submittedOnce = false;
   bool _loading = false;
   _OAuthPhase _oauthPhase = _OAuthPhase.idle;
   /// Which provider flow is active (for overlay copy). Cleared when idle.
@@ -200,10 +204,7 @@ class _LoginScreenState extends State<LoginScreen> {
       case 'courier':
         return CourierMerchantDashboard(email: email);
       default:
-        return MarketplaceMerchantDashboard(
-          email: email,
-          onBackToHomeTab: () {},
-        );
+        return Bottomnavbar(email: email);
     }
   }
 
@@ -265,19 +266,36 @@ class _LoginScreenState extends State<LoginScreen> {
       await prefs.setString('phone', phoneVal);
     }
 
-    final role =
-        (user['role'] ?? user['userRole'] ?? 'customer').toString().toLowerCase();
-    await prefs.setString('role', role);
-    await prefs.setString('user_role', role);
-    await prefs.setBool('is_merchant', role == 'merchant');
+    final fbUid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    final incomingUid = fbUid.isNotEmpty
+        ? fbUid
+        : (user['uid'] ?? user['id'] ?? user['firebaseUid'] ?? '')
+            .toString()
+            .trim();
+    final prevUid = (prefs.getString('uid') ?? '').trim();
+    if (incomingUid.isNotEmpty && prevUid.isNotEmpty && incomingUid != prevUid) {
+      await RoleSessionService.clearRoleKeys(prefs);
+    }
+    if (fbUid.isNotEmpty) {
+      user['uid'] = fbUid;
+      user['firebaseUid'] = fbUid;
+    }
+
+    await RoleSessionService.persistUserToPrefs(prefs, user);
+    try {
+      final synced = await RoleSessionService.syncFromServer(
+        prefs: prefs,
+        token: token,
+        timeout: const Duration(seconds: 8),
+      );
+      if (synced != null && synced.hasUser && synced.user != null) {
+        user = Map<String, dynamic>.from(synced.user!);
+      }
+    } catch (_) {}
+    var role = RoleHelper.roleFromUserMap(user);
     await loadDriverStatusFromPrefs();
 
-    final uid = user['uid']?.toString() ??
-        user['id']?.toString() ??
-        user['firebaseUid']?.toString();
-    if (uid != null && uid.isNotEmpty) {
-      await prefs.setString('uid', uid);
-    }
+    final uid = incomingUid.isNotEmpty ? incomingUid : null;
 
     await _persistSavedLoginAccount(result, user, displayId);
 
@@ -304,7 +322,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (merchantService == null || merchantService.isEmpty) {
         if (uid != null) {
-          merchantService = await _fetchMerchantServiceFromFirebase(uid);
+          merchantService = await resolveMerchantServiceForUid(uid) ??
+              await _fetchMerchantServiceFromFirebase(uid);
         }
       }
 
@@ -343,7 +362,25 @@ class _LoginScreenState extends State<LoginScreen> {
     TextInput.finishAutofillContext(shouldSave: true);
 
      if (role == 'merchant') {
-       final merchantService = prefs.getString('merchant_service');
+       var merchantService = normalizeMerchantServiceKey(
+         prefs.getString('merchant_service'),
+       );
+       final lookupUid = (FirebaseAuth.instance.currentUser?.uid ?? uid ?? '')
+           .trim();
+       if (lookupUid.isNotEmpty &&
+           (merchantService == null ||
+               merchantService.isEmpty ||
+               merchantService == 'marketplace')) {
+         final discovered = await resolveMerchantServiceForUid(lookupUid);
+         if (discovered != null &&
+             discovered.isNotEmpty &&
+             (merchantService == null ||
+                 merchantService.isEmpty ||
+                 discovered != 'marketplace')) {
+           merchantService = discovered;
+           await persistMerchantServiceFromApi(prefs, discovered);
+         }
+       }
 
        if (merchantService != null && merchantService.isNotEmpty) {
          final merchantDashboard =
@@ -356,10 +393,7 @@ class _LoginScreenState extends State<LoginScreen> {
        } else {
          Navigator.of(context).pushAndRemoveUntil(
            MaterialPageRoute(
-             builder: (_) => MarketplaceMerchantDashboard(
-               email: displayId,
-               onBackToHomeTab: () {},
-             ),
+             builder: (_) => Bottomnavbar(email: displayId),
            ),
            (route) => false,
          );
@@ -390,7 +424,7 @@ class _LoginScreenState extends State<LoginScreen> {
             userData?['serviceType']?.toString();
       }
 
-      final services = ['marketplace', 'food', 'taxi', 'accommodation', 'courier'];
+      final services = ['accommodation', 'food', 'courier', 'marketplace'];
       for (final service in services) {
         final collectionName =
             service == 'marketplace' ? 'marketplace_merchants' : '${service}_merchants';
@@ -427,13 +461,12 @@ class _LoginScreenState extends State<LoginScreen> {
 
     // Ensure at least a basic profile exists
     if (profile.isEmpty) {
-      final prefs = await SharedPreferences.getInstance();
-      final cachedRole = (prefs.getString('user_role') ?? 'customer').toLowerCase();
+      // Never copy a previous account's role from this device onto a new uid.
       profile = {
         'email': user.email,
         'name': user.displayName,
         'phone': '',
-        'role': cachedRole,
+        'role': 'customer',
       };
       try {
         await _firestore.collection('users').doc(user.uid).set({
@@ -444,8 +477,7 @@ class _LoginScreenState extends State<LoginScreen> {
       } catch (_) {}
     }
 
-    final role =
-        (profile['role'] ?? 'customer').toString().toLowerCase();
+    final role = RoleHelper.roleFromUserMap(profile);
     final token = await AuthHandler.getFirebaseToken();
     final rawEmail = user.email ?? _identifier.text.trim();
     final isPhoneAccount = rawEmail.endsWith('@phone.vero360.app');
@@ -463,7 +495,9 @@ class _LoginScreenState extends State<LoginScreen> {
         'name': profile['name']?.toString() ?? (user.displayName ?? ''),
         'role': role,
         'photoURL': user.photoURL ?? profile['photoURL'] ?? profile['profilepicture'],
-        'merchantService': profile['merchantService'],
+        'merchantService': profile['merchantService'] ??
+            profile['merchant_service'] ??
+            profile['serviceType'],
         'businessName': profile['businessName'],
         'businessAddress': profile['businessAddress'],
       },
@@ -483,15 +517,19 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       token = await tokenFut;
     } catch (_) {}
+    String? merchantService;
     try {
       final snap = await snapFut;
       if (snap.exists && snap.data() != null) {
-        role = (snap.data()!['role'] ?? '').toString().toLowerCase();
+        final data = snap.data()!;
+        role = RoleHelper.roleFromUserMap(data);
+        merchantService = data['merchantService']?.toString() ??
+            data['merchant_service']?.toString() ??
+            data['serviceType']?.toString();
       }
     } catch (_) {}
     if (role.isEmpty) {
-      final prefs = await SharedPreferences.getInstance();
-      role = (prefs.getString('user_role') ?? 'customer').toLowerCase();
+      role = 'customer';
     }
 
     return <String, dynamic>{
@@ -505,7 +543,7 @@ class _LoginScreenState extends State<LoginScreen> {
         'name': user.displayName ?? '',
         'photoURL': user.photoURL,
         'role': role,
-        'merchantService': null,
+        'merchantService': merchantService,
         'businessName': null,
         'businessAddress': null,
       },
@@ -530,6 +568,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _submit() async {
+    setState(() => _submittedOnce = true);
     if (!(_formKey.currentState?.validate() ?? false)) return;
     FocusScope.of(context).unfocus();
 
@@ -1018,30 +1057,14 @@ class _LoginScreenState extends State<LoginScreen> {
             _buildSelectedAccountHeader(),
             const SizedBox(height: 16),
             if (_selectedAccount!.isSocial) ...[
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: (_loading || _socialLoading)
-                      ? null
-                      : () => _continueWithSavedSocial(_selectedAccount!),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.brandOrange,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  child: Text(
-                    _selectedAccount!.authProvider == 'google'
-                        ? 'Continue with Google'
-                        : 'Continue with Apple',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 16,
-                    ),
-                  ),
-                ),
+              AuthPrimaryButton(
+                label: _selectedAccount!.authProvider == 'google'
+                    ? 'Continue with Google'
+                    : 'Continue with Apple',
+                loading: _loading || _socialLoading,
+                onPressed: (_loading || _socialLoading)
+                    ? null
+                    : () => _continueWithSavedSocial(_selectedAccount!),
               ),
             ] else ...[
               TextFormField(
@@ -1064,8 +1087,9 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
                 validator: (v) {
-                  if (v == null || v.isEmpty) return 'Password is required';
-                  if (v.length < 6) return 'Must be at least 6 characters';
+                  if (v == null || v.trim().isEmpty) {
+                    return 'Password is required';
+                  }
                   return null;
                 },
               ),
@@ -1080,33 +1104,17 @@ class _LoginScreenState extends State<LoginScreen> {
                     'Forgot password?',
                     style: TextStyle(
                       color: AppColors.brandOrange,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w700,
                       fontSize: 13,
                     ),
                   ),
                 ),
               ),
               const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: (_loading || _socialLoading) ? null : _submit,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.brandOrange,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  child: Text(
-                    _loading ? 'Signing in…' : 'Sign in',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 16,
-                    ),
-                  ),
-                ),
+              AuthPrimaryButton(
+                label: _loading ? 'Signing in…' : 'Sign in',
+                loading: _loading,
+                onPressed: (_loading || _socialLoading) ? null : _submit,
               ),
             ],
             if (_savedAccounts.isNotEmpty) ...[
@@ -1166,8 +1174,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               validator: (v) {
-                if (v == null || v.isEmpty) return 'Password is required';
-                if (v.length < 6) return 'Must be at least 6 characters';
+                if (v == null || v.trim().isEmpty) {
+                  return 'Password is required';
+                }
                 return null;
               },
             ),
@@ -1182,33 +1191,17 @@ class _LoginScreenState extends State<LoginScreen> {
                   'Forgot password?',
                   style: TextStyle(
                     color: AppColors.brandOrange,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
                     fontSize: 13,
                   ),
                 ),
               ),
             ),
             const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton(
-                onPressed: (_loading || _socialLoading) ? null : _submit,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.brandOrange,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-                child: Text(
-                  _loading ? 'Signing in…' : 'Sign in',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
+            AuthPrimaryButton(
+              label: _loading ? 'Signing in…' : 'Sign in',
+              loading: _loading,
+              onPressed: (_loading || _socialLoading) ? null : _submit,
             ),
             if (_savedAccounts.isNotEmpty) ...[
               const SizedBox(height: 8),
@@ -1242,208 +1235,103 @@ class _LoginScreenState extends State<LoginScreen> {
     required IconData icon,
     Widget? trailing,
   }) {
-    return InputDecoration(
-      labelText: label,
-      hintText: hint,
-      prefixIcon: Icon(icon),
-      suffixIcon: trailing,
-      filled: true,
-      fillColor: AppColors.fieldFill,
-      contentPadding:
-          const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide.none,
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide:
-            const BorderSide(color: AppColors.brandOrange, width: 1.2),
-      ),
+    return authFieldDecoration(
+      label: label,
+      hint: hint,
+      icon: icon,
+      trailing: trailing,
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final title = _showSavedAccountPicker
+        ? (_savedAccounts.length > 1 ? 'Switch account' : 'Continue as')
+        : 'Welcome back';
+    final subtitle = _showSavedAccountPicker
+        ? (_savedAccounts.length > 1
+            ? 'Choose an account or add another one'
+            : 'Tap your account, then enter your password')
+        : _showSavedAccountSignIn
+            ? 'Enter your password to continue'
+            : 'Sign in to pick up where you left off';
+
     return Scaffold(
       body: Stack(children: [
-        Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment(0, -1),
-              end: Alignment(0, 1),
-              colors: [Color(0xFFEFF6FF), Colors.white],
-            ),
-          ),
-        ),
-        SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 520),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    CircleAvatar(
-                      radius: 44,
-                      backgroundColor: Colors.white,
-                      child: ClipOval(
-                        child: Image.asset(
-                          'assets/logo_mark.png',
-                          width: 72,
-                          height: 72,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => const Icon(
-                            Icons.eco,
-                            size: 42,
-                            color: AppColors.brandOrange,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    Text(
-                      _showSavedAccountPicker
-                          ? (_savedAccounts.length > 1
-                              ? 'Switch account'
-                              : 'Continue as')
-                          : 'Welcome back',
-                      style: const TextStyle(
-                        color: AppColors.title,
-                        fontSize: 26,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    if (_showSavedAccountPicker) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        _savedAccounts.length > 1
-                            ? 'Choose an account or add another one'
-                            : 'Tap your account, then enter your password',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.grey.shade600,
-                          fontSize: 14,
-                          height: 1.35,
-                        ),
-                      ),
-                    ] else if (_showSavedAccountSignIn) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        'Enter your password to continue',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.grey.shade600,
-                          fontSize: 14,
-                          height: 1.35,
-                        ),
-                      ),
-                    ] else ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        'Sign in to pick up where you left off',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.grey.shade600,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 8),
-
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.06),
-                            blurRadius: 20,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
-                      ),
-                      padding: const EdgeInsets.all(18),
-                      child: _loadingSavedAccounts
-                          ? const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 28),
-                              child: Center(
-                                child: SizedBox(
-                                  width: 28,
-                                  height: 28,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2.5,
-                                    color: AppColors.brandOrange,
-                                  ),
-                                ),
-                              ),
-                            )
-                          : _showSavedAccountPicker
-                          ? Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                ..._savedAccounts.map(_buildSavedAccountCard),
-                                const SizedBox(height: 4),
-                                TextButton(
-                                  onPressed: (_loading || _socialLoading)
-                                      ? null
-                                      : () => _switchAccount(addNewAccount: true),
-                                  child: const Text(
-                                    'Add another account',
-                                    style: TextStyle(
-                                      color: AppColors.brandOrange,
-                                      fontWeight: FontWeight.w800,
+        AuthBackground(
+          warm: false,
+          child: SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 520),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      AuthHeroHeader(title: title, subtitle: subtitle),
+                      const SizedBox(height: 22),
+                      AuthCard(
+                        child: _loadingSavedAccounts
+                            ? const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 28),
+                                child: Center(
+                                  child: SizedBox(
+                                    width: 28,
+                                    height: 28,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.5,
+                                      color: AuthPalette.orange,
                                     ),
                                   ),
                                 ),
-                              ],
-                            )
-                          : Form(
-                              key: _formKey,
-                              child: _buildCredentialForm(),
-                            ),
-                    ),
-
-                    if (!_showSavedAccountPicker) ...[
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        Expanded(child: Divider(color: Colors.grey.shade300)),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: Text(
-                            'or',
-                            style: TextStyle(
-                              color: AppColors.body,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
+                              )
+                            : _showSavedAccountPicker
+                                ? Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      ..._savedAccounts
+                                          .map(_buildSavedAccountCard),
+                                      const SizedBox(height: 4),
+                                      TextButton(
+                                        onPressed:
+                                            (_loading || _socialLoading)
+                                                ? null
+                                                : () => _switchAccount(
+                                                      addNewAccount: true,
+                                                    ),
+                                        child: const Text(
+                                          'Add another account',
+                                          style: TextStyle(
+                                            color: AuthPalette.orange,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                : Form(
+                                    key: _formKey,
+                                    autovalidateMode: _submittedOnce
+                                        ? AutovalidateMode.always
+                                        : AutovalidateMode.disabled,
+                                    child: _buildCredentialForm(),
+                                  ),
+                      ),
+                      if (!_showSavedAccountPicker) ...[
+                        const SizedBox(height: 22),
+                        const AuthOrDivider(),
+                        const SizedBox(height: 18),
+                        OAuthButtonsRow(
+                          onGoogle: _socialLoading ? null : _google,
+                          onApple: _socialLoading ? null : _apple,
+                          iconOnly: true,
                         ),
-                        Expanded(child: Divider(color: Colors.grey.shade300)),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    OAuthButtonsRow(
-                      onGoogle: _socialLoading ? null : _google,
-                      onApple: _socialLoading ? null : _apple,
-                      iconOnly: true,
-                    ),
-
-                    const SizedBox(height: 14),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Text(
-                          "Don't have an account?",
-                          style: TextStyle(
-                            color: AppColors.body,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
+                        const SizedBox(height: 8),
                         TextButton(
                           onPressed: (_loading || _socialLoading)
                               ? null
@@ -1454,18 +1342,28 @@ class _LoginScreenState extends State<LoginScreen> {
                                     ),
                                   );
                                 },
-                          child: const Text(
-                            'Create one',
-                            style: TextStyle(
-                              color: AppColors.brandOrange,
-                              fontWeight: FontWeight.w800,
+                          child: const Text.rich(
+                            TextSpan(
+                              text: "Don't have an account? ",
+                              style: TextStyle(
+                                color: AuthPalette.muted,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              children: [
+                                TextSpan(
+                                  text: 'Create one',
+                                  style: TextStyle(
+                                    color: AuthPalette.orange,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
                       ],
-                    ),
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),

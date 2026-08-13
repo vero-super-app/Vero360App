@@ -257,16 +257,28 @@ class RideLifecycleNotifier extends Notifier<RideLifecycleState> {
     );
 
     // HTTP poll fallback when WebSocket status events are missed.
+    // Keep polling after completion while payment is still pending (cash).
     _statusPollTimer = Timer.periodic(_statusPollInterval, (_) async {
       if (_activeRideId != rideId) return;
       final current = state;
-      if (current is! RideActive) return;
+      final awaitingSettlement = current is RideCompleted &&
+          (role == ActiveRideRole.driver
+              ? current.ride.isSettlementPending
+              : current.ride.needsPayment);
+      if (current is! RideActive && !awaitingSettlement) return;
       try {
         final ride = await _httpService.getRideDetails(rideId);
         if (_activeRideId != rideId) return;
-        if (ride.status == current.ride.status &&
+        if (current is RideActive &&
+            ride.status == current.ride.status &&
             !ride.isCompleted &&
             !ride.isCancelled) {
+          return;
+        }
+        if (current is RideCompleted &&
+            ride.paymentStatus == current.ride.paymentStatus &&
+            ride.paymentChannel == current.ride.paymentChannel &&
+            ride.isPaid == current.ride.isPaid) {
           return;
         }
         _applyRideSnapshot(ride, role: role);

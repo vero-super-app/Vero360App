@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
+import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_completion_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_history_ui.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 
 enum RideHistoryPerspective { passenger, driver }
 
-class RideHistoryDetailScreen extends StatelessWidget {
+class RideHistoryDetailScreen extends StatefulWidget {
   final Ride ride;
   final RideHistoryPerspective perspective;
 
@@ -16,6 +17,43 @@ class RideHistoryDetailScreen extends StatelessWidget {
     required this.ride,
     required this.perspective,
   });
+
+  @override
+  State<RideHistoryDetailScreen> createState() =>
+      _RideHistoryDetailScreenState();
+}
+
+class _RideHistoryDetailScreenState extends State<RideHistoryDetailScreen> {
+  late Ride ride;
+
+  @override
+  void initState() {
+    super.initState();
+    ride = widget.ride;
+  }
+
+  RideHistoryPerspective get perspective => widget.perspective;
+
+  Future<void> _openPayment() async {
+    final paid = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => RideCompletionScreen(
+          ride: ride,
+          onDone: () {},
+        ),
+      ),
+    );
+    if (!mounted) return;
+    try {
+      final fresh = await RideShareHttpService().getRideDetails(ride.id);
+      if (!mounted) return;
+      setState(() => ride = fresh);
+    } catch (_) {
+      if (paid == true && mounted) {
+        setState(() {});
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -32,7 +70,8 @@ class RideHistoryDetailScreen extends StatelessWidget {
         summary?.driverEarnings ?? ride.driverEarnings ?? (fare - platformFee);
     final when = ride.endTime ?? ride.createdAt;
     final isDriver = perspective == RideHistoryPerspective.driver;
-    final pending = ridePaymentPending(ride);
+    final pending = ride.needsPayment;
+    final unsettled = ride.isSettlementPending;
     final counterpart = rideCounterpartName(ride, isDriver: isDriver);
     final vehicle = rideVehicleLabel(ride);
     final pickup = summary?.pickup ?? ride.pickupAddress ?? 'Pickup';
@@ -176,7 +215,12 @@ class RideHistoryDetailScreen extends StatelessWidget {
                           ),
                         ),
                         if (ride.isCompleted)
-                          RideHistoryPaymentChip(pending: pending),
+                          RideHistoryPaymentChip(
+                            pending: unsettled,
+                            pendingLabel: ride.isCashPayment
+                                ? 'Cash pending'
+                                : 'Payment pending',
+                          ),
                       ],
                     ),
                   ),
@@ -236,7 +280,7 @@ class RideHistoryDetailScreen extends StatelessWidget {
                         ] else ...[
                           const Divider(height: 22),
                           _kv(
-                            pending ? 'Amount due' : 'Total paid',
+                            unsettled ? 'Amount due' : 'Total paid',
                             formatRideMoney(fare, money),
                             emphasize: true,
                           ),
@@ -244,22 +288,26 @@ class RideHistoryDetailScreen extends StatelessWidget {
                       ],
                     ),
                   ),
+                  if (!isDriver && ride.isCashPayment && unsettled) ...[
+                    const SizedBox(height: 18),
+                    _card(
+                      child: Text(
+                        'Pay the driver in cash. They will confirm when they receive it. You can book another ride now.',
+                        style: TextStyle(
+                          color: Colors.grey.shade800,
+                          fontWeight: FontWeight.w600,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ],
                   if (!isDriver && pending) ...[
                     const SizedBox(height: 18),
                     SizedBox(
                       width: double.infinity,
                       height: 54,
                       child: ElevatedButton.icon(
-                        onPressed: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => RideCompletionScreen(
-                                ride: ride,
-                                onDone: () => Navigator.of(context).pop(),
-                              ),
-                            ),
-                          );
-                        },
+                        onPressed: _openPayment,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: RideShareColors.primary,
                           foregroundColor: Colors.white,

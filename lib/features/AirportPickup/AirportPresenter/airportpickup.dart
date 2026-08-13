@@ -620,6 +620,9 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
                   onMapCreated: _onMapCreated,
                   zoomControlsEnabled: false,
                   compassEnabled: false,
+                  buildingsEnabled: false,
+                  indoorViewEnabled: false,
+                  trafficEnabled: false,
                 ),
                 // Legend
                 Positioned(

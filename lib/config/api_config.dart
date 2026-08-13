@@ -91,7 +91,8 @@ class ApiConfig {
   static Future<void> setBase(String ignored) => useProd();
 
   // ---------------------------------------------------------------------------
-  // ADMIN (service fee) — optional; if set, Flutter reports 2.5% fee to admin app
+  // ADMIN (service fee) — optional extra report; the fee is credited to
+  // wallets/super_admin in Firestore regardless of this.
   // ---------------------------------------------------------------------------
   static const String adminApiBase = String.fromEnvironment(
     'ADMIN_API_BASE_URL',

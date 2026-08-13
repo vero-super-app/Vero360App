@@ -133,6 +133,9 @@ class _MapLocationPickerScreenState
             myLocationEnabled: true,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,
+            buildingsEnabled: false,
+            indoorViewEnabled: false,
+            trafficEnabled: false,
             onMapCreated: (c) => _controller = c,
             onCameraMove: (pos) => _selected = pos.target,
             onCameraIdle: () {

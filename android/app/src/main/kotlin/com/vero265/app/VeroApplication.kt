@@ -1,4 +1,4 @@
-package com.vero.vero360
+package com.vero265.app
 
 import android.app.Application
 import io.flutter.FlutterInjector

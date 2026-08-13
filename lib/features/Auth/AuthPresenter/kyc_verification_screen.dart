@@ -1,10 +1,15 @@
+import 'dart:io' show Platform;
 import 'dart:math' as math;
 
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
+import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
 class KycVerificationScreen extends StatefulWidget {
   const KycVerificationScreen({super.key});
@@ -108,16 +113,30 @@ class _KycVerificationScreenState extends State<KycVerificationScreen>
       String msg;
       if (code == 'not-found' || code == 'not_found') {
         msg =
-            'Verification service is not available yet. '
-            'Ask support to deploy createDiditSession, then try again.';
+            'Verification service is not deployed yet. '
+            'Deploy createDiditSession, then try again.';
       } else if (code == 'unauthenticated') {
         msg = 'Please sign in again, then retry verification.';
       } else if (code == 'unavailable') {
         msg = 'Network issue reaching verification. Check connection and retry.';
+      } else if (code == 'failed-precondition') {
+        msg = e.message?.trim().isNotEmpty == true
+            ? e.message!
+            : 'Verification is not configured on the server yet.';
+      } else if (code == 'internal') {
+        final m = e.message?.trim() ?? '';
+        msg = (m.isNotEmpty && m.toLowerCase() != 'internal')
+            ? m
+            : 'Server error starting verification. Try again in a moment.';
       } else if (e.message?.trim().isNotEmpty == true) {
         msg = e.message!;
       } else {
-        msg = 'Could not start verification. Try again.';
+        msg = 'Could not start verification ($code). Try again.';
+      }
+      // Keep details visible for support (Didit/API misconfig).
+      final details = e.details;
+      if (details != null && details.toString().trim().isNotEmpty) {
+        msg = '$msg\n${details.toString().trim()}';
       }
       setState(() => _error = msg);
     } catch (e) {
@@ -787,7 +806,46 @@ class _KycWebViewPageState extends State<_KycWebViewPage> {
   @override
   void initState() {
     super.initState();
-    _controller = WebViewController()
+    _controller = _buildController();
+    _prepareAndLoad();
+  }
+
+  WebViewController _buildController() {
+    late final PlatformWebViewControllerCreationParams params;
+    if (!kIsWeb && WebViewPlatform.instance is WebKitWebViewPlatform) {
+      params = WebKitWebViewControllerCreationParams(
+        allowsInlineMediaPlayback: true,
+        mediaTypesRequiringUserAction: const <PlaybackMediaTypes>{},
+      );
+    } else {
+      params = const PlatformWebViewControllerCreationParams();
+    }
+
+    final controller = WebViewController.fromPlatformCreationParams(
+      params,
+      onPermissionRequest: (WebViewPermissionRequest request) async {
+        // OS runtime permission, then grant the WebView getUserMedia request.
+        for (final type in request.types) {
+          if (type == WebViewPermissionResourceType.camera) {
+            await Permission.camera.request();
+          } else if (type == WebViewPermissionResourceType.microphone) {
+            await Permission.microphone.request();
+          }
+        }
+        final camOk = !request.types.contains(WebViewPermissionResourceType.camera) ||
+            await Permission.camera.isGranted;
+        final micOk =
+            !request.types.contains(WebViewPermissionResourceType.microphone) ||
+                await Permission.microphone.isGranted;
+        if (camOk && micOk) {
+          await request.grant();
+        } else {
+          await request.deny();
+        }
+      },
+    );
+
+    controller
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
         NavigationDelegate(
@@ -817,8 +875,26 @@ class _KycWebViewPageState extends State<_KycWebViewPage> {
             return NavigationDecision.navigate;
           },
         ),
-      )
-      ..loadRequest(Uri.parse(widget.verificationUrl));
+      );
+
+    final platform = controller.platform;
+    if (platform is AndroidWebViewController) {
+      AndroidWebViewController.enableDebugging(false);
+      platform.setMediaPlaybackRequiresUserGesture(false);
+    }
+
+    return controller;
+  }
+
+  Future<void> _prepareAndLoad() async {
+    if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+      await [
+        Permission.camera,
+        Permission.microphone,
+      ].request();
+    }
+    if (!mounted) return;
+    await _controller.loadRequest(Uri.parse(widget.verificationUrl));
   }
 
   void _maybeComplete(String url) {

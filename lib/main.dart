@@ -56,6 +56,7 @@ import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
+import 'package:vero360_app/utils/low_ram_android.dart';
 import 'package:vero360_app/utils/session_local_cache.dart';
 import 'package:vero360_app/widgets/vero_launch_splash.dart';
 
@@ -64,13 +65,11 @@ final GlobalKey<NavigatorState> navKey = appNavKey;
 /// Lower raster resolution on Android so Adreno sharedmem stays under budget.
 Widget _androidGpuSoftened(BuildContext context, Widget? child) {
   final content = child ?? const SizedBox.shrink();
-  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
-    return content;
-  }
+  if (!LowRamAndroid.isAndroid) return content;
   final mq = MediaQuery.of(context);
-  if (mq.devicePixelRatio <= 1.25) return content;
+  if (mq.devicePixelRatio <= LowRamAndroid.maxDpr) return content;
   return MediaQuery(
-    data: mq.copyWith(devicePixelRatio: 1.25),
+    data: mq.copyWith(devicePixelRatio: LowRamAndroid.maxDpr),
     child: content,
   );
 }
@@ -211,13 +210,27 @@ Future<void> main() async {
     debugPrint = (String? message, {int? wrapWidth}) {};
   }
 
+  // Cap decoded-image cache — Redmi 8A / 2GB Adreno dies on GPU texture OOM.
+  if (LowRamAndroid.isAndroid) {
+    PaintingBinding.instance.imageCache.maximumSize = LowRamAndroid.imageCacheCount;
+    PaintingBinding.instance.imageCache.maximumSizeBytes =
+        LowRamAndroid.imageCacheBytes;
+  } else {
+    PaintingBinding.instance.imageCache.maximumSize = 60;
+    PaintingBinding.instance.imageCache.maximumSizeBytes = 48 << 20;
+  }
+
   void launchApp() {
     // Cap decoded-image cache — Redmi 8A / 2GB Adreno dies on GPU texture OOM.
-    final lowRamAndroid =
-        !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
-    PaintingBinding.instance.imageCache.maximumSize = lowRamAndroid ? 12 : 60;
-    PaintingBinding.instance.imageCache.maximumSizeBytes =
-        lowRamAndroid ? 8 << 20 : 48 << 20; // 8 MB on Android, 48 MB elsewhere
+    if (LowRamAndroid.isAndroid) {
+      PaintingBinding.instance.imageCache.maximumSize =
+          LowRamAndroid.imageCacheCount;
+      PaintingBinding.instance.imageCache.maximumSizeBytes =
+          LowRamAndroid.imageCacheBytes;
+    } else {
+      PaintingBinding.instance.imageCache.maximumSize = 60;
+      PaintingBinding.instance.imageCache.maximumSizeBytes = 48 << 20;
+    }
 
     // Start Firebase self-heal immediately, but do not block first paint.
     unawaited(_ensureFirebaseHealthy(quiet: true));

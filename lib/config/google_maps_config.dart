@@ -17,12 +17,16 @@ class GoogleMapsConfig {
       return;
     }
 
-    // Fallback to .env file
+    // Prefer local .env; fall back to committed .env.example (CI / missing local file).
     try {
-      await dotenv.load(fileName: '.env');
+      try {
+        await dotenv.load(fileName: '.env');
+      } catch (_) {
+        await dotenv.load(fileName: '.env.example');
+      }
       apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
     } catch (e) {
-      AppLogger.d('[GoogleMapsConfig] Error loading .env', e);
+      AppLogger.d('[GoogleMapsConfig] Error loading env', e);
       apiKey = '';
     }
 

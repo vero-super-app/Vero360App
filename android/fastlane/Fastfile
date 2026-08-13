@@ -1,0 +1,87 @@
+# frozen_string_literal: true
+
+# Fastlane for Play Store uploads (Flutter AAB).
+# Run from android/:  bundle exec fastlane internal
+#
+# Prerequisites:
+#   1. Real android/key.properties + upload keystore (not placeholders)
+#   2. Play Console app com.vero265.app with at least one manual AAB uploaded
+#   3. Google Cloud service account JSON linked in Play Console → API access
+#      Save as android/play-store-service-account.json (gitignored)
+
+default_platform(:android)
+
+platform :android do
+  desc 'Bump pubspec build number (+N) by 1'
+  lane :bump_build do
+    sh('cd .. && dart run tool/bump_build.dart')
+  end
+
+  desc 'Build release app bundle (signed)'
+  lane :build do
+    sh('cd .. && flutter pub get')
+    sh('cd .. && flutter build appbundle --release --android-skip-build-dependency-validation')
+  end
+
+  desc 'Upload existing AAB to a track (ENV TRACK=internal|alpha|production)'
+  lane :upload do
+    track = (ENV['TRACK'] || 'internal').downcase
+    aab = File.expand_path('../../build/app/outputs/bundle/release/app-release.aab', __dir__)
+    UI.user_error!("AAB not found at #{aab}. Run fastlane build first.") unless File.exist?(aab)
+
+    upload_to_play_store(
+      track: track,
+      aab: aab,
+      release_status: track == 'production' ? 'draft' : 'completed',
+      skip_upload_metadata: true,
+      skip_upload_changelogs: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+      skip_upload_apk: true
+    )
+  end
+
+  desc 'Upload existing AAB to Play internal testing track'
+  lane :upload_internal do
+    ENV['TRACK'] = 'internal'
+    upload
+  end
+
+  desc 'Build + upload to Play internal testing'
+  lane :internal do
+    build
+    upload_internal
+  end
+
+  desc 'Build + upload to Play production (draft — review in Console)'
+  lane :production do
+    build
+    aab = File.expand_path('../../build/app/outputs/bundle/release/app-release.aab', __dir__)
+    upload_to_play_store(
+      track: 'production',
+      aab: aab,
+      release_status: 'draft',
+      skip_upload_metadata: true,
+      skip_upload_changelogs: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+      skip_upload_apk: true
+    )
+  end
+
+  desc 'Build + upload to closed beta (alpha track)'
+  lane :beta do
+    build
+    aab = File.expand_path('../../build/app/outputs/bundle/release/app-release.aab', __dir__)
+    upload_to_play_store(
+      track: 'alpha',
+      aab: aab,
+      release_status: 'completed',
+      skip_upload_metadata: true,
+      skip_upload_changelogs: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+      skip_upload_apk: true
+    )
+  end
+end

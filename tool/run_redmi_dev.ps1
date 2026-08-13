@@ -1,11 +1,11 @@
-# Develop on Redmi 8A with Flutter attached (live updates).
-# Release APKs cannot hot-reload — use this instead of run_redmi.ps1 while coding.
+# Live development on Redmi 8A (hot reload).
+# Debug on this phone OOMs the Adreno GPU — so debug uses CPU Skia instead.
 #
-# Modes:
-#   .\tool\run_redmi_dev.ps1           → profile (stable on 2GB; press R to hot-restart)
-#   .\tool\run_redmi_dev.ps1 -Debug    → debug (press r to hot-reload; heavier, may crash)
+#   .\tool\run_redmi_dev.ps1            → debug + software render (press r to hot-reload)
+#   .\tool\run_redmi_dev.ps1 -Profile   → profile / GPU Skia (press R to hot-restart)
 
 param(
+  [switch]$Profile,
   [switch]$Debug
 )
 
@@ -40,25 +40,35 @@ if ($adb) {
   $prev = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   & $adb start-server 2>&1 | Out-Null
+  & $adb shell am force-stop com.vero265.app 2>&1 | Out-Null
   $ErrorActionPreference = $prev
 }
 
-# Impeller stays off via AndroidManifest / VeroApplication.
-# Prefer a single ABI on this phone so the install stays small.
-$mode = if ($Debug) { 'debug' } else { 'profile' }
+$useProfile = $Profile -and -not $Debug
+$mode = if ($useProfile) { 'profile' } else { 'debug' }
 
 Write-Host @"
-Running in $mode on Redmi (Impeller off).
+Running in $mode on Redmi 8A (Impeller off, 32-bit ARM).
 
-  Hot reload  -> press r   (debug mode only)
-  Hot restart -> press R   (profile + debug)
+  Hot reload  -> press r   (debug)
+  Hot restart -> press R
   Quit        -> press q
 
-Close other apps on the phone first.
+Close Chrome, WhatsApp, and other apps on the phone first.
 "@
 
-if ($Debug) {
-  flutter run --debug --no-enable-impeller
-} else {
-  flutter run --profile --no-enable-impeller
+# `--target-platform` is build-only; `flutter run` rejects it.
+$flutterArgs = @(
+  'run',
+  "--$mode",
+  '--no-enable-impeller'
+)
+
+if (-not $useProfile) {
+  # Bypass Adreno sharedmem OOM so debug + hot reload can stay attached.
+  $flutterArgs += '--enable-software-rendering'
+  $flutterArgs += '--no-track-widget-creation'
+  Write-Host 'Debug uses CPU rendering (not GPU) so this 2GB phone can hot-reload.' -ForegroundColor Cyan
 }
+
+& flutter @flutterArgs

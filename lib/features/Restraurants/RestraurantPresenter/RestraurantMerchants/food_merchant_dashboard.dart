@@ -15,6 +15,7 @@ import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 
 final NumberFormat _mwk0Fmt =
     NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
@@ -310,6 +311,33 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
         'status': status,
         'updatedAt': FieldValue.serverTimestamp(),
       });
+
+      // Delivered / completed → credit kitchen (90%) + platform wallet (10%).
+      final s = status.toLowerCase();
+      if (s == 'delivered' || s == 'completed') {
+        try {
+          await OrderEscrowService.releaseFoodOrderByMerchant(orderId);
+          if (mounted) {
+            ToastHelper.showCustomToast(
+              context,
+              'Order paid out — kitchen wallet + 10% platform fee credited.',
+              isSuccess: true,
+              errorMessage: '',
+            );
+          }
+        } catch (e) {
+          debugPrint('Food escrow release failed: $e');
+          if (mounted) {
+            ToastHelper.showCustomToast(
+              context,
+              'Order updated, but wallet release failed: $e',
+              isSuccess: false,
+              errorMessage: '',
+            );
+          }
+        }
+      }
+
       _loadMerchantData();
     } catch (e) {
       debugPrint('Error updating order: $e');

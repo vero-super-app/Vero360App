@@ -1130,8 +1130,11 @@ async function notifyEscrowReleasedToMerchant({
   });
 }
 
+const PLATFORM_WALLET_USER_ID = 'super_admin';
+const PLATFORM_WALLET_NAME = 'Vero 360 Platform';
+
 /**
- * Credits merchant wallet (same shape as Flutter FirebaseWalletService.creditWallet).
+ * Credits a wallet (same shape as Flutter FirebaseWalletService.creditWallet).
  */
 async function creditMerchantWalletFromEscrow({
   merchantUid,
@@ -1139,6 +1142,7 @@ async function creditMerchantWalletFromEscrow({
   amount,
   description,
   reference,
+  type = 'sale_escrow',
 }) {
   const uid = String(merchantUid || '').trim();
   const amt = typeof amount === 'number' ? amount : Number(amount);
@@ -1147,34 +1151,54 @@ async function creditMerchantWalletFromEscrow({
   }
 
   const db = admin.firestore();
-  const walletQuery = await db
-    .collection('wallets')
-    .where('userId', '==', uid)
-    .limit(1)
-    .get();
-
+  const EMBEDDED_TX_CAP = 25;
   let walletRef;
-  if (walletQuery.empty) {
-    walletRef = db.collection('wallets').doc();
-    await walletRef.set({
-      walletId: walletRef.id,
-      userId: uid,
-      merchantName: String(merchantName || 'Merchant'),
-      balance: 0,
-      pendingBalance: 0,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      transactions: [],
-    });
+
+  if (uid === PLATFORM_WALLET_USER_ID) {
+    walletRef = db.collection('wallets').doc(PLATFORM_WALLET_USER_ID);
+    const snap = await walletRef.get();
+    if (!snap.exists) {
+      await walletRef.set({
+        walletId: PLATFORM_WALLET_USER_ID,
+        userId: PLATFORM_WALLET_USER_ID,
+        merchantName: String(merchantName || PLATFORM_WALLET_NAME),
+        balance: 0,
+        pendingBalance: 0,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        transactions: [],
+      });
+    }
   } else {
-    walletRef = walletQuery.docs[0].ref;
+    const walletQuery = await db
+      .collection('wallets')
+      .where('userId', '==', uid)
+      .limit(1)
+      .get();
+
+    if (walletQuery.empty) {
+      walletRef = db.collection('wallets').doc();
+      await walletRef.set({
+        walletId: walletRef.id,
+        userId: uid,
+        merchantName: String(merchantName || 'Merchant'),
+        balance: 0,
+        pendingBalance: 0,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        transactions: [],
+      });
+    } else {
+      walletRef = walletQuery.docs[0].ref;
+    }
   }
 
   const transactionId = `TXN${Date.now()}${Math.floor(Math.random() * 1000)}`;
   const txPayload = {
     transactionId,
     walletId: walletRef.id,
-    type: 'sale_escrow',
+    userId: uid,
+    type: String(type || 'sale_escrow'),
     amount: amt,
     status: 'completed',
     description: String(description || 'Marketplace escrow release'),
@@ -1191,10 +1215,14 @@ async function creditMerchantWalletFromEscrow({
       ? [...data.transactions]
       : [];
     transactions.push(txPayload);
+    const capped =
+      transactions.length > EMBEDDED_TX_CAP
+        ? transactions.slice(-EMBEDDED_TX_CAP)
+        : transactions;
     tx.update(walletRef, {
       balance: newBalance,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      transactions,
+      transactions: capped,
     });
   });
 
@@ -1225,7 +1253,11 @@ async function releaseHeldEscrowDoc(docSnap, { source }) {
   const amountRaw = before.merchantAmount;
   const merchantAmount =
     typeof amountRaw === 'number' ? amountRaw : Number(amountRaw);
+  const feeRaw = before.serviceFeeAmount;
+  const serviceFee =
+    typeof feeRaw === 'number' ? feeRaw : Number(feeRaw || 0);
   const txRef = String(before.txRef || docSnap.id);
+  const serviceType = String(before.serviceType || 'marketplace').toLowerCase();
 
   if (!merchantUid || !Number.isFinite(merchantAmount) || merchantAmount <= 0) {
     console.warn(`Escrow ${docSnap.id}: invalid merchant/amount, skip`);
@@ -1259,9 +1291,34 @@ async function releaseHeldEscrowDoc(docSnap, { source }) {
       merchantUid,
       merchantName,
       amount: merchantAmount,
-      description: `Marketplace sale — auto-released after ${ESCROW_AUTO_RELEASE_LABEL}`,
+      description:
+        serviceType === 'accommodation'
+          ? `Stay payment — auto-released after ${ESCROW_AUTO_RELEASE_LABEL}`
+          : `Marketplace sale — auto-released after ${ESCROW_AUTO_RELEASE_LABEL}`,
       reference: txRef,
     });
+    if (Number.isFinite(serviceFee) && serviceFee > 0) {
+      await creditMerchantWalletFromEscrow({
+        merchantUid: PLATFORM_WALLET_USER_ID,
+        merchantName: PLATFORM_WALLET_NAME,
+        amount: serviceFee,
+        description:
+          serviceType === 'accommodation'
+            ? `Stay service fee (${txRef})`
+            : `Marketplace service fee 10% (${txRef})`,
+        reference: txRef,
+        type: 'service_fee',
+      });
+      await ref.set(
+        {
+          platformFeeCredited: true,
+          platformFeeCreditedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    } else {
+      await ref.set({ platformFeeCredited: true }, { merge: true });
+    }
   } catch (err) {
     console.error(`Escrow ${docSnap.id}: wallet credit failed, reverting hold`, err);
     await ref.set(
@@ -1488,6 +1545,7 @@ const { defineSecret } = require('firebase-functions/params');
 const axios = require('axios');
 
 const diditApiKey = defineSecret('DIDIT_API_KEY');
+const diditWorkflowId = defineSecret('DIDIT_WORKFLOW_ID');
 
 /**
  * Creates a Didit KYC session for the signed-in user.
@@ -1495,15 +1553,28 @@ const diditApiKey = defineSecret('DIDIT_API_KEY');
  *
  * Prerequisites:
  *   firebase functions:secrets:set DIDIT_API_KEY
+ *   firebase functions:secrets:set DIDIT_WORKFLOW_ID
  *   firebase functions:secrets:set DIDIT_WEBHOOK_SECRET
  *   firebase deploy --only functions:createDiditSession,functions:diditWebhook
  */
 exports.createDiditSession = onCall(
-  { secrets: [diditApiKey] },
+  {
+    secrets: [diditApiKey, diditWorkflowId],
+    // App Engine default SA has Firestore access; Compute default often does not.
+    serviceAccount: FUNCTIONS_SERVICE_ACCOUNT,
+  },
   async (request) => {
     const uid = request.auth && request.auth.uid;
     if (!uid) {
       throw new HttpsError('unauthenticated', 'Sign in required.');
+    }
+
+    const workflowId = String(diditWorkflowId.value() || '').trim();
+    if (!workflowId) {
+      throw new HttpsError(
+        'failed-precondition',
+        'DIDIT_WORKFLOW_ID is not configured on the server.',
+      );
     }
 
     let data;
@@ -1511,9 +1582,11 @@ exports.createDiditSession = onCall(
       const res = await axios.post(
         'https://verification.didit.me/v3/session/',
         {
+          workflow_id: workflowId,
           vendor_data: uid,
-          features: 'OCR + FACE',
-          expected_details: { country: 'MW' },
+          callback: 'vero360://kyc-complete',
+          // Didit expects ISO 3166-1 alpha-3 (Malawi = MWI, not MW).
+          expected_details: { country: 'MWI' },
         },
         {
           headers: {
@@ -1524,18 +1597,23 @@ exports.createDiditSession = onCall(
       );
       data = res.data || {};
     } catch (err) {
-      if (err && err.response) {
-        console.error(
-          'Didit session create failed',
-          err.response.status,
-          err.response.data,
-        );
-      } else {
-        console.error('Didit session create failed', err);
+      const status = err && err.response && err.response.status;
+      const body = err && err.response && err.response.data;
+      console.error('Didit session create failed', status, body || err);
+      let detail = '';
+      if (body && typeof body === 'object') {
+        detail = String(
+          body.detail || body.message || body.error || JSON.stringify(body),
+        ).slice(0, 240);
+      } else if (typeof body === 'string') {
+        detail = body.slice(0, 240);
       }
+      // Do NOT use 'internal' — Firebase strips its message from clients.
       throw new HttpsError(
-        'internal',
-        'Could not start identity verification.',
+        'failed-precondition',
+        detail
+          ? `Didit rejected session (${status || '?'}): ${detail}`
+          : `Didit session failed (${status || 'network'}). Set DIDIT_API_KEY + DIDIT_WORKFLOW_ID and redeploy createDiditSession.`,
       );
     }
 
@@ -1543,24 +1621,32 @@ exports.createDiditSession = onCall(
     const sessionToken = data.session_token;
     if (!sessionId || !sessionToken) {
       console.error('Didit session response missing fields', data);
-      throw new HttpsError('internal', 'Invalid Didit session response.');
+      throw new HttpsError(
+        'failed-precondition',
+        'Didit response missing session_token. Check API key / workflow.',
+      );
     }
 
-    await admin.firestore().collection('users').doc(uid).set(
-      {
-        kycStatus: 'pending',
-        kycSessionId: sessionId,
-        kycVerified: false,
-      },
-      { merge: true },
-    );
+    try {
+      await admin.firestore().collection('users').doc(uid).set(
+        {
+          kycStatus: 'pending',
+          kycSessionId: sessionId,
+          kycVerified: false,
+        },
+        { merge: true },
+      );
+    } catch (err) {
+      // Don't block verification UI if status write fails — webhook can still update later.
+      console.error('KYC pending status write failed', err);
+    }
 
     const url =
       data.url ||
       data.session_url ||
       `https://verify.didit.me/session/${sessionToken}`;
 
-    return { session_token: sessionToken, url };
+    return { session_token: sessionToken, url, session_id: sessionId };
   },
 );
 

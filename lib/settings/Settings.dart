@@ -9,7 +9,6 @@ import 'package:http/http.dart' as http;
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 
 import 'package:local_auth/local_auth.dart';
 import 'package:pdfx/pdfx.dart';
@@ -1500,7 +1499,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _maybeHaptic();
     try {
       const storeUrl =
-          'https://play.google.com/store/apps/details?id=com.vero.vero360';
+          'https://play.google.com/store/apps/details?id=com.vero265.app';
       final text = _t(
         'Try Vero360 – one app for VeroRide,marketplace, food, transport,accomodation and more. $storeUrl',
         'Yesani Vero360 – pulogalamu imodzi ya msika, chakudya, mayendedwe, ndi zina. $storeUrl',
@@ -1758,22 +1757,17 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<bool> _authenticateDeleteWithProvider(User user) async {
-    final provider = _primaryAuthProvider(user);
+    final authProvider = _primaryAuthProvider(user);
     try {
-      if (provider == 'google.com') {
-        final google = GoogleSignIn.instance;
-        await google.initialize(
-          serverClientId:
-              '1010595167807-vl7asia9e4eep8u68g9c8mp5aa3eotgi.apps.googleusercontent.com',
-        );
-        final account = await google.authenticate();
-        final auth = account.authentication;
-        final cred = GoogleAuthProvider.credential(idToken: auth.idToken);
-        await user.reauthenticateWithCredential(cred);
+      if (authProvider == 'google.com') {
+        final google = GoogleAuthProvider()
+          ..addScope('email')
+          ..addScope('profile');
+        await user.reauthenticateWithProvider(google);
         return true;
       }
 
-      if (provider == 'apple.com') {
+      if (authProvider == 'apple.com') {
         final appleCred = await SignInWithApple.getAppleIDCredential(
           scopes: [
             AppleIDAuthorizationScopes.email,

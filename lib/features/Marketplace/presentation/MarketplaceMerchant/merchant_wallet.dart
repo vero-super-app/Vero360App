@@ -9,6 +9,7 @@ import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GeneralModels/wallet_model.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet_transactions_page.dart';
+import 'package:vero360_app/utils/kyc_gate.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 
 class _HeldEscrowRow {
@@ -466,6 +467,12 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
     } catch (e) {
       print('Error saving bank details: $e');
     }
+  }
+
+  Future<void> _onRequestPayoutPressed() async {
+    final ok = await KycGate.ensureVerifiedForWithdraw(context);
+    if (!ok || !mounted) return;
+    _showPayoutDialog();
   }
 
   void _showPayoutDialog() {
@@ -973,6 +980,14 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   Future<void> _requestPayout(void Function(void Function()) setState) async {
     if (!_formKey.currentState!.validate()) return;
 
+    if (!await KycGate.isVerified()) {
+      if (mounted) {
+        Navigator.of(context).pop(); // close payout dialog
+        await KycGate.ensureVerifiedForWithdraw(context);
+      }
+      return;
+    }
+
     if (_selectedPayoutMethod == 'bank' && _selectedBankIndex == null) {
       _showError('Please select a bank');
       return;
@@ -1379,7 +1394,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                           width: double.infinity,
                           child: ElevatedButton.icon(
                             onPressed: _walletBalance >= 1000
-                                ? _showPayoutDialog
+                                ? _onRequestPayoutPressed
                                 : null,
                             icon: const Icon(Icons.payment),
                             label: const Text('Request Payout'),

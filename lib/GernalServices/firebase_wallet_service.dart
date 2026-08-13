@@ -9,9 +9,39 @@ class FirebaseWalletService {
   /// User ID and display name for the platform super-admin wallet (receives service fees).
   static const String superAdminUserId = 'super_admin';
   static const String superAdminDisplayName = 'Vero 360 Platform';
+  /// Fixed Firestore doc id so cash-out / fee credits never hit different wallets.
+  static const String platformWalletDocId = 'super_admin';
 
-  /// Service fee rate: 2.5% of each successful transaction is credited to super admin.
+  /// Keep only a short recent list on the wallet doc — full history lives in
+  /// `wallet_transactions`. Unbounded embeds blow past the 1MB doc limit and
+  /// silently stop platform fee credits after cash-outs.
+  static const int _embeddedTxCap = 25;
+
+  /// Ride / stay default fee (kept for those products).
   static const double serviceFeeRate = 0.025;
+
+  /// Marketplace purchases: 10% of item gross is credited to the super-admin wallet.
+  static const double marketplaceServiceFeeRate = 0.10;
+
+  /// Ensures the platform wallet exists and credits a service fee into it.
+  static Future<void> creditPlatformServiceFee({
+    required double amount,
+    required String description,
+    required String reference,
+  }) async {
+    if (amount <= 0) return;
+    await getOrCreateWallet(
+      merchantId: superAdminUserId,
+      merchantName: superAdminDisplayName,
+    );
+    await creditWallet(
+      merchantId: superAdminUserId,
+      amount: amount,
+      description: description,
+      reference: reference,
+      type: 'service_fee',
+    );
+  }
 
   // Get or create wallet for merchant
   static Future<WalletModel> getOrCreateWallet({
@@ -19,6 +49,33 @@ class FirebaseWalletService {
     required String merchantName,
   }) async {
     try {
+      // Platform wallet always uses a fixed document id.
+      if (merchantId == superAdminUserId) {
+        final ref = _firestore.collection('wallets').doc(platformWalletDocId);
+        final snap = await ref.get();
+        if (snap.exists) {
+          return WalletModel.fromMap({
+            ...snap.data()!,
+            'walletId': snap.id,
+          });
+        }
+        final newWallet = WalletModel(
+          walletId: platformWalletDocId,
+          userId: superAdminUserId,
+          merchantName: merchantName,
+          balance: 0.0,
+          pendingBalance: 0.0,
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+          transactions: [],
+        );
+        await ref.set({
+          ...newWallet.toMap(),
+          'transactions': <Map<String, dynamic>>[],
+        });
+        return newWallet;
+      }
+
       final query = _firestore
           .collection('wallets')
           .where('userId', isEqualTo: merchantId)
@@ -97,19 +154,15 @@ class FirebaseWalletService {
     required String reference,
   }) async {
     try {
-      // Find wallet for merchant
-      final walletQuery = await _firestore
-          .collection('wallets')
-          .where('userId', isEqualTo: merchantId)
-          .limit(1)
-          .get();
-
-      if (walletQuery.docs.isEmpty) {
+      final walletDoc = await _findWalletDoc(merchantId);
+      if (walletDoc == null) {
         throw Exception('Wallet not found for merchant');
       }
 
-      final walletDoc = walletQuery.docs.first;
       final walletData = walletDoc.data();
+      if (walletData == null) {
+        throw Exception('Wallet not found for merchant');
+      }
       final currentBalance = (walletData['balance'] ?? 0.0).toDouble();
 
       if (currentBalance < amount) {
@@ -129,7 +182,6 @@ class FirebaseWalletService {
         createdAt: DateTime.now(),
       );
 
-      // Update wallet balance and add transaction
       await _firestore.runTransaction((firestoreTransaction) async {
         final walletRef = _firestore.collection('wallets').doc(walletDoc.id);
         final walletSnapshot = await firestoreTransaction.get(walletRef);
@@ -140,24 +192,27 @@ class FirebaseWalletService {
 
         final data = walletSnapshot.data() as Map<String, dynamic>;
         final newBalance = (data['balance'] ?? 0.0).toDouble() - amount;
-        final transactions =
-            List<Map<String, dynamic>>.from(data['transactions'] ?? []);
-
-        transactions.add({
-          ...walletTransaction.toMap(),
-          'createdAt': Timestamp.now(),
-        });
+        if (newBalance < 0) {
+          throw Exception('Insufficient balance');
+        }
 
         firestoreTransaction.update(walletRef, {
           'balance': newBalance,
           'updatedAt': Timestamp.now(),
-          'transactions': transactions,
+          'transactions': _cappedEmbeddedTransactions(
+            data['transactions'],
+            {
+              ...walletTransaction.toMap(),
+              'userId': merchantId,
+              'createdAt': Timestamp.now(),
+            },
+          ),
         });
       });
 
-      // Also create a separate transaction document
       await _firestore.collection('wallet_transactions').doc(transactionId).set({
         ...walletTransaction.toMap(),
+        'userId': merchantId,
         'createdAt': Timestamp.now(),
         'updatedAt': Timestamp.now(),
       });
@@ -255,20 +310,11 @@ class FirebaseWalletService {
     String type = 'credit',
   }) async {
     try {
-      // Find wallet for merchant
-      final walletQuery = await _firestore
-          .collection('wallets')
-          .where('userId', isEqualTo: merchantId)
-          .limit(1)
-          .get();
-
-      if (walletQuery.docs.isEmpty) {
+      final walletDoc = await _findWalletDoc(merchantId);
+      if (walletDoc == null) {
         throw Exception('Wallet not found for merchant');
       }
 
-      final walletDoc = walletQuery.docs.first;
-
-      // Create transaction
       final transactionId = 'TXN${DateTime.now().millisecondsSinceEpoch}';
       final walletTransaction = WalletTransaction(
         transactionId: transactionId,
@@ -281,45 +327,72 @@ class FirebaseWalletService {
         createdAt: DateTime.now(),
       );
 
-      // Update wallet balance and add transaction
       await _firestore.runTransaction((firestoreTransaction) async {
         final walletRef = _firestore.collection('wallets').doc(walletDoc.id);
         final walletSnapshot = await firestoreTransaction.get(walletRef);
-        
+
         if (!walletSnapshot.exists) {
           throw Exception('Wallet not found');
         }
 
         final data = walletSnapshot.data() as Map<String, dynamic>;
         final newBalance = (data['balance'] ?? 0.0).toDouble() + amount;
-        final transactions = List<Map<String, dynamic>>.from(data['transactions'] ?? []);
-        
-        transactions.add({
-          ...walletTransaction.toMap(),
-          'createdAt': Timestamp.now(),
-        });
 
         firestoreTransaction.update(walletRef, {
           'balance': newBalance,
           'updatedAt': Timestamp.now(),
-          'transactions': transactions,
+          'transactions': _cappedEmbeddedTransactions(
+            data['transactions'],
+            {
+              ...walletTransaction.toMap(),
+              'userId': merchantId,
+              'createdAt': Timestamp.now(),
+            },
+          ),
         });
       });
 
-      // Create separate transaction document
-      await _firestore
-          .collection('wallet_transactions')
-          .doc(transactionId)
-          .set({
-            ...walletTransaction.toMap(),
-            'createdAt': Timestamp.now(),
-            'updatedAt': Timestamp.now(),
-          });
-
+      await _firestore.collection('wallet_transactions').doc(transactionId).set({
+        ...walletTransaction.toMap(),
+        'userId': merchantId,
+        'createdAt': Timestamp.now(),
+        'updatedAt': Timestamp.now(),
+      });
     } catch (e) {
       print('Error crediting wallet: $e');
       rethrow;
     }
+  }
+
+  static Future<DocumentSnapshot<Map<String, dynamic>>?> _findWalletDoc(
+    String merchantId,
+  ) async {
+    if (merchantId == superAdminUserId) {
+      final snap =
+          await _firestore.collection('wallets').doc(platformWalletDocId).get();
+      if (snap.exists) return snap;
+    }
+    final walletQuery = await _firestore
+        .collection('wallets')
+        .where('userId', isEqualTo: merchantId)
+        .limit(1)
+        .get();
+    if (walletQuery.docs.isEmpty) return null;
+    return walletQuery.docs.first;
+  }
+
+  static List<Map<String, dynamic>> _cappedEmbeddedTransactions(
+    dynamic existing,
+    Map<String, dynamic> next,
+  ) {
+    final list = List<Map<String, dynamic>>.from(
+      (existing as List<dynamic>? ?? const <dynamic>[]).map(
+        (e) => Map<String, dynamic>.from(e as Map),
+      ),
+    );
+    list.add(next);
+    if (list.length <= _embeddedTxCap) return list;
+    return list.sublist(list.length - _embeddedTxCap);
   }
 
   // Get wallet transactions

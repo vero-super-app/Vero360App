@@ -57,11 +57,11 @@ const List<MerchantService> kMerchantServices = [
     name: 'Marketplace',
     icon: Icons.store_rounded,
   ),
-  // MerchantService(
-  //   key: 'food',
-  //   name: 'Food & Restaurants',
-  //   icon: Icons.restaurant_rounded,
-  // ),
+  MerchantService(
+    key: 'food',
+    name: 'Food & Restaurants',
+    icon: Icons.restaurant_rounded,
+  ),
   MerchantService(
     key: 'accommodation',
     name: 'Accommodation',
@@ -951,6 +951,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
         msg.contains('unreachable') ||
         msg.contains('UNAVAILABLE')) {
       return 'Network error. Check your connection and try again.';
+    }
+    if (msg.contains('SHA') ||
+        msg.contains('google-config') ||
+        msg.contains('com.vero265.app') ||
+        msg.contains('DEVELOPER_ERROR') ||
+        msg.contains('ApiException: 10')) {
+      return 'Google Sign-In is not set up for this app build. Add SHA-1 for com.vero265.app in Firebase Console.';
     }
     return msg.length > 80 ? 'Google sign-in failed. Please try again.' : msg;
   }

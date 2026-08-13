@@ -10,6 +10,7 @@ import 'package:vero360_app/config/map_style_constants.dart';
 import 'package:vero360_app/providers/ride_share/nearby_vehicles_provider.dart';
 import 'package:vero360_app/GernalServices/nearby_vehicles_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
+import 'package:vero360_app/utils/low_ram_android.dart';
 
 class MapViewWidget extends ConsumerStatefulWidget {
   final Function(GoogleMapController) onMapCreated;
@@ -535,13 +536,16 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
       initialCameraPosition: _initialCameraPosition,
       markers: _markers,
       polylines: _polylines,
-      mapType: MapType.hybrid,
+      mapType: LowRamAndroid.isAndroid ? MapType.normal : MapType.hybrid,
       style: _mapStyleJson,
       myLocationEnabled: true,
       myLocationButtonEnabled: true,
-      zoomControlsEnabled: true,
+      zoomControlsEnabled: !LowRamAndroid.isAndroid,
       mapToolbarEnabled: false,
-      compassEnabled: true,
+      compassEnabled: !LowRamAndroid.isAndroid,
+      buildingsEnabled: !LowRamAndroid.isAndroid,
+      indoorViewEnabled: false,
+      trafficEnabled: false,
     );
   }
 

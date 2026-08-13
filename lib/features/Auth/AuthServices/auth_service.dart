@@ -10,7 +10,6 @@ import 'package:crypto/crypto.dart' show sha256;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
@@ -25,6 +24,7 @@ import 'package:vero360_app/utils/session_local_cache.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/Auth/AuthServices/account_data_purge.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/Auth/AuthServices/google_sign_in_helper.dart';
 import 'package:vero360_app/features/Auth/AuthServices/password_reset_verification_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/registration_verification_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_online_session.dart';
@@ -64,17 +64,6 @@ class AuthService {
   static const String supportEmail = 'support@vero360.app';
   static const Duration _reqTimeoutWarm = Duration(seconds: 18);
 
-  // ✅ google_sign_in 7.x
-  final GoogleSignIn _google = GoogleSignIn.instance;
-
-  static const List<String> _googleScopes = <String>[
-    'openid',
-    'email',
-    'profile',
-  ];
-
-  static bool _googleInitialized = false;
-
   final FirebaseAuth _firebaseAuth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
@@ -99,16 +88,6 @@ class AuthService {
         msg.contains('connection refused') ||
         msg.contains('network is unreachable') ||
         msg.contains('timed out');
-  }
-
-  Future<void> _ensureGoogleInit() async {
-    if (_googleInitialized) return;
-
-    // If you have specific clientId/serverClientId, pass them here.
-    // await _google.initialize(clientId: "...", serverClientId: "...");
-    await _google.initialize();
-
-    _googleInitialized = true;
   }
 
   Map<String, dynamic> _normalizeBackendAuthResponse(
@@ -1029,79 +1008,23 @@ class AuthService {
 
   Future<Map<String, dynamic>?> continueWithGoogle(BuildContext context) async {
     try {
-      await _ensureGoogleInit();
-
-      if (!_google.supportsAuthenticate()) {
-        _toast(context, 'Google Sign-In not supported on this platform',
-            ok: false);
+      final user = await GoogleSignInHelper.signInToFirebase();
+      if (user == null) {
+        _toast(context, 'Google sign-in was cancelled.', ok: false);
         return null;
       }
 
-      final GoogleSignInAccount account = await _google.authenticate();
-
-      // Prefer server auth code for backend exchange
-      GoogleSignInServerAuthorization? serverAuth;
-      try {
-        serverAuth =
-            await account.authorizationClient.authorizeServer(_googleScopes);
-      } catch (_) {}
-
-      final serverAuthCode = serverAuth?.serverAuthCode;
-
-      // Fallback tokens (if your backend still accepts idToken)
-      String? idToken;
-      try {
-        final auth = account.authentication;
-        idToken = auth.idToken;
-      } catch (_) {}
-
-      if ((serverAuthCode == null || serverAuthCode.isEmpty) &&
-          (idToken == null || idToken.isEmpty)) {
-        _toast(context, 'Could not get Google token', ok: false);
-        return null;
-      }
-
-      // ✅ Use ApiConfig for production-ready endpoint
-      final res = await http
-          .post(
-            ApiConfig.endpoint('/auth/google'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json'
-            },
-            body: jsonEncode({
-              if (serverAuthCode != null && serverAuthCode.isNotEmpty)
-                'serverAuthCode': serverAuthCode,
-              if (idToken != null && idToken.isNotEmpty) 'idToken': idToken,
-              'email': account.email,
-            }),
-          )
-          .timeout(_reqTimeoutWarm);
-
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        String? backendMsg;
-        try {
-          final decoded = jsonDecode(res.body);
-          if (decoded is Map && decoded['message'] != null) {
-            final m = decoded['message'];
-            if (m is List) {
-              backendMsg = m.join('\n');
-            } else {
-              backendMsg = m.toString();
-            }
-          }
-        } catch (_) {}
-        throw ApiException(
-          message: backendMsg ?? 'Google sign-in failed.',
-          statusCode: res.statusCode,
-        );
-      }
-
-      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      await _saveFirebaseProfile(user);
       _toast(context, 'Signed in with Google');
-      return _normalizeBackendAuthResponse(data);
-    } on ApiException catch (e) {
-      _toast(context, e.message, ok: false);
+      return _buildFirebaseAuthResult(user);
+    } on FirebaseAuthException catch (e) {
+      _toast(
+        context,
+        e.message?.trim().isNotEmpty == true
+            ? e.message!
+            : 'Google sign-in failed. Please try again.',
+        ok: false,
+      );
       return null;
     } catch (_) {
       _toast(context, 'Google sign-in failed. Please try again.', ok: false);
@@ -1257,7 +1180,7 @@ class AuthService {
         await NotificationService.instance.clearSessionOnLogout();
       }),
       raced(() async {
-        await _google.signOut();
+        await GoogleSignInHelper.signOut();
       }),
     ]).timeout(budget, onTimeout: () => <void>[]);
   }

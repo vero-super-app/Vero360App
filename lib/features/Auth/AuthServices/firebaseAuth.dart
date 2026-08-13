@@ -4,19 +4,12 @@ import 'dart:math';
 import 'dart:async' show unawaited;
 
 import 'package:crypto/crypto.dart' show sha256;
-import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
+import 'package:vero360_app/features/Auth/AuthServices/google_sign_in_helper.dart';
 
 class FirebaseAuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final GoogleSignIn _google = GoogleSignIn.instance;
-
-  static bool _googleInitialized = false;
-
-  static const String _serverClientId =
-      '1010595167807-vl7asia9e4eep8u68g9c8mp5aa3eotgi.apps.googleusercontent.com';
 
   Future<User?> signupWithEmailAndPassword(String email, String password) async {
     try {
@@ -47,26 +40,9 @@ class FirebaseAuthService {
   }
 
   Future<User?> signInWithGoogle() async {
-    try {
-      if (!_googleInitialized) {
-        await _google.initialize(serverClientId: _serverClientId);
-        _googleInitialized = true;
-      }
-      if (!_google.supportsAuthenticate()) {
-     //   print('Google Sign-In not supported on this platform');
-        return null;
-      }
-      final GoogleSignInAccount account = await _google.authenticate();
-      if (account == null) return null;
-      final auth = account.authentication;
-      final credential = GoogleAuthProvider.credential(idToken: auth.idToken);
-      final userCred = await _auth.signInWithCredential(credential);
-      unawaited(logCurrentIdToken());
-      return userCred.user;
-    } catch (e) {
-     // debugPrint('Google sign-in failed: $e');
-      rethrow;
-    }
+    final user = await GoogleSignInHelper.signInToFirebase();
+    if (user != null) unawaited(logCurrentIdToken());
+    return user;
   }
 
   Future<User?> signInWithApple() async {
@@ -121,9 +97,7 @@ class FirebaseAuthService {
 
   Future<void> signOut() async {
     await _auth.signOut();
-    try {
-      await _google.signOut();
-    } catch (_) {}
+    await GoogleSignInHelper.signOut();
   }
 
   User? get currentUser => _auth.currentUser;

@@ -130,6 +130,7 @@ class _MapLocationPickerScreenState
         children: [
           GoogleMap(
             initialCameraPosition: CameraPosition(target: initial, zoom: 15),
+            mapType: MapType.hybrid,
             myLocationEnabled: true,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,

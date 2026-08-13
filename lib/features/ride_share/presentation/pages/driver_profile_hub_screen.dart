@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:vero360_app/features/ride_share/core/fleet_date_picker.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/become_driver_page.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/edit_driver_details_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/edit_taxi_screen.dart';
@@ -53,9 +54,8 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
   }
 
   String _date(dynamic v) {
-    if (v == null) return '—';
-    final parsed = DateTime.tryParse(v.toString());
-    if (parsed == null) return v.toString();
+    final parsed = tryParseFleetDate(v);
+    if (parsed == null || parsed.year <= 1901) return '—';
     return DateFormat.yMMMd().format(parsed);
   }
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
+import 'package:vero360_app/features/ride_share/core/fleet_date_picker.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/car_rental/utils/car_rental_colors.dart';
 
@@ -214,16 +215,16 @@ class _EditTaxiScreenState extends State<EditTaxiScreen> {
   }
 
   Future<void> _selectDate(BuildContext context) async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _registrationExpiryController.text.isNotEmpty
-          ? DateTime.parse(_registrationExpiryController.text)
-          : DateTime.now().add(const Duration(days: 365)),
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 3650)),
+    final now = DateTime.now();
+    final current = tryParseFleetDate(_registrationExpiryController.text);
+    final picked = await showFleetDatePicker(
+      context,
+      current: current ?? now.add(const Duration(days: 365)),
+      firstDate: DateTime(now.year, now.month, now.day),
+      lastDate: DateTime(now.year + 10, now.month, now.day),
     );
     if (picked != null) {
-      _registrationExpiryController.text = picked.toString().split(' ')[0];
+      _registrationExpiryController.text = fleetDateIso(picked);
       _validateAndAutoVerify();
     }
   }

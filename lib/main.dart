@@ -29,12 +29,8 @@ import 'package:vero360_app/Home/CustomersProfilepage.dart';
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 
-import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
-import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_merchant_dashboard.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_share_link.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
-import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
-import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourierMerchant/courier_merchant_dashboard.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/app_nav_key.dart';
@@ -95,22 +91,11 @@ void _openPasswordResetFromDeepLink(Uri uri) {
   );
 }
 
-/// Root merchant shell: must match [Bottomnavbar] / auth screens (prefs `merchant_service`).
-/// Unknown vertical → customer home, never a fake marketplace dashboard.
+/// Root merchant shell: one [Bottomnavbar], Dashboard tab = vertical UI.
 Widget merchantDashboardFromPrefs(String email, SharedPreferences prefs) {
   final displayEmail =
       email.trim().isNotEmpty ? email : (prefs.getString('email') ?? '');
-  final key = normalizeMerchantServiceKey(prefs.getString('merchant_service'));
-  return switch (key) {
-    'food' => FoodMerchantDashboard(email: displayEmail),
-    'accommodation' => AccommodationMerchantDashboard(email: displayEmail),
-    'courier' => CourierMerchantDashboard(email: displayEmail),
-    'marketplace' => MarketplaceMerchantDashboard(
-        email: displayEmail,
-        onBackToHomeTab: () {},
-      ),
-    _ => Bottomnavbar(email: displayEmail),
-  };
+  return Bottomnavbar(email: displayEmail, initialIndex: 4);
 }
 
 /// Set in [MyApp] initState; used by [OnboardingGate] to re-run role-based shell redirect.

@@ -170,8 +170,9 @@ class RoleSessionService {
 
   static Future<void> persistUserToPrefs(
     SharedPreferences prefs,
-    Map<String, dynamic> user,
-  ) async {
+    Map<String, dynamic> user, {
+    bool resolveMerchantVertical = true,
+  }) async {
     String join(String? a, String? b) {
       final parts = [a, b]
           .where((x) => x != null && x.trim().isNotEmpty)
@@ -219,7 +220,8 @@ class RoleSessionService {
                 user['serviceType']?.toString() ??
                 user['merchant_service']?.toString(),
           );
-      if (lookupUid.isNotEmpty &&
+      if (resolveMerchantVertical &&
+          lookupUid.isNotEmpty &&
           (service == null ||
               service.isEmpty ||
               service == 'marketplace')) {

@@ -7,12 +7,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
-
-// Merchant dashboards
-import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
-import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_merchant_dashboard.dart';
-import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
-import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourierMerchant/courier_merchant_dashboard.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/auth_ui.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/forgot_password_screen.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
@@ -187,27 +181,6 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  // -------------------- Merchant dashboard selection --------------------
-
-  Widget _getMerchantDashboard(String serviceKey, String email) {
-    final key = normalizeMerchantServiceKey(serviceKey) ?? serviceKey.trim().toLowerCase();
-    switch (key) {
-      case 'marketplace':
-        return MarketplaceMerchantDashboard(
-          email: email,
-          onBackToHomeTab: () {},
-        );
-      case 'food':
-        return FoodMerchantDashboard(email: email);
-      case 'accommodation':
-        return AccommodationMerchantDashboard(email: email);
-      case 'courier':
-        return CourierMerchantDashboard(email: email);
-      default:
-        return Bottomnavbar(email: email);
-    }
-  }
-
   // -------------------- Handle auth result --------------------
 
   Future<void> _handleAuthResult(Map<String, dynamic>? result) async {
@@ -281,25 +254,16 @@ class _LoginScreenState extends State<LoginScreen> {
       user['firebaseUid'] = fbUid;
     }
 
-    await RoleSessionService.persistUserToPrefs(prefs, user);
-    try {
-      final synced = await RoleSessionService.syncFromServer(
-        prefs: prefs,
-        token: token,
-        timeout: const Duration(seconds: 8),
-      );
-      if (synced != null && synced.hasUser && synced.user != null) {
-        user = Map<String, dynamic>.from(synced.user!);
-      }
-    } catch (_) {}
-    var role = RoleHelper.roleFromUserMap(user);
+    await RoleSessionService.persistUserToPrefs(
+      prefs,
+      user,
+      resolveMerchantVertical: false,
+    );
+    final role = RoleHelper.roleFromUserMap(user);
     await loadDriverStatusFromPrefs();
 
     final uid = incomingUid.isNotEmpty ? incomingUid : null;
 
-    await _persistSavedLoginAccount(result, user, displayId);
-
-    // Backend chat expects numeric userId in SharedPreferences
     final rawId = user['id'] ?? user['userId'];
     if (rawId != null) {
       final numericId = rawId is int ? rawId : int.tryParse(rawId.toString());
@@ -312,40 +276,20 @@ class _LoginScreenState extends State<LoginScreen> {
       if (numericId != null) await prefs.setInt('userId', numericId);
     }
 
-    // Always align numeric userId with backend /users/me for messaging
-    await AuthStorage.syncBackendUserIdFromMe();
-
-    if (role == 'merchant') {
-      String? merchantService = user['merchantService']?.toString() ??
-          user['serviceType']?.toString() ??
-          user['merchant_service']?.toString();
-
-      if (merchantService == null || merchantService.isEmpty) {
-        if (uid != null) {
-          merchantService = await resolveMerchantServiceForUid(uid) ??
-              await _fetchMerchantServiceFromFirebase(uid);
-        }
-      }
-
-      if (merchantService != null && merchantService.isNotEmpty) {
-        await persistMerchantServiceFromApi(prefs, merchantService);
-      }
-      await hydrateMerchantServiceFromFirestore(prefs);
-
+    if (role == RoleHelper.merchant) {
       final businessName = user['businessName']?.toString();
       if (businessName != null && businessName.isNotEmpty) {
         await prefs.setString('business_name', businessName);
       }
-
       final businessAddress = user['businessAddress']?.toString();
       if (businessAddress != null && businessAddress.isNotEmpty) {
         await prefs.setString('business_address', businessAddress);
       }
-
       final savedService = normalizeMerchantServiceKey(
-            prefs.getString('merchant_service') ?? merchantService,
-          ) ??
-          '';
+        prefs.getString('merchant_service') ??
+            user['merchantService']?.toString() ??
+            user['serviceType']?.toString(),
+      );
       final guideUid = (user['uid'] ?? user['firebaseUid'] ?? prefs.getString('uid') ?? '')
           .toString()
           .trim();
@@ -357,92 +301,61 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     }
 
+    unawaited(_persistSavedLoginAccount(result, user, displayId));
+    unawaited(_finishSessionAfterLogin(prefs: prefs, token: token, uid: uid));
+
     if (!mounted) return;
-
     TextInput.finishAutofillContext(shouldSave: true);
+    _openPostLoginShell(role: role, displayId: displayId, prefs: prefs);
+  }
 
-     if (role == 'merchant') {
-       var merchantService = normalizeMerchantServiceKey(
-         prefs.getString('merchant_service'),
-       );
-       final lookupUid = (FirebaseAuth.instance.currentUser?.uid ?? uid ?? '')
-           .trim();
-       if (lookupUid.isNotEmpty &&
-           (merchantService == null ||
-               merchantService.isEmpty ||
-               merchantService == 'marketplace')) {
-         final discovered = await resolveMerchantServiceForUid(lookupUid);
-         if (discovered != null &&
-             discovered.isNotEmpty &&
-             (merchantService == null ||
-                 merchantService.isEmpty ||
-                 discovered != 'marketplace')) {
-           merchantService = discovered;
-           await persistMerchantServiceFromApi(prefs, discovered);
-         }
-       }
+  void _openPostLoginShell({
+    required String role,
+    required String displayId,
+    required SharedPreferences prefs,
+  }) {
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) => Bottomnavbar(
+          email: displayId,
+          initialIndex: role == RoleHelper.merchant ? 4 : 0,
+        ),
+      ),
+      (route) => false,
+    );
+  }
 
-       if (merchantService != null && merchantService.isNotEmpty) {
-         final merchantDashboard =
-             _getMerchantDashboard(merchantService, displayId);
-
-         Navigator.of(context).pushAndRemoveUntil(
-           MaterialPageRoute(builder: (_) => merchantDashboard),
-           (route) => false,
-         );
-       } else {
-         Navigator.of(context).pushAndRemoveUntil(
-           MaterialPageRoute(
-             builder: (_) => Bottomnavbar(email: displayId),
-           ),
-           (route) => false,
-         );
-       }
-     } else {
-       Navigator.of(context).pushAndRemoveUntil(
-         MaterialPageRoute(
-           builder: (_) => Bottomnavbar(email: displayId),
-         ),
-         (route) => false,
-       );
-     }
+  /// Network-heavy follow-up after Home is already showing.
+  Future<void> _finishSessionAfterLogin({
+    required SharedPreferences prefs,
+    required String token,
+    required String? uid,
+  }) async {
+    try {
+      await RoleSessionService.syncFromServer(
+        prefs: prefs,
+        token: token,
+        timeout: const Duration(seconds: 8),
+      );
+    } catch (_) {}
+    try {
+      await AuthStorage.syncBackendUserIdFromMe();
+    } catch (_) {}
+    try {
+      await hydrateMerchantServiceFromFirestore(prefs);
+      final lookupUid =
+          (FirebaseAuth.instance.currentUser?.uid ?? uid ?? '').trim();
+      if (lookupUid.isNotEmpty) {
+        final discovered = await resolveMerchantServiceForUid(lookupUid);
+        if (discovered != null && discovered.isNotEmpty) {
+          await persistMerchantServiceFromApi(prefs, discovered);
+        }
+      }
+    } catch (_) {}
+    await loadDriverStatusFromPrefs();
   }
 
   // -------------------- Firebase profile helpers --------------------
-
-  Future<String?> _fetchMerchantServiceFromFirebase(String uid) async {
-    try {
-      final userDoc = await _firestore
-          .collection('users')
-          .doc(uid)
-          .get()
-          .timeout(const Duration(seconds: 10));
-      if (userDoc.exists) {
-        final userData = userDoc.data();
-        return userData?['merchantService']?.toString() ??
-            userData?['merchant_service']?.toString() ??
-            userData?['serviceType']?.toString();
-      }
-
-      final services = ['accommodation', 'food', 'courier', 'marketplace'];
-      for (final service in services) {
-        final collectionName =
-            service == 'marketplace' ? 'marketplace_merchants' : '${service}_merchants';
-
-        final merchantDoc = await _firestore
-            .collection(collectionName)
-            .doc(uid)
-            .get()
-            .timeout(const Duration(seconds: 8));
-        if (merchantDoc.exists) {
-          return service;
-        }
-      }
-    } catch (e) {
-      AppLogger.d('[Login] merchant service lookup failed', e);
-    }
-    return null;
-  }
 
   Future<Map<String, dynamic>> _buildResultFromUser(User user) async {
     Map<String, dynamic> profile = {};
@@ -519,7 +432,7 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (_) {}
     String? merchantService;
     try {
-      final snap = await snapFut;
+      final snap = await snapFut.timeout(const Duration(milliseconds: 1200));
       if (snap.exists && snap.data() != null) {
         final data = snap.data()!;
         role = RoleHelper.roleFromUserMap(data);
@@ -603,7 +516,7 @@ class _LoginScreenState extends State<LoginScreen> {
             );
             final user = cred.user;
             if (user != null && mounted) {
-              result = await _buildResultFromUser(user);
+              result = await _buildQuickResultFromUser(user);
               ToastHelper.showCustomToast(
                 context,
                 'Logged in successfully',
@@ -611,6 +524,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 errorMessage: '',
               );
               await _handleAuthResult(result);
+              unawaited(_buildResultFromUser(user));
               return;
             }
           } on FirebaseAuthException catch (_) {}
@@ -642,7 +556,7 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      final result = await _buildResultFromUser(user);
+      final result = await _buildQuickResultFromUser(user);
       ToastHelper.showCustomToast(
         context,
         'Logged in successfully',
@@ -650,6 +564,7 @@ class _LoginScreenState extends State<LoginScreen> {
         errorMessage: '',
       );
       await _handleAuthResult(result);
+      unawaited(_buildResultFromUser(user));
     } on FirebaseAuthException catch (e) {
       String msg;
       switch (e.code) {

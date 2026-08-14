@@ -10,12 +10,6 @@ import 'package:vero360_app/utils/app_logger.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
-
-// Merchant dashboards
-import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
-import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_merchant_dashboard.dart';
-import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
-import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourierMerchant/courier_merchant_dashboard.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:vero360_app/features/Auth/AuthPresenter/auth_ui.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/oauth_buttons.dart';
@@ -348,27 +342,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     if (role == 'merchant') {
       await hydrateMerchantServiceFromFirestore(prefs);
-      final serviceKey = normalizeMerchantServiceKey(
-        prefs.getString('merchant_service') ??
-            merchantService ??
-            _selectedMerchantService?.key,
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => Bottomnavbar(email: displayId, initialIndex: 4),
+        ),
+        (route) => false,
       );
-
-      if (serviceKey != null && serviceKey.isNotEmpty) {
-        final merchantDashboard =
-            _getMerchantDashboard(serviceKey, displayId);
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => merchantDashboard),
-          (route) => false,
-        );
-      } else {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(
-            builder: (_) => Bottomnavbar(email: displayId),
-          ),
-          (route) => false,
-        );
-      }
     } else {
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
@@ -377,24 +356,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
         (route) => false,
       );
     }
-  }
-
-  Widget _getMerchantDashboard(String serviceKey, String email) {
-    final key = normalizeMerchantServiceKey(serviceKey) ?? serviceKey;
-    switch (key) {
-      case 'marketplace':
-        return MarketplaceMerchantDashboard(
-          email: email,
-          onBackToHomeTab: () {},
-        );
-      case 'food':
-        return FoodMerchantDashboard(email: email);
-      case 'accommodation':
-        return AccommodationMerchantDashboard(email: email);
-      case 'courier':
-        return CourierMerchantDashboard(email: email);
-    }
-    return Bottomnavbar(email: email);
   }
 
   Future<Map<String, dynamic>> _buildResultFromUser(User user) async {

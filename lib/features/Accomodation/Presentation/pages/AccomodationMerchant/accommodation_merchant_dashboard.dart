@@ -884,7 +884,13 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
 
 class AccommodationMerchantDashboard extends StatefulWidget {
   final String email;
-  const AccommodationMerchantDashboard({super.key, required this.email});
+  final bool embeddedInMainNav;
+
+  const AccommodationMerchantDashboard({
+    super.key,
+    required this.email,
+    this.embeddedInMainNav = false,
+  });
 
   @override
   State<AccommodationMerchantDashboard> createState() => _AccommodationMerchantDashboardState();
@@ -1095,6 +1101,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   @override
   void initState() {
     super.initState();
+    if (widget.embeddedInMainNav) _selectedIndex = 4;
     _accommodationTabs = TabController(length: 3, vsync: this);
     _loadMerchantData();
     // No periodic refresh – data updates only on pull-to-refresh
@@ -3483,11 +3490,12 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
 
   @override
   Widget build(BuildContext context) {
+    final embedded = widget.embeddedInMainNav;
     return Scaffold(
       backgroundColor: const Color(0xFFF3F4F7),
-      appBar: _selectedIndex == 4 ? _buildDashboardAppBar() : null,
-      body: _getCurrentPage(),
-      bottomNavigationBar: _buildMerchantNavBar(),
+      appBar: (embedded || _selectedIndex == 4) ? _buildDashboardAppBar() : null,
+      body: embedded ? _buildDashboardContent() : _getCurrentPage(),
+      bottomNavigationBar: embedded ? null : _buildMerchantNavBar(),
     );
   }
 

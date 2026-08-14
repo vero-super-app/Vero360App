@@ -301,7 +301,10 @@ class _BottomnavbarState extends State<Bottomnavbar>
     final key = normalizeMerchantServiceKey(prefs.getString('merchant_service'));
     return switch (key) {
       'food' => FoodMerchantDashboard(email: email, embeddedInMainNav: true),
-      'accommodation' => AccommodationMerchantDashboard(email: email),
+      'accommodation' => AccommodationMerchantDashboard(
+          email: email,
+          embeddedInMainNav: true,
+        ),
       'courier' => CourierMerchantDashboard(email: email),
       'marketplace' => MarketplaceMerchantDashboard(
           email: email,

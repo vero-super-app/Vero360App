@@ -490,7 +490,14 @@ class MarketPage extends StatefulWidget {
   /// When Marketplace is embedded as a bottom-nav tab, back should switch to
   /// Home instead of popping the app shell (which leaves a blank screen).
   final VoidCallback? onBackToHome;
-  const MarketPage({required this.cartService, this.onBackToHome, super.key});
+  /// Force GPS near-me ranking (used when opening from Home → Nearby).
+  final bool preferNearbyLocation;
+  const MarketPage({
+    required this.cartService,
+    this.onBackToHome,
+    this.preferNearbyLocation = false,
+    super.key,
+  });
   @override
   State<MarketPage> createState() => _MarketPageState();
 }
@@ -803,12 +810,17 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   }
 
   Future<void> _initBrowseLocation() async {
-    _nearMeMode = await MarketplaceBrowseLocation.loadNearMe();
     _browseCity = await MarketplaceBrowseLocation.loadSavedCity();
+    if (widget.preferNearbyLocation) {
+      _nearMeMode = true;
+      await MarketplaceBrowseLocation.save(city: _browseCity, nearMe: true);
+    } else {
+      _nearMeMode = await MarketplaceBrowseLocation.loadNearMe();
+    }
     if (!mounted) return;
     setState(() {});
 
-    if (!_nearMeMode && _browseCity != null) return;
+    if (!_nearMeMode && _browseCity != null && !widget.preferNearbyLocation) return;
 
     try {
       final detected = await MarketplaceBrowseLocation.detect();

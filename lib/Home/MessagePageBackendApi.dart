@@ -19,6 +19,7 @@ import 'package:uuid/uuid.dart';
 
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
+import 'package:vero360_app/GernalServices/chat_outbox.dart';
 import 'package:vero360_app/GernalServices/chat_notification_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
@@ -28,7 +29,6 @@ import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/widgets/messaging_skeleton_loaders.dart';
 import 'package:vero360_app/widgets/voice_note_bubble.dart';
-import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/chat_offplatform_detector.dart';
 import 'package:vero360_app/widgets/chat_offplatform_warning.dart';
 import 'package:vero360_app/GeneralPages/checkout_page.dart';
@@ -91,7 +91,6 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   final _input = TextEditingController();
   final _scroll = ScrollController();
 
-  bool _sending = false;
   bool _loading = true;
   bool _bootComplete = false;
   bool _resolvingChat = false;
@@ -107,8 +106,6 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   final _picker = ImagePicker();
   final AudioRecorder _recorder = AudioRecorder();
   _PendingImage? _pendingImage;
-  bool _uploadingImage = false;
-  bool _uploadingAudio = false;
   bool _recording = false;
   int _recordMs = 0;
   Timer? _recordTimer;
@@ -116,6 +113,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   final Map<String, String> _localVoicePaths = {};
   final Map<String, int> _localVoiceDurations = {};
   BackendChatMessage? _replyingTo;
+  final Set<String> _outboxFlushing = {};
 
   static const _imgPrefix = 'img::';
   static const _audPrefix = 'aud::';
@@ -185,6 +183,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       if (connected) {
         _fallbackPollTimer?.cancel();
         _fallbackPollTimer = null;
+        unawaited(_flushOutbox());
       } else {
         _startFallbackPoll();
       }
@@ -193,7 +192,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     _startFallbackPoll();
     _readStatusPollTimer?.cancel();
     _readStatusPollTimer = Timer.periodic(const Duration(seconds: 18), (_) {
-      if (mounted && !_sending && _chatId.isNotEmpty) {
+      if (mounted && _chatId.isNotEmpty) {
         _loadMessages(silent: true);
       }
     });
@@ -204,10 +203,10 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     if (BackendMessagingSocket.isConnected) return;
     _fallbackPollTimer = Timer.periodic(_fallbackPollInterval, (_) {
       if (mounted &&
-          !_sending &&
           _chatId.isNotEmpty &&
           !BackendMessagingSocket.isConnected) {
         _loadMessages(silent: true);
+        unawaited(_flushOutbox());
       }
     });
   }
@@ -290,7 +289,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
       // Warm local user id without blocking resolve.
       final prefsFuture = SharedPreferences.getInstance();
-      unawaited(prefsFuture.then((prefs) {
+      unawaited(prefsFuture.then((prefs) async {
         final cachedUserId = prefs.getInt('userId') ?? prefs.getInt('user_id');
         if (cachedUserId != null && cachedUserId > 0 && mounted) {
           setState(() {
@@ -298,6 +297,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
             _me = cachedUserId.toString();
             if (_chatId.isNotEmpty) _bootComplete = true;
           });
+          await _hydrateOutbox();
         }
       }).catchError((_) {}));
 
@@ -346,6 +346,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         _me = userId.toString();
         _bootComplete = true;
       });
+      await _hydrateOutbox();
+      unawaited(_flushOutbox());
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -476,7 +478,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
   Future<void> _markUnreadAsRead(int myUserId) async {
     final unreadIds = _messages
-        .where((m) => !m.isMine(myUserId))
+        .where((m) => !m.isMine(myUserId) && !_isUnsent(m))
         .map((m) => m.id)
         .where((id) => id.isNotEmpty)
         .toList();
@@ -495,7 +497,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     final myId = _myUserId;
     if (myId == null) return server;
 
-    final pending = _messages.where((m) => m.status == 'pending').toList();
+    final pending = _messages.where(_isUnsent).toList();
     if (pending.isEmpty) return server;
 
     final merged = List<BackendChatMessage>.from(server);
@@ -523,8 +525,11 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         a.createdAt.difference(b.createdAt).inSeconds.abs() < 30;
   }
 
+  bool _isUnsent(BackendChatMessage m) =>
+      m.status == 'pending' || m.status == 'failed';
+
   void _startReply(BackendChatMessage msg) {
-    if (msg.status == 'pending') return;
+    if (_isUnsent(msg)) return;
     HapticFeedback.selectionClick();
     setState(() => _replyingTo = msg);
   }
@@ -687,7 +692,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
           m.id == msg.id ||
           (msg.clientMessageId != null &&
               m.clientMessageId == msg.clientMessageId) ||
-          (m.status == 'pending' &&
+          (_isUnsent(m) &&
               msg.clientMessageId != null &&
               m.id == msg.clientMessageId),
     );
@@ -756,7 +761,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   }
 
   Future<void> _sendMessage() async {
-    if (_sending || _uploadingImage || _uploadingAudio || _recording) return;
+    if (_recording) return;
 
     final content = _input.text.trim();
     final pendingImage = _pendingImage;
@@ -777,6 +782,13 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
     final clientMessageId = const Uuid().v4();
     final replyMeta = _replyMetadataPayload();
+    final productMeta = attachProductTag
+        ? {'source': 'marketplace', 'productId': product.productId}
+        : null;
+    final metadata = <String, dynamic>{
+      if (productMeta != null) ...productMeta,
+      if (replyMeta != null) ...replyMeta,
+    };
     final pending = BackendChatMessage(
       id: clientMessageId,
       chatId: _chatId,
@@ -790,52 +802,26 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       metadata: replyMeta,
     );
 
+    final entry = ChatOutboxEntry(
+      clientMessageId: clientMessageId,
+      chatId: _chatId,
+      senderId: myId,
+      type: 'text',
+      content: content,
+      status: 'pending',
+      createdAt: pending.createdAt,
+      tags: tags,
+      metadata: metadata.isEmpty ? null : metadata,
+    );
+    await ChatOutbox.upsert(entry);
+
     setState(() {
-      _sending = true;
       _messages = [..._messages, pending];
       _replyingTo = null;
     });
     _input.clear();
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
-
-    try {
-      final productMeta = attachProductTag
-          ? {'source': 'marketplace', 'productId': product.productId}
-          : null;
-      final metadata = <String, dynamic>{
-        if (productMeta != null) ...productMeta,
-        if (replyMeta != null) ...replyMeta,
-      };
-      final saved = await BackendChatService.sendMessage(
-        chatId: _chatId,
-        content: content,
-        type: 'text',
-        tags: tags,
-        clientMessageId: clientMessageId,
-        metadata: metadata.isEmpty ? null : metadata,
-      );
-
-      if (attachProductTag) _productTagAttached = true;
-
-      if (mounted) {
-        setState(() {
-          _upsertMessage(saved);
-          _sending = false;
-        });
-        BackendChatService.refreshThreads();
-        unawaited(_pushNotifyPeer(body: content));
-        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
-      }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _sending = false;
-        _messages =
-            _messages.where((m) => m.clientMessageId != clientMessageId).toList();
-        _input.text = content;
-      });
-      _toast(UserFacingError.from(e, fallback: 'Failed to send message'));
-    }
+    unawaited(_deliverOutboxEntry(entry, notifyPeerOnSuccess: true));
   }
 
   Future<void> _sendImageMessage(
@@ -859,59 +845,42 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       metadata: replyMeta,
     );
 
+    String? localImagePath;
+    try {
+      final ext = image.filename.contains('.')
+          ? image.filename.split('.').last
+          : 'jpg';
+      localImagePath = await ChatOutbox.persistImageBytes(
+        bytes: image.bytes,
+        clientMessageId: clientMessageId,
+        ext: ext,
+      );
+    } catch (_) {}
+
+    final entry = ChatOutboxEntry(
+      clientMessageId: clientMessageId,
+      chatId: _chatId,
+      senderId: myId,
+      type: 'image',
+      content: caption,
+      status: 'pending',
+      createdAt: pending.createdAt,
+      localImagePath: localImagePath,
+      imageMime: image.mime,
+      imageFilename: image.filename,
+      metadata: replyMeta,
+    );
+    await ChatOutbox.upsert(entry);
+
     setState(() {
       _localImageBytes[clientMessageId] = image.bytes;
       _messages = [..._messages, pending];
       _pendingImage = null;
-      _uploadingImage = true;
-      _sending = true;
       _replyingTo = null;
     });
     _input.clear();
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
-
-    try {
-      final url = await _uploadImageBytes(image);
-      final saved = await BackendChatService.sendImageMessage(
-        chatId: _chatId,
-        imageUrl: url,
-        caption: caption,
-        clientMessageId: clientMessageId,
-        mimeType: image.mime,
-        metadata: replyMeta,
-      );
-
-      if (!mounted) return;
-      setState(() {
-        _localImageBytes.remove(clientMessageId);
-        _upsertMessage(saved);
-        _sending = false;
-        _uploadingImage = false;
-      });
-      BackendChatService.refreshThreads();
-      unawaited(_pushNotifyPeer(body: caption.isNotEmpty ? caption : '📷 Photo'));
-      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _localImageBytes.remove(clientMessageId);
-        _messages = _messages
-            .where((m) => m.clientMessageId != clientMessageId)
-            .toList();
-        _sending = false;
-        _uploadingImage = false;
-        _pendingImage = image;
-        if (caption.isNotEmpty) _input.text = caption;
-      });
-      _toast(_friendlyImageError(e));
-    }
-  }
-
-  String _friendlyImageError(Object e) {
-    return UserFacingError.from(
-      e,
-      fallback: 'Failed to send image. Please try again.',
-    );
+    unawaited(_deliverOutboxEntry(entry, notifyPeerOnSuccess: true));
   }
 
   Future<String> _uploadImageBytes(_PendingImage image) async {
@@ -967,7 +936,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
   Future<void> _startVoiceRecording() async {
     if (_myUserId == null) return;
-    if (_sending || _uploadingImage || _uploadingAudio || _recording) return;
+    if (_recording) return;
     if (kIsWeb) {
       _toast('Voice notes are not supported on web yet.');
       return;
@@ -1078,74 +1047,221 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       metadata: replyMeta,
     );
 
+    String durablePath = filePath;
+    try {
+      durablePath = await ChatOutbox.persistVoiceFile(
+        sourcePath: filePath,
+        clientMessageId: clientMessageId,
+      );
+    } catch (_) {}
+
+    final entry = ChatOutboxEntry(
+      clientMessageId: clientMessageId,
+      chatId: _chatId,
+      senderId: myId,
+      type: 'audio',
+      content: 'Voice note',
+      status: 'pending',
+      createdAt: pending.createdAt,
+      localVoicePath: durablePath,
+      voiceDurationMs: durationMs,
+      metadata: replyMeta,
+    );
+    await ChatOutbox.upsert(entry);
+
     setState(() {
-      _localVoicePaths[clientMessageId] = filePath;
+      _localVoicePaths[clientMessageId] = durablePath;
       _localVoiceDurations[clientMessageId] = durationMs;
       _messages = [..._messages, pending];
-      _uploadingAudio = true;
-      _sending = true;
       _replyingTo = null;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    unawaited(_deliverOutboxEntry(entry, notifyPeerOnSuccess: true));
+  }
 
-    try {
-      final firebaseUser = await _requireFirebaseUserForStorage();
-      final bytes = await File(filePath).readAsBytes();
-      final url = await _uploadAudioBytes(bytes, firebaseUser.uid);
-      final saved = await BackendChatService.sendAudioMessage(
-        chatId: _chatId,
-        audioUrl: url,
-        durationMs: durationMs,
-        clientMessageId: clientMessageId,
-        mimeType: 'audio/mp4',
-        metadata: replyMeta,
-      );
+  Future<void> _hydrateOutbox() async {
+    final myId = _myUserId;
+    if (myId == null || _chatId.isEmpty) return;
+    final entries = await ChatOutbox.forChat(userId: myId, chatId: _chatId);
+    if (entries.isEmpty || !mounted) return;
 
-      if (!mounted) return;
-      // Keep local file mapped so playback stays instant for the sender.
-      setState(() {
-        _localVoicePaths[saved.id] = filePath;
-        _localVoiceDurations[saved.id] = durationMs;
-        if (saved.clientMessageId != null) {
-          _localVoicePaths[saved.clientMessageId!] = filePath;
-          _localVoiceDurations[saved.clientMessageId!] = durationMs;
+    for (final e in entries) {
+      if (e.localVoicePath != null &&
+          e.localVoicePath!.isNotEmpty &&
+          File(e.localVoicePath!).existsSync()) {
+        _localVoicePaths[e.clientMessageId] = e.localVoicePath!;
+        if (e.voiceDurationMs != null) {
+          _localVoiceDurations[e.clientMessageId] = e.voiceDurationMs!;
         }
-        _upsertMessage(saved);
-        _sending = false;
-        _uploadingAudio = false;
-      });
-      BackendChatService.refreshThreads();
-      unawaited(_pushNotifyPeer(body: '🎤 Voice message'));
-      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
-    } catch (e) {
+      }
+      if (e.localImagePath != null &&
+          e.localImagePath!.isNotEmpty &&
+          File(e.localImagePath!).existsSync()) {
+        try {
+          _localImageBytes[e.clientMessageId] =
+              await File(e.localImagePath!).readAsBytes();
+        } catch (_) {}
+      }
+      _upsertMessage(e.toMessage());
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _flushOutbox() async {
+    final myId = _myUserId;
+    if (myId == null || _chatId.isEmpty) return;
+    final entries = await ChatOutbox.forChat(userId: myId, chatId: _chatId);
+    for (final e in entries) {
       if (!mounted) return;
-      setState(() {
-        _localVoicePaths.remove(clientMessageId);
-        _localVoiceDurations.remove(clientMessageId);
-        _messages = _messages
-            .where((m) => m.clientMessageId != clientMessageId)
-            .toList();
-        _sending = false;
-        _uploadingAudio = false;
-      });
-      _showVoiceErrorToast(e);
-      try {
-        await File(filePath).delete();
-      } catch (_) {}
+      if (e.isAudio &&
+          (e.localVoicePath == null ||
+              e.localVoicePath!.isEmpty ||
+              !File(e.localVoicePath!).existsSync())) {
+        continue;
+      }
+      if (e.isImage &&
+          _localImageBytes[e.clientMessageId] == null &&
+          (e.localImagePath == null ||
+              e.localImagePath!.isEmpty ||
+              !File(e.localImagePath!).existsSync())) {
+        continue;
+      }
+      await _deliverOutboxEntry(e);
     }
   }
 
-  void _showVoiceErrorToast(Object e) {
-    if (!mounted) return;
-    if (kDebugMode) {
-      debugPrint('[VoiceNote] send failed: $e');
-    }
-    ToastHelper.showCustomToast(
-      context,
-      "Couldn't send your VN",
-      isSuccess: false,
-      errorMessage: '',
+  Future<void> _retryUnsent(BackendChatMessage msg) async {
+    final myId = _myUserId;
+    final id = msg.clientMessageId ?? msg.id;
+    if (myId == null || id.isEmpty) return;
+    final entry = await ChatOutbox.get(myId, id);
+    if (entry == null) return;
+    await _deliverOutboxEntry(entry, notifyPeerOnSuccess: true, userInitiated: true);
+  }
+
+  Future<void> _deliverOutboxEntry(
+    ChatOutboxEntry entry, {
+    bool notifyPeerOnSuccess = false,
+    bool userInitiated = false,
+  }) async {
+    final id = entry.clientMessageId;
+    if (id.isEmpty || _outboxFlushing.contains(id)) return;
+    _outboxFlushing.add(id);
+
+    _setUnsentStatus(id, 'pending');
+    await ChatOutbox.markStatus(
+      userId: entry.senderId,
+      clientMessageId: id,
+      status: 'pending',
     );
+
+    try {
+      BackendChatMessage saved;
+      if (entry.isAudio) {
+        final path = entry.localVoicePath;
+        if (path == null || path.isEmpty || !File(path).existsSync()) {
+          throw StateError('Voice note file is missing on this device');
+        }
+        final firebaseUser = await _requireFirebaseUserForStorage();
+        final bytes = await File(path).readAsBytes();
+        final url = await _uploadAudioBytes(bytes, firebaseUser.uid);
+        saved = await BackendChatService.sendAudioMessage(
+          chatId: entry.chatId,
+          audioUrl: url,
+          durationMs: entry.voiceDurationMs ?? 0,
+          clientMessageId: id,
+          mimeType: 'audio/mp4',
+          metadata: entry.metadata,
+        );
+        _localVoicePaths[saved.id] = path;
+        _localVoiceDurations[saved.id] = entry.voiceDurationMs ?? 0;
+        if (saved.clientMessageId != null) {
+          _localVoicePaths[saved.clientMessageId!] = path;
+          _localVoiceDurations[saved.clientMessageId!] =
+              entry.voiceDurationMs ?? 0;
+        }
+      } else if (entry.isImage) {
+        Uint8List? bytes = _localImageBytes[id];
+        if (bytes == null &&
+            entry.localImagePath != null &&
+            File(entry.localImagePath!).existsSync()) {
+          bytes = await File(entry.localImagePath!).readAsBytes();
+          _localImageBytes[id] = bytes;
+        }
+        if (bytes == null || bytes.isEmpty) {
+          throw StateError('Photo is missing on this device');
+        }
+        final image = _PendingImage(
+          bytes: bytes,
+          filename: entry.imageFilename ?? 'photo.jpg',
+          mime: entry.imageMime ?? 'image/jpeg',
+        );
+        final url = await _uploadImageBytes(image);
+        saved = await BackendChatService.sendImageMessage(
+          chatId: entry.chatId,
+          imageUrl: url,
+          caption: entry.content ?? '',
+          clientMessageId: id,
+          mimeType: image.mime,
+          metadata: entry.metadata,
+        );
+      } else {
+        saved = await BackendChatService.sendMessage(
+          chatId: entry.chatId,
+          content: entry.content ?? '',
+          type: 'text',
+          tags: entry.tags,
+          clientMessageId: id,
+          metadata: entry.metadata,
+        );
+        if (entry.tags != null && entry.tags!.isNotEmpty) {
+          _productTagAttached = true;
+        }
+      }
+
+      await ChatOutbox.remove(entry.senderId, id);
+      if (!mounted) return;
+      setState(() => _upsertMessage(saved));
+      BackendChatService.refreshThreads();
+      if (notifyPeerOnSuccess) {
+        final body = entry.isAudio
+            ? '🎤 Voice message'
+            : entry.isImage
+                ? ((entry.content ?? '').trim().isNotEmpty
+                    ? entry.content!.trim()
+                    : '📷 Photo')
+                : (entry.content ?? '').trim();
+        if (body.isNotEmpty) unawaited(_pushNotifyPeer(body: body));
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    } catch (e) {
+      await ChatOutbox.markStatus(
+        userId: entry.senderId,
+        clientMessageId: id,
+        status: 'failed',
+      );
+      _setUnsentStatus(id, 'failed');
+      if (kDebugMode) debugPrint('[ChatOutbox] deliver failed $id: $e');
+      if (mounted && userInitiated) {
+        _toast(UserFacingError.from(
+          e,
+          fallback: 'Still offline. We\'ll keep this message here.',
+        ));
+      }
+    } finally {
+      _outboxFlushing.remove(id);
+    }
+  }
+
+  void _setUnsentStatus(String clientMessageId, String status) {
+    if (!mounted) return;
+    final idx = _messages.indexWhere(
+      (m) => m.clientMessageId == clientMessageId || m.id == clientMessageId,
+    );
+    if (idx < 0) return;
+    setState(() {
+      _messages[idx] = _messages[idx].copyWith(status: status);
+    });
   }
 
   void _scrollToBottom() {
@@ -1279,10 +1395,74 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     if (urls.isNotEmpty) VoiceNoteBubble.warmUrls(urls);
   }
 
+  Future<void> _showUnsentActions(BackendChatMessage m) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.black12,
+                borderRadius: BorderRadius.circular(99),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.refresh_rounded, color: _brandOrange),
+              title: const Text('Retry send'),
+              subtitle: const Text('Keep this message and try again'),
+              onTap: () {
+                Navigator.pop(context);
+                unawaited(_retryUnsent(m));
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Color(0xFFEF4444)),
+              title: const Text(
+                'Delete unsent message',
+                style: TextStyle(color: Color(0xFFEF4444)),
+              ),
+              onTap: () async {
+                Navigator.pop(context);
+                await _deleteUnsent(m);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteUnsent(BackendChatMessage m) async {
+    final myId = _myUserId;
+    final id = m.clientMessageId ?? m.id;
+    if (myId != null && id.isNotEmpty) {
+      await ChatOutbox.remove(myId, id);
+    }
+    if (!mounted) return;
+    setState(() {
+      _messages = _messages
+          .where((x) => (x.clientMessageId ?? x.id) != id)
+          .toList();
+      _localVoicePaths.remove(id);
+      _localVoiceDurations.remove(id);
+      _localImageBytes.remove(id);
+    });
+  }
+
   Future<void> _showMsgActions(BackendChatMessage m) async {
     final myId = _myUserId;
     if (myId == null || !m.isMine(myId) || !_within5Min(m)) return;
-    if (m.status == 'pending') return;
+    if (_isUnsent(m)) return;
 
     final canEdit = _isEditableText(m);
 
@@ -1436,10 +1616,21 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
     try {
       await BackendChatService.clearChatHistory(_chatId);
+      final myId = _myUserId;
+      if (myId != null) {
+        final entries =
+            await ChatOutbox.forChat(userId: myId, chatId: _chatId);
+        for (final e in entries) {
+          await ChatOutbox.remove(myId, e.clientMessageId);
+        }
+      }
       if (!mounted) return;
       setState(() {
         _messages = [];
         _pendingImage = null;
+        _localVoicePaths.clear();
+        _localVoiceDurations.clear();
+        _localImageBytes.clear();
       });
       BackendChatService.refreshThreads();
       _toast('Chat cleared');
@@ -1654,7 +1845,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     if (myId == null) return null;
     for (var i = _messages.length - 1; i >= 0; i--) {
       final m = _messages[i];
-      if (m.isMine(myId) && m.status != 'pending') return i;
+      if (m.isMine(myId) && !_isUnsent(m)) return i;
     }
     return null;
   }
@@ -1832,7 +2023,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
   /// True when the signed-in user owns this shop / is the merchant in the thread.
   bool _iAmTheMerchantForRating() {
-    final myUid = FirebaseAuth.instance.currentUser?.uid?.trim() ?? '';
+    final myUid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
     final merchantRef = (widget.peerMerchantId ??
             widget.resolveMerchantId ??
             widget.productContext?.merchantId ??
@@ -1928,9 +2119,6 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     final canSend = (hasText || hasPendingImage) &&
         _chatId.isNotEmpty &&
         !_resolvingChat &&
-        !_sending &&
-        !_uploadingImage &&
-        !_uploadingAudio &&
         !_recording;
 
     return PopScope(
@@ -2041,6 +2229,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     final myId = _myUserId;
     final isMine = myId != null && msg.isMine(myId);
     final isPending = msg.status == 'pending';
+    final isFailed = msg.status == 'failed';
+    final isUnsent = isPending || isFailed;
     final showDateSeparator = _isDifferentDay(msg, prevMsg);
     final localBytes = _localImageFor(msg);
     final imageUrl = localBytes == null ? _messageImageUrl(msg) : null;
@@ -2048,7 +2238,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     final audio = _messageAudio(msg);
     final localVoicePath = _localVoicePathFor(msg);
     final voiceDuration = _voiceDurationFor(msg, audio);
-    final canAct = isMine && _within5Min(msg) && !isPending;
+    final canAct = isMine && _within5Min(msg) && !isUnsent;
     final isLastOutgoing = isMine && index == _lastOutgoingMessageIndex();
     final scanText = [
       caption,
@@ -2076,7 +2266,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
               children: [
                 AnimatedOpacity(
                   duration: const Duration(milliseconds: 200),
-                  opacity: isPending ? 0.72 : 1,
+                  opacity: isPending ? 0.72 : (isFailed ? 0.92 : 1),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 14,
@@ -2200,7 +2390,24 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                         ),
                       ),
                     ],
-                    if (isMine && !isPending) ...[
+                    if (isFailed) ...[
+                      const SizedBox(width: 6),
+                      const Icon(
+                        Icons.error_outline_rounded,
+                        size: 16,
+                        color: Color(0xFFEF4444),
+                      ),
+                      const SizedBox(width: 4),
+                      const Text(
+                        'Tap to retry',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFFEF4444),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                    if (isMine && !isUnsent) ...[
                       const SizedBox(width: 6),
                       _buildMessageReceipt(msg, isLastOutgoing),
                     ],
@@ -2241,17 +2448,20 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
           const SizedBox(height: 12),
         ],
         GestureDetector(
+          onTap: isFailed ? () => unawaited(_retryUnsent(msg)) : null,
           onLongPress: () {
-            if (canAct) {
+            if (isUnsent) {
+              _showUnsentActions(msg);
+            } else if (canAct) {
               _showMsgActions(msg);
-            } else if (msg.status != 'pending') {
+            } else {
               _startReply(msg);
             }
           },
           child: Slidable(
             key: ValueKey('msg_${msg.clientMessageId ?? msg.id}'),
             groupTag: 'chat_messages',
-            startActionPane: msg.status == 'pending'
+            startActionPane: isUnsent
                 ? null
                 : ActionPane(
                     motion: const StretchMotion(),
@@ -2605,7 +2815,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                   ],
                 ),
               ),
-            if (_uploadingImage || _uploadingAudio)
+            if (_outboxFlushing.isNotEmpty)
               const LinearProgressIndicator(
                 minHeight: 2,
                 color: _brandOrange,
@@ -2620,12 +2830,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                     shape: const CircleBorder(),
                     child: InkWell(
                       customBorder: const CircleBorder(),
-                      onTap: (_sending ||
-                              _uploadingImage ||
-                              _uploadingAudio ||
-                              _recording)
-                          ? null
-                          : _showAttachSheet,
+                      onTap: _recording ? null : _showAttachSheet,
                       child: const SizedBox(
                         width: 44,
                         height: 44,
@@ -2677,11 +2882,9 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                     ),
                   ),
                   const SizedBox(width: 10),
-                  if (canSend || _sending || _uploadingImage || _uploadingAudio)
+                  if (canSend)
                     AnimatedScale(
-                      scale: canSend || _sending || _uploadingImage || _uploadingAudio
-                          ? 1
-                          : 0.92,
+                      scale: 1,
                       duration: const Duration(milliseconds: 180),
                       curve: Curves.easeOut,
                       child: AnimatedContainer(
@@ -2689,71 +2892,33 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                         width: 48,
                         height: 48,
                         decoration: BoxDecoration(
-                          gradient: canSend ||
-                                  _sending ||
-                                  _uploadingImage ||
-                                  _uploadingAudio
-                              ? const LinearGradient(
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                  colors: [
-                                    Color(0xFFFF9A2E),
-                                    Color(0xFFFF8A00),
-                                  ],
-                                )
-                              : null,
-                          color: canSend ||
-                                  _sending ||
-                                  _uploadingImage ||
-                                  _uploadingAudio
-                              ? null
-                              : const Color(0xFFE4E6EB),
+                          gradient: const LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              Color(0xFFFF9A2E),
+                              Color(0xFFFF8A00),
+                            ],
+                          ),
                           borderRadius: BorderRadius.circular(24),
-                          boxShadow: canSend ||
-                                  _sending ||
-                                  _uploadingImage ||
-                                  _uploadingAudio
-                              ? [
-                                  BoxShadow(
-                                    color:
-                                        _brandOrange.withValues(alpha: 0.35),
-                                    blurRadius: 10,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ]
-                              : null,
+                          boxShadow: [
+                            BoxShadow(
+                              color: _brandOrange.withValues(alpha: 0.35),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
                         ),
                         child: Material(
                           color: Colors.transparent,
                           child: InkWell(
-                            onTap: canSend ? _sendMessage : null,
+                            onTap: _sendMessage,
                             borderRadius: BorderRadius.circular(24),
-                            child: Center(
-                              child: AnimatedSwitcher(
-                                duration: const Duration(milliseconds: 180),
-                                child: _sending ||
-                                        _uploadingImage ||
-                                        _uploadingAudio
-                                    ? const SizedBox(
-                                        key: ValueKey('sending'),
-                                        width: 22,
-                                        height: 22,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2.5,
-                                          valueColor:
-                                              AlwaysStoppedAnimation<Color>(
-                                            Colors.white,
-                                          ),
-                                        ),
-                                      )
-                                    : Icon(
-                                        key: const ValueKey('send'),
-                                        Icons.arrow_upward_rounded,
-                                        color: canSend
-                                            ? Colors.white
-                                            : Colors.grey.shade500,
-                                        size: 22,
-                                      ),
+                            child: const Center(
+                              child: Icon(
+                                Icons.arrow_upward_rounded,
+                                color: Colors.white,
+                                size: 22,
                               ),
                             ),
                           ),
@@ -2832,12 +2997,12 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
             ),
           ),
           TextButton(
-            onPressed: _sending ? null : _cancelVoiceRecording,
+            onPressed: _cancelVoiceRecording,
             child: const Text('Cancel'),
           ),
           const SizedBox(width: 4),
           FilledButton(
-            onPressed: _sending ? null : _stopVoiceRecordingAndSend,
+            onPressed: _stopVoiceRecordingAndSend,
             style: FilledButton.styleFrom(
               backgroundColor: _brandOrange,
               foregroundColor: Colors.white,

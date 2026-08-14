@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/guest_booking_local_cache.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/mybookingData_service.dart'
@@ -37,6 +38,7 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
   /// Escrow snapshot keyed by booking id / booking number.
   final Map<String, OrderEscrowSnapshot?> _escrowByBooking = {};
   String? _releasingBookingKey;
+  String _accountPhone = '';
 
   @override
   bool get wantKeepAlive => true;
@@ -72,9 +74,19 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
       await GuestBookingLocalCache.clearOnLogout();
       throw AuthRequiredException('Sign in to see your bookings');
     }
+    try {
+      final sp = await SharedPreferences.getInstance();
+      _accountPhone = (sp.getString('phone') ?? '').trim();
+    } catch (_) {}
     final list = await _svc.getGuestMyBookings();
     await _loadEscrowForBookings(list);
     return list;
+  }
+
+  String _bookerPhone(BookingItem b) {
+    final p = (b.guestPhone ?? '').trim();
+    if (p.isNotEmpty) return p;
+    return _accountPhone;
   }
 
   String _bookingEscrowKey(BookingItem b) {
@@ -416,8 +428,11 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
       b.guestName ?? '',
       b.guestEmail ?? '',
       b.guestPhone ?? '',
+      _bookerPhone(b),
       if (b.bookingDate != null) dateFmt.format(b.bookingDate!),
       if (b.bookingDate != null) DateFormat('yyyy-MM-dd').format(b.bookingDate!),
+      if (b.bookingDate != null) formatStayReceiptDate(b.bookingDate),
+      if (b.transactionDate != null) formatStayReceiptDate(b.transactionDate),
     ];
 
     for (final f in fields) {
@@ -446,7 +461,7 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
   bool _hasBookerDetails(BookingItem b) {
     return (b.guestName ?? '').trim().isNotEmpty ||
         (b.guestEmail ?? '').trim().isNotEmpty ||
-        (b.guestPhone ?? '').trim().isNotEmpty;
+        _bookerPhone(b).isNotEmpty;
   }
 
   Future<void> _confirmAndDelete(BuildContext context, BookingItem b) async {
@@ -696,9 +711,11 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
               final title = (b.accommodationName ?? 'Accommodation').trim();
               final loc = (b.accommodationLocation ?? '').trim();
               final paid = _showPaidBadge(b);
-              final when = b.bookingDate != null
-                  ? dateFmt.format(b.bookingDate!)
-                  : '—';
+              final when = formatStayReceiptDate(b.bookingDate);
+              final txWhen = formatStayReceiptDate(
+                b.transactionDate ?? b.bookingDate,
+              );
+              final phone = _bookerPhone(b);
 
               return Material(
                 color: widget.isDark ? const Color(0xFF1E293B) : Colors.white,
@@ -807,9 +824,9 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
                                               : Colors.grey.shade700,
                                         ),
                                       ),
-                                    if ((b.guestPhone ?? '').trim().isNotEmpty)
+                                    if (phone.isNotEmpty)
                                       Text(
-                                        b.guestPhone!.trim(),
+                                        phone,
                                         style: TextStyle(
                                           fontSize: 12,
                                           color: widget.isDark
@@ -893,7 +910,8 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
                           ],
                         ),
                         const Divider(height: 22),
-                        if (_hasBookerDetails(b)) ...[
+                        if ((b.guestName ?? '').trim().isNotEmpty ||
+                            (b.guestEmail ?? '').trim().isNotEmpty) ...[
                           _detailRow(
                             Icons.person_outline_rounded,
                             'Guest / booker',
@@ -902,17 +920,29 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
                                 b.guestName!.trim(),
                               if ((b.guestEmail ?? '').trim().isNotEmpty)
                                 b.guestEmail!.trim(),
-                              if ((b.guestPhone ?? '').trim().isNotEmpty)
-                                b.guestPhone!.trim(),
                             ].join('\n'),
                             widget.isDark,
                           ),
                           const SizedBox(height: 8),
                         ],
                         _detailRow(
+                          Icons.phone_iphone_rounded,
+                          'Booker phone',
+                          phone.isNotEmpty ? phone : '—',
+                          widget.isDark,
+                        ),
+                        const SizedBox(height: 8),
+                        _detailRow(
                           Icons.event_rounded,
-                          'Check-in / booking date',
+                          'Check-in',
                           when,
+                          widget.isDark,
+                        ),
+                        const SizedBox(height: 8),
+                        _detailRow(
+                          Icons.receipt_long_rounded,
+                          'Transaction date',
+                          txWhen,
                           widget.isDark,
                         ),
                         const SizedBox(height: 8),

@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_amenities.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/Accomodation_service.dart';
@@ -22,12 +23,20 @@ class AccommodationMainPage extends StatefulWidget {
   /// After paying, open stays with this listing scrolled into view (if it appears in results).
   final int? focusAccommodationId;
 
+  /// Prefill Discover search (shared stay link `?q=`).
+  final String? initialSearchQuery;
+
+  /// When true and [focusAccommodationId] is found, open Book stay once.
+  final bool openFocusedStay;
+
   /// `0` = Discover, `1` = My bookings (e.g. after successful payment).
   final int initialTabIndex;
 
   const AccommodationMainPage({
     super.key,
     this.focusAccommodationId,
+    this.initialSearchQuery,
+    this.openFocusedStay = false,
     this.initialTabIndex = 0,
   }) : assert(initialTabIndex >= 0 && initialTabIndex < 2);
 
@@ -105,6 +114,7 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
 
   final GlobalKey _focusCardKey = GlobalKey();
   bool _didScrollToFocus = false;
+  bool _didOpenFocusedStay = false;
 
   /// Discover list: drives “Book now” vs “Sign in to book” on cards.
   bool _authReady = false;
@@ -135,6 +145,11 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
       initialIndex: widget.initialTabIndex.clamp(0, 1),
     );
     _tabController.addListener(_onAccommodationTabChanged);
+    final sharedQ = widget.initialSearchQuery?.trim() ?? '';
+    if (sharedQ.isNotEmpty) {
+      _searchController.text = sharedQ;
+      _searchQuery = sharedQ.toLowerCase();
+    }
     _loadFromService();
     _refreshSession();
     _searchController.addListener(_onSearchChanged);
@@ -441,7 +456,7 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
               const SizedBox(height: 10),
               Text(
                 'Booking and payment are available to signed-in guests only. '
-                'We’ll load your name, email, and phone into the booking form.',
+                'We’ll use your account name, email, and phone automatically.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 15,
@@ -553,6 +568,7 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
     final byApiIdHostelGender = <int, String>{};
     final byApiIdRoomType = <int, String>{};
     final byApiIdAvailability = <int, bool>{};
+    final byApiIdAmenities = <int, List<String>>{};
     try {
       final idList = ids.toList();
       for (var i = 0; i < idList.length; i += 10) {
@@ -603,6 +619,12 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
           if (rawAvailable is bool) {
             byApiIdAvailability[apiId] = rawAvailable;
           }
+          final amenities = parseAccommodationAmenities(
+            d['amenities'] ?? d['servicesOffered'] ?? d['facilities'],
+          );
+          if (amenities.isNotEmpty) {
+            byApiIdAmenities[apiId] = amenities;
+          }
         }
       }
     } catch (_) {
@@ -619,14 +641,22 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
       ..clear()
       ..addAll(byApiIdAvailability);
 
-    if (byApiId.isEmpty && byApiIdCapacity.isEmpty) return list;
+    if (byApiId.isEmpty &&
+        byApiIdCapacity.isEmpty &&
+        byApiIdAmenities.isEmpty) {
+      return list;
+    }
     return list
         .map((a) {
           final p = byApiId[a.id];
           final cap = byApiIdCapacity[a.id];
+          final amenities = byApiIdAmenities[a.id];
           var updated = a;
           if (p != null) updated = updated.withPricingPeriod(p);
           if (cap != null) updated = updated.withRoomsAvailable(cap);
+          if (amenities != null && amenities.isNotEmpty) {
+            updated = updated.withAmenities(amenities);
+          }
           return updated;
         })
         .toList();
@@ -721,11 +751,22 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
   List<Accommodation> _applySearchFilter(List<Accommodation> list) {
     if (_searchQuery.isEmpty) return list;
     final q = _searchQuery.toLowerCase();
-    return list.where((a) {
-      final name = a.name.toLowerCase();
-      final loc = a.location.toLowerCase();
-      return name.contains(q) || loc.contains(q);
+    final tokens =
+        q.split(RegExp(r'\s+')).where((t) => t.length > 1).toList();
+    final filtered = list.where((a) {
+      final hay = '${a.name} ${a.location}'.toLowerCase();
+      if (hay.contains(q)) return true;
+      if (tokens.isEmpty) return false;
+      return tokens.every((t) => hay.contains(t));
     }).toList();
+    final focusId = widget.focusAccommodationId;
+    if (focusId != null &&
+        focusId > 0 &&
+        !filtered.any((a) => a.id == focusId)) {
+      final hit = list.where((a) => a.id == focusId);
+      if (hit.isNotEmpty) return [...hit, ...filtered];
+    }
+    return filtered;
   }
 
   Widget _buildDiscoverTab(BuildContext context, bool isDark) {
@@ -780,6 +821,26 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
                 }
 
                 final focusId = widget.focusAccommodationId;
+                if (widget.openFocusedStay &&
+                    !_didOpenFocusedStay &&
+                    focusId != null &&
+                    focusId > 0) {
+                  Accommodation? match;
+                  for (final e in data) {
+                    if (e.id == focusId) {
+                      match = e;
+                      break;
+                    }
+                  }
+                  if (match != null) {
+                    _didOpenFocusedStay = true;
+                    final stay = match;
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (!mounted) return;
+                      unawaited(_openBookingFlow(stay));
+                    });
+                  }
+                }
                 if (focusId != null && !_didScrollToFocus) {
                   final hit = data.any((e) => e.id == focusId);
                   if (hit) {
@@ -1380,7 +1441,11 @@ class _AccommodationCard extends StatelessWidget {
       if (imgBytes != null && accListingLooksLikeBase64(only)) {
         return Image.memory(imgBytes, fit: BoxFit.cover);
       }
-      return accImageFromAnySource(only, fit: BoxFit.cover);
+      return accImageFromAnySource(
+        only,
+        fit: BoxFit.cover,
+        memCacheWidth: 900,
+      );
     }
 
     return _AccommodationSlideCarousel(
@@ -1392,6 +1457,7 @@ class _AccommodationCard extends StatelessWidget {
         fit: BoxFit.cover,
         width: double.infinity,
         height: double.infinity,
+        memCacheWidth: 900,
       ),
     );
   }
@@ -1479,7 +1545,12 @@ class _AccommodationCard extends StatelessWidget {
         ),
         child: Column(
           children: [
-            AspectRatio(
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: accommodation.id <= 0
+                  ? null
+                  : () => onBookStay(accommodation),
+              child: AspectRatio(
               aspectRatio: 16 / 9,
               child: Stack(
                 fit: StackFit.expand,
@@ -1627,6 +1698,7 @@ class _AccommodationCard extends StatelessWidget {
                   ),
                 ],
               ),
+            ),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
@@ -1798,9 +1870,7 @@ class _AccommodationCard extends StatelessWidget {
                                 ? 'Opening...'
                                 : hostelClosedByHost
                                 ? 'Booked / unavailable'
-                                : authReady
-                                    ? 'Book now'
-                                    : 'Book',
+                                : 'Book stay',
                             style: const TextStyle(
                               fontWeight: FontWeight.w900,
                               fontSize: 13,

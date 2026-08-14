@@ -1,3 +1,11 @@
+import 'package:intl/intl.dart';
+
+/// Receipt / transaction date, e.g. Monday 12 August 2026.
+String formatStayReceiptDate(DateTime? d) {
+  if (d == null) return '—';
+  return DateFormat('EEEE d MMMM yyyy').format(d.toLocal());
+}
+
 enum BookingStatus { pending, confirmed, cancelled, completed, unknown }
 
 BookingStatus bookingStatusFrom(String? v) {
@@ -68,7 +76,8 @@ String formatVeroAccommodationBookingRef(String? raw) {
 
 class BookingItem {
   final String id;                 // accepts "ID" | "id" | "bookingId"
-  final DateTime? bookingDate;     // ISO string -> DateTime
+  final DateTime? bookingDate;     // check-in / stay start
+  final DateTime? transactionDate; // payment / created time
   final num price;
   final num bookingFee;
   final BookingStatus status;
@@ -160,6 +169,7 @@ class BookingItem {
   BookingItem({
     required this.id,
     required this.bookingDate,
+    this.transactionDate,
     required this.price,
     required this.bookingFee,
     required this.status,
@@ -186,14 +196,52 @@ class BookingItem {
     return null;
   }
 
+  static DateTime? _parseDateTime(Object? raw) {
+    if (raw == null) return null;
+    if (raw is DateTime) return raw;
+    if (raw is int) {
+      if (raw > 999999999999) {
+        return DateTime.fromMillisecondsSinceEpoch(raw);
+      }
+      if (raw > 999999999) {
+        return DateTime.fromMillisecondsSinceEpoch(raw * 1000);
+      }
+      return null;
+    }
+    if (raw is num) return _parseDateTime(raw.toInt());
+    final s = raw.toString().trim();
+    if (s.isEmpty) return null;
+    try {
+      return DateTime.parse(s);
+    } catch (_) {
+      return null;
+    }
+  }
+
   factory BookingItem.fromJson(Map<String, dynamic> m) {
     final idAny = _first<Object>(m, ['ID','id','bookingId','BookingId']);
     final idStr = idAny?.toString() ?? '';
 
-    // date
-    DateTime? date;
-    final dRaw = _first<String>(m, ['bookingDate','BookingDate','date','createdAt']);
-    if (dRaw != null) { try { date = DateTime.parse(dRaw); } catch (_) {} }
+    DateTime? date = _parseDateTime(_first<Object>(m, [
+      'bookingDate',
+      'BookingDate',
+      'date',
+      'checkIn',
+      'check_in',
+      'checkInDate',
+    ]));
+    DateTime? txDate = _parseDateTime(_first<Object>(m, [
+      'createdAt',
+      'CreatedAt',
+      'transactionDate',
+      'transaction_date',
+      'paidAt',
+      'paymentDate',
+      'bookedAt',
+      'timestamp',
+    ]));
+    date ??= txDate;
+    txDate ??= date;
 
     DateTime? checkOut;
     final coRaw = _first<String>(m, [
@@ -382,6 +430,7 @@ class BookingItem {
     return BookingItem(
       id: idStr,
       bookingDate: date,
+      transactionDate: txDate,
       price: pr,
       bookingFee: fee,
       status: st,

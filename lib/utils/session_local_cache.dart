@@ -10,9 +10,13 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_sell
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
+import 'package:vero360_app/GernalServices/chat_outbox.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
+import 'package:vero360_app/GernalServices/local_message_database.dart';
 import 'package:vero360_app/GernalServices/profile_photo_cache.dart';
+import 'package:vero360_app/features/ride_share/services/active_ride_storage.dart';
 
 /// Wipes device-local Marketplace / cart / messaging state that must not follow
 /// the next account on the same phone (static memory + SharedPreferences).
@@ -37,6 +41,12 @@ class SessionLocalCache {
     'userId',
     'user_id',
     'messaging_firebase_uid',
+    'active_ride_id',
+    'active_ride_role',
+    'active_ride_status',
+    'active_ride_taxi_id',
+    'nearby_taxis_cache',
+    'has_driver_profile',
   ];
 
   static const _prefixes = <String>[
@@ -51,6 +61,16 @@ class SessionLocalCache {
   ];
 
   static Future<void> clearOnLogout() async {
+    await _clearLocalState(accountDeleted: false);
+  }
+
+  /// Stronger wipe after account deletion so a new signup on this phone
+  /// cannot reopen the previous chats / rides from Hive or prefs.
+  static Future<void> clearOnAccountDeletion() async {
+    await _clearLocalState(accountDeleted: true);
+  }
+
+  static Future<void> _clearLocalState({required bool accountDeleted}) async {
     CartService.clearSessionCache();
     CartServiceProvider.clear();
     MerchantSellerLoader.clearSessionCaches();
@@ -71,9 +91,24 @@ class SessionLocalCache {
     try {
       await GuestBookingLocalCache.clearOnLogout();
     } catch (_) {}
-
     try {
       await NotificationStore.instance.clearForLogout();
+    } catch (_) {}
+    try {
+      await ActiveRideStorage.clear();
+    } catch (_) {}
+    try {
+      await LocalMessageDatabase.clearAllBoxes();
+    } catch (_) {}
+    try {
+      if (accountDeleted) {
+        await BackendMessagingCache.clearAll();
+      } else {
+        await BackendMessagingCache.clearSessionThreads();
+      }
+    } catch (_) {}
+    try {
+      await ChatOutbox.clearAll();
     } catch (_) {}
 
     try {

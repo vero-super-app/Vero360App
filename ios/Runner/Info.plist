@@ -46,17 +46,6 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 
-<key>CFBundleURLTypes</key>
-<array>
-  <dict>
-    <key>CFBundleURLSchemes</key>
-    <array>
-      <!-- Firebase / Google Sign-In URL scheme -->
-      <string>com.googleusercontent.apps.1010595167807-404sciqkn2mt62srt60tiaa86evvhl59</string>
-    </array>
-  </dict>
-</array>
-
 	<!-- Performance -->
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
@@ -67,9 +56,14 @@
 	<key>GMSApiKey</key>
 	<string>AIzaSyBqvHbaR4EooNVrk9sgULwmIFJydKhERiE</string>
 
-	<!-- 🔸 Deep link so scanners can open your app: vero360://users/me -->
 	<key>CFBundleURLTypes</key>
 	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.1010595167807-3c4t2b7l8ogrioanlbu30s8tiqk9cu5p</string>
+			</array>
+		</dict>
 		<dict>
 			<key>CFBundleURLSchemes</key>
 			<array>

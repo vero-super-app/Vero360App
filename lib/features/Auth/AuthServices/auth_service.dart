@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 import 'package:vero360_app/GernalServices/api_client.dart';
+import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
@@ -1116,7 +1117,9 @@ class AuthService {
       BuildContext context) async {
     try {
       // Wipe Firestore/API marketplace + profile data while still authenticated.
-      await AccountDataPurge.purgeCurrentUser();
+      await AccountDataPurge.purgeCurrentUser(
+        budget: const Duration(seconds: 6),
+      );
     } catch (_) {}
 
     bool firebaseDeleted = true;
@@ -1239,6 +1242,9 @@ class AuthService {
         'messaging_firebase_uid',
         'role',
         'user_role',
+        RoleSessionService.intendedRoleKey,
+        RoleSessionService.intendedServiceKey,
+        RoleSessionService.intendedUidKey,
         'has_driver_profile',
         'fullName',
         'name',

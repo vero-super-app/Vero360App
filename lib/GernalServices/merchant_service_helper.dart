@@ -54,6 +54,58 @@ Future<void> hydrateMerchantServiceFromFirestore(SharedPreferences prefs) async 
   } catch (_) {}
 }
 
+/// Discover the merchant vertical for [uid] without trusting a leftover prefs value.
+/// Prefers accommodation/food/courier over a generic marketplace default.
+Future<String?> resolveMerchantServiceForUid(String uid) async {
+  final id = uid.trim();
+  if (id.isEmpty) return null;
+
+  String? fromUsers;
+  try {
+    final doc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(id)
+        .get()
+        .timeout(const Duration(seconds: 8));
+    if (doc.exists && doc.data() != null) {
+      fromUsers = normalizeMerchantServiceKey(
+        doc.data()!['merchantService']?.toString() ??
+            doc.data()!['merchant_service']?.toString() ??
+            doc.data()!['serviceType']?.toString(),
+      );
+    }
+  } catch (_) {}
+
+  String? fromCollection;
+  const services = ['accommodation', 'food', 'courier', 'marketplace'];
+  for (final service in services) {
+    try {
+      final collectionName = service == 'marketplace'
+          ? 'marketplace_merchants'
+          : '${service}_merchants';
+      final merchantDoc = await FirebaseFirestore.instance
+          .collection(collectionName)
+          .doc(id)
+          .get()
+          .timeout(const Duration(seconds: 5));
+      if (merchantDoc.exists) {
+        fromCollection = service;
+        break;
+      }
+    } catch (_) {}
+  }
+
+  if (fromCollection != null && fromCollection != 'marketplace') {
+    return fromCollection;
+  }
+  if (fromUsers != null &&
+      fromUsers.isNotEmpty &&
+      fromUsers != 'marketplace') {
+    return fromUsers;
+  }
+  return fromCollection ?? fromUsers;
+}
+
 class MerchantServiceHelper {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 

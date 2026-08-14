@@ -1,17 +1,14 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:ui' as ui;
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:vero360_app/utils/low_ram_android.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
-import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_guard.dart';
 
@@ -217,73 +214,35 @@ class _BottomnavbarState extends State<Bottomnavbar>
   }
 
   Future<void> _fetchAndUpdateRoleFromServer() async {
-    final token = await AuthHandler.getTokenForApi();
+    final prefs = await SharedPreferences.getInstance();
+    final token = RoleSessionService.readToken(prefs) ??
+        await AuthHandler.getTokenForApi();
     if (token == null || token.isEmpty) return;
     try {
-      final resp = await http.get(
-        ApiConfig.endpoint('/users/me'),
-        headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'},
-      ).timeout(const Duration(seconds: 3));
-      if (resp.statusCode != 200) return;
-      final decoded = json.decode(resp.body);
-      final user = (decoded is Map && decoded['data'] is Map)
-          ? Map<String, dynamic>.from(decoded['data'])
-          : (decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{});
-      final prefs = await SharedPreferences.getInstance();
-      final backendRole = (user['role'] ?? '').toString().toLowerCase();
-      final cachedRole = (prefs.getString('user_role') ?? '').toLowerCase();
-      if (cachedRole.isNotEmpty && cachedRole != 'customer' && backendRole == 'customer') {
-        await _putRoleToBackend(token, cachedRole); return;
-      }
-      if (backendRole == 'customer') {
-        final firestoreRole = await _getRoleFromFirestore();
-        if (firestoreRole != null && firestoreRole != 'customer' && firestoreRole != backendRole) {
-          await prefs.setString('user_role', firestoreRole);
-          await prefs.setString('role', firestoreRole);
-          await _putRoleToBackend(token, firestoreRole);
-          if (mounted) { await _checkUserRoleAndSetup(); setState(() {}); }
-          return;
-        }
-      }
-      final isMerchant = RoleHelper.isMerchant(user);
-      final isDriver = !isMerchant && RoleHelper.isDriver(user);
-      var newRole = isMerchant ? 'merchant' : (isDriver ? 'driver' : 'customer');
-      // Keep merchant when backend still reports customer (PUT may have failed).
-      if (newRole == 'customer' && cachedRole == 'merchant') {
-        newRole = 'merchant';
-      }
-      // Do not keep stale "driver" when server says customer — a driver DB row ≠ driver session.
-      if (newRole == 'customer' && cachedRole == 'driver') {
-        newRole = 'customer';
-      }
-      if (cachedRole != newRole) {
-        await prefs.setString('user_role', newRole);
-        await prefs.setString('role', newRole);
-      }
+      final result = await RoleSessionService.syncFromServer(
+        prefs: prefs,
+        token: token,
+      );
+      if (result == null || result.isUnauthorized || !result.hasUser) return;
       await loadDriverStatusFromPrefs();
-      if (mounted && (_isMerchant != isMerchant || _isDriver != isDriver)) { await _checkUserRoleAndSetup(); if (mounted) setState(() {}); }
+      final isMerchant = result.isMerchant;
+      final isDriver = result.isDriver;
+      if (mounted &&
+          (_isMerchant != isMerchant || _isDriver != isDriver)) {
+        await _checkUserRoleAndSetup();
+        if (mounted) setState(() {});
+      }
     } catch (_) {}
-  }
-
-  Future<void> _putRoleToBackend(String token, String role) async {
-    try { await http.put(ApiConfig.endpoint('/users/me'), headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json', 'Content-Type': 'application/json'}, body: json.encode({'role': role})).timeout(const Duration(seconds: 6)); } catch (_) {}
-  }
-
-  Future<String?> _getRoleFromFirestore() async {
-    try {
-      final fbUser = FirebaseAuth.instance.currentUser;
-      if (fbUser == null) return null;
-      final doc = await FirebaseFirestore.instance.collection('users').doc(fbUser.uid).get();
-      if (doc.exists && doc.data() != null) return (doc.data()!['role'] ?? '').toString().toLowerCase();
-    } catch (_) {}
-    return null;
   }
 
   Future<void> _checkUserRoleAndSetup({bool forcePagesRebuild = false}) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = (prefs.getString('user_role') ?? prefs.getString('role') ?? '').toLowerCase().trim();
-    final nextMerchant = raw == 'merchant';
-    final nextDriver = raw == 'driver';
+    final raw = RoleHelper.normalizeAccountRole(
+          prefs.getString('user_role') ?? prefs.getString('role'),
+        ) ??
+        RoleHelper.customer;
+    final nextMerchant = raw == RoleHelper.merchant;
+    final nextDriver = raw == RoleHelper.driver;
 
     // Keep the current tab. Only rebuild page widgets when role flags change,
     // account (uid) changes, or on first setup — rebuilding every auth/role
@@ -339,12 +298,20 @@ class _BottomnavbarState extends State<Bottomnavbar>
 
   Widget _merchantProfileTab(SharedPreferences prefs) {
     final email = prefs.getString('email') ?? widget.email;
-    final key = normalizeMerchantServiceKey(prefs.getString('merchant_service')) ?? 'marketplace';
+    final key = normalizeMerchantServiceKey(prefs.getString('merchant_service'));
     return switch (key) {
       'food' => FoodMerchantDashboard(email: email, embeddedInMainNav: true),
-      'accommodation' => AccommodationMerchantDashboard(email: email),
+      'accommodation' => AccommodationMerchantDashboard(
+          email: email,
+          embeddedInMainNav: true,
+        ),
       'courier' => CourierMerchantDashboard(email: email),
-      _ => MarketplaceMerchantDashboard(email: email, onBackToHomeTab: () => setState(() => _selectedIndex = 0), embeddedInMainNav: true),
+      'marketplace' => MarketplaceMerchantDashboard(
+          email: email,
+          onBackToHomeTab: () => setState(() => _selectedIndex = 0),
+          embeddedInMainNav: true,
+        ),
+      _ => const ProfilePage(),
     };
   }
 

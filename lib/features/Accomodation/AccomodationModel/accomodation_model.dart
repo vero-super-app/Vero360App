@@ -3,6 +3,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_amenities.dart';
+
 /// How [Accommodation.price] is quoted (create/update sends `pricingPeriod` to the API).
 enum AccommodationPricePeriod {
   night,
@@ -177,6 +179,11 @@ class Accommodation {
   /// Additional gallery URLs/paths
   final List<String> gallery;
 
+  /// What this place offers (Wi-Fi, parking, pool, …).
+  final List<String>? _amenities;
+
+  List<String> get amenities => _amenities ?? const [];
+
   Accommodation({
     required this.id,
     required this.name,
@@ -191,7 +198,9 @@ class Accommodation {
     this.image,
     this.imageBytes,
     this.gallery = const [],
-  }) : _pricePeriod = pricePeriod;
+    List<String>? amenities,
+  })  : _pricePeriod = pricePeriod,
+        _amenities = amenities;
 
   /// Same listing with an explicit rate unit (e.g. after merging Firestore `pricingPeriod`).
   Accommodation withPricingPeriod(AccommodationPricePeriod period) {
@@ -209,6 +218,7 @@ class Accommodation {
       image: image,
       imageBytes: imageBytes,
       gallery: gallery,
+      amenities: _amenities,
     );
   }
 
@@ -227,6 +237,26 @@ class Accommodation {
       image: image,
       imageBytes: imageBytes,
       gallery: gallery,
+      amenities: _amenities,
+    );
+  }
+
+  Accommodation withAmenities(List<String> next) {
+    return Accommodation(
+      id: id,
+      name: name,
+      location: location,
+      description: description,
+      price: price,
+      pricePeriod: pricePeriod,
+      accommodationType: accommodationType,
+      roomsAvailable: roomsAvailable,
+      owner: owner,
+      hostMerchantUid: hostMerchantUid,
+      image: image,
+      imageBytes: imageBytes,
+      gallery: gallery,
+      amenities: next,
     );
   }
 
@@ -332,6 +362,12 @@ class Accommodation {
       image: rawImage.isEmpty ? null : rawImage,
       imageBytes: imageBytes,
       gallery: gallery,
+      amenities: parseAccommodationAmenities(
+        json['amenities'] ??
+            json['servicesOffered'] ??
+            json['facilities'] ??
+            json['features'],
+      ),
     );
   }
 }

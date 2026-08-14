@@ -361,26 +361,15 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                   elevation: 0,
                   backgroundColor: AppColors.brandOrangeDeep,
                   automaticallyImplyLeading: false,
-                  flexibleSpace: FlexibleSpaceBar(
-                    collapseMode: CollapseMode.parallax,
-                    expandedTitleScale: 1.0,
-                    background: _HeroHeader(
-                      greeting:  _greeting(),
-                      name:      _displayName(),
-                      heroFade:  _heroFade,
-                      heroSlide: _heroSlide,
-                      onNotifTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const NotificationsPage()),
-                      ),
-                      onSearchTap: _onSearchTap,
+                  flexibleSpace: _HeroFlexibleSpace(
+                    greeting:  _greeting(),
+                    name:      _displayName(),
+                    heroFade:  _heroFade,
+                    heroSlide: _heroSlide,
+                    onNotifTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const NotificationsPage()),
                     ),
-                    title: _HeroFlexibleTitle(
-                      onSearchTap: _onSearchTap,
-                      onNotifTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const NotificationsPage()),
-                      ),
-                    ),
-                    titlePadding: EdgeInsets.zero,
+                    onSearchTap: _onSearchTap,
                   ),
                   actions: const [],
                 ),
@@ -425,11 +414,18 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                   child: Padding(
                     padding: const EdgeInsets.only(top: 24),
                     child: _NearbySection(
-                      onOpenService: (key) => _openServiceStatic(
-                        context,
-                        key,
-                        isDriverHome: widget.isDriverHome,
-                      ),
+                      onOpenService: (key) {
+                        if (RideShareEntryResolver.isRideShareServiceKey(key)) {
+                          _openRideShareEntry();
+                          return;
+                        }
+                        _openServiceStatic(
+                          context,
+                          key,
+                          isDriverHome: widget.isDriverHome,
+                          nearbyLocation: true,
+                        );
+                      },
                     ),
                   ),
                 ),
@@ -524,11 +520,15 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
     BuildContext context,
     String key, {
     bool isDriverHome = false,
+    bool nearbyLocation = false,
   }) {
     Widget page;
     switch (key) {
       case 'mainmarketplace':
-        page = MarketPage(cartService: CartService('', apiPrefix: ApiConfig.apiPrefix));
+        page = MarketPage(
+          cartService: CartService('', apiPrefix: ApiConfig.apiPrefix),
+          preferNearbyLocation: nearbyLocation,
+        );
         break;
       case 'food':
       case 'grocery':
@@ -708,8 +708,24 @@ class _HeroHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final settings =
+        context.dependOnInheritedWidgetOfExactType<FlexibleSpaceBarSettings>();
+    double greetingOpacity = 1.0;
+    double chromeOpacity = 1.0;
+    if (settings != null) {
+      final span =
+          (settings.maxExtent - settings.minExtent).clamp(1e-6, double.infinity);
+      final expandT =
+          ((settings.currentExtent - settings.minExtent) / span).clamp(0.0, 1.0);
+      // Hide greeting/search well before they slide under the pinned toolbar.
+      greetingOpacity = ((expandT - 0.62) / 0.38).clamp(0.0, 1.0);
+      // Fade hero chrome as the pinned scrim + collapsed bar take over.
+      chromeOpacity = ((expandT - 0.78) / 0.22).clamp(0.0, 1.0);
+    }
+
     return Container(
       decoration: const BoxDecoration(gradient: kHeroGradient),
+      clipBehavior: Clip.hardEdge,
       child: Stack(
         children: [
           /* decorative blobs */
@@ -745,14 +761,19 @@ class _HeroHeader extends StatelessWidget {
           ),
 
           SafeArea(
-            child: Padding(
+            child: SingleChildScrollView(
+              physics: const NeverScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 22),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  /* top row */
-                  Row(
-                    children: [
+                  /* top row — fade as the pinned scrim takes over */
+                  IgnorePointer(
+                    ignoring: chromeOpacity < 0.08,
+                    child: Opacity(
+                      opacity: chromeOpacity,
+                      child: Row(
+                        children: [
                       Container(
                         padding: const EdgeInsets.all(2.5),
                         decoration: const BoxDecoration(
@@ -814,46 +835,51 @@ class _HeroHeader extends StatelessWidget {
                         },
                       ),
                     ],
+                      ),
+                    ),
                   ),
 
                   const SizedBox(height: 20),
 
                   /* greeting */
-                  FadeTransition(
-                    opacity: heroFade,
-                    child: SlideTransition(
-                      position: heroSlide,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '$greeting 👋',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white.withOpacity(0.80),
+                  Opacity(
+                    opacity: greetingOpacity,
+                    child: FadeTransition(
+                      opacity: heroFade,
+                      child: SlideTransition(
+                        position: heroSlide,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '$greeting 👋',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white.withOpacity(0.80),
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            'Hi, $name',
-                            style: const TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.w900,
-                              color: Colors.white,
-                              letterSpacing: -0.6,
-                              height: 1.15,
+                            const SizedBox(height: 3),
+                            Text(
+                              'Hi, $name',
+                              style: const TextStyle(
+                                fontSize: 24,
+                                fontWeight: FontWeight.w900,
+                                color: Colors.white,
+                                letterSpacing: -0.6,
+                                height: 1.15,
+                              ),
                             ),
-                          ),
-                          Text(
-                            'What do you need today?',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white.withOpacity(0.75),
+                            Text(
+                              'What do you need today?',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white.withOpacity(0.75),
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -861,36 +887,42 @@ class _HeroHeader extends StatelessWidget {
                   const SizedBox(height: 14),
 
                   /* search row — min height + padding so text scale / line height never clips */
-                  GestureDetector(
-                    onTap: onSearchTap,
-                    child: Container(
-                      width: double.infinity,
-                      constraints: const BoxConstraints(minHeight: 52),
-                      decoration: BoxDecoration(
-                        color:        Colors.white.withOpacity(0.96),
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                      alignment: Alignment.centerLeft,
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Icon(Icons.search_rounded, color: Color(0xFFBBBBBB), size: 20),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'what are you looking for?',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color:      Color(0xFF999999),
-                                fontWeight: FontWeight.w600,
-                                fontSize:   13,
-                                height:     1.2,
-                              ),
-                            ),
+                  IgnorePointer(
+                    ignoring: greetingOpacity < 0.08,
+                    child: Opacity(
+                      opacity: greetingOpacity,
+                      child: GestureDetector(
+                        onTap: onSearchTap,
+                        child: Container(
+                          width: double.infinity,
+                          constraints: const BoxConstraints(minHeight: 52),
+                          decoration: BoxDecoration(
+                            color:        Colors.white.withOpacity(0.96),
+                            borderRadius: BorderRadius.circular(14),
                           ),
-                        ],
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                          alignment: Alignment.centerLeft,
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Icon(Icons.search_rounded, color: Color(0xFFBBBBBB), size: 20),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'what are you looking for?',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color:      Color(0xFF999999),
+                                    fontWeight: FontWeight.w600,
+                                    fontSize:   13,
+                                    height:     1.2,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -904,14 +936,21 @@ class _HeroHeader extends StatelessWidget {
   }
 }
 
-/// [FlexibleSpaceBar] draws `title` on top of `background` at the bottom of the expanded
-/// region — so the collapsed toolbar would sit on the hero search field. Fade it out while
-/// expanded and ignore hits so the hero UI stays visible and tappable.
-class _HeroFlexibleTitle extends StatelessWidget {
+/// Pinned hero chrome: background + a top scrim so scrolling text
+/// never reads through the collapsed toolbar.
+class _HeroFlexibleSpace extends StatelessWidget {
+  final String greeting;
+  final String name;
+  final Animation<double> heroFade;
+  final Animation<Offset> heroSlide;
   final VoidCallback onSearchTap;
   final VoidCallback onNotifTap;
 
-  const _HeroFlexibleTitle({
+  const _HeroFlexibleSpace({
+    required this.greeting,
+    required this.name,
+    required this.heroFade,
+    required this.heroSlide,
     required this.onSearchTap,
     required this.onNotifTap,
   });
@@ -920,20 +959,57 @@ class _HeroFlexibleTitle extends StatelessWidget {
   Widget build(BuildContext context) {
     final settings =
         context.dependOnInheritedWidgetOfExactType<FlexibleSpaceBarSettings>();
-    if (settings == null) {
-      return _CollapsedBar(onSearchTap: onSearchTap, onNotifTap: onNotifTap);
+    final paddingTop = MediaQuery.paddingOf(context).top;
+    double expandT = 1.0;
+    if (settings != null) {
+      final span =
+          (settings.maxExtent - settings.minExtent).clamp(1e-6, double.infinity);
+      expandT =
+          ((settings.currentExtent - settings.minExtent) / span).clamp(0.0, 1.0);
     }
-    final span = (settings.maxExtent - settings.minExtent).clamp(1e-6, double.infinity);
-    final expandT =
-        ((settings.currentExtent - settings.minExtent) / span).clamp(0.0, 1.0);
     final collapsedVisible = 1.0 - expandT;
+    final scrimOpacity = ((1.0 - expandT) / 0.22).clamp(0.0, 1.0);
 
-    return IgnorePointer(
-      ignoring: collapsedVisible < 0.12,
-      child: Opacity(
-        opacity: collapsedVisible,
-        child: _CollapsedBar(onSearchTap: onSearchTap, onNotifTap: onNotifTap),
-      ),
+    return Stack(
+      fit: StackFit.expand,
+      clipBehavior: Clip.hardEdge,
+      children: [
+        _HeroHeader(
+          greeting: greeting,
+          name: name,
+          heroFade: heroFade,
+          heroSlide: heroSlide,
+          onNotifTap: onNotifTap,
+          onSearchTap: onSearchTap,
+        ),
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          height: paddingTop + kToolbarHeight,
+          child: IgnorePointer(
+            child: ColoredBox(
+              color: AppColors.brandOrangeDeep.withOpacity(scrimOpacity),
+            ),
+          ),
+        ),
+        Positioned(
+          top: paddingTop,
+          left: 0,
+          right: 0,
+          height: kToolbarHeight,
+          child: IgnorePointer(
+            ignoring: collapsedVisible < 0.12,
+            child: Opacity(
+              opacity: collapsedVisible,
+              child: _CollapsedBar(
+                onSearchTap: onSearchTap,
+                onNotifTap: onNotifTap,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1278,11 +1354,21 @@ class _NearbySection extends StatefulWidget {
   State<_NearbySection> createState() => _NearbySectionState();
 }
 
+class _NearbyItem {
+  final String emoji;
+  final String name;
+  final String rating;
+  final String serviceKey;
+  const _NearbyItem(this.emoji, this.name, this.rating, this.serviceKey);
+}
+
 class _NearbySectionState extends State<_NearbySection> {
   static const _items = [
-    ['🍔', 'Food & Restaurants', '4.6', 'food'],
-    ['🏨', 'Accommodations',     '4.7', 'accommodation'],
-    ['🚲', 'VeroBike',   '4.9', 'verobike'],
+    _NearbyItem('🚗', 'Vero Ride nearby', '4.8', 'taxi'),
+    _NearbyItem('🛒', 'Marketplace nearby', '4.7', 'mainmarketplace'),
+    _NearbyItem('🍔', 'Food & Restaurants', '4.6', 'food'),
+    _NearbyItem('🏨', 'Stays nearby', '4.7', 'accommodation'),
+    _NearbyItem('🚲', 'Vero Bike nearby', '4.9', 'vero_bike'),
   ];
   int _index = 0;
 
@@ -1313,10 +1399,10 @@ class _NearbySectionState extends State<_NearbySection> {
           itemBuilder: (_, i, __) {
             final it = _items[i];
             return _NearbyCard(
-              emoji:  it[0],
-              name:   it[1],
-              rating: it[2],
-              onOpen: () => widget.onOpenService(it[3]),
+              emoji:  it.emoji,
+              name:   it.name,
+              rating: it.rating,
+              onOpen: () => widget.onOpenService(it.serviceKey),
             );
           },
         ),
@@ -1330,7 +1416,12 @@ class _NearbySectionState extends State<_NearbySection> {
 class _NearbyCard extends StatelessWidget {
   final String emoji, name, rating;
   final VoidCallback onOpen;
-  const _NearbyCard({required this.emoji, required this.name, required this.rating, required this.onOpen});
+  const _NearbyCard({
+    required this.emoji,
+    required this.name,
+    required this.rating,
+    required this.onOpen,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1658,27 +1749,22 @@ class _NearYouCarousel extends StatefulWidget {
 class _NearYouCarouselState extends State<_NearYouCarousel> {
   int _index = 0;
 
-  void _openNearby(BuildContext context, String name) {
-    final t = name.toLowerCase();
-    String serviceKey;
-    if (t.contains('ride')) {
-      serviceKey = 'taxi';
-    } else if (t.contains('food')) {
-      serviceKey = 'food';
-    } else if (t.contains('accom')) {
-      serviceKey = 'accommodation';
-    } else {
-      serviceKey = 'more';
-    }
-    _Vero360HomepageState._openServiceStatic(context, serviceKey);
+  void _openNearby(BuildContext context, String serviceKey) {
+    _Vero360HomepageState._openServiceStatic(
+      context,
+      serviceKey,
+      nearbyLocation: true,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final items = const [
-      ['🍔', 'Food & Restaurants', '4.6'],
-      ['🏨', 'Accomodations', '4.7'],
-      ['🚲', 'VeroBike', '4.9'],
+      _NearbyItem('🚗', 'Vero Ride nearby', '4.8', 'taxi'),
+      _NearbyItem('🛒', 'Marketplace nearby', '4.7', 'mainmarketplace'),
+      _NearbyItem('🍔', 'Food & Restaurants', '4.6', 'food'),
+      _NearbyItem('🏨', 'Stays nearby', '4.7', 'accommodation'),
+      _NearbyItem('🚲', 'Vero Bike nearby', '4.9', 'vero_bike'),
     ];
 
     return _Section(
@@ -1732,10 +1818,10 @@ class _NearYouCarouselState extends State<_NearYouCarousel> {
                   itemBuilder: (_, i, __) {
                     final it = items[i];
                     return _ProviderCard(
-                      emoji: it[0],
-                      name: it[1],
-                      rating: it[2],
-                      onOpen: () => _openNearby(context, it[1]),
+                      emoji: it.emoji,
+                      name: it.name,
+                      rating: it.rating,
+                      onOpen: () => _openNearby(context, it.serviceKey),
                     );
                   },
                 ),

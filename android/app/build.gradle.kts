@@ -78,8 +78,15 @@ android {
             create("release") {
                 keyAlias = keystoreProperties["keyAlias"] as String
                 keyPassword = keystoreProperties["keyPassword"] as String
-                storeFile = file(keystoreProperties["storeFile"] as String)
                 storePassword = keystoreProperties["storePassword"] as String
+                val rawStore = keystoreProperties["storeFile"] as String
+                val fromAndroid = rootProject.file(rawStore)
+                val fromApp = file(rawStore)
+                storeFile = when {
+                    fromAndroid.exists() -> fromAndroid
+                    fromApp.exists() -> fromApp
+                    else -> fromAndroid
+                }
             }
         }
     }

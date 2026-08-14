@@ -29,10 +29,8 @@ import 'package:vero360_app/Home/CustomersProfilepage.dart';
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 
-import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
-import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_merchant_dashboard.dart';
-import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
-import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourierMerchant/courier_merchant_dashboard.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_share_link.dart';
+import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/app_nav_key.dart';
@@ -93,21 +91,11 @@ void _openPasswordResetFromDeepLink(Uri uri) {
   );
 }
 
-/// Root merchant shell: must match [Bottomnavbar] / auth screens (prefs `merchant_service`).
+/// Root merchant shell: one [Bottomnavbar], Dashboard tab = vertical UI.
 Widget merchantDashboardFromPrefs(String email, SharedPreferences prefs) {
   final displayEmail =
       email.trim().isNotEmpty ? email : (prefs.getString('email') ?? '');
-  final key = normalizeMerchantServiceKey(prefs.getString('merchant_service')) ??
-      'marketplace';
-  return switch (key) {
-    'food' => FoodMerchantDashboard(email: displayEmail),
-    'accommodation' => AccommodationMerchantDashboard(email: displayEmail),
-    'courier' => CourierMerchantDashboard(email: displayEmail),
-    _ => MarketplaceMerchantDashboard(
-        email: displayEmail,
-        onBackToHomeTab: () {},
-      ),
-  };
+  return Bottomnavbar(email: displayEmail, initialIndex: 4);
 }
 
 /// Set in [MyApp] initState; used by [OnboardingGate] to re-run role-based shell redirect.
@@ -136,14 +124,34 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   }
 }
 
-const FirebaseOptions _kFirebaseOptions = FirebaseOptions(
+const FirebaseOptions _kFirebaseOptionsAndroid = FirebaseOptions(
   apiKey: 'AIzaSyCQ5_4N2J_xwKqmY-lAa8-ifRxovoRTTYk',
   authDomain: 'vero360app-ca423.firebaseapp.com',
   projectId: 'vero360app-ca423',
   storageBucket: 'vero360app-ca423.firebasestorage.app',
   messagingSenderId: '1010595167807',
-  appId: '1:1010595167807:android:87af3098cda575fd1dc28a',
+  appId: '1:1010595167807:android:86f213f63fa2f8391dc28a',
 );
+
+const FirebaseOptions _kFirebaseOptionsIos = FirebaseOptions(
+  apiKey: 'AIzaSyBJX498cAin_BXc_IAvs_spisGl2kKtuCE',
+  authDomain: 'vero360app-ca423.firebaseapp.com',
+  databaseURL: 'https://vero360app-ca423-default-rtdb.firebaseio.com',
+  projectId: 'vero360app-ca423',
+  storageBucket: 'vero360app-ca423.firebasestorage.app',
+  messagingSenderId: '1010595167807',
+  appId: '1:1010595167807:ios:83dcb52c7e1285251dc28a',
+  iosBundleId: 'com.vero265.app',
+);
+
+FirebaseOptions get _kFirebaseOptions {
+  if (!kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.macOS)) {
+    return _kFirebaseOptionsIos;
+  }
+  return _kFirebaseOptionsAndroid;
+}
 
 bool _fcmBackgroundHandlerRegistered = false;
 Future<bool>? _firebaseHealInFlight;
@@ -361,10 +369,10 @@ class _AppBootstrapState extends State<AppBootstrap> {
             await prefsWarm.timeout(const Duration(milliseconds: 200));
         onboardingDone = prefs.getBool('onboarding_completed_v1') ?? false;
         email = prefs.getString('email') ?? '';
-        final role =
-            (prefs.getString('user_role') ?? prefs.getString('role') ?? '')
-                .toLowerCase()
-                .trim();
+        final role = RoleHelper.normalizeAccountRole(
+              prefs.getString('user_role') ?? prefs.getString('role'),
+            ) ??
+            'customer';
         if (role == 'merchant' || role == 'driver') {
           initialRole = role;
         }
@@ -620,17 +628,37 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           MaterialPageRoute(builder: (_) => const OrdersPage()),
           (route) => route.isFirst,
         );
+      } else if (isAccommodationShareUri(uri)) {
+        _openAccommodationFromShare(uri);
       }
     }, onError: (_) {});
 
     try {
       final initial = await _appLinks.getInitialLink();
-      if (initial != null && _isPasswordResetDeepLink(initial)) {
+      if (initial != null) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          _openPasswordResetFromDeepLink(initial);
+          if (_isPasswordResetDeepLink(initial)) {
+            _openPasswordResetFromDeepLink(initial);
+          } else if (isAccommodationShareUri(initial)) {
+            _openAccommodationFromShare(initial);
+          }
         });
       }
     } catch (_) {}
+  }
+
+  void _openAccommodationFromShare(Uri uri) {
+    final id = accommodationIdFromShareUri(uri);
+    final q = accommodationSearchQueryFromShareUri(uri);
+    navKey.currentState?.push(
+      MaterialPageRoute(
+        builder: (_) => AccommodationMainPage(
+          focusAccommodationId: (id != null && id > 0) ? id : null,
+          initialSearchQuery: q,
+          openFocusedStay: id != null && id > 0,
+        ),
+      ),
+    );
   }
 
   void _trimImageMemory() {
@@ -728,9 +756,18 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     final onboardingDone = prefs.getBool('onboarding_completed_v1') ?? false;
     if (!onboardingDone) return;
-    final role = (prefs.getString('user_role') ?? prefs.getString('role') ?? '')
-        .toLowerCase();
+    final role = RoleHelper.normalizeAccountRole(
+          prefs.getString('user_role') ?? prefs.getString('role'),
+        ) ??
+        'customer';
     final email = prefs.getString('email') ?? '';
+    final token = RoleSessionService.readToken(prefs);
+    final signedIn = FirebaseAuth.instance.currentUser != null ||
+        (token != null && token.trim().isNotEmpty);
+    if (!signedIn) {
+      if (_currentShell != 'customer') _pushCustomer(email);
+      return;
+    }
 
     // First launch: _currentShell is '' so we push once. Later calls skip when
     // already on the right shell (avoids Home blink / tab reset).
@@ -778,15 +815,35 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     await prefs.remove('jwt_token');
     await prefs.remove('token');
     await prefs.remove('authToken');
-    await prefs.remove('user_role');
-    await prefs.remove('role');
+    await RoleSessionService.clearRoleKeys(prefs);
   }
 
   Future<void> _pushMerchant(String email) async {
     if (!mounted) return;
     final prefs = await SharedPreferences.getInstance();
     await hydrateMerchantServiceFromFirestore(prefs);
+    final uid = (FirebaseAuth.instance.currentUser?.uid ??
+            prefs.getString('uid') ??
+            '')
+        .trim();
+    var service = normalizeMerchantServiceKey(prefs.getString('merchant_service'));
+    if (uid.isNotEmpty &&
+        (service == null || service.isEmpty || service == 'marketplace')) {
+      final discovered = await resolveMerchantServiceForUid(uid);
+      if (discovered != null &&
+          discovered.isNotEmpty &&
+          (service == null ||
+              service.isEmpty ||
+              (service == 'marketplace' && discovered != 'marketplace'))) {
+        service = discovered;
+        await persistMerchantServiceFromApi(prefs, discovered);
+      }
+    }
     if (!mounted) return;
+    if (service == null || service.isEmpty) {
+      if (_currentShell != 'customer') _pushCustomer(email);
+      return;
+    }
     _currentShell = 'merchant';
     navKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(
@@ -1060,6 +1117,20 @@ class AuthFlow {
       String email, bool isMerchant, bool isDriver) async {
     final prefs = await SharedPreferences.getInstance();
     if (isMerchant) {
+      await hydrateMerchantServiceFromFirestore(prefs);
+      final uid = (FirebaseAuth.instance.currentUser?.uid ??
+              prefs.getString('uid') ??
+              '')
+          .trim();
+      var service =
+          normalizeMerchantServiceKey(prefs.getString('merchant_service'));
+      if (uid.isNotEmpty &&
+          (service == null || service.isEmpty || service == 'marketplace')) {
+        final discovered = await resolveMerchantServiceForUid(uid);
+        if (discovered != null && discovered.isNotEmpty) {
+          await persistMerchantServiceFromApi(prefs, discovered);
+        }
+      }
       navKey.currentState?.pushAndRemoveUntil(
         MaterialPageRoute(
           builder: (_) => merchantDashboardFromPrefs(email, prefs),
@@ -1107,23 +1178,7 @@ class AuthFlow {
         final isMerchant = RoleHelper.isMerchant(user);
         final isDriver = !isMerchant && RoleHelper.isDriver(user);
 
-        // Persist role to preferences
-        if (isMerchant) {
-          await prefs.setString('user_role', 'merchant');
-          await prefs.setString('role', 'merchant');
-          await persistMerchantServiceFromApi(
-            prefs,
-            user['merchantService']?.toString() ??
-                user['serviceType']?.toString() ??
-                user['merchant_service']?.toString(),
-          );
-        } else if (isDriver) {
-          await prefs.setString('user_role', 'driver');
-          await prefs.setString('role', 'driver');
-        } else {
-          await prefs.setString('user_role', 'customer');
-          await prefs.setString('role', 'customer');
-        }
+        await RoleSessionService.persistUserToPrefs(prefs, user);
 
         await loadDriverStatusFromPrefs();
 
@@ -1152,8 +1207,7 @@ class AuthFlow {
     await p.remove('jwt_token');
     await p.remove('token');
     await p.remove('authToken');
-    await p.remove('user_role');
-    await p.remove('role');
+    await RoleSessionService.clearRoleKeys(p);
     await p.remove('has_driver_profile');
     resetDriverSessionCache();
     try {

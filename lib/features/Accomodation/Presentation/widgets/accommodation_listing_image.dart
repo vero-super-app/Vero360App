@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 final Map<String, Future<String>> _accDlUrlCache = {};
 
@@ -51,6 +52,8 @@ Widget accImageFromAnySource(
   double? width,
   double? height,
   BorderRadius? radius,
+  int? memCacheWidth,
+  int? memCacheHeight,
 }) {
   final s = raw.trim();
 
@@ -78,29 +81,16 @@ Widget accImageFromAnySource(
   }
 
   if (accListingIsHttp(s)) {
-    return wrap(Image.network(
-      s,
-      fit: fit,
-      width: width,
-      height: height,
-      errorBuilder: (_, __, ___) => Container(
+    return wrap(
+      ResilientCachedNetworkImage(
+        url: s,
+        fit: fit,
         width: width,
         height: height,
-        color: Colors.grey.shade200,
-        alignment: Alignment.center,
-        child: const Icon(Icons.image_not_supported_rounded),
+        memCacheWidth: memCacheWidth,
+        memCacheHeight: memCacheHeight,
       ),
-      loadingBuilder: (c, child, progress) {
-        if (progress == null) return child;
-        return Container(
-          width: width,
-          height: height,
-          color: Colors.grey.shade100,
-          alignment: Alignment.center,
-          child: const CircularProgressIndicator(strokeWidth: 2),
-        );
-      },
-    ));
+    );
   }
 
   return FutureBuilder<String?>(
@@ -113,22 +103,25 @@ Widget accImageFromAnySource(
           height: height,
           color: Colors.grey.shade200,
           alignment: Alignment.center,
-          child: const Icon(Icons.image_not_supported_rounded),
+          child: snap.connectionState == ConnectionState.waiting
+              ? const SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.image_not_supported_rounded),
         ));
       }
-      return wrap(Image.network(
-        url,
-        fit: fit,
-        width: width,
-        height: height,
-        errorBuilder: (_, __, ___) => Container(
+      return wrap(
+        ResilientCachedNetworkImage(
+          url: url,
+          fit: fit,
           width: width,
           height: height,
-          color: Colors.grey.shade200,
-          alignment: Alignment.center,
-          child: const Icon(Icons.image_not_supported_rounded),
+          memCacheWidth: memCacheWidth,
+          memCacheHeight: memCacheHeight,
         ),
-      ));
+      );
     },
   );
 }

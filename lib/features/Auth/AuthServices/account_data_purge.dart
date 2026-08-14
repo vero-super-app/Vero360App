@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -21,7 +24,10 @@ class AccountDataPurge {
   static final _db = FirebaseFirestore.instance;
 
   /// Best-effort full wipe. Failures are logged; deletion flow should continue.
-  static Future<void> purgeCurrentUser() async {
+  /// Caps remote work so Settings delete does not hang.
+  static Future<void> purgeCurrentUser({
+    Duration budget = const Duration(seconds: 6),
+  }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
     final uid = user.uid;
@@ -35,88 +41,167 @@ class AccountDataPurge {
       debugPrint('[AccountDataPurge] starting for uid=$uid nestId=$nestId');
     }
 
-    // Backend cascade first (while auth is valid).
-    await _deleteBackendUser(token);
-
-    // Marketplace listings (Firebase uid + Nest seller id).
-    await _deleteQueryDocs(
-      _db.collection('marketplace_items').where('merchantId', isEqualTo: uid),
-    );
-    if (nestId != null) {
-      await _deleteQueryDocs(
-        _db
-            .collection('marketplace_items')
-            .where('sellerUserId', isEqualTo: nestId),
-      );
-      await _deleteQueryDocs(
-        _db
-            .collection('marketplace_items')
-            .where('sellerUserId', isEqualTo: nestId.toString()),
-      );
-    }
-
-    // Merchant profiles / wallets / reviews / stories
-    await _deleteDoc(_db.collection('marketplace_merchants').doc(uid));
-    await _deleteDoc(_db.collection('food_merchants').doc(uid));
-    await _deleteDoc(_db.collection('accommodation_merchants').doc(uid));
-    await _deleteDoc(_db.collection('courier_merchants').doc(uid));
-    await _deleteDoc(_db.collection('merchant_wallets').doc(uid));
-    await _deleteDoc(_db.collection('wallets').doc(uid));
-
-    await _deleteQueryDocs(
-      _db.collection('merchant_stories').where('merchantId', isEqualTo: uid),
-    );
-    await _deleteQueryDocs(
-      _db.collection('accommodation_rooms').where('merchantId', isEqualTo: uid),
-    );
-    await _deleteQueryDocs(
-      _db.collection('accommodation_reviews').where('merchantId', isEqualTo: uid),
-    );
-    await _deleteQueryDocs(
-      _db.collection('food_menu_items').where('merchantId', isEqualTo: uid),
-    );
-    await _deleteQueryDocs(
-      _db.collection('latestarrivals').where('merchantId', isEqualTo: uid),
-    );
-    await _deleteQueryDocs(
-      _db.collection('wallet_transactions').where('merchantId', isEqualTo: uid),
-    );
-    await _deleteQueryDocs(
-      _db.collection('wallet_transactions').where('userId', isEqualTo: uid),
-    );
-
-    // Customer cart backup (+ email key fallback used by CartService).
-    await _deleteSubcollection(_db.collection('backup_carts').doc(uid), 'items');
-    await _deleteDoc(_db.collection('backup_carts').doc(uid));
-    if (email.isNotEmpty) {
-      await _deleteSubcollection(
-        _db.collection('backup_carts').doc(email),
-        'items',
-      );
-      await _deleteDoc(_db.collection('backup_carts').doc(email));
-    }
-
-    // Followed merchants + any other user subcollections we know about.
-    final userRef = _db.collection('users').doc(uid);
-    await _deleteSubcollection(userRef, 'followed_merchants');
-    await _deleteSubcollection(userRef, 'notifications');
-    await _deleteSubcollection(userRef, 'fcmTokens');
-    await _deleteDoc(userRef);
-    await _deleteDoc(_db.collection('profiles').doc(uid));
-
-    // API-owned resources
-    await _deleteMyLatestArrivals(token);
-    await _deleteMyPromos(token);
-
-    // Storage folders (stories / profile) — best effort
-    await _deleteStoragePrefix('merchant_stories/$uid');
-    await _deleteStoragePrefix('profiles/$uid');
-    await _deleteStoragePrefix('marketplace/$uid');
-
+    // Local chats / rides / hive first — new signup must not see old data.
     CartService.clearSessionCache();
-    await SessionLocalCache.clearOnLogout();
+    await SessionLocalCache.clearOnAccountDeletion();
+
+    try {
+      await Future.wait<void>([
+        _deleteBackendUser(token),
+        _deleteBackendChats(token),
+        _deleteFirestoreBundle(uid: uid, nestId: nestId, email: email),
+      ]).timeout(budget);
+    } catch (e) {
+      if (kDebugMode) debugPrint('[AccountDataPurge] timed/failed: $e');
+    }
+
+    // Slow leftovers — never block leaving the account.
+    unawaited(_deleteMyLatestArrivals(token));
+    unawaited(_deleteMyPromos(token));
+    unawaited(_deleteStoragePrefix('merchant_stories/$uid'));
+    unawaited(_deleteStoragePrefix('profiles/$uid'));
+    unawaited(_deleteStoragePrefix('marketplace/$uid'));
 
     if (kDebugMode) debugPrint('[AccountDataPurge] finished for uid=$uid');
+  }
+
+  static Future<void> _deleteFirestoreBundle({
+    required String uid,
+    required int? nestId,
+    required String email,
+  }) async {
+    final userRef = _db.collection('users').doc(uid);
+    final jobs = <Future<void>>[
+      _deleteQueryDocs(
+        _db.collection('marketplace_items').where('merchantId', isEqualTo: uid),
+      ),
+      _deleteDoc(_db.collection('marketplace_merchants').doc(uid)),
+      _deleteDoc(_db.collection('food_merchants').doc(uid)),
+      _deleteDoc(_db.collection('accommodation_merchants').doc(uid)),
+      _deleteDoc(_db.collection('courier_merchants').doc(uid)),
+      _deleteDoc(_db.collection('merchant_wallets').doc(uid)),
+      _deleteDoc(_db.collection('wallets').doc(uid)),
+      _deleteQueryDocs(
+        _db.collection('merchant_stories').where('merchantId', isEqualTo: uid),
+      ),
+      _deleteQueryDocs(
+        _db.collection('accommodation_rooms').where('merchantId', isEqualTo: uid),
+      ),
+      _deleteQueryDocs(
+        _db
+            .collection('accommodation_reviews')
+            .where('merchantId', isEqualTo: uid),
+      ),
+      _deleteQueryDocs(
+        _db.collection('food_menu_items').where('merchantId', isEqualTo: uid),
+      ),
+      _deleteQueryDocs(
+        _db.collection('latestarrivals').where('merchantId', isEqualTo: uid),
+      ),
+      _deleteQueryDocs(
+        _db
+            .collection('wallet_transactions')
+            .where('merchantId', isEqualTo: uid),
+      ),
+      _deleteQueryDocs(
+        _db.collection('wallet_transactions').where('userId', isEqualTo: uid),
+      ),
+      _deleteSubcollection(_db.collection('backup_carts').doc(uid), 'items'),
+      _deleteDoc(_db.collection('backup_carts').doc(uid)),
+      _deleteSubcollection(userRef, 'followed_merchants'),
+      _deleteSubcollection(userRef, 'notifications'),
+      _deleteSubcollection(userRef, 'fcmTokens'),
+      _deleteDoc(userRef),
+      _deleteDoc(_db.collection('profiles').doc(uid)),
+    ];
+    if (nestId != null) {
+      jobs.addAll([
+        _deleteQueryDocs(
+          _db
+              .collection('marketplace_items')
+              .where('sellerUserId', isEqualTo: nestId),
+        ),
+        _deleteQueryDocs(
+          _db
+              .collection('marketplace_items')
+              .where('sellerUserId', isEqualTo: nestId.toString()),
+        ),
+      ]);
+    }
+    if (email.isNotEmpty) {
+      jobs.addAll([
+        _deleteSubcollection(_db.collection('backup_carts').doc(email), 'items'),
+        _deleteDoc(_db.collection('backup_carts').doc(email)),
+      ]);
+    }
+    await Future.wait(jobs);
+  }
+
+  /// Remove chat threads on the API so the same email/phone cannot reopen them.
+  static Future<void> _deleteBackendChats(String? token) async {
+    if (token == null || token.isEmpty) return;
+    try {
+      final listUri = Uri.parse(
+        '${ApiConfig.prod}/vero/api/v1/chats?page=1&pageSize=100',
+      );
+      final res = await http.get(
+        listUri,
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 4));
+      if (res.statusCode != 200) return;
+
+      final decoded = jsonDecode(res.body);
+      final raw = <dynamic>[];
+      if (decoded is List) {
+        raw.addAll(decoded);
+      } else if (decoded is Map) {
+        final data = decoded['data'];
+        if (data is List) {
+          raw.addAll(data);
+        } else if (data is Map) {
+          for (final key in ['items', 'chats', 'threads', 'results']) {
+            final v = data[key];
+            if (v is List) {
+              raw.addAll(v);
+              break;
+            }
+          }
+        }
+        if (raw.isEmpty) {
+          for (final key in ['items', 'chats', 'threads', 'results']) {
+            final v = decoded[key];
+            if (v is List) {
+              raw.addAll(v);
+              break;
+            }
+          }
+        }
+      }
+
+      await Future.wait(
+        raw.map((item) async {
+          if (item is! Map) return;
+          final id = (item['id'] ?? item['chatId'] ?? '').toString().trim();
+          if (id.isEmpty) return;
+          try {
+            await http
+                .delete(
+                  Uri.parse('${ApiConfig.prod}/vero/api/v1/chats/$id'),
+                  headers: {
+                    'Authorization': 'Bearer $token',
+                    'Accept': 'application/json',
+                  },
+                )
+                .timeout(const Duration(seconds: 3));
+          } catch (_) {}
+        }),
+      ).timeout(const Duration(seconds: 4));
+    } catch (e) {
+      if (kDebugMode) debugPrint('[AccountDataPurge] chats: $e');
+    }
   }
 
   static int? _nestUserIdFromPrefs(SharedPreferences prefs) {
@@ -137,7 +222,7 @@ class AccountDataPurge {
               'Accept': 'application/json',
             },
           )
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 5));
     } catch (e) {
       if (kDebugMode) debugPrint('[AccountDataPurge] backend DELETE /users/me: $e');
     }

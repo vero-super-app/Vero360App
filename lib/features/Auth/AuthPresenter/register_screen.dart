@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -11,28 +10,28 @@ import 'package:vero360_app/utils/app_logger.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
-
-// Merchant dashboards
-import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
-import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_merchant_dashboard.dart';
-import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:vero360_app/features/Auth/AuthPresenter/auth_ui.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/oauth_buttons.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/register_otp_screen.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/Auth/AuthServices/signup_password_rules.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Auth/AuthServices/firebaseAuth.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/registration_verification_service.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
+import 'package:vero360_app/GernalServices/role_helper.dart';
+import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
 import 'package:vero360_app/settings/Settings.dart' show PolicyPage;
 
 class AppColors {
-  static const brandOrange = Color(0xFFFF8A00);
-  static const title = Color(0xFF101010);
-  static const body = Color(0xFF6B6B6B);
-  static const fieldFill = Color(0xFFF7F7F9);
+  static const brandOrange = AuthPalette.orange;
+  static const title = AuthPalette.ink;
+  static const body = AuthPalette.muted;
+  static const fieldFill = AuthPalette.field;
 }
 
 enum UserRole { customer, merchant, driver }
@@ -107,19 +106,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _confirm = TextEditingController();
   final _businessName = TextEditingController();
   final _businessAddress = TextEditingController();
-  final _otpCode = TextEditingController();
 
   bool _obscure1 = true;
   bool _obscure2 = true;
   bool _agree = false;
-  bool _otpSent = false;
-  String? _otpError;
+  bool _submittedOnce = false;
 
   UserRole _role = UserRole.customer;
   MerchantService? _selectedMerchantService;
 
   bool _registering = false;
-  bool _resendingOtp = false;
   bool _socialLoading = false;
 
   Timer? _dummyTimer;
@@ -133,15 +129,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _confirm.dispose();
     _businessName.dispose();
     _businessAddress.dispose();
-    _otpCode.dispose();
     super.dispose();
-  }
-
-  void _resetOtpStep() {
-    _otpSent = false;
-    _otpError = null;
-    _otpCode.clear();
-    _verificationResult = null;
   }
 
   // ---------- validators ----------
@@ -194,11 +182,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return 'Enter a valid email or phone (08/09xxxxxxxx or +2659xxxxxxxx)';
   }
 
-  String? _validatePassword(String? v) {
-    if (v == null || v.isEmpty) return 'Password is required';
-    if (v.length < 8) return 'Must be at least 8 characters';
-    return null;
-  }
+  String? _validatePassword(String? v) => SignupPasswordRules.validate(v);
 
   String? _validateConfirm(String? v) {
     if (v == null || v.isEmpty) return 'Please confirm your password';
@@ -304,37 +288,45 @@ class _RegisterScreenState extends State<RegisterScreen> {
       merchantService = _selectedMerchantService?.key ??
           user['merchantService']?.toString() ??
           user['serviceType']?.toString();
-    } else {
-      merchantService = user['merchantService']?.toString() ??
-          user['serviceType']?.toString() ??
-          _selectedMerchantService?.key;
     }
     merchantService = normalizeMerchantServiceKey(merchantService);
-    if (merchantService != null && merchantService.isNotEmpty) {
-      await prefs.setString('merchant_service', merchantService);
 
-      if (_role == UserRole.merchant) {
-        await prefs.setString('business_name', _businessName.text.trim());
-        await prefs.setString('business_address', _businessAddress.text.trim());
-      }
-    }
-
-    var role =
-        (user['role'] ?? user['userRole'] ?? '').toString().toLowerCase();
-    // Registration chip selection wins over API/Firestore defaults (backend often
-    // creates "customer" before PUT /users/me succeeds).
+    var role = RoleHelper.roleFromUserMap(user);
     if (_role == UserRole.merchant || _role == UserRole.driver) {
       role = _roleString;
     } else if (role.isEmpty) {
-      role = 'customer';
+      role = RoleHelper.customer;
     }
-    await prefs.setString('role', role);
-    await prefs.setString('user_role', role);
-    await prefs.setBool('is_merchant', role == 'merchant');
+    user['role'] = role;
+    if (_role == UserRole.merchant && merchantService != null) {
+      user['merchantService'] = merchantService;
+    } else {
+      user.remove('merchantService');
+      user.remove('serviceType');
+      user.remove('merchant_service');
+    }
 
-    final uid = user['uid']?.toString() ?? user['firebaseUid']?.toString();
+    final fbUid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    final uid = fbUid.isNotEmpty
+        ? fbUid
+        : (user['uid']?.toString() ?? user['firebaseUid']?.toString());
     if (uid != null && uid.isNotEmpty) {
       await prefs.setString('uid', uid);
+    }
+    await RoleSessionService.lockIntendedRole(
+      prefs: prefs,
+      role: role,
+      merchantService: _role == UserRole.merchant ? merchantService : null,
+      uid: uid,
+    );
+    await RoleSessionService.persistUserToPrefs(prefs, user);
+    if (_role == UserRole.merchant) {
+      if (_businessName.text.trim().isNotEmpty) {
+        await prefs.setString('business_name', _businessName.text.trim());
+      }
+      if (_businessAddress.text.trim().isNotEmpty) {
+        await prefs.setString('business_address', _businessAddress.text.trim());
+      }
     }
 
     // Marketplace onboarding guide only for marketplace merchants (once per account).
@@ -350,28 +342,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     if (role == 'merchant') {
       await hydrateMerchantServiceFromFirestore(prefs);
-      final serviceKey = normalizeMerchantServiceKey(
-        merchantService ?? _selectedMerchantService?.key,
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => Bottomnavbar(email: displayId, initialIndex: 4),
+        ),
+        (route) => false,
       );
-
-      if (serviceKey != null && serviceKey.isNotEmpty) {
-        final merchantDashboard =
-            _getMerchantDashboard(serviceKey, displayId);
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => merchantDashboard),
-          (route) => false,
-        );
-      } else {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(
-            builder: (_) => MarketplaceMerchantDashboard(
-              email: displayId,
-              onBackToHomeTab: () {},
-            ),
-          ),
-          (route) => false,
-        );
-      }
     } else {
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
@@ -380,25 +356,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
         (route) => false,
       );
     }
-  }
-
-  Widget _getMerchantDashboard(String serviceKey, String email) {
-    final key = normalizeMerchantServiceKey(serviceKey) ?? serviceKey;
-    switch (key) {
-      case 'marketplace':
-        return MarketplaceMerchantDashboard(
-          email: email,
-          onBackToHomeTab: () {},
-        );
-      case 'food':
-        return FoodMerchantDashboard(email: email);
-      case 'accommodation':
-        return AccommodationMerchantDashboard(email: email);
-    }
-    return MarketplaceMerchantDashboard(
-      email: email,
-      onBackToHomeTab: () {},
-    );
   }
 
   Future<Map<String, dynamic>> _buildResultFromUser(User user) async {
@@ -860,67 +817,37 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
     }
 
+    setState(() => _submittedOnce = true);
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
-    if (!_otpSent) {
-      setState(() => _registering = true);
-      try {
-        final sent = await _sendRegistrationOtp();
-        if (!sent || !mounted) return;
-
-        setState(() {
-          _otpSent = true;
-          _otpError = null;
-        });
-
-        if (_identifierEmail.isNotEmpty) {
-          ToastHelper.showCustomToast(
-            context,
-            '6-digit code sent to your email',
-            isSuccess: true,
-            errorMessage: '',
-          );
-        } else {
-          ToastHelper.showCustomToast(
-            context,
-            '6-digit code sent via SMS',
-            isSuccess: true,
-            errorMessage: '',
-          );
-        }
-      } finally {
-        if (mounted) setState(() => _registering = false);
-      }
-      return;
-    }
-
-    final code = _otpCode.text.trim();
-    if (code.length != 6) {
-      setState(() => _otpError = 'Enter the 6-digit code');
-      return;
-    }
-
-    setState(() {
-      _registering = true;
-      _otpError = null;
-    });
+    setState(() => _registering = true);
     try {
-      bool verified;
-      try {
-        verified = await _verifyRegistrationOtp(code);
-      } on ApiException catch (e) {
-        if (!mounted) return;
-        setState(() {
-          _otpError = RegistrationVerificationService.friendlyError(e);
-        });
-        return;
-      }
+      final sent = await _sendRegistrationOtp();
+      if (!sent || !mounted) return;
 
-      if (!verified || !mounted) {
-        setState(() => _otpError = 'Invalid or expired code. Try again.');
-        return;
-      }
+      ToastHelper.showCustomToast(
+        context,
+        _identifierEmail.isNotEmpty
+            ? '6-digit code sent to your email'
+            : '6-digit code sent via SMS',
+        isSuccess: true,
+        errorMessage: '',
+      );
 
+      final verified = await Navigator.of(context).push<bool>(
+        MaterialPageRoute(
+          builder: (_) => RegisterOtpScreen(
+            identifier: _identifierValue,
+            channel: _identifierEmail.isNotEmpty ? 'email' : 'phone',
+            onVerify: _verifyRegistrationOtp,
+            onResend: _sendRegistrationOtp,
+          ),
+        ),
+      );
+
+      if (verified != true || !mounted) return;
+
+      setState(() => _registering = true);
       await _createAccountAfterVerification();
     } finally {
       if (mounted) setState(() => _registering = false);
@@ -1125,25 +1052,79 @@ class _RegisterScreenState extends State<RegisterScreen> {
     required IconData icon,
     Widget? trailing,
   }) {
-    return InputDecoration(
-      labelText: label,
-      hintText: hint,
-      prefixIcon: Icon(icon),
-      suffixIcon: trailing,
-      filled: true,
-      fillColor: AppColors.fieldFill,
-      contentPadding:
-          const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide.none,
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(
-          color: AppColors.brandOrange,
-          width: 1.2,
+    return authFieldDecoration(
+      label: label,
+      hint: hint,
+      icon: icon,
+      trailing: trailing,
+    );
+  }
+
+  Widget _buildRoleSelector() {
+    Widget chip(UserRole role, String label, IconData icon) {
+      final selected = _role == role;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => setState(() {
+            _role = role;
+            if (role != UserRole.merchant) {
+              _businessName.clear();
+              _businessAddress.clear();
+              _selectedMerchantService = null;
+            }
+          }),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            decoration: BoxDecoration(
+              color: selected ? AuthPalette.orange : Colors.transparent,
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: selected
+                  ? [
+                      BoxShadow(
+                        color: AuthPalette.orange.withValues(alpha: 0.28),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Column(
+              children: [
+                Icon(
+                  icon,
+                  size: 18,
+                  color: selected ? Colors.white : AuthPalette.muted,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: selected ? Colors.white : AuthPalette.ink,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: AuthPalette.field,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        children: [
+          chip(UserRole.customer, 'Customer', Icons.person_rounded),
+          chip(UserRole.merchant, 'Merchant', Icons.storefront_rounded),
+          chip(UserRole.driver, 'Driver', Icons.local_taxi_rounded),
+        ],
       ),
     );
   }
@@ -1151,177 +1132,78 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Stack(children: [
-        Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment(0, -1),
-              end: Alignment(0, 1),
-              colors: [Color(0xFFFFF4E9), Colors.white],
-            ),
-          ),
-        ),
-        SafeArea(
+      body: AuthBackground(
+        child: SafeArea(
           child: Center(
             child: SingleChildScrollView(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 520),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.all(3),
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [
-                            AppColors.brandOrange,
-                            Color(0xFFFFB85C),
-                          ],
-                        ),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.brandOrange.withValues(alpha: 0.25),
-                            blurRadius: 20,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
-                      ),
-                      child: CircleAvatar(
-                        radius: 44,
-                        backgroundColor: Colors.white,
-                        child: ClipOval(
-                          child: Image.asset(
-                            'assets/logo_mark.png',
-                            width: 72,
-                            height: 72,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => const Icon(
-                              Icons.eco,
-                              size: 42,
-                              color: AppColors.brandOrange,
-                            ),
-                          ),
-                        ),
-                      ),
+                    const AuthHeroHeader(
+                      title: 'Create your account',
+                      subtitle: 'Join Vero360 in a minute.',
                     ),
-                    const SizedBox(height: 18),
-                    const Text(
-                      'Create your account',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: AppColors.title,
-                        fontSize: 26,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.06),
-                            blurRadius: 20,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
-                      ),
-                      padding: const EdgeInsets.all(18),
+                    const SizedBox(height: 22),
+                    AuthCard(
                       child: Form(
                         key: _formKey,
+                        autovalidateMode: _submittedOnce
+                            ? AutovalidateMode.always
+                            : AutovalidateMode.disabled,
                         onChanged: () => setState(() {}),
                         child: Column(
                           children: [
-                            Wrap(
-                              spacing: 8,
-                              children: [
-                                ChoiceChip(
-                                  label: const Text('Customer'),
-                                  selected: _role == UserRole.customer,
-                                  onSelected: (_) => setState(() {
-                                    _role = UserRole.customer;
-                                    _businessName.clear();
-                                    _businessAddress.clear();
-                                    _selectedMerchantService = null;
-                                  }),
-                                ),
-                                 ChoiceChip(
-                                  label: const Text('Merchant'),
-                                  selected: _role == UserRole.merchant,
-                                  onSelected: (_) =>
-                                      setState(() => _role = UserRole.merchant),
-                                ),
-                                ChoiceChip(
-                                  label: const Text('Driver'),
-                                  selected: _role == UserRole.driver,
-                                  onSelected: (_) => setState(() {
-                                    _role = UserRole.driver;
-                                    _businessName.clear();
-                                    _businessAddress.clear();
-                                    _selectedMerchantService = null;
-                                  }),
-                                ),
-                               
-                              ],
-                            ),
-                            const SizedBox(height: 16),
-
+                            _buildRoleSelector(),
+                            const SizedBox(height: 18),
                             TextFormField(
                               controller: _name,
                               textInputAction: TextInputAction.next,
+                              textCapitalization: TextCapitalization.words,
                               decoration: _dec(
                                 label: 'Your name',
                                 hint: 'Your full name',
-                                icon: Icons.person_outline,
+                                icon: Icons.person_outline_rounded,
                               ),
                               validator: _validateName,
                             ),
                             const SizedBox(height: 14),
-
                             if (_role == UserRole.merchant) ...[
                               TextFormField(
                                 controller: _businessName,
                                 textInputAction: TextInputAction.next,
+                                textCapitalization: TextCapitalization.words,
                                 decoration: _dec(
-                                  label: 'Business Name',
+                                  label: 'Business name',
                                   hint: 'Your business name',
-                                  icon: Icons.business_rounded,
+                                  icon: Icons.storefront_outlined,
                                 ),
                                 validator: _validateBusinessName,
                               ),
                               const SizedBox(height: 14),
                             ],
-
                             TextFormField(
                               controller: _identifier,
                               keyboardType: TextInputType.emailAddress,
                               textInputAction: TextInputAction.next,
-                              onChanged: (_) {
-                                if (_otpSent) {
-                                  setState(_resetOtpStep);
-                                }
-                              },
                               decoration: _dec(
-                                label: ' phone number or email',
-                                hint: ' 09xxxxxxxx or you@vero360.',
+                                label: 'Phone number or email',
+                                hint: '09xxxxxxxx or you@vero360.com',
                                 icon: Icons.contact_mail_outlined,
                               ),
                               validator: _validateIdentifier,
                             ),
                             const SizedBox(height: 14),
-
                             if (_role == UserRole.merchant) ...[
                               DropdownButtonFormField<MerchantService>(
                                 value: _selectedMerchantService,
                                 decoration: _dec(
-                                  label: 'Service You Provide',
+                                  label: 'Service you provide',
                                   hint: 'Select your service',
-                                  icon: Icons.work_outline,
+                                  icon: Icons.work_outline_rounded,
                                 ),
                                 validator: (value) =>
                                     _validateMerchantService(value),
@@ -1333,7 +1215,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                         Icon(
                                           service.icon,
                                           size: 20,
-                                          color: AppColors.brandOrange,
+                                          color: AuthPalette.orange,
                                         ),
                                         const SizedBox(width: 12),
                                         Text(service.name),
@@ -1349,21 +1231,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               ),
                               const SizedBox(height: 14),
                             ],
-
                             TextFormField(
                               controller: _password,
                               obscureText: _obscure1,
                               textInputAction: TextInputAction.next,
                               decoration: _dec(
                                 label: 'Password',
-                                hint: '••••••••',
-                                icon: Icons.lock_outline,
+                                hint: 'At least 8 characters',
+                                icon: Icons.lock_outline_rounded,
                                 trailing: IconButton(
                                   tooltip: _obscure1 ? 'Show' : 'Hide',
                                   icon: Icon(
                                     _obscure1
-                                        ? Icons.visibility
-                                        : Icons.visibility_off,
+                                        ? Icons.visibility_outlined
+                                        : Icons.visibility_off_outlined,
                                   ),
                                   onPressed: () => setState(
                                     () => _obscure1 = !_obscure1,
@@ -1372,21 +1253,39 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               ),
                               validator: _validatePassword,
                             ),
-                            const SizedBox(height: 14),
+                            AuthPasswordStrengthMeter(password: _password.text),
+                            const SizedBox(height: 6),
+                            const Align(
+                              alignment: Alignment.centerLeft,
+                              child: Padding(
+                                padding: EdgeInsets.only(left: 4, bottom: 8),
+                                child: Text(
+                                  'Use letters and numbers',
+                                  style: TextStyle(
+                                    color: AuthPalette.muted,
+                                    fontSize: 12,
+                                    height: 1.3,
+                                  ),
+                                ),
+                              ),
+                            ),
                             TextFormField(
                               controller: _confirm,
                               obscureText: _obscure2,
                               textInputAction: TextInputAction.done,
+                              onFieldSubmitted: (_) {
+                                if (!_registering) _registerWithFirebaseOnly();
+                              },
                               decoration: _dec(
                                 label: 'Confirm password',
-                                hint: '••••••••',
-                                icon: Icons.lock_outline,
+                                hint: 'Re-enter your password',
+                                icon: Icons.lock_outline_rounded,
                                 trailing: IconButton(
                                   tooltip: _obscure2 ? 'Show' : 'Hide',
                                   icon: Icon(
                                     _obscure2
-                                        ? Icons.visibility
-                                        : Icons.visibility_off,
+                                        ? Icons.visibility_outlined
+                                        : Icons.visibility_off_outlined,
                                   ),
                                   onPressed: () => setState(
                                     () => _obscure2 = !_obscure2,
@@ -1395,151 +1294,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               ),
                               validator: _validateConfirm,
                             ),
-                            if (_otpSent) ...[
-                              const SizedBox(height: 18),
-                              Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.all(14),
-                                decoration: BoxDecoration(
-                                  color: AppColors.fieldFill,
-                                  borderRadius: BorderRadius.circular(14),
-                                  border: Border.all(
-                                    color: AppColors.brandOrange.withValues(
-                                      alpha: 0.35,
-                                    ),
-                                  ),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      _identifierEmail.isNotEmpty
-                                          ? 'Enter the 6-digit code sent to your email:'
-                                          : 'Enter the 6-digit code sent to your phone:',
-                                      style: TextStyle(
-                                        color: Colors.grey.shade700,
-                                        fontSize: 14,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      _identifierValue,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 15,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 14),
-                                    TextFormField(
-                                      controller: _otpCode,
-                                      keyboardType: TextInputType.number,
-                                      textAlign: TextAlign.center,
-                                      maxLength: 6,
-                                      enabled: !_registering,
-                                      inputFormatters: [
-                                        FilteringTextInputFormatter.digitsOnly,
-                                      ],
-                                      style: const TextStyle(
-                                        fontSize: 24,
-                                        fontWeight: FontWeight.w800,
-                                        letterSpacing: 12,
-                                      ),
-                                      decoration: InputDecoration(
-                                        counterText: '',
-                                        hintText: '••••••',
-                                        filled: true,
-                                        fillColor: Colors.white,
-                                        border: OutlineInputBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(14),
-                                          borderSide: BorderSide.none,
-                                        ),
-                                        focusedBorder: OutlineInputBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(14),
-                                          borderSide: const BorderSide(
-                                            color: AppColors.brandOrange,
-                                            width: 1.2,
-                                          ),
-                                        ),
-                                      ),
-                                      onChanged: (_) {
-                                        if (_otpError != null) {
-                                          setState(() => _otpError = null);
-                                        }
-                                      },
-                                    ),
-                                    if (_otpError != null) ...[
-                                      const SizedBox(height: 10),
-                                      Text(
-                                        _otpError!,
-                                        style: const TextStyle(
-                                          color: Colors.red,
-                                          fontSize: 13,
-                                        ),
-                                      ),
-                                    ],
-                                    const SizedBox(height: 8),
-                                    Align(
-                                      alignment: Alignment.centerRight,
-                                      child: TextButton(
-                                        onPressed: (_registering || _resendingOtp)
-                                            ? null
-                                            : () async {
-                                                setState(() {
-                                                  _resendingOtp = true;
-                                                  _otpError = null;
-                                                });
-                                                try {
-                                                  final ok =
-                                                      await _sendRegistrationOtp();
-                                                  if (!mounted) return;
-                                                  if (ok) {
-                                                    _otpCode.clear();
-                                                    ToastHelper.showCustomToast(
-                                                      context,
-                                                      _identifierEmail
-                                                              .isNotEmpty
-                                                          ? 'New code sent to your email'
-                                                          : 'New code sent via SMS',
-                                                      isSuccess: true,
-                                                      errorMessage: '',
-                                                    );
-                                                  }
-                                                } finally {
-                                                  if (mounted) {
-                                                    setState(
-                                                      () => _resendingOtp =
-                                                          false,
-                                                    );
-                                                  }
-                                                }
-                                              },
-                                        child: Text(
-                                          _resendingOtp
-                                              ? 'Sending…'
-                                              : 'Resend code',
-                                          style: const TextStyle(
-                                            color: AppColors.brandOrange,
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                            const SizedBox(height: 10),
-
+                            const SizedBox(height: 12),
                             Row(
                               crossAxisAlignment: CrossAxisAlignment.center,
                               children: [
                                 Checkbox(
                                   value: _agree,
+                                  activeColor: AuthPalette.orange,
                                   onChanged: (v) =>
                                       setState(() => _agree = v ?? false),
-                                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  materialTapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
                                   visualDensity: VisualDensity.compact,
                                 ),
                                 Expanded(
@@ -1549,16 +1314,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                       TextSpan(
                                         text: 'I agree to the ',
                                         style: TextStyle(
-                                          color: AppColors.body,
+                                          color: AuthPalette.muted,
                                           fontWeight: FontWeight.w600,
                                         ),
                                         children: [
                                           TextSpan(
                                             text: 'Terms & Privacy Policy',
                                             style: TextStyle(
-                                              color: AppColors.brandOrange,
-                                              fontWeight: FontWeight.w700,
-                                              decoration: TextDecoration.underline,
+                                              color: AuthPalette.orange,
+                                              fontWeight: FontWeight.w800,
+                                              decoration:
+                                                  TextDecoration.underline,
                                             ),
                                           ),
                                         ],
@@ -1568,75 +1334,47 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 ),
                               ],
                             ),
-
                             const SizedBox(height: 14),
-                            SizedBox(
-                              width: double.infinity,
-                              height: 50,
-                              child: ElevatedButton(
-                                onPressed: _registering
-                                    ? null
-                                    : _registerWithFirebaseOnly,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppColors.brandOrange,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                  ),
-                                ),
-                                child: Text(
-                                  _registering
-                                      ? (_otpSent
-                                          ? 'Creating account…'
-                                          : 'Sending code…')
-                                      : (_otpSent
-                                          ? 'Verify & create account'
-                                          : 'Create account'),
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 16,
-                                  ),
-                                ),
-                              ),
+                            AuthPrimaryButton(
+                              label: _registering
+                                  ? 'Sending code…'
+                                  : 'Create account',
+                              loading: _registering,
+                              onPressed: _registering
+                                  ? null
+                                  : _registerWithFirebaseOnly,
                             ),
                           ],
                         ),
                       ),
                     ),
-
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        Expanded(child: Divider(color: Colors.grey.shade300)),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: Text(
-                            'or',
-                            style: TextStyle(
-                              color: AppColors.body,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                        Expanded(child: Divider(color: Colors.grey.shade300)),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 22),
+                    const AuthOrDivider(),
+                    const SizedBox(height: 18),
                     OAuthButtonsRow(
                       onGoogle: _socialLoading ? null : _google,
                       onApple: _socialLoading ? null : _apple,
                       iconOnly: true,
                     ),
-
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 8),
                     TextButton(
                       onPressed: () => Navigator.of(context).pop(),
-                      child: const Text(
-                        'Already have an account? Sign in',
-                        style: TextStyle(
-                          color: AppColors.brandOrange,
-                          fontWeight: FontWeight.w800,
+                      child: const Text.rich(
+                        TextSpan(
+                          text: 'Already have an account? ',
+                          style: TextStyle(
+                            color: AuthPalette.muted,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          children: [
+                            TextSpan(
+                              text: 'Sign in',
+                              style: TextStyle(
+                                color: AuthPalette.orange,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -1646,7 +1384,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
           ),
         ),
-      ]),
+      ),
     );
   }
 }

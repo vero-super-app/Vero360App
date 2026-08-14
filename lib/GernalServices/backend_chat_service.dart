@@ -302,6 +302,40 @@ class BackendChatMessage {
       if (metadata != null) 'metadata': metadata,
     };
   }
+
+  BackendChatMessage copyWith({
+    String? id,
+    String? chatId,
+    int? senderId,
+    String? content,
+    String? type,
+    String? status,
+    DateTime? createdAt,
+    DateTime? readAt,
+    DateTime? deliveredAt,
+    List<Map<String, dynamic>>? attachments,
+    List<Map<String, dynamic>>? tags,
+    Map<String, dynamic>? sender,
+    String? clientMessageId,
+    Map<String, dynamic>? metadata,
+  }) {
+    return BackendChatMessage(
+      id: id ?? this.id,
+      chatId: chatId ?? this.chatId,
+      senderId: senderId ?? this.senderId,
+      content: content ?? this.content,
+      type: type ?? this.type,
+      status: status ?? this.status,
+      createdAt: createdAt ?? this.createdAt,
+      readAt: readAt ?? this.readAt,
+      deliveredAt: deliveredAt ?? this.deliveredAt,
+      attachments: attachments ?? this.attachments,
+      tags: tags ?? this.tags,
+      sender: sender ?? this.sender,
+      clientMessageId: clientMessageId ?? this.clientMessageId,
+      metadata: metadata ?? this.metadata,
+    );
+  }
 }
 
 class ChatParticipant {

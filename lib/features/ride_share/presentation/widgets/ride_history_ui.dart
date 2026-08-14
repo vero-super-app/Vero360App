@@ -21,12 +21,12 @@ String rideCounterpartName(Ride ride, {required bool isDriver}) {
 String rideVehicleLabel(Ride ride) {
   final plate = ride.tripSummary?.vehiclePlate ?? ride.taxi?.licensePlate;
   final cls = ride.tripSummary?.vehicleClass ?? ride.taxi?.vehicleClass;
-  final make = ride.taxi?.make;
+  final model = ride.taxi?.model;
   final color = ride.taxi?.color;
   final parts = <String>[
-    if (make != null && make.isNotEmpty) make,
+    if (model != null && model.isNotEmpty) model,
     if (color != null && color.isNotEmpty) color,
-    if ((make == null || make.isEmpty) &&
+    if ((model == null || model.isEmpty) &&
         cls != null &&
         cls.isNotEmpty)
       cls,

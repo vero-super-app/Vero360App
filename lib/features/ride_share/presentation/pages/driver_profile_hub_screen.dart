@@ -142,12 +142,10 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
           _statsRow(driver),
           const SizedBox(height: 16),
           _infoSection(
-            title: 'Identity & license',
+            title: 'Driver info',
             icon: Icons.badge_outlined,
             rows: [
-              _InfoRow('National ID', (driver['nationalId'] ?? '—').toString()),
-              _InfoRow('License', (driver['licenseNumber'] ?? '—').toString()),
-              _InfoRow('License expiry', _date(driver['licenseExpiry'])),
+              _InfoRow('Date of birth', _date(driver['dateOfBirth'])),
               _InfoRow('Status', (driver['status'] ?? '—').toString()),
             ],
           ),
@@ -498,7 +496,6 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
   }
 
   Widget _vehicleCard(Map<String, dynamic> taxi) {
-    final make = (taxi['make'] ?? '').toString();
     final model = (taxi['model'] ?? '').toString();
     final plate = (taxi['licensePlate'] ?? '').toString();
     final taxiClass = (taxi['taxiClass'] ?? 'STANDARD').toString();
@@ -541,9 +538,7 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '$make $model'.trim().isEmpty
-                            ? 'Vehicle'
-                            : '$make $model',
+                        model.trim().isEmpty ? 'Vehicle' : model,
                         style: const TextStyle(
                           fontWeight: FontWeight.w800,
                           color: _brandOrange,

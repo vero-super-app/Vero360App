@@ -23,26 +23,15 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
   final _formKey = GlobalKey<FormState>();
   final _picker = ImagePicker();
 
-  final _licenseNumber = TextEditingController();
-  final _nationalId = TextEditingController();
-  final _make = TextEditingController();
   final _model = TextEditingController();
   final _plate = TextEditingController();
   final _color = TextEditingController();
   final _seats = TextEditingController(text: '4');
 
   DateTime? _dateOfBirth;
-  DateTime? _licenseExpiry;
-  DateTime? _insuranceExpiry;
-  DateTime? _cofExpiry;
-  int? _year;
 
   String? _licenseImagePath;
-  String? _nationalIdImagePath;
   String? _vehicleImagePath;
-  String? _registrationImagePath;
-  String? _insuranceImagePath;
-  String? _cofImagePath;
 
   Map<String, dynamic>? _profile;
   _OnboardingPhase _phase = _OnboardingPhase.driver;
@@ -59,9 +48,6 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
 
   @override
   void dispose() {
-    _licenseNumber.dispose();
-    _nationalId.dispose();
-    _make.dispose();
     _model.dispose();
     _plate.dispose();
     _color.dispose();
@@ -92,7 +78,6 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
     _profile = profile;
     final status = profile['status']?.toString() ?? '';
     final isVerified = profile['isVerified'] == true;
-    final license = (profile['licenseNumber']?.toString() ?? '').trim();
     final hasLicenseImage =
         (profile['licenseImageUrl']?.toString() ?? '').trim().isNotEmpty;
     final taxis = (profile['taxis'] is List)
@@ -105,36 +90,19 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
     final taxi = taxis.isNotEmpty ? taxis.first : null;
     final taxiStatus = taxi?['status']?.toString() ?? '';
 
-    if (license.isNotEmpty) _licenseNumber.text = license;
-    final nid = (profile['nationalId']?.toString() ?? '').trim();
-    if (nid.isNotEmpty) _nationalId.text = nid;
-
     final dob = tryParseFleetDate(profile['dateOfBirth']);
-    final lex = tryParseFleetDate(profile['licenseExpiry']);
     final today = fleetDateOnly(DateTime.now());
     final adultCutoff = DateTime(today.year - 18, today.month, today.day);
-    final hasIdentity = license.isNotEmpty || nid.isNotEmpty;
-    // Backend auto-creates driver rows with placeholder dates (today historically,
-    // or 1900-01-01). Treat those and under-18 DOBs as unset so the picker works.
     final dobIsPlaceholder = dob == null ||
         dob.year <= 1901 ||
-        dob.isAfter(adultCutoff) ||
-        (!hasIdentity && lex != null && dob == lex);
-    final lexIsPlaceholder = lex == null ||
-        lex.year <= 1901 ||
-        (!hasIdentity && !lex.isAfter(today));
+        dob.isAfter(adultCutoff);
     _dateOfBirth = dobIsPlaceholder ? null : dob;
-    _licenseExpiry = lexIsPlaceholder ? null : lex;
 
     if (taxi != null) {
-      _make.text = taxi['make']?.toString() ?? '';
       _model.text = taxi['model']?.toString() ?? '';
       _plate.text = taxi['licensePlate']?.toString() ?? '';
       _color.text = taxi['color']?.toString() ?? '';
       _seats.text = '${taxi['seats'] ?? 4}';
-      _year = (taxi['year'] as num?)?.toInt();
-      _insuranceExpiry = tryParseFleetDate(taxi['insuranceExpiry']);
-      _cofExpiry = tryParseFleetDate(taxi['cofExpiry']);
     }
 
     _OnboardingPhase next;
@@ -199,8 +167,8 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
 
   Future<void> _submitDriverStep() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_dateOfBirth == null || _licenseExpiry == null) {
-      setState(() => _error = 'Date of birth and license expiry are required.');
+    if (_dateOfBirth == null) {
+      setState(() => _error = 'Date of birth is required.');
       return;
     }
     final age = DateTime.now().difference(_dateOfBirth!).inDays / 365.25;
@@ -212,12 +180,6 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
         (_profile?['licenseImageUrl']?.toString() ?? '').trim();
     if (_licenseImagePath == null && existingLicenseUrl.isEmpty) {
       setState(() => _error = 'Upload a clear photo of your driving license.');
-      return;
-    }
-    final existingNidUrl =
-        (_profile?['nationalIdImageUrl']?.toString() ?? '').trim();
-    if (_nationalIdImagePath == null && existingNidUrl.isEmpty) {
-      setState(() => _error = 'Upload a clear photo of your national ID.');
       return;
     }
 
@@ -233,21 +195,10 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
           'license',
         );
       }
-      String? nidUrl = existingNidUrl.isEmpty ? null : existingNidUrl;
-      if (_nationalIdImagePath != null) {
-        nidUrl = await _driverService.uploadDriverDocument(
-          _nationalIdImagePath!,
-          'national_id',
-        );
-      }
 
       final payload = <String, dynamic>{
-        'licenseNumber': _licenseNumber.text.trim(),
         'licenseImageUrl': licenseUrl,
-        'licenseExpiry': fleetDateIso(_licenseExpiry!),
         'dateOfBirth': fleetDateIso(_dateOfBirth!),
-        'nationalId': _nationalId.text.trim(),
-        if (nidUrl != null) 'nationalIdImageUrl': nidUrl,
       };
 
       Map<String, dynamic> profile;
@@ -262,7 +213,6 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
       setState(() {
         _profile = profile;
         _licenseImagePath = null;
-        _nationalIdImagePath = null;
         _phase = _OnboardingPhase.vehicle;
       });
       ScaffoldMessenger.of(context).showSnackBar(
@@ -279,18 +229,8 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
   }
 
   Future<void> _submitVehicleStep() async {
-    if (_make.text.trim().isEmpty ||
-        _model.text.trim().isEmpty ||
-        _plate.text.trim().isEmpty) {
-      setState(() => _error = 'Make, model, and license plate are required.');
-      return;
-    }
-    if (_year == null) {
-      setState(() => _error = 'Select the vehicle year.');
-      return;
-    }
-    if (_insuranceExpiry == null || _cofExpiry == null) {
-      setState(() => _error = 'Insurance and COF expiry dates are required.');
+    if (_model.text.trim().isEmpty || _plate.text.trim().isEmpty) {
+      setState(() => _error = 'Model and license plate are required.');
       return;
     }
 
@@ -303,26 +243,9 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
         : <Map<String, dynamic>>[];
     final taxi = taxis.isNotEmpty ? taxis.first : null;
     final existingVehicleUrl = (taxi?['imageUrl']?.toString() ?? '').trim();
-    final existingRegUrl =
-        (taxi?['registrationImageUrl']?.toString() ?? '').trim();
-    final existingInsUrl =
-        (taxi?['insuranceImageUrl']?.toString() ?? '').trim();
-    final existingCofUrl = (taxi?['cofImageUrl']?.toString() ?? '').trim();
 
     if (_vehicleImagePath == null && existingVehicleUrl.isEmpty) {
       setState(() => _error = 'Upload a photo of your vehicle.');
-      return;
-    }
-    if (_registrationImagePath == null && existingRegUrl.isEmpty) {
-      setState(() => _error = 'Upload your vehicle registration (logbook).');
-      return;
-    }
-    if (_insuranceImagePath == null && existingInsUrl.isEmpty) {
-      setState(() => _error = 'Upload your vehicle insurance document.');
-      return;
-    }
-    if (_cofImagePath == null && existingCofUrl.isEmpty) {
-      setState(() => _error = 'Upload your Certificate of Fitness (COF).');
       return;
     }
 
@@ -332,9 +255,6 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
     });
     try {
       var vehicleUrl = existingVehicleUrl;
-      var regUrl = existingRegUrl;
-      var insUrl = existingInsUrl;
-      var cofUrl = existingCofUrl;
 
       if (_vehicleImagePath != null) {
         vehicleUrl = await _driverService.uploadDriverDocument(
@@ -342,40 +262,14 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
           'vehicle',
         );
       }
-      if (_registrationImagePath != null) {
-        regUrl = await _driverService.uploadDriverDocument(
-          _registrationImagePath!,
-          'registration',
-        );
-      }
-      if (_insuranceImagePath != null) {
-        insUrl = await _driverService.uploadDriverDocument(
-          _insuranceImagePath!,
-          'insurance',
-        );
-      }
-      if (_cofImagePath != null) {
-        cofUrl = await _driverService.uploadDriverDocument(
-          _cofImagePath!,
-          'cof',
-        );
-      }
 
       final payload = <String, dynamic>{
         'taxiClass': 'STANDARD',
-        'make': _make.text.trim(),
         'model': _model.text.trim(),
-        'year': _year,
         'licensePlate': _plate.text.trim().toUpperCase(),
         'color': _color.text.trim().isEmpty ? 'Unknown' : _color.text.trim(),
         'seats': int.tryParse(_seats.text.trim()) ?? 4,
-        'registrationNumber': _plate.text.trim().toUpperCase(),
         'imageUrl': vehicleUrl,
-        'registrationImageUrl': regUrl,
-        'insuranceImageUrl': insUrl,
-        'insuranceExpiry': fleetDateIso(_insuranceExpiry!),
-        'cofImageUrl': cofUrl,
-        'cofExpiry': fleetDateIso(_cofExpiry!),
         'features': ['AC'],
       };
 
@@ -396,9 +290,6 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
       setState(() {
         _profile = refreshed;
         _vehicleImagePath = null;
-        _registrationImagePath = null;
-        _insuranceImagePath = null;
-        _cofImagePath = null;
         _phase = _OnboardingPhase.status;
       });
       ScaffoldMessenger.of(context).showSnackBar(
@@ -699,7 +590,7 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Text(
-              'Upload your license and national ID. An operator will review them before you can go online.',
+              'Upload a photo of your driving license and your date of birth. An operator will review them before you can go online.',
               style: TextStyle(color: RideShareColors.onSecondaryContainer),
             ),
           ),
@@ -707,19 +598,6 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
           _card(
             title: 'Identity',
             children: [
-              TextFormField(
-                controller: _licenseNumber,
-                decoration: _fieldDecoration('License number'),
-                validator: (v) =>
-                    (v == null || v.trim().isEmpty) ? 'Required' : null,
-              ),
-              const SizedBox(height: 10),
-              TextFormField(
-                controller: _nationalId,
-                decoration: _fieldDecoration('National ID number'),
-                validator: (v) =>
-                    (v == null || v.trim().isEmpty) ? 'Required' : null,
-              ),
               _dateTile(
                 label: 'Date of birth',
                 value: _dateOfBirth,
@@ -730,16 +608,6 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
                   onPicked: (d) => setState(() => _dateOfBirth = d),
                 ),
               ),
-              _dateTile(
-                label: 'License expiry',
-                value: _licenseExpiry,
-                onTap: () => _pickDate(
-                  current: _licenseExpiry,
-                  firstDate: DateTime(now.year, now.month, now.day),
-                  lastDate: DateTime(now.year + 20, now.month, now.day),
-                  onPicked: (d) => setState(() => _licenseExpiry = d),
-                ),
-              ),
               _docTile(
                 label: 'License photo',
                 localPath: _licenseImagePath,
@@ -747,15 +615,6 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
                 onPick: () => _pickDoc(
                   'license',
                   (p) => setState(() => _licenseImagePath = p),
-                ),
-              ),
-              _docTile(
-                label: 'National ID photo',
-                localPath: _nationalIdImagePath,
-                existingUrl: _profile?['nationalIdImageUrl']?.toString(),
-                onPick: () => _pickDoc(
-                  'national_id',
-                  (p) => setState(() => _nationalIdImagePath = p),
                 ),
               ),
             ],
@@ -791,8 +650,6 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
   }
 
   Widget _vehicleForm() {
-    final now = DateTime.now();
-    final years = List.generate(30, (i) => now.year - i);
     final taxis = (_profile?['taxis'] is List)
         ? List<Map<String, dynamic>>.from(
             (_profile!['taxis'] as List).whereType<Map>().map(
@@ -812,7 +669,7 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
             borderRadius: BorderRadius.circular(12),
           ),
           child: const Text(
-            'Add your vehicle details and compliance documents (registration, insurance, COF).',
+            'Add your vehicle details and a clear photo of the vehicle.',
             style: TextStyle(color: RideShareColors.onSecondaryContainer),
           ),
         ),
@@ -821,25 +678,8 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
           title: 'Vehicle details',
           children: [
             TextField(
-              controller: _make,
-              decoration: _fieldDecoration('Make'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
               controller: _model,
               decoration: _fieldDecoration('Model'),
-            ),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<int>(
-              // ignore: deprecated_member_use
-              value: _year,
-              decoration: _fieldDecoration('Year'),
-              items: years
-                  .map(
-                    (y) => DropdownMenuItem(value: y, child: Text('$y')),
-                  )
-                  .toList(),
-              onChanged: (v) => setState(() => _year = v),
             ),
             const SizedBox(height: 10),
             TextField(
@@ -858,26 +698,6 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
               decoration: _fieldDecoration('Seats'),
               keyboardType: TextInputType.number,
             ),
-            _dateTile(
-              label: 'Insurance expiry',
-              value: _insuranceExpiry,
-              onTap: () => _pickDate(
-                current: _insuranceExpiry,
-                firstDate: DateTime(now.year, now.month, now.day),
-                lastDate: DateTime(now.year + 10, now.month, now.day),
-                onPicked: (d) => setState(() => _insuranceExpiry = d),
-              ),
-            ),
-            _dateTile(
-              label: 'COF expiry',
-              value: _cofExpiry,
-              onTap: () => _pickDate(
-                current: _cofExpiry,
-                firstDate: DateTime(now.year, now.month, now.day),
-                lastDate: DateTime(now.year + 10, now.month, now.day),
-                onPicked: (d) => setState(() => _cofExpiry = d),
-              ),
-            ),
             _docTile(
               label: 'Vehicle photo',
               localPath: _vehicleImagePath,
@@ -885,33 +705,6 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
               onPick: () => _pickDoc(
                 'vehicle',
                 (p) => setState(() => _vehicleImagePath = p),
-              ),
-            ),
-            _docTile(
-              label: 'Registration (logbook)',
-              localPath: _registrationImagePath,
-              existingUrl: taxi?['registrationImageUrl']?.toString(),
-              onPick: () => _pickDoc(
-                'registration',
-                (p) => setState(() => _registrationImagePath = p),
-              ),
-            ),
-            _docTile(
-              label: 'Insurance document',
-              localPath: _insuranceImagePath,
-              existingUrl: taxi?['insuranceImageUrl']?.toString(),
-              onPick: () => _pickDoc(
-                'insurance',
-                (p) => setState(() => _insuranceImagePath = p),
-              ),
-            ),
-            _docTile(
-              label: 'Certificate of Fitness (COF)',
-              localPath: _cofImagePath,
-              existingUrl: taxi?['cofImageUrl']?.toString(),
-              onPick: () => _pickDoc(
-                'cof',
-                (p) => setState(() => _cofImagePath = p),
               ),
             ),
           ],

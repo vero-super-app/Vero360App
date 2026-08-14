@@ -450,7 +450,9 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
           markerId: MarkerId('taxi_${taxi.id}'),
           position: LatLng(taxi.latitude, taxi.longitude),
           infoWindow: InfoWindow(
-            title: '${taxi.make} ${taxi.model}',
+            title: taxi.model.trim().isNotEmpty
+                ? taxi.model
+                : 'Vero Ride',
             snippet: '${taxi.distance.toStringAsFixed(1)}km • ⭐${taxi.rating}',
           ),
           icon: _getTaxiMarkerIcon(taxi.taxiClass),

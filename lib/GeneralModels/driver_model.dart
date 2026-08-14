@@ -66,8 +66,7 @@ class Driver {
   bool get isRejected => status == 'REJECTED';
   bool get isPendingVerification => status == 'PENDING_VERIFICATION';
   bool get hasLicenseDocs =>
-      licenseNumber.trim().isNotEmpty &&
-      (licenseImageUrl?.trim().isNotEmpty ?? false);
+      licenseImageUrl?.trim().isNotEmpty ?? false;
 
   Map<String, dynamic>? get primaryTaxi =>
       taxis.isEmpty ? null : taxis.first;

@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
-import 'package:vero360_app/features/ride_share/core/fleet_date_picker.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
@@ -25,51 +23,30 @@ class _EditDriverDetailsScreenState
   bool _saving = false;
 
   late final TextEditingController _bioController;
-  late final TextEditingController _licenseController;
   late final TextEditingController _bankNameController;
   late final TextEditingController _bankNumberController;
   late final TextEditingController _bankCodeController;
-  DateTime? _licenseExpiry;
 
   @override
   void initState() {
     super.initState();
     final d = widget.driver;
     _bioController = TextEditingController(text: (d['bio'] ?? '').toString());
-    _licenseController =
-        TextEditingController(text: (d['licenseNumber'] ?? '').toString());
     _bankNameController =
         TextEditingController(text: (d['bankAccountName'] ?? '').toString());
     _bankNumberController =
         TextEditingController(text: (d['bankAccountNumber'] ?? '').toString());
     _bankCodeController =
         TextEditingController(text: (d['bankCode'] ?? '').toString());
-
-    final expiry = tryParseFleetDate(d['licenseExpiry']);
-    _licenseExpiry = (expiry != null && expiry.year > 1901) ? expiry : null;
   }
 
   @override
   void dispose() {
     _bioController.dispose();
-    _licenseController.dispose();
     _bankNameController.dispose();
     _bankNumberController.dispose();
     _bankCodeController.dispose();
     super.dispose();
-  }
-
-  Future<void> _pickLicenseExpiry() async {
-    final now = DateTime.now();
-    final picked = await showFleetDatePicker(
-      context,
-      current: _licenseExpiry ?? now.add(const Duration(days: 365)),
-      firstDate: DateTime(now.year, now.month, now.day),
-      lastDate: DateTime(now.year + 20, now.month, now.day),
-    );
-    if (picked != null) {
-      setState(() => _licenseExpiry = picked);
-    }
   }
 
   Future<void> _save() async {
@@ -82,8 +59,6 @@ class _EditDriverDetailsScreenState
     try {
       final payload = <String, dynamic>{
         'bio': _bioController.text.trim(),
-        'licenseNumber': _licenseController.text.trim(),
-        if (_licenseExpiry != null) 'licenseExpiry': fleetDateIso(_licenseExpiry!),
         'bankAccountName': _bankNameController.text.trim(),
         'bankAccountNumber': _bankNumberController.text.trim(),
         'bankCode': _bankCodeController.text.trim(),
@@ -142,45 +117,6 @@ class _EditDriverDetailsScreenState
                   border: OutlineInputBorder(),
                   alignLabelWithHint: true,
                 ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            _sectionTitle('License'),
-            _fieldCard(
-              child: Column(
-                children: [
-                  TextFormField(
-                    controller: _licenseController,
-                    decoration: const InputDecoration(
-                      labelText: 'License number',
-                      border: OutlineInputBorder(),
-                    ),
-                    validator: (v) =>
-                        (v == null || v.trim().isEmpty) ? 'Required' : null,
-                  ),
-                  const SizedBox(height: 12),
-                  InkWell(
-                    onTap: _pickLicenseExpiry,
-                    borderRadius: BorderRadius.circular(8),
-                    child: InputDecorator(
-                      decoration: const InputDecoration(
-                        labelText: 'License expiry',
-                        border: OutlineInputBorder(),
-                        suffixIcon: Icon(Icons.calendar_today_outlined),
-                      ),
-                      child: Text(
-                        _licenseExpiry != null
-                            ? DateFormat.yMMMd().format(_licenseExpiry!)
-                            : 'Select date',
-                        style: TextStyle(
-                          color: _licenseExpiry != null
-                              ? _brandOrange
-                              : Colors.grey.shade600,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
               ),
             ),
             const SizedBox(height: 16),

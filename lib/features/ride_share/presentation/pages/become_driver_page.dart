@@ -3,9 +3,13 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
+import 'package:vero360_app/GernalServices/role_helper.dart';
+import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/features/ride_share/core/fleet_date_picker.dart';
 import 'package:vero360_app/features/ride_share/core/fleet_image_compressor.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 
 enum _OnboardingPhase { driver, vehicle, status }
@@ -222,13 +226,24 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
 
       Map<String, dynamic> profile;
       final wasVerified = _profile?['isVerified'] == true;
+      final prefs = await SharedPreferences.getInstance();
+      final wasDriverSession =
+          RoleHelper.normalizeAccountRole(
+            prefs.getString('user_role') ?? prefs.getString('role'),
+          ) ==
+          RoleHelper.driver;
       if (wasVerified) {
         profile = await _driverService.updateMyDriver(payload);
       } else {
         profile = await _driverService.applyAsDriver(payload);
       }
+      await loadDriverStatusFromPrefs();
 
       if (!mounted) return;
+      if (!wasDriverSession) {
+        await _openDriverHome();
+        return;
+      }
       setState(() {
         _profile = profile;
         _licenseImagePath = null;
@@ -371,6 +386,16 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
       setState(
           () => _error = 'Could not open the date picker. Please try again.');
     }
+  }
+
+  Future<void> _openDriverHome() async {
+    final prefs = await SharedPreferences.getInstance();
+    final email = prefs.getString('email') ?? '';
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => Bottomnavbar(email: email)),
+      (route) => false,
+    );
   }
 
   String _fmt(DateTime? d) =>
@@ -935,7 +960,7 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
           ),
         ),
         TextButton(
-          onPressed: () => Navigator.of(context).maybePop(),
+          onPressed: _openDriverHome,
           child: const Text('Back to driver home'),
         ),
       ],

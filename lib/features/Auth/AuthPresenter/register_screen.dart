@@ -320,6 +320,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
       uid: uid,
     );
     await RoleSessionService.persistUserToPrefs(prefs, user);
+    if (role == RoleHelper.driver || role == RoleHelper.merchant) {
+      unawaited(
+        RoleSessionService.retryPromoteAccountRole(
+          role: role,
+          name: _name.text.trim().isNotEmpty
+              ? _name.text.trim()
+              : user['name']?.toString(),
+          email: _identifierEmail.isNotEmpty
+              ? _identifierEmail
+              : user['email']?.toString(),
+          phone: _identifierPhone.isNotEmpty
+              ? _identifierPhone
+              : user['phone']?.toString(),
+          merchantService: merchantService,
+          businessName: _businessName.text.trim(),
+          businessAddress: _businessAddress.text.trim(),
+        ),
+      );
+    }
     if (_role == UserRole.merchant) {
       if (_businessName.text.trim().isNotEmpty) {
         await prefs.setString('business_name', _businessName.text.trim());
@@ -617,38 +636,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
     } catch (_) {}
   }
 
-  /// Retry syncing role to backend (handles guard creating user with default role on first request).
+  /// Retry syncing role to backend. Does not depend on this widget staying mounted.
   void _retrySyncRoleToBackend(User user) {
-    unawaited(_retrySyncRoleToBackendLoop(user));
-  }
-
-  Future<void> _retrySyncRoleToBackendLoop(User user) async {
-    const delays = [
-      Duration(seconds: 2),
-      Duration(seconds: 5),
-      Duration(seconds: 10),
-    ];
-    for (final delay in delays) {
-      await Future.delayed(delay);
-      if (!mounted) return;
-      await _persistRoleToFirestore(user);
-      final ok = await _syncProfileToBackend(user, showUserFeedback: false);
-      if (ok) {
-        if (kDebugMode) {
-          // ignore: avoid_print
-          print('[Register] Retry PUT /users/me succeeded');
-        }
-        return;
-      }
-    }
-    if (mounted && (_role == UserRole.driver || _role == UserRole.merchant)) {
-      ToastHelper.showCustomToast(
-        context,
-        'Account created. ${_roleString == 'driver' ? 'Driver' : 'Merchant'} mode is active; server role sync is still pending.',
-        isSuccess: true,
-        errorMessage: '',
-      );
-    }
+    unawaited(
+      RoleSessionService.retryPromoteAccountRole(
+        role: _roleString,
+        name: _name.text.trim().isNotEmpty
+            ? _name.text.trim()
+            : user.displayName,
+        email: _identifierEmail.isNotEmpty ? _identifierEmail : user.email,
+        phone: _identifierPhone.isNotEmpty
+            ? _identifierPhone
+            : user.phoneNumber,
+        merchantService: _selectedMerchantService?.key,
+        businessName: _businessName.text.trim(),
+        businessAddress: _businessAddress.text.trim(),
+      ),
+    );
   }
 
   // ---------- Registration with API OTP verification ----------

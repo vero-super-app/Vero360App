@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 import 'package:vero360_app/GernalServices/api_client.dart';
+import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
@@ -163,9 +164,9 @@ class AuthService {
     final name =
         (profile['name'] ?? fallbackName ?? user.displayName ?? '').toString();
     final phone = (profile['phone'] ?? fallbackPhone ?? '').toString();
-    final role = (profile['role'] ?? fallbackRole ?? 'customer')
-        .toString()
-        .toLowerCase();
+    final role = RoleHelper.normalizeAccountRole(
+      profile['role'] ?? fallbackRole,
+    );
 
     final token = await AuthHandler.getFirebaseToken();
 
@@ -180,7 +181,7 @@ class AuthService {
       'email': user.email ?? '',
       'phone': phone,
       'name': name,
-      'role': role,
+      if (role != null) 'role': role,
     };
 
     if (merchantData != null && role == 'merchant') {
@@ -213,7 +214,7 @@ class AuthService {
       }
 
       _toast(context, 'Logged in successfully', ok: true);
-      return _buildFirebaseAuthResult(user, fallbackRole: 'customer');
+      return _buildFirebaseAuthResult(user);
     } on FirebaseAuthException catch (e) {
       _toast(context, onFailMessage ?? (e.message ?? 'Backup login failed.'),
           ok: false);

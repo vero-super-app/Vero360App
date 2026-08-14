@@ -31,7 +31,10 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
   DateTime? _dateOfBirth;
 
   String? _licenseImagePath;
+  String? _nationalIdImagePath;
   String? _vehicleImagePath;
+  String? _insuranceImagePath;
+  String? _cofImagePath;
 
   Map<String, dynamic>? _profile;
   _OnboardingPhase _phase = _OnboardingPhase.driver;
@@ -80,6 +83,8 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
     final isVerified = profile['isVerified'] == true;
     final hasLicenseImage =
         (profile['licenseImageUrl']?.toString() ?? '').trim().isNotEmpty;
+    final hasNationalIdImage =
+        (profile['nationalIdImageUrl']?.toString() ?? '').trim().isNotEmpty;
     final taxis = (profile['taxis'] is List)
         ? List<Map<String, dynamic>>.from(
             (profile['taxis'] as List).whereType<Map>().map(
@@ -93,9 +98,8 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
     final dob = tryParseFleetDate(profile['dateOfBirth']);
     final today = fleetDateOnly(DateTime.now());
     final adultCutoff = DateTime(today.year - 18, today.month, today.day);
-    final dobIsPlaceholder = dob == null ||
-        dob.year <= 1901 ||
-        dob.isAfter(adultCutoff);
+    final dobIsPlaceholder =
+        dob == null || dob.year <= 1901 || dob.isAfter(adultCutoff);
     _dateOfBirth = dobIsPlaceholder ? null : dob;
 
     if (taxi != null) {
@@ -108,13 +112,14 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
     _OnboardingPhase next;
     if (status == 'REJECTED') {
       next = _OnboardingPhase.driver;
-    } else if (!hasLicenseImage) {
+    } else if (!hasLicenseImage || !hasNationalIdImage) {
       next = _OnboardingPhase.driver;
     } else if (taxi == null || taxiStatus == 'INACTIVE') {
       next = _OnboardingPhase.vehicle;
     } else if (isVerified && taxiStatus == 'ACTIVE') {
       next = _OnboardingPhase.status;
-    } else if (status == 'PENDING_VERIFICATION' && taxiStatus != 'PENDING_REVIEW') {
+    } else if (status == 'PENDING_VERIFICATION' &&
+        taxiStatus != 'PENDING_REVIEW') {
       next = _OnboardingPhase.vehicle;
     } else {
       next = _OnboardingPhase.status;
@@ -182,6 +187,12 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
       setState(() => _error = 'Upload a clear photo of your driving license.');
       return;
     }
+    final existingNidUrl =
+        (_profile?['nationalIdImageUrl']?.toString() ?? '').trim();
+    if (_nationalIdImagePath == null && existingNidUrl.isEmpty) {
+      setState(() => _error = 'Upload a clear photo of your national ID.');
+      return;
+    }
 
     setState(() {
       _submitting = true;
@@ -195,9 +206,17 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
           'license',
         );
       }
+      String nidUrl = existingNidUrl;
+      if (_nationalIdImagePath != null) {
+        nidUrl = await _driverService.uploadDriverDocument(
+          _nationalIdImagePath!,
+          'national_id',
+        );
+      }
 
       final payload = <String, dynamic>{
         'licenseImageUrl': licenseUrl,
+        'nationalIdImageUrl': nidUrl,
         'dateOfBirth': fleetDateIso(_dateOfBirth!),
       };
 
@@ -213,6 +232,7 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
       setState(() {
         _profile = profile;
         _licenseImagePath = null;
+        _nationalIdImagePath = null;
         _phase = _OnboardingPhase.vehicle;
       });
       ScaffoldMessenger.of(context).showSnackBar(
@@ -243,9 +263,20 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
         : <Map<String, dynamic>>[];
     final taxi = taxis.isNotEmpty ? taxis.first : null;
     final existingVehicleUrl = (taxi?['imageUrl']?.toString() ?? '').trim();
+    final existingInsUrl =
+        (taxi?['insuranceImageUrl']?.toString() ?? '').trim();
+    final existingCofUrl = (taxi?['cofImageUrl']?.toString() ?? '').trim();
 
     if (_vehicleImagePath == null && existingVehicleUrl.isEmpty) {
       setState(() => _error = 'Upload a photo of your vehicle.');
+      return;
+    }
+    if (_insuranceImagePath == null && existingInsUrl.isEmpty) {
+      setState(() => _error = 'Upload your vehicle insurance document.');
+      return;
+    }
+    if (_cofImagePath == null && existingCofUrl.isEmpty) {
+      setState(() => _error = 'Upload your Certificate of Fitness (COF).');
       return;
     }
 
@@ -255,11 +286,25 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
     });
     try {
       var vehicleUrl = existingVehicleUrl;
+      var insUrl = existingInsUrl;
+      var cofUrl = existingCofUrl;
 
       if (_vehicleImagePath != null) {
         vehicleUrl = await _driverService.uploadDriverDocument(
           _vehicleImagePath!,
           'vehicle',
+        );
+      }
+      if (_insuranceImagePath != null) {
+        insUrl = await _driverService.uploadDriverDocument(
+          _insuranceImagePath!,
+          'insurance',
+        );
+      }
+      if (_cofImagePath != null) {
+        cofUrl = await _driverService.uploadDriverDocument(
+          _cofImagePath!,
+          'cof',
         );
       }
 
@@ -270,13 +315,13 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
         'color': _color.text.trim().isEmpty ? 'Unknown' : _color.text.trim(),
         'seats': int.tryParse(_seats.text.trim()) ?? 4,
         'imageUrl': vehicleUrl,
+        'insuranceImageUrl': insUrl,
+        'cofImageUrl': cofUrl,
         'features': ['AC'],
       };
 
       final taxiStatus = taxi?['status']?.toString() ?? '';
-      if (taxi != null &&
-          taxi['id'] != null &&
-          taxiStatus == 'ACTIVE') {
+      if (taxi != null && taxi['id'] != null && taxiStatus == 'ACTIVE') {
         await _driverService.updateTaxi(
           (taxi['id'] as num).toInt(),
           payload,
@@ -290,6 +335,8 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
       setState(() {
         _profile = refreshed;
         _vehicleImagePath = null;
+        _insuranceImagePath = null;
+        _cofImagePath = null;
         _phase = _OnboardingPhase.status;
       });
       ScaffoldMessenger.of(context).showSnackBar(
@@ -321,7 +368,8 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
       if (picked != null) onPicked(picked);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Could not open the date picker. Please try again.');
+      setState(
+          () => _error = 'Could not open the date picker. Please try again.');
     }
   }
 
@@ -388,9 +436,7 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
           child: Container(
             padding: const EdgeInsets.symmetric(vertical: 10),
             decoration: BoxDecoration(
-              color: active
-                  ? RideShareColors.primarySoft
-                  : Colors.transparent,
+              color: active ? RideShareColors.primarySoft : Colors.transparent,
               border: Border(
                 bottom: BorderSide(
                   color: active
@@ -416,8 +462,10 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
       );
     }
 
-    final driverDone =
-        ((_profile?['licenseImageUrl']?.toString() ?? '').trim().isNotEmpty);
+    final driverDone = ((_profile?['licenseImageUrl']?.toString() ?? '')
+            .trim()
+            .isNotEmpty) &&
+        ((_profile?['nationalIdImageUrl']?.toString() ?? '').trim().isNotEmpty);
     return Row(
       children: [
         chip('1. Driver', _OnboardingPhase.driver, true),
@@ -542,9 +590,7 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
               ),
               child: Icon(
                 hasRemote ? Icons.check_circle : Icons.add_a_photo_outlined,
-                color: hasRemote
-                    ? Colors.green
-                    : RideShareColors.primaryDeep,
+                color: hasRemote ? Colors.green : RideShareColors.primaryDeep,
               ),
             ),
           const SizedBox(width: 12),
@@ -560,8 +606,8 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
                   localPath != null
                       ? 'New photo selected'
                       : hasRemote
-                          ? 'On file — tap to replace'
-                          : 'Required — tap to add',
+                          ? 'On file, tap to replace'
+                          : 'Required, tap to add',
                   style: TextStyle(
                     fontSize: 12,
                     color: RideShareColors.bodyText,
@@ -570,7 +616,9 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
               ],
             ),
           ),
-          TextButton(onPressed: onPick, child: Text(hasRemote || localPath != null ? 'Replace' : 'Add')),
+          TextButton(
+              onPressed: onPick,
+              child: Text(hasRemote || localPath != null ? 'Replace' : 'Add')),
         ],
       ),
     );
@@ -590,7 +638,7 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Text(
-              'Upload a photo of your driving license and your date of birth. An operator will review them before you can go online.',
+              'Upload photos of your driving license and national ID. An operator will review them before you can go online.',
               style: TextStyle(color: RideShareColors.onSecondaryContainer),
             ),
           ),
@@ -615,6 +663,15 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
                 onPick: () => _pickDoc(
                   'license',
                   (p) => setState(() => _licenseImagePath = p),
+                ),
+              ),
+              _docTile(
+                label: 'National ID photo',
+                localPath: _nationalIdImagePath,
+                existingUrl: _profile?['nationalIdImageUrl']?.toString(),
+                onPick: () => _pickDoc(
+                  'national_id',
+                  (p) => setState(() => _nationalIdImagePath = p),
                 ),
               ),
             ],
@@ -669,7 +726,7 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
             borderRadius: BorderRadius.circular(12),
           ),
           child: const Text(
-            'Add your vehicle details and a clear photo of the vehicle.',
+            'Add your vehicle details plus photos of the vehicle, insurance, and COF.',
             style: TextStyle(color: RideShareColors.onSecondaryContainer),
           ),
         ),
@@ -705,6 +762,24 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
               onPick: () => _pickDoc(
                 'vehicle',
                 (p) => setState(() => _vehicleImagePath = p),
+              ),
+            ),
+            _docTile(
+              label: 'Insurance document',
+              localPath: _insuranceImagePath,
+              existingUrl: taxi?['insuranceImageUrl']?.toString(),
+              onPick: () => _pickDoc(
+                'insurance',
+                (p) => setState(() => _insuranceImagePath = p),
+              ),
+            ),
+            _docTile(
+              label: 'Certificate of Fitness (COF)',
+              localPath: _cofImagePath,
+              existingUrl: taxi?['cofImageUrl']?.toString(),
+              onPick: () => _pickDoc(
+                'cof',
+                (p) => setState(() => _cofImagePath = p),
               ),
             ),
           ],
@@ -750,7 +825,7 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
           )
         : <Map<String, dynamic>>[];
     final taxi = taxis.isNotEmpty ? taxis.first : null;
-    final taxiStatus = taxi?['status']?.toString() ?? '—';
+    final taxiStatus = taxi?['status']?.toString() ?? ',';
 
     String headline;
     String body;
@@ -767,7 +842,7 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
           'Both gates are approved. Return to the driver dashboard and go online.';
       tone = const Color(0xFF047857);
     } else if (isVerified && taxiStatus == 'PENDING_REVIEW') {
-      headline = 'Driver approved — vehicle under review';
+      headline = 'Driver approved, vehicle under review';
       body =
           'Your identity documents are verified. Wait for an operator to approve your vehicle.';
       tone = RideShareColors.primaryDeep;
@@ -816,12 +891,16 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
         ),
         const SizedBox(height: 16),
         if (status == 'REJECTED' ||
-            !( (_profile?['licenseImageUrl']?.toString() ?? '').isNotEmpty))
+            !((_profile?['licenseImageUrl']?.toString() ?? '')
+                .trim()
+                .isNotEmpty) ||
+            !((_profile?['nationalIdImageUrl']?.toString() ?? '')
+                .trim()
+                .isNotEmpty))
           SizedBox(
             width: double.infinity,
             child: OutlinedButton(
-              onPressed: () =>
-                  setState(() => _phase = _OnboardingPhase.driver),
+              onPressed: () => setState(() => _phase = _OnboardingPhase.driver),
               child: const Text('Update driver documents'),
             ),
           ),

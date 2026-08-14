@@ -1,44 +1,92 @@
 # frozen_string_literal: true
 
 # Fastlane for Play Store uploads (Flutter AAB).
-# Run from android/:  bundle exec fastlane internal
+# From repo root:  .\tool\play_deploy.ps1
+# From android/:   bundle exec fastlane internal
 #
 # Prerequisites:
-#   1. Real android/key.properties + upload keystore (not placeholders)
-#   2. Play Console app com.vero265.app with at least one manual AAB uploaded
-#   3. Google Cloud service account JSON linked in Play Console → API access
-#      Save as android/play-store-service-account.json (gitignored)
+#   1. android/key.properties + upload keystore
+#   2. android/play-store-service-account.json (Play Console API access)
+#   3. Play app com.vero265.app (upload cert must match this keystore)
 
 default_platform(:android)
+opt_out_usage
+
+def project_root
+  File.expand_path('../..', __dir__)
+end
+
+def release_aab
+  File.join(project_root, 'build/app/outputs/bundle/release/app-release.aab')
+end
+
+def require_play_json!
+  path = ENV['PLAY_STORE_JSON_KEY']
+  path = File.expand_path('../play-store-service-account.json', __dir__) if path.nil? || path.empty?
+  return path if File.exist?(path)
+
+  UI.user_error!(<<~MSG)
+    Missing Play API key at:
+      #{path}
+
+    Create it:
+      1. Google Cloud Console → APIs → enable "Google Play Android Developer API"
+      2. Create a service account → Keys → Add key → JSON
+      3. Play Console → Setup → API access → link that Cloud project
+      4. Invite the service account with "Release to production, exclude devices…" (or Admin)
+      5. Save the JSON as android/play-store-service-account.json
+  MSG
+end
+
+def upload_aab!(track)
+  require_play_json!
+  aab = release_aab
+  UI.user_error!("AAB not found at #{aab}. Run fastlane build first.") unless File.exist?(aab)
+
+  upload_to_play_store(
+    track: track,
+    aab: aab,
+    release_status: track == 'production' ? 'draft' : 'completed',
+    skip_upload_metadata: true,
+    skip_upload_changelogs: true,
+    skip_upload_images: true,
+    skip_upload_screenshots: true,
+    skip_upload_apk: true
+  )
+end
 
 platform :android do
+  desc 'Check Ruby/Fastlane/signing/Play JSON without uploading'
+  lane :verify do
+    UI.success("Ruby #{RUBY_VERSION}")
+    UI.message("Project: #{project_root}")
+    key_props = File.expand_path('../key.properties', __dir__)
+    UI.user_error!("Missing #{key_props}") unless File.exist?(key_props)
+    UI.success('key.properties present')
+    json = require_play_json!
+    UI.success("Play JSON: #{json}")
+    UI.success('Fastlane is ready. Run: .\\tool\\play_deploy.ps1')
+  end
+
   desc 'Bump pubspec build number (+N) by 1'
   lane :bump_build do
-    sh('cd .. && dart run tool/bump_build.dart')
+    Dir.chdir(project_root) do
+      sh('dart run tool/bump_build.dart')
+    end
   end
 
   desc 'Build release app bundle (signed)'
   lane :build do
-    sh('cd .. && flutter pub get')
-    sh('cd .. && flutter build appbundle --release --android-skip-build-dependency-validation')
+    Dir.chdir(project_root) do
+      sh('flutter pub get')
+      sh('flutter build appbundle --release --android-skip-build-dependency-validation')
+    end
   end
 
   desc 'Upload existing AAB to a track (ENV TRACK=internal|alpha|production)'
   lane :upload do
     track = (ENV['TRACK'] || 'internal').downcase
-    aab = File.expand_path('../../build/app/outputs/bundle/release/app-release.aab', __dir__)
-    UI.user_error!("AAB not found at #{aab}. Run fastlane build first.") unless File.exist?(aab)
-
-    upload_to_play_store(
-      track: track,
-      aab: aab,
-      release_status: track == 'production' ? 'draft' : 'completed',
-      skip_upload_metadata: true,
-      skip_upload_changelogs: true,
-      skip_upload_images: true,
-      skip_upload_screenshots: true,
-      skip_upload_apk: true
-    )
+    upload_aab!(track)
   end
 
   desc 'Upload existing AAB to Play internal testing track'
@@ -56,32 +104,12 @@ platform :android do
   desc 'Build + upload to Play production (draft — review in Console)'
   lane :production do
     build
-    aab = File.expand_path('../../build/app/outputs/bundle/release/app-release.aab', __dir__)
-    upload_to_play_store(
-      track: 'production',
-      aab: aab,
-      release_status: 'draft',
-      skip_upload_metadata: true,
-      skip_upload_changelogs: true,
-      skip_upload_images: true,
-      skip_upload_screenshots: true,
-      skip_upload_apk: true
-    )
+    upload_aab!('production')
   end
 
   desc 'Build + upload to closed beta (alpha track)'
   lane :beta do
     build
-    aab = File.expand_path('../../build/app/outputs/bundle/release/app-release.aab', __dir__)
-    upload_to_play_store(
-      track: 'alpha',
-      aab: aab,
-      release_status: 'completed',
-      skip_upload_metadata: true,
-      skip_upload_changelogs: true,
-      skip_upload_images: true,
-      skip_upload_screenshots: true,
-      skip_upload_apk: true
-    )
+    upload_aab!('alpha')
   end
 end

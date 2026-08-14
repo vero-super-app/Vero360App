@@ -1,0 +1,89 @@
+# Codemagic builds this file when it is on the scanned branch.
+# Workflow Editor settings for the same trigger events are ignored once this exists.
+#
+# After the first push: Codemagic → app → Check for configuration file.
+# Set App Store Connect integration name below to match Team settings → Integrations.
+# iOS signing: Team settings → Code signing identities (App Store profile for com.vero265.app).
+
+workflows:
+  ios-simulator-smoke:
+    name: iOS Simulator smoke (launch crash check)
+    instance_type: mac_mini_m2
+    max_build_duration: 45
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      vars:
+        BUNDLE_ID: com.vero265.app
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/Library/Caches/CocoaPods
+    scripts:
+      - name: Flutter pub get
+        script: |
+          flutter pub get
+      - name: Build iOS Simulator .app
+        script: |
+          flutter build ios --simulator --debug
+      - name: Boot simulator, install, launch, fail on crash
+        script: |
+          bash tool/ios_simulator_smoke.sh
+    artifacts:
+      - build/ios/iphonesimulator/Runner.app
+      - build/simulator-smoke/**
+
+  ios-app-store:
+    name: iOS TestFlight (smoke then IPA)
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+    # Manual start in Codemagic UI (avoids publishing an IPA on every push).
+    triggering:
+      events: []
+    integrations:
+      app_store_connect: Vero360
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.vero265.app
+      vars:
+        BUNDLE_ID: com.vero265.app
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/Library/Caches/CocoaPods
+    scripts:
+      - name: Flutter pub get
+        script: |
+          flutter pub get
+      - name: Build iOS Simulator .app
+        script: |
+          flutter build ios --simulator --debug
+      - name: Boot simulator, install, launch, fail on crash
+        script: |
+          bash tool/ios_simulator_smoke.sh
+      - name: Set up code signing
+        script: xcode-project use-profiles
+      - name: Build App Store IPA
+        script: |
+          flutter build ipa --release \
+            --export-options-plist=/Users/builder/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - build/ios/iphonesimulator/Runner.app
+      - build/simulator-smoke/**
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        submit_to_app_store: false

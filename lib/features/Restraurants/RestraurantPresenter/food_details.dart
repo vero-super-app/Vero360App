@@ -1,22 +1,25 @@
 // lib/features/Restraurants/RestraurantPresenter/food_details.dart
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import 'package:vero360_app/config/paychangu_config.dart';
+import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_model.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantsService/food_review_service.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
+import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
@@ -185,8 +188,10 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
 
   int  _pageIdx           = 0;
   int  _qty               = 1;
-  bool _payStarting       = false;
+  bool _cartBusy          = false;
   bool _descExpanded      = false;
+  int? _selectedVariantIndex;
+  final Set<int> _selectedAddOnIndexes = {};
 
   double? _deliveryLat, _deliveryLng;
   bool _pinning = false;
@@ -206,12 +211,60 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     return unique.isNotEmpty ? unique : [''];
   }
 
-  // ── Lifecycle ──────────────────────────────────────────────────────────────
+  double get _unitPrice {
+    final item = widget.foodItem;
+    var total = item.price;
+    final vi = _selectedVariantIndex;
+    if (vi != null && vi >= 0 && vi < item.variants.length) {
+      total += item.variants[vi].priceDeltaMwk;
+    }
+    for (final i in _selectedAddOnIndexes) {
+      if (i >= 0 && i < item.addOns.length) {
+        total += item.addOns[i].priceMwk;
+      }
+    }
+    return total;
+  }
+
+  String? get _selectedVariantName {
+    final item = widget.foodItem;
+    final vi = _selectedVariantIndex;
+    if (vi == null || vi < 0 || vi >= item.variants.length) return null;
+    final n = item.variants[vi].name.trim();
+    return n.isEmpty ? null : n;
+  }
+
+  List<String> get _selectedAddOnNames {
+    final item = widget.foodItem;
+    final names = <String>[];
+    for (final i in _selectedAddOnIndexes) {
+      if (i < 0 || i >= item.addOns.length) continue;
+      final n = item.addOns[i].name.trim();
+      if (n.isNotEmpty) names.add(n);
+    }
+    return names;
+  }
+
+  String get _incomingLineConfigKey {
+    final v = (_selectedVariantName ?? '').toLowerCase();
+    final a = _selectedAddOnNames.map((e) => e.toLowerCase()).toList()..sort();
+    if (v.isEmpty && a.isEmpty) return '';
+    return '$v|${a.join(',')}';
+  }
+
   @override
   void initState() {
     super.initState();
     _pageCtrl = PageController();
     _tabCtrl  = TabController(length: 2, vsync: this);
+    _tabCtrl.addListener(() {
+      if (mounted) setState(() {});
+    });
+    final item = widget.foodItem;
+    if (item.variants.isNotEmpty) _selectedVariantIndex = 0;
+    for (var i = 0; i < item.addOns.length; i++) {
+      if (item.addOns[i].isDefault) _selectedAddOnIndexes.add(i);
+    }
     _hydrateDefaultsFast();
     _startHeroAutoSlide();
   }
@@ -324,7 +377,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     } catch (_) {}
   }
 
-  /// Auto-pin coords so Buy works without tapping Pin first.
+  /// Auto-pin coords so delivery fields stay ready if the user fills the form.
   Future<bool> _autoPinDelivery() async {
     if (_deliveryLat != null && _deliveryLng != null) return true;
     if (_pinning) return false;
@@ -468,135 +521,146 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     }
   }
 
-  Future<void> _startCheckout() async {
-    if (_payStarting) return;
-    setState(() => _payStarting = true);
+  String _kitchenKeyForFood(FoodModel item) {
+    final rid = item.restaurantId?.trim();
+    if (rid != null && rid.isNotEmpty) return 'r:$rid';
+    final mid = item.merchantId?.trim();
+    if (mid != null && mid.isNotEmpty) return 'm:$mid';
+    return 'n:${item.RestrauntName.trim().toLowerCase()}';
+  }
 
+  Future<bool> _confirmReplaceCart(String otherName) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Start a new order?'),
+        content: Text(
+          'Your cart has items from $otherName. Clear cart and add this item instead?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Clear cart',
+              style: TextStyle(color: _veroOrange),
+            ),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
+  Future<void> _addFoodToCart({required bool goToCheckout}) async {
+    if (_cartBusy) return;
     final item = widget.foodItem;
     final mid = item.merchantId?.trim();
     if (mid == null || mid.isEmpty) {
-      if (mounted) setState(() => _payStarting = false);
       _toast('This dish cannot be ordered online (missing seller).', false);
       return;
     }
-    if (!_formKey.currentState!.validate()) {
-      if (mounted) setState(() => _payStarting = false);
-      _toast('Please complete all required fields', false);
-      return;
-    }
-    final name = _nameCtrl.text.trim();
-    final phone = _phoneCtrl.text.trim();
-    final loc = _locationCtrl.text.trim();
-    var email = _emailCtrl.text.trim();
-    if (email.isEmpty) {
-      final d = phone.replaceAll(RegExp(r'\D'), '');
-      email = d.isNotEmpty ? 'guest+$d@guest.vero360.app' : 'guest@vero360.app';
-    }
 
-    // One-tap Buy: pin automatically if needed (no manual Pin tap).
-    if (_deliveryLat == null || _deliveryLng == null) {
-      await _autoPinDelivery();
-    }
-    if ((_deliveryLat == null || _deliveryLng == null) && loc.length < 4) {
-      if (mounted) setState(() => _payStarting = false);
-      _toast('Add a delivery address or allow location.', false);
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) {
+      _toast('Please sign in to add items to cart.', false);
       return;
     }
 
+    setState(() => _cartBusy = true);
     try {
-      await InternetAddress.lookup('api.paychangu.com');
-    } on SocketException {
-      if (mounted) setState(() => _payStarting = false);
-      _toast('No internet — check connection', false);
-      return;
-    }
+      final cart = CartServiceProvider.getInstance();
+      var existing = cart.cachedItems;
+      if (existing.isEmpty) {
+        existing = await cart.loadLocalCart();
+      }
 
-    final amount = (item.price * _qty).round();
-    if (amount < 1) {
-      if (mounted) setState(() => _payStarting = false);
-      _toast('Invalid price', false);
-      return;
-    }
-    final txRef = 'vero-food-${DateTime.now().millisecondsSinceEpoch}';
-    final parts = name.split(RegExp(r'\s+'));
-    final fName = parts.isNotEmpty ? parts.first : 'Customer';
-    final lName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
-    try {
-      final res = await http
-          .post(
-            PayChanguConfig.paymentUri,
-            headers: PayChanguConfig.authHeaders,
-            body: json.encode({
-              'tx_ref': txRef,
-              'first_name': fName,
-              'last_name': lName,
-              'email': email,
-              'phone_number': phone,
-              'currency': 'MWK',
-              'amount': amount.toString(),
-              'payment_methods': ['card', 'mobile_money', 'bank'],
-              'callback_url': PayChanguConfig.callbackUrl,
-              'return_url': PayChanguConfig.returnUrl,
-              'customization': {
-                'title': 'Vero360 Food',
-                'description': '${item.FoodName} x$_qty • $loc',
-              },
-            }),
-          )
-          .timeout(const Duration(seconds: 30));
-      if (!mounted) return;
-      if (res.statusCode != 200 && res.statusCode != 201) {
-        setState(() => _payStarting = false);
-        _toast('Payment start failed (${res.statusCode})', false);
-        return;
+      final incomingKey = _kitchenKeyForFood(item);
+      CartModel? conflict;
+      for (final e in existing.where((c) => c.isFood)) {
+        if (e.kitchenKey != incomingKey) {
+          conflict = e;
+          break;
+        }
       }
-      final body = json.decode(res.body) as Map<String, dynamic>;
-      final status = (body['status'] ?? '').toString().toLowerCase();
-      if (status != 'success') {
-        setState(() => _payStarting = false);
-        _toast(body['message']?.toString() ?? 'Payment failed', false);
-        return;
+      if (conflict != null) {
+        final proceed = await _confirmReplaceCart(
+          conflict.merchantName.trim().isEmpty
+              ? 'another restaurant'
+              : conflict.merchantName.trim(),
+        );
+        if (!proceed) return;
+        await cart.clearCart();
+        existing = const [];
       }
-      final checkoutUrl = body['data']['checkout_url'] as String;
+
+      final numericId = item.id != 0
+          ? item.id
+          : (item.firestoreListingId ?? item.FoodName).hashCode.abs() %
+              2000000000;
+      var already = 0;
+      final configKey = _incomingLineConfigKey;
+      for (final c in existing) {
+        if (c.item == numericId &&
+            c.merchantId == mid &&
+            c.lineConfigKey == configKey) {
+          already += c.quantity;
+        }
+      }
+      final qty = (already + _qty).clamp(1, 99999);
+
       final note = _descCtrl.text.trim();
-      final imgRaw = item.FoodImage.trim().isNotEmpty
+      final img = item.FoodImage.trim().isNotEmpty
           ? item.FoodImage.trim()
           : (item.gallery.isNotEmpty ? item.gallery.first.trim() : '');
-      final img =
-          (imgRaw.startsWith('http://') || imgRaw.startsWith('https://'))
-              ? imgRaw
-              : null;
+      final addOns = _selectedAddOnNames;
+
+      final cartItem = CartModel(
+        userId: uid,
+        item: numericId,
+        quantity: qty,
+        image: img,
+        name: item.FoodName,
+        price: _unitPrice,
+        description: item.description ?? '',
+        comment: note.isEmpty ? null : note,
+        merchantId: mid,
+        merchantName: item.RestrauntName.trim().isEmpty
+            ? 'Local kitchen'
+            : item.RestrauntName.trim(),
+        serviceType: 'food',
+        restaurantId: item.restaurantId?.trim().isEmpty == true
+            ? null
+            : item.restaurantId?.trim(),
+        variant: _selectedVariantName,
+        notes: note.isEmpty ? null : note,
+        addOns: addOns,
+      );
+
+      await cart.addToCart(cartItem);
       if (!mounted) return;
-      setState(() => _payStarting = false);
-      await Navigator.of(context).push<void>(MaterialPageRoute(
-        builder: (_) => InAppPaymentPage(
-          checkoutUrl: checkoutUrl,
-          txRef: txRef,
-          totalAmount: item.price * _qty,
-          rootContext: context,
-          foodCheckout: FoodCheckoutContext(
-            merchantId: mid,
-            customerName: name,
-            customerPhone: phone,
-            customerEmail: email,
-            deliveryAddress: loc,
-            deliveryLat: _deliveryLat,
-            deliveryLng: _deliveryLng,
-            foodName: item.FoodName,
-            totalMwk: item.price * _qty,
-            customerNote: note.isEmpty ? null : note,
-            foodImageUrl: img,
-            sqlListingId: item.id != 0 ? item.id.toString() : null,
-            firestoreListingId: item.firestoreListingId,
+
+      if (goToCheckout) {
+        final items = cart.cachedItems.isNotEmpty
+            ? cart.cachedItems
+            : <CartModel>[cartItem];
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute(
+            builder: (_) => CheckoutFromCartPage(items: items),
           ),
-        ),
-      ));
-    } on SocketException {
-      if (mounted) setState(() => _payStarting = false);
-      _toast('Network error', false);
+        );
+      } else {
+        _toast('${item.FoodName} added to cart', true);
+      }
     } catch (e) {
-      if (mounted) setState(() => _payStarting = false);
-      _toast('Could not start payment: $e', false);
+      if (mounted) {
+        _toast('Could not add to cart. Please sign in and try again.', false);
+      }
+    } finally {
+      if (mounted) setState(() => _cartBusy = false);
     }
   }
 
@@ -610,14 +674,12 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     final desc   = item.description?.trim() ?? '';
     final mq     = MediaQuery.of(context);
 
-    // How tall the orange hero zone is
-    const double heroHeight = 420.0;
-    // How much the food image overflows into the white card
-    const double overflow   = 48.0;
+    // How tall the orange dome is
+    final double heroHeight = 300.0 + mq.padding.top;
+    const double imageSize = 220.0;
 
     return Scaffold(
-      backgroundColor: _veroOrange,
-      // No AppBar — we paint everything manually
+      backgroundColor: Colors.white,
       body: Stack(
         children: [
 
@@ -628,72 +690,66 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
               child: Column(
                 children: [
 
-                  // ── ORANGE HERO AREA ──────────────────────────────────
+                  // ── ORANGE DOME + CIRCULAR FOOD ───────────────────────
                   SizedBox(
-                    height: heroHeight,
+                    height: heroHeight + 48,
                     width: double.infinity,
                     child: Stack(
                       clipBehavior: Clip.none,
                       children: [
-
-                        // Soft gradient fill
-                        Positioned.fill(
-                          child: DecoratedBox(
+                        Positioned(
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          height: heroHeight,
+                          child: Container(
                             decoration: const BoxDecoration(
                               gradient: LinearGradient(
                                 colors: [Color(0xFFFF9A1F), Color(0xFFFF7A00)],
                                 begin: Alignment.topLeft,
                                 end: Alignment.bottomRight,
                               ),
-                            ),
-                          ),
-                        ),
-
-                        // Food image — edge-to-edge so it doesn't look shrunk
-                        Positioned(
-                          top: mq.padding.top + 8,
-                          left: 0,
-                          right: 0,
-                          bottom: -overflow,
-                          child: PageView.builder(
-                            controller: _pageCtrl,
-                            itemCount: heroImages.length,
-                            onPageChanged: _onHeroPageChanged,
-                            itemBuilder: (_, i) => SizedBox.expand(
-                              child: _FoodHeroImage(
-                                raw: heroImages[i],
-                                fit: BoxFit.cover,
+                              borderRadius: BorderRadius.vertical(
+                                bottom: Radius.circular(200),
                               ),
                             ),
                           ),
                         ),
-
-                        // Soft fade into white card
                         Positioned(
                           left: 0,
                           right: 0,
-                          bottom: -overflow,
-                          height: 72,
-                          child: IgnorePointer(
-                            child: DecoratedBox(
+                          bottom: 8,
+                          child: Center(
+                            child: Container(
+                              width: imageSize,
+                              height: imageSize,
                               decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  begin: Alignment.topCenter,
-                                  end: Alignment.bottomCenter,
-                                  colors: [
-                                    Colors.white.withValues(alpha: 0),
-                                    Colors.white.withValues(alpha: 0.92),
-                                  ],
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.18),
+                                    blurRadius: 24,
+                                    offset: const Offset(0, 10),
+                                  ),
+                                ],
+                              ),
+                              child: ClipOval(
+                                child: PageView.builder(
+                                  controller: _pageCtrl,
+                                  itemCount: heroImages.length,
+                                  onPageChanged: _onHeroPageChanged,
+                                  itemBuilder: (_, i) => _FoodHeroImage(
+                                    raw: heroImages[i],
+                                    fit: BoxFit.cover,
+                                  ),
                                 ),
                               ),
                             ),
                           ),
                         ),
-
-                        // Page indicator dots
                         if (heroImages.length > 1)
                           Positioned(
-                            bottom: 14, left: 0, right: 0,
+                            bottom: 0, left: 0, right: 0,
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: List.generate(heroImages.length, (i) {
@@ -704,19 +760,13 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                                   margin: const EdgeInsets.symmetric(
                                       horizontal: 3),
                                   height: 6,
-                                  width: a ? 20 : 6,
+                                  width: a ? 16 : 6,
                                   decoration: BoxDecoration(
                                     color: a
-                                        ? Colors.white
-                                        : Colors.white54,
+                                        ? _veroOrange
+                                        : Colors.grey.shade300,
                                     borderRadius:
                                         BorderRadius.circular(99),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withValues(alpha: 0.25),
-                                        blurRadius: 4,
-                                      ),
-                                    ],
                                   ),
                                 );
                               }),
@@ -726,17 +776,11 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                     ),
                   ),
 
-                  // ── WHITE CARD ────────────────────────────────────────
+                  // ── WHITE BODY ────────────────────────────────────────
                   Container(
                     width: double.infinity,
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      borderRadius:
-                          BorderRadius.vertical(top: Radius.circular(36)),
-                    ),
-                    // top padding = overflow so food image has room
-                    padding: EdgeInsets.fromLTRB(
-                        22, overflow + 16, 22, 16),
+                    color: Colors.white,
+                    padding: const EdgeInsets.fromLTRB(22, 8, 22, 16),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -755,7 +799,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                             ),
                             const SizedBox(width: 12),
                             Text(
-                              'MWK ${item.price.toStringAsFixed(0)}',
+                              'MWK ${_unitPrice.toStringAsFixed(0)}',
                               style: const TextStyle(
                                   fontSize: 20,
                                   fontWeight: FontWeight.w900,
@@ -773,15 +817,96 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                                 color: Colors.grey.shade500,
                                 fontWeight: FontWeight.w500)),
 
+                        if (item.variants.isNotEmpty) ...[
+                          const SizedBox(height: 16),
+                          const Text('Size',
+                              style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w800,
+                                  color: _ink)),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: List.generate(item.variants.length, (i) {
+                              final v = item.variants[i];
+                              final sel = _selectedVariantIndex == i;
+                              final delta = v.priceDeltaMwk;
+                              final deltaLabel = delta == 0
+                                  ? v.name
+                                  : '${v.name} (${delta > 0 ? '+' : ''}${delta.toStringAsFixed(0)})';
+                              return ChoiceChip(
+                                label: Text(deltaLabel),
+                                selected: sel,
+                                onSelected: (_) =>
+                                    setState(() => _selectedVariantIndex = i),
+                                selectedColor: _veroOrange,
+                                labelStyle: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: sel ? Colors.white : _ink,
+                                ),
+                                backgroundColor: Colors.grey.shade100,
+                                checkmarkColor: Colors.white,
+                              );
+                            }),
+                          ),
+                        ],
+                        if (item.addOns.isNotEmpty) ...[
+                          const SizedBox(height: 16),
+                          const Text('Add-ons',
+                              style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w800,
+                                  color: _ink)),
+                          const SizedBox(height: 4),
+                          ...List.generate(item.addOns.length, (i) {
+                            final a = item.addOns[i];
+                            final sel = _selectedAddOnIndexes.contains(i);
+                            return CheckboxListTile(
+                              value: sel,
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              controlAffinity: ListTileControlAffinity.leading,
+                              activeColor: _veroOrange,
+                              title: Text(
+                                a.name,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  color: _ink,
+                                ),
+                              ),
+                              secondary: Text(
+                                a.priceMwk == 0
+                                    ? 'Free'
+                                    : '+ MWK ${a.priceMwk.toStringAsFixed(0)}',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.grey.shade700,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              onChanged: (v) {
+                                setState(() {
+                                  if (v == true) {
+                                    _selectedAddOnIndexes.add(i);
+                                  } else {
+                                    _selectedAddOnIndexes.remove(i);
+                                  }
+                                });
+                              },
+                            );
+                          }),
+                        ],
+
                         const SizedBox(height: 18),
 
                         // Details / Reviews tabs
                         _SegmentedTabs(controller: _tabCtrl),
                         const SizedBox(height: 14),
 
-                        // Tab content (fixed height)
+                        // Tab content (description stays compact; reviews list needs room)
                         SizedBox(
-                          height: 95,
+                          height: _tabCtrl.index == 1 ? 220 : 95,
                           child: TabBarView(
                             controller: _tabCtrl,
                             physics:
@@ -828,11 +953,9 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                                       ),
                                     ),
                               // — Reviews tab —
-                              Center(
-                                child: Text('No reviews yet.',
-                                    style: TextStyle(
-                                        fontSize: 13,
-                                        color: Colors.grey.shade400)),
+                              _KitchenReviewsPane(
+                                restaurantId: item.restaurantId,
+                                merchantId: item.merchantId,
                               ),
                             ],
                           ),
@@ -937,7 +1060,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                           ),
 
                         // Space so content clears the fixed bottom bar
-                        const SizedBox(height: 100),
+                        const SizedBox(height: 140),
                       ],
                     ),
                   ),
@@ -967,21 +1090,24 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
             ),
           ),
 
-          // ── THREE-DOT MENU (top-right, over red) ────────────────────────
+          // ── THREE-DOT MENU ──────────────────────────────────────────────
           Positioned(
-            top: mq.padding.top + 18,
-            right: 20,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: List.generate(
-                3,
-                (_) => Container(
-                  width: 4, height: 4,
-                  margin: const EdgeInsets.symmetric(vertical: 2.5),
-                  decoration: const BoxDecoration(
-                      color: Colors.white, shape: BoxShape.circle),
+            top: mq.padding.top + 10,
+            right: 8,
+            child: PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+              onSelected: (v) {
+                if (v == 'buy') {
+                  FocusScope.of(context).unfocus();
+                  unawaited(_addFoodToCart(goToCheckout: true));
+                }
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: 'buy',
+                  child: Text('Buy now'),
                 ),
-              ),
+              ],
             ),
           ),
 
@@ -991,25 +1117,26 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
             child: Container(
               color: Colors.white,
               padding: EdgeInsets.fromLTRB(
-                  20, 12, 20, 12 + mq.padding.bottom),
-              child: Container(
-                height: 58,
-                decoration: BoxDecoration(
-                  color: _veroOrange,
-                  borderRadius: BorderRadius.circular(18),
-                  boxShadow: [
-                    BoxShadow(
-                        color: _veroOrange.withOpacity(0.35),
-                        blurRadius: 16,
-                        offset: const Offset(0, 6)),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    // ── Qty stepper ─────────────────────────────────────
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8),
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  20, 10, 20, 14 + mq.padding.bottom),
+              child: Row(
+                children: [
+                  Container(
+                    height: 52,
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(28),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.08),
+                          blurRadius: 14,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
                         _stepBtn(
                           icon: Icons.remove_rounded,
                           onTap: () {
@@ -1017,65 +1144,64 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                           },
                         ),
                         Padding(
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 14),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
                           child: Text(
                             '$_qty',
                             style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w800,
-                                color: Colors.white),
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: _ink,
+                            ),
                           ),
                         ),
                         _stepBtn(
                           icon: Icons.add_rounded,
                           onTap: () => setState(() => _qty++),
                         ),
-                      ]),
+                      ],
                     ),
-
-                    // Thin divider
-                    Container(
-                        width: 1,
-                        height: 30,
-                        margin: const EdgeInsets.symmetric(horizontal: 10),
-                        color: Colors.white.withOpacity(0.30)),
-
-                    // ── Buy ─────────────────────────────────────────────
-                    Expanded(
-                      child: Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          onTap: _payStarting ? null : () {
-                            FocusScope.of(context).unfocus();
-                            unawaited(_startCheckout());
-                          },
-                          borderRadius: BorderRadius.circular(12),
-                          child: Center(
-                            child: _payStarting
-                                ? const SizedBox(
-                                    width: 22,
-                                    height: 22,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2.5,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Text(
-                                    'Buy',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w800,
-                                      color: Colors.white,
-                                      letterSpacing: 0.3,
-                                    ),
-                                  ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: SizedBox(
+                      height: 52,
+                      child: FilledButton(
+                        onPressed: _cartBusy
+                            ? null
+                            : () {
+                                FocusScope.of(context).unfocus();
+                                unawaited(
+                                    _addFoodToCart(goToCheckout: false));
+                              },
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _veroOrange,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
                           ),
+                          elevation: 0,
                         ),
+                        child: _cartBusy
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.5,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Text(
+                                'Add to cart',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.2,
+                                ),
+                              ),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -1180,6 +1306,135 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                   : null),
         ),
       ],
+    );
+  }
+}
+
+// ── Kitchen reviews (food_reviews) ────────────────────────────────────────────
+class _KitchenReviewsPane extends StatelessWidget {
+  const _KitchenReviewsPane({this.restaurantId, this.merchantId});
+
+  final String? restaurantId;
+  final String? merchantId;
+
+  @override
+  Widget build(BuildContext context) {
+    final stream = FoodReviewService().reviewsStreamForKitchen(
+      restaurantId: restaurantId,
+      merchantId: merchantId,
+    );
+    if (stream == null) {
+      return Text(
+        'No reviews yet.',
+        style: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+      );
+    }
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: stream,
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting &&
+            !snap.hasData) {
+          return const Center(
+            child: SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: _veroOrange,
+              ),
+            ),
+          );
+        }
+        final docs = [...(snap.data?.docs ?? const [])];
+        docs.sort((a, b) {
+          DateTime at = DateTime.fromMillisecondsSinceEpoch(0);
+          DateTime bt = DateTime.fromMillisecondsSinceEpoch(0);
+          final ad = a.data()['createdAt'];
+          final bd = b.data()['createdAt'];
+          if (ad is Timestamp) at = ad.toDate();
+          if (bd is Timestamp) bt = bd.toDate();
+          return bt.compareTo(at);
+        });
+        if (docs.isEmpty) {
+          return Text(
+            'No reviews yet.',
+            style: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+          );
+        }
+        return ListView.separated(
+          padding: EdgeInsets.zero,
+          itemCount: docs.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 8),
+          itemBuilder: (context, i) {
+            final m = docs[i].data();
+            final name =
+                (m['customerName']?.toString() ?? 'Anonymous').trim();
+            final comment = (m['comment']?.toString() ?? '').trim();
+            final rating = m['rating'] is num
+                ? (m['rating'] as num).round()
+                : int.tryParse('${m['rating']}') ?? 0;
+            DateTime? when;
+            final raw = m['createdAt'];
+            if (raw is Timestamp) when = raw.toDate();
+            if (raw is DateTime) when = raw;
+            final ago = when == null
+                ? ''
+                : MarketplaceTime.formatTimeAgo(when, verbose: true);
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        name.isEmpty ? 'Anonymous' : name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                          color: _ink,
+                        ),
+                      ),
+                    ),
+                    ...List.generate(5, (s) {
+                      return Icon(
+                        Icons.star_rounded,
+                        size: 14,
+                        color: s < rating
+                            ? const Color(0xFFFFC107)
+                            : Colors.grey.shade300,
+                      );
+                    }),
+                  ],
+                ),
+                if (comment.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      comment,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.35,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                  ),
+                if (ago.isNotEmpty)
+                  Text(
+                    ago,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey.shade500,
+                    ),
+                  ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 }

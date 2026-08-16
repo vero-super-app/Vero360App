@@ -276,6 +276,16 @@ class _CartPageState extends State<CartPage> {
               : (data['availableStock'] is num
                   ? (data['availableStock'] as num).toInt()
                   : int.tryParse('${data['availableStock'] ?? data['stockQuantity']}')),
+          restaurantId: (data['restaurantId'] ?? '').toString().trim().isEmpty
+              ? null
+              : (data['restaurantId'] ?? '').toString().trim(),
+          variant: (data['variant'] ?? '').toString().trim().isEmpty
+              ? null
+              : (data['variant'] ?? '').toString().trim(),
+          notes: (data['notes'] ?? '').toString().trim().isEmpty
+              ? null
+              : (data['notes'] ?? '').toString().trim(),
+          addOns: CartModel.parseAddOnNames(data['addOns'] ?? data['addons']),
         );
       }).toList();
     } catch (_) {
@@ -292,7 +302,7 @@ class _CartPageState extends State<CartPage> {
           .collection('backup_carts')
           .doc(userId)
           .collection('items')
-          .doc('${item.item}_${item.merchantId}');
+          .doc(item.firestoreDocId);
 
       await doc.set({
         'itemId': item.item,
@@ -305,6 +315,13 @@ class _CartPageState extends State<CartPage> {
         'merchantId': item.merchantId,
         'merchantName': item.merchantName,
         'serviceType': item.serviceType,
+        if (item.restaurantId != null && item.restaurantId!.trim().isNotEmpty)
+          'restaurantId': item.restaurantId,
+        if (item.variant != null && item.variant!.trim().isNotEmpty)
+          'variant': item.variant,
+        if (item.notes != null && item.notes!.trim().isNotEmpty)
+          'notes': item.notes,
+        if (item.addOns.isNotEmpty) 'addOns': item.addOns,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } catch (_) {}

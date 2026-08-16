@@ -19,6 +19,7 @@ import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
+import 'package:vero360_app/features/Restraurants/Models/food_order_model.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
@@ -1552,52 +1553,144 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     }
   }
 
-  Future<void> _persistFoodOrderAfterPayment() async {
+  Future<void> _persistFoodOrderAfterPayment({
+    List<CartModel> cartFoodItems = const [],
+  }) async {
     final fc = widget.foodCheckout;
-    if (fc == null) return;
+    final foodLines = cartFoodItems.where((e) => e.isFood).toList();
+    if (fc == null && foodLines.isEmpty) return;
+
     try {
       final ref = FirebaseFirestore.instance.collection('food_orders').doc();
-      final uid = FirebaseAuth.instance.currentUser?.uid;
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+      final prefs = await SharedPreferences.getInstance();
+      final addr = widget.shippingAddress;
+
+      final lineItems = <FoodOrderLineItem>[];
+      String merchantId = '';
+      String restaurantId = '';
+      String merchantName = 'Kitchen';
+      String customerName = '';
+      String customerPhone = '';
+      String customerEmail = '';
+      String deliveryAddress = '';
+      double? deliveryLat;
+      double? deliveryLng;
+      String? customerNote;
+
+      if (fc != null) {
+        merchantId = fc.merchantId;
+        customerName = fc.customerName;
+        customerPhone = fc.customerPhone;
+        customerEmail = fc.customerEmail;
+        deliveryAddress = fc.deliveryAddress;
+        deliveryLat = fc.deliveryLat;
+        deliveryLng = fc.deliveryLng;
+        customerNote = fc.customerNote;
+        lineItems.add(FoodOrderLineItem(
+          menuItemId: fc.firestoreListingId ?? fc.sqlListingId ?? '',
+          name: fc.foodName,
+          unitPriceMwk: fc.totalMwk,
+          quantity: 1,
+          notes: fc.customerNote,
+        ));
+      } else {
+        merchantId = foodLines.first.merchantId;
+        restaurantId = foodLines.first.restaurantId?.trim() ?? '';
+        merchantName = foodLines.first.merchantName;
+        customerName = (prefs.getString('user_full_name') ??
+                prefs.getString('name') ??
+                '')
+            .trim();
+        customerPhone = (prefs.getString('user_phone') ??
+                prefs.getString('phone') ??
+                '')
+            .trim();
+        customerEmail = (prefs.getString('email') ??
+                FirebaseAuth.instance.currentUser?.email ??
+                '')
+            .trim();
+        deliveryAddress = [
+          addr?.description,
+          addr?.city,
+        ].where((e) => e != null && e.trim().isNotEmpty).join(', ');
+        deliveryLat = addr?.lat;
+        deliveryLng = addr?.lng;
+        for (final line in foodLines) {
+          lineItems.add(FoodOrderLineItem(
+            menuItemId: '${line.item}',
+            name: line.name,
+            unitPriceMwk: line.price,
+            quantity: line.quantity,
+            variant: line.variant,
+            notes: line.notes ?? line.comment,
+            addOns: line.addOns,
+          ));
+        }
+      }
+
+      final subtotalMwk =
+          lineItems.fold<double>(0, (s, e) => s + e.lineTotalMwk);
+      // TODO: pull real deliveryFeeMwk / serviceFeeMwk from the restaurant
+      // document (delivery radius / min order / restaurant config) once wired.
+      const deliveryFeeMwk = 0.0;
+      const serviceFeeMwk = 0.0;
+      final totalMwk = subtotalMwk + deliveryFeeMwk + serviceFeeMwk;
+
+      final order = FoodOrder(
+        id: ref.id,
+        restaurantId: restaurantId,
+        merchantId: merchantId,
+        customerUid: uid,
+        customerName: customerName,
+        customerPhone: customerPhone,
+        customerEmail: customerEmail,
+        deliveryAddress: deliveryAddress,
+        deliveryLat: deliveryLat,
+        deliveryLng: deliveryLng,
+        lineItems: lineItems,
+        subtotalMwk: subtotalMwk,
+        deliveryFeeMwk: deliveryFeeMwk,
+        serviceFeeMwk: serviceFeeMwk,
+        totalMwk: totalMwk,
+        status: 'pending',
+        paymentTxRef: widget.txRef,
+        paymentStatus: 'paid',
+        restaurantName: merchantName,
+      );
+
       await ref.set({
+        ...order.toJson(),
         'orderId': ref.id,
-        'id': ref.id,
-        'merchantId': fc.merchantId,
         'customerId': uid,
-        'customerName': fc.customerName,
-        'customerPhone': fc.customerPhone,
-        'customerEmail': fc.customerEmail,
-        'deliveryAddress': fc.deliveryAddress,
-        'deliveryLat': fc.deliveryLat,
-        'deliveryLng': fc.deliveryLng,
-        'items': [
-          {
-            'name': fc.foodName,
-            'price': fc.totalMwk,
-            'quantity': 1,
-            if (fc.foodImageUrl != null && fc.foodImageUrl!.isNotEmpty)
-              'image': fc.foodImageUrl,
-          },
-        ],
-        'totalAmount': fc.totalMwk,
-        'status': 'pending',
-        'paymentStatus': 'paid',
-        'paymentTxRef': widget.txRef,
-        if (fc.customerNote != null && fc.customerNote!.trim().isNotEmpty)
-          'customerNote': fc.customerNote!.trim(),
-        if (fc.sqlListingId != null) 'listingSqlId': fc.sqlListingId,
-        if (fc.firestoreListingId != null) 'firestoreListingId': fc.firestoreListingId,
+        // Legacy dashboard fields until the merchant UI is updated.
+        'totalAmount': totalMwk,
+        'items': lineItems
+            .map((e) => {
+                  'name': e.name,
+                  'price': e.unitPriceMwk,
+                  'quantity': e.quantity,
+                  if (e.variant != null) 'variant': e.variant,
+                  if (e.notes != null) 'notes': e.notes,
+                  if (e.addOns.isNotEmpty) 'addOns': e.addOns,
+                })
+            .toList(),
+        if (customerNote != null && customerNote.trim().isNotEmpty)
+          'customerNote': customerNote.trim(),
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
-      // 10% platform fee held until kitchen marks delivered.
+      final summaryName = lineItems.length == 1
+          ? lineItems.first.name
+          : '${lineItems.length} dishes';
       await OrderEscrowService.createHoldForFoodOrder(
         orderId: ref.id,
         txRef: widget.txRef,
-        merchantUid: fc.merchantId,
-        merchantName: 'Food merchant',
-        foodName: fc.foodName,
-        grossAmountMwk: fc.totalMwk,
+        merchantUid: merchantId,
+        merchantName: merchantName,
+        foodName: summaryName,
+        grossAmountMwk: totalMwk,
         orderNumber: ref.id,
       );
     } catch (e) {
@@ -1633,8 +1726,26 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     // Non-cart paths still fire-and-forget; cart path awaits below.
 
     final food = widget.foodCheckout;
-    if (food != null) {
-      unawaited(_persistFoodOrderAfterPayment());
+    final cartItems = widget.cartItemsForMerchantCredit ?? const <CartModel>[];
+    final foodItems = cartItems.where((e) => e.isFood).toList();
+    final marketItems = cartItems.where((e) => !e.isFood).toList();
+
+    if (food != null || foodItems.isNotEmpty) {
+      unawaited(_persistFoodOrderAfterPayment(cartFoodItems: foodItems));
+    }
+
+    if (marketItems.isNotEmpty) {
+      unawaited(_createConfirmedOrdersAndEscrow(marketItems));
+    } else if (food == null && foodItems.isEmpty) {
+      final items = widget.cartItemsForMerchantCredit;
+      if (items != null && items.isNotEmpty) {
+        unawaited(_createConfirmedOrdersAndEscrow(items));
+      }
+    }
+
+    final isFoodCartCheckout = foodItems.isNotEmpty && food == null;
+
+    if (food != null && marketItems.isEmpty) {
       ToastHelper.showCustomToast(
         widget.rootContext,
         'Payment successful — the kitchen has your order.',
@@ -1649,11 +1760,6 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
       });
       return;
     }
-
-    final items = widget.cartItemsForMerchantCredit;
-    if (items != null && items.isNotEmpty) {
-      unawaited(_createConfirmedOrdersAndEscrow(items));
-    }
     final esc = widget.accommodationEscrow;
     if (esc != null) {
       unawaited(OrderEscrowService.createHoldForAccommodationBooking(
@@ -1667,7 +1773,11 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
 
     ToastHelper.showCustomToast(
       widget.rootContext,
-      isDigital ? 'Payment successful!' : 'Payment Successful!',
+      isDigital
+          ? 'Payment successful!'
+          : isFoodCartCheckout
+              ? 'Payment successful — the kitchen has your order.'
+              : 'Payment Successful!',
       isSuccess: true,
       errorMessage: '',
     );

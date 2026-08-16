@@ -17,7 +17,10 @@ import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/GernalServices/location_service.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_details.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_model.dart';
+import 'package:vero360_app/features/Restraurants/Models/food_categories.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_service.dart';
+import 'package:vero360_app/Home/CustomersProfilepage.dart';
+import 'package:vero360_app/Home/notifications_page.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
@@ -33,7 +36,7 @@ class _FoodPageState extends State<FoodPage> {
   // ── Brand palette ─────────────────────────────────────────────────────────
   static const Color _veroOrange   = Color(0xFFFF8A00);
   static const Color _ink          = Color(0xFF1A1109);
-  static const Color _pageBg       = Color(0xFFF7F8FA);
+  static const Color _pageBg       = Color(0xFFFFFFFF);
   static const Color _divider      = Color(0xFFEEEEEE);
 
   // ── Services / controllers ─────────────────────────────────────────────────
@@ -53,12 +56,9 @@ class _FoodPageState extends State<FoodPage> {
   double _radiusKm        = 25;
   String _categoryFilter  = 'All';
 
-  static const List<String> _kCategoryChips = [
-    'All', 'Meals', 'Pizza', 'Burger', 'Drinks', 'Asian',
-  ];
-
   String _navEmail = '';
   bool _isMerchant = false;
+  String _profileUrl = '';
 
   late Future<List<FoodModel>> _future;
 
@@ -174,6 +174,11 @@ class _FoodPageState extends State<FoodPage> {
     setState(() {
       _navEmail = p.getString('email') ?? '';
       _isMerchant = role == 'merchant';
+      _profileUrl = (p.getString('profilepicture') ??
+              p.getString('profilePicture') ??
+              p.getString('photoUrl') ??
+              '')
+          .trim();
     });
   }
 
@@ -610,7 +615,7 @@ class _FoodPageState extends State<FoodPage> {
             color: Color(0xFF1A1D26)),
         cursorColor: _veroOrange,
         decoration: InputDecoration(
-          hintText: 'Search food or restaurant…',
+          hintText: 'Search',
           hintStyle: TextStyle(color: Colors.grey.shade400,
               fontWeight: FontWeight.w400, fontSize: 14),
           prefixIcon: const Icon(Icons.search_rounded,
@@ -650,10 +655,10 @@ class _FoodPageState extends State<FoodPage> {
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(horizontal: 20),
         scrollDirection: Axis.horizontal,
-        itemCount: _kCategoryChips.length,
+        itemCount: kFoodBrowseChips.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (_, i) {
-          final label = _kCategoryChips[i];
+          final label = kFoodBrowseChips[i];
           final sel = _categoryFilter == label;
           return GestureDetector(
             onTap: () => setState(() => _categoryFilter = label),
@@ -687,56 +692,6 @@ class _FoodPageState extends State<FoodPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _pageBg,
-      // ── App bar ──────────────────────────────────────────────────────────
-      appBar: AppBar(
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        backgroundColor: _pageBg,
-        foregroundColor: _ink,
-        centerTitle: false,
-        titleSpacing: 0,
-        automaticallyImplyLeading: Navigator.of(context).canPop(),
-        leading: Navigator.of(context).canPop()
-            ? null
-            : const SizedBox.shrink(),
-        leadingWidth: Navigator.of(context).canPop() ? null : 0,
-        title: const Text(
-          'Food',
-          style: TextStyle(
-            fontWeight: FontWeight.w900,
-            fontSize: 22,
-            color: _ink,
-          ),
-        ),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: _veroOrange.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.local_fire_department_rounded,
-                      size: 16, color: _veroOrange),
-                  SizedBox(width: 4),
-                  Text(
-                    'Vero',
-                    style: TextStyle(
-                      color: _veroOrange,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-
       bottomNavigationBar: VeroMainNavigationBar(
         selectedIndex: null,
         isDark: Theme.of(context).brightness == Brightness.dark,
@@ -747,29 +702,37 @@ class _FoodPageState extends State<FoodPage> {
           tabIndex: i,
         ),
       ),
-
-      body: Column(
+      body: SafeArea(
+        bottom: false,
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Headline
+          _buildTopBar(),
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+            padding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                RichText(
-                  text: TextSpan(
-                    style: const TextStyle(fontSize: 26,
-                        fontWeight: FontWeight.w900, color: _ink, height: 1.2),
-                    children: const [
-                      TextSpan(text: 'Choose Your\n'),
-                      TextSpan(text: 'Favorite '),
-                      TextSpan(text: 'Food',
-                          style: TextStyle(color: _veroOrange)),
-                    ],
+                const Text(
+                  'Choose',
+                  style: TextStyle(
+                    fontSize: 34,
+                    fontWeight: FontWeight.w900,
+                    color: _veroOrange,
+                    height: 1.05,
+                    letterSpacing: -0.6,
                   ),
                 ),
-                const SizedBox(height: 16),
+                Text(
+                  'your favourite Food',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                    color: _ink.withValues(alpha: 0.85),
+                    height: 1.15,
+                  ),
+                ),
+                const SizedBox(height: 18),
                 _buildSearchRow(),
               ],
             ),
@@ -880,7 +843,7 @@ class _FoodPageState extends State<FoodPage> {
                         ),
                       const SizedBox(height: 4),
                       SizedBox(
-                        height: 276,
+                        height: 248,
                         child: ListView.separated(
                           padding: const EdgeInsets.symmetric(horizontal: 20),
                           scrollDirection: Axis.horizontal,
@@ -905,7 +868,7 @@ class _FoodPageState extends State<FoodPage> {
                       ),
                       const SizedBox(height: 4),
                       SizedBox(
-                        height: 276,
+                        height: 248,
                         child: ListView.separated(
                           padding: const EdgeInsets.symmetric(horizontal: 20),
                           scrollDirection: Axis.horizontal,
@@ -925,6 +888,56 @@ class _FoodPageState extends State<FoodPage> {
                   );
                 },
               ),
+            ),
+          ),
+        ],
+      ),
+      ),
+    );
+  }
+
+  Widget _buildTopBar() {
+    final canPop = Navigator.of(context).canPop();
+    final url = _profileUrl;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 8, 0),
+      child: Row(
+        children: [
+          if (canPop)
+            IconButton(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+              color: _ink,
+            ),
+          GestureDetector(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ProfilePage()),
+              );
+            },
+            child: CircleAvatar(
+              radius: 22,
+              backgroundColor: const Color(0xFFFFE8CC),
+              backgroundImage: url.isNotEmpty ? NetworkImage(url) : null,
+              child: url.isEmpty
+                  ? const Icon(Icons.person_rounded, color: _veroOrange)
+                  : null,
+            ),
+          ),
+          const Spacer(),
+          IconButton(
+            tooltip: 'Notifications',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const NotificationsPage()),
+              );
+            },
+            icon: const Icon(
+              Icons.notifications_none_rounded,
+              color: _veroOrange,
+              size: 28,
             ),
           ),
         ],
@@ -1047,16 +1060,29 @@ String _foodListingLocationLine(FoodModel item) {
 }
 
 String _foodEtaLabel(FoodModel item, double? userLat, double? userLng) {
+  double? d;
+  int? deliveryMins;
   if (userLat != null &&
       userLng != null &&
       item.latitude != null &&
       item.longitude != null) {
-    final d = FoodService.distanceKm(
+    d = FoodService.distanceKm(
         userLat, userLng, item.latitude!, item.longitude!);
     if (d != null) {
-      final mins = (18 + d * 2.8).round().clamp(18, 55);
-      return '~$mins min';
+      deliveryMins = (d * 2.8).round().clamp(1, 45);
     }
+  }
+
+  final prep = item.effectivePrepTimeMinutes;
+  if (prep != null) {
+    final total = prep + (deliveryMins ?? 0);
+    return '~$total min';
+  }
+
+  // No item/restaurant prep — keep the old distance-based estimate.
+  if (d != null) {
+    final mins = (18 + d * 2.8).round().clamp(18, 55);
+    return '~$mins min';
   }
   return '25–40 min';
 }
@@ -1082,9 +1108,14 @@ Widget _foodMetaRow(IconData icon, String text) => Row(
     );
 
 class _FoodImageTile extends StatefulWidget {
-  const _FoodImageTile({required this.raw, this.height = 116});
+  const _FoodImageTile({
+    required this.raw,
+    this.height = 116,
+    this.fit = BoxFit.cover,
+  });
   final String raw;
   final double height;
+  final BoxFit fit;
 
   @override
   State<_FoodImageTile> createState() => _FoodImageTileState();
@@ -1175,7 +1206,7 @@ class _FoodImageTileState extends State<_FoodImageTile> {
         url: raw,
         height: widget.height,
         width: double.infinity,
-        fit: BoxFit.cover,
+        fit: widget.fit,
         memCacheWidth: cachePx,
         memCacheHeight: cachePx,
         showSpinner: false,
@@ -1189,7 +1220,7 @@ class _FoodImageTileState extends State<_FoodImageTile> {
         url: resolved,
         height: widget.height,
         width: double.infinity,
-        fit: BoxFit.cover,
+        fit: widget.fit,
         memCacheWidth: cachePx,
         memCacheHeight: cachePx,
         showSpinner: false,
@@ -1203,7 +1234,7 @@ class _FoodImageTileState extends State<_FoodImageTile> {
         bytes,
         height: widget.height,
         width: double.infinity,
-        fit: BoxFit.cover,
+        fit: widget.fit,
         cacheWidth: cachePx,
         gaplessPlayback: true,
         errorBuilder: (_, __, ___) => _placeholder(),
@@ -1249,95 +1280,109 @@ class _FoodCard extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 172,
+        width: 168,
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(22),
+          borderRadius: BorderRadius.circular(24),
           boxShadow: [
-            BoxShadow(color: Colors.black.withOpacity(0.07),
-                blurRadius: 18, offset: const Offset(0, 6)),
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.07),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
           ],
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: Stack(
           children: [
-            // Image
-            Stack(children: [
-              ClipRRect(
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(22)),
-                child: _FoodImageTile(
-                  raw: item.FoodImage.trim().isNotEmpty
-                      ? item.FoodImage
-                      : (item.gallery.isNotEmpty ? item.gallery.first : ''),
-                  height: 116,
-                ),
-              ),
-              Positioned(
-                top: 10, right: 10,
-                child: Container(
-                  width: 32, height: 32,
-                  decoration: BoxDecoration(
-                      color: Colors.white, shape: BoxShape.circle,
-                      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.10),
-                          blurRadius: 8, offset: const Offset(0, 2))]),
-                  child: Icon(Icons.favorite_border_rounded,
-                      size: 16, color: Colors.grey.shade400),
-                ),
-              ),
-            ]),
-            // Info
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(item.FoodName, maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 14,
-                            fontWeight: FontWeight.w800, color: ink)),
-                    const SizedBox(height: 2),
-                    Text(cat, maxLines: 1, overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 11,
-                            fontWeight: FontWeight.w500,
-                            color: Colors.grey.shade500)),
-                    const SizedBox(height: 4),
-                    _foodMetaRow(
-                        Icons.place_outlined, _foodListingLocationLine(item)),
-                    const SizedBox(height: 3),
-                    _foodMetaRow(Icons.schedule_rounded, etaLine),
-                    const SizedBox(height: 3),
-                    _foodMetaRow(
-                      Icons.storefront_outlined,
-                      item.RestrauntName.trim().isEmpty
-                          ? 'Kitchen'
-                          : item.RestrauntName,
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 14, 12, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: _FoodImageTile(
+                        raw: item.FoodImage.trim().isNotEmpty
+                            ? item.FoodImage
+                            : (item.gallery.isNotEmpty
+                                ? item.gallery.first
+                                : ''),
+                        height: 112,
+                        fit: BoxFit.cover,
+                      ),
                     ),
-                    const Spacer(),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Expanded(
-                          child: Text('MWK ${item.price.toStringAsFixed(0)}',
-                              style: TextStyle(fontSize: 13,
-                                  fontWeight: FontWeight.w900, color: accent)),
-                        ),
-                        GestureDetector(
-                          onTap: onTap,
-                          child: Container(
-                            width: 30, height: 30,
-                            decoration: BoxDecoration(
-                                color: accent,
-                                borderRadius: BorderRadius.circular(10)),
-                            child: const Icon(Icons.add_rounded,
-                                color: Colors.white, size: 18),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(item.FoodName, maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 15,
+                          fontWeight: FontWeight.w800, color: ink)),
+                  const SizedBox(height: 2),
+                  Text(cat, maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.grey.shade500)),
+                  const SizedBox(height: 4),
+                  Text(
+                    etaLine,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey.shade400,
+                    ),
+                  ),
+                  const Spacer(),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'MWK ${item.price.toStringAsFixed(0)}',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w900,
+                            color: ink,
                           ),
                         ),
-                      ],
-                    ),
-                  ],
-                ),
+                      ),
+                      GestureDetector(
+                        onTap: onTap,
+                        child: Container(
+                          width: 34,
+                          height: 34,
+                          decoration: BoxDecoration(
+                            color: accent,
+                            borderRadius: BorderRadius.circular(10),
+                            boxShadow: [
+                              BoxShadow(
+                                color: accent.withValues(alpha: 0.35),
+                                blurRadius: 8,
+                                offset: const Offset(0, 3),
+                              ),
+                            ],
+                          ),
+                          child: const Icon(
+                            Icons.shopping_cart_outlined,
+                            color: Colors.white,
+                            size: 16,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Positioned(
+              top: 10,
+              right: 10,
+              child: Icon(
+                Icons.favorite_border_rounded,
+                size: 20,
+                color: Colors.grey.shade400,
               ),
             ),
           ],
@@ -1401,7 +1446,7 @@ class _FilterButton extends StatelessWidget {
     child: Container(
       width: 52, height: 52,
       decoration: BoxDecoration(
-        color: color, borderRadius: BorderRadius.circular(16),
+        color: color, borderRadius: BorderRadius.circular(18),
         boxShadow: [BoxShadow(color: color.withOpacity(0.40),
             blurRadius: 12, offset: const Offset(0, 4))],
       ),

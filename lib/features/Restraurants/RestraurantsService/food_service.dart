@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
 import 'package:vero360_app/features/Restraurants/Models/food_model.dart';
+import 'package:vero360_app/features/Restraurants/Models/restaurant_model.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/config/api_config.dart';
 
@@ -40,8 +41,10 @@ class FoodService {
         results[2],
       );
 
+      final withPrep = await _attachRestaurantPrep(merged);
+
       return prioritizeNearUser(
-        merged,
+        withPrep,
         latitude: latitude,
         longitude: longitude,
         radiusKm: radiusKm,
@@ -119,25 +122,27 @@ class FoodService {
         lo ??= double.tryParse('$rawLo');
 
         final mid = data['merchantId']?.toString().trim();
+        final rid = data['restaurantId']?.toString().trim();
         final listingLoc = _listingLocationFromRaw(
           Map<String, dynamic>.from(data),
         );
         final gallery = _pickGallery(data);
-        out.add(FoodModel(
-          id: doc.id.hashCode.abs() % 2000000000,
-          FoodName: name,
-          FoodImage: img,
-          RestrauntName: seller,
-          price: price,
-          description: data['description']?.toString(),
-          category: 'food',
-          latitude: la,
-          longitude: lo,
-          listingLocation: listingLoc,
-          gallery: gallery,
-          merchantId: (mid != null && mid.isNotEmpty) ? mid : null,
-          firestoreListingId: doc.id,
-        ));
+        out.add(FoodModel.fromJson({
+          ...Map<String, dynamic>.from(data),
+          'id': doc.id.hashCode.abs() % 2000000000,
+          'FoodName': name,
+          'FoodImage': img,
+          'RestrauntName': seller,
+          'price': price,
+          'category': 'food',
+          'latitude': la,
+          'longitude': lo,
+          'listingLocation': listingLoc,
+          'gallery': gallery,
+          'merchantId': (mid != null && mid.isNotEmpty) ? mid : null,
+          'restaurantId': (rid != null && rid.isNotEmpty) ? rid : null,
+          'firestoreListingId': doc.id,
+        }));
       }
       return out;
     } catch (_) {
@@ -166,18 +171,21 @@ class FoodService {
         final seller =
             '${data['businessName'] ?? data['merchantName'] ?? 'Local kitchen'}';
         final mid = data['merchantId']?.toString().trim();
-        out.add(FoodModel(
-          id: doc.id.hashCode.abs() % 2000000000,
-          FoodName: name,
-          FoodImage: img,
-          RestrauntName: seller,
-          price: price,
-          description: data['description']?.toString(),
-          category: 'food',
-          gallery: img.isEmpty ? const [] : [img],
-          merchantId: (mid != null && mid.isNotEmpty) ? mid : null,
-          firestoreListingId: doc.id,
-        ));
+        final rid = data['restaurantId']?.toString().trim();
+        final cat = '${data['category'] ?? ''}'.trim();
+        out.add(FoodModel.fromJson({
+          ...Map<String, dynamic>.from(data),
+          'id': doc.id.hashCode.abs() % 2000000000,
+          'FoodName': name,
+          'FoodImage': img,
+          'RestrauntName': seller,
+          'price': price,
+          'category': cat.isEmpty ? 'Meals' : cat,
+          'gallery': img.isEmpty ? const [] : [img],
+          'merchantId': (mid != null && mid.isNotEmpty) ? mid : null,
+          'restaurantId': (rid != null && rid.isNotEmpty) ? rid : null,
+          'firestoreListingId': doc.id,
+        }));
       }
       return out;
     } catch (_) {
@@ -478,6 +486,7 @@ class FoodService {
     final sid = raw['sellerUserId']?.toString().trim();
     final merchantKey =
         (mid != null && mid.isNotEmpty) ? mid : ((sid != null && sid.isNotEmpty) ? sid : null);
+    final restaurantId = raw['restaurantId']?.toString().trim();
 
     final listingLoc = _listingLocationFromRaw(raw);
 
@@ -525,6 +534,43 @@ class FoodService {
       if (gallery.isNotEmpty) 'gallery': gallery,
       if (listingLoc != null) 'listingLocation': listingLoc,
       if (merchantKey != null) 'merchantId': merchantKey,
+      if (restaurantId != null && restaurantId.isNotEmpty)
+        'restaurantId': restaurantId,
+      if (raw['variants'] != null) 'variants': raw['variants'],
+      if (raw['addOns'] != null) 'addOns': raw['addOns'],
+      if (raw['addons'] != null) 'addons': raw['addons'],
+      if (raw['prepTimeMinutes'] != null)
+        'prepTimeMinutes': raw['prepTimeMinutes'],
     };
+  }
+
+  /// Stamp [FoodModel.restaurantAvgPrepTimeMinutes] from `restaurants` so ETA
+  /// can use kitchen prep without a per-card lookup.
+  Future<List<FoodModel>> _attachRestaurantPrep(List<FoodModel> items) async {
+    if (items.isEmpty) return items;
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('restaurants')
+          .limit(80)
+          .get();
+      final byId = <String, int>{};
+      final byOwner = <String, int>{};
+      for (final d in snap.docs) {
+        final r = RestaurantModel.fromFirestore(d);
+        if (r.id.isNotEmpty) byId[r.id] = r.avgPrepTimeMinutes;
+        if (r.ownerUid.isNotEmpty) byOwner[r.ownerUid] = r.avgPrepTimeMinutes;
+      }
+      return items.map((f) {
+        int? mins;
+        final rid = f.restaurantId?.trim();
+        if (rid != null && rid.isNotEmpty) mins = byId[rid];
+        final mid = f.merchantId?.trim();
+        if (mins == null && mid != null && mid.isNotEmpty) mins = byOwner[mid];
+        if (mins == null || mins <= 0) return f;
+        return f.copyWith(restaurantAvgPrepTimeMinutes: mins);
+      }).toList();
+    } catch (_) {
+      return items;
+    }
   }
 }

@@ -22,6 +22,7 @@ import 'package:vero360_app/GeneralPages/checkout_page.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_share_link.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
@@ -200,19 +201,42 @@ class _DetailsPageState extends State<DetailsPage> {
   /// Share current product
   void _shareProduct() {
     final item = widget.item;
-    final merchantName = item.merchantName ?? item.sellerBusinessName ?? 'A merchant';
-    final productUrl = 'https://vero360.app/marketplace/${item.id}';
+    final merchantName =
+        item.merchantName ?? item.sellerBusinessName ?? 'A merchant';
     final priceStr = NumberFormat('#,###', 'en').format(item.price.truncate());
+    final url = marketplaceProductShareUrl(
+      id: marketplaceProductShareId(
+        sqlItemId: item.id > 0 ? item.id : null,
+        firestoreDocId: item.firestoreDocId,
+      ),
+      name: item.name,
+      location: item.location,
+      price: priceStr,
+      merchant: merchantName,
+      description: item.description,
+      image: marketplaceShareImageUrl(item.image, item.gallery),
+    );
     Share.share(
-      '$merchantName is selling this on Vero360 - Check out ${item.name} - MWK $priceStr\n$productUrl',
+      '$merchantName is selling this on Vero360 — ${item.name} — MWK $priceStr\n$url',
     );
   }
 
   /// Copy product link to clipboard (for pasting in other apps)
   void _copyProductLink() {
     final item = widget.item;
-    final productUrl = 'https://vero360.app/marketplace/${item.id}';
-    Clipboard.setData(ClipboardData(text: productUrl));
+    final url = marketplaceProductShareUrl(
+      id: marketplaceProductShareId(
+        sqlItemId: item.id > 0 ? item.id : null,
+        firestoreDocId: item.firestoreDocId,
+      ),
+      name: item.name,
+      location: item.location,
+      price: NumberFormat('#,###', 'en').format(item.price.truncate()),
+      merchant: item.merchantName ?? item.sellerBusinessName,
+      description: item.description,
+      image: marketplaceShareImageUrl(item.image, item.gallery),
+    );
+    Clipboard.setData(ClipboardData(text: url));
     _toast('Product link copied', Icons.link, _brandOrange);
   }
 

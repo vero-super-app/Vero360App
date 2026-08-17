@@ -58,15 +58,20 @@
                 <data android:scheme="vero360" />
             </intent-filter>
 
-            <!-- Shared stay links: https://vero360.app/accommodation/{id} -->
+            <!-- Shared stay + marketplace links: https://vero360.app/accommodation/{id} -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:scheme="https"
-                    android:host="vero360.app"
-                    android:pathPrefix="/accommodation" />
+                <data android:scheme="https" android:host="vero360.app" android:pathPrefix="/accommodation" />
+                <data android:scheme="https" android:host="vero360.app" android:pathPrefix="/stay" />
+                <data android:scheme="https" android:host="vero360.app" android:pathPrefix="/marketplace" />
+                <data android:scheme="https" android:host="vero360.app" android:pathPrefix="/shop" />
+                <data android:scheme="https" android:host="vero360.app" android:pathPrefix="/merchant" />
+                <data android:scheme="https" android:host="www.vero360.app" android:pathPrefix="/accommodation" />
+                <data android:scheme="https" android:host="www.vero360.app" android:pathPrefix="/stay" />
+                <data android:scheme="https" android:host="www.vero360.app" android:pathPrefix="/marketplace" />
+                <data android:scheme="https" android:host="www.vero360.app" android:pathPrefix="/shop" />
             </intent-filter>
 
             <!-- If you want to be more restrictive (only payment-complete path), use this instead: -->

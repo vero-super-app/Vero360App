@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
@@ -18,6 +19,7 @@ import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodatio
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_booking_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/accommodation_occupancy_service.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationService/accommodation_watchers_service.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/booking_service.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/guest_booking_local_cache.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/widgets/accommodation_listing_image.dart';
@@ -145,6 +147,8 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   final BookingService _bookingService = BookingService();
   final AccommodationOccupancyService _occupancy =
       AccommodationOccupancyService();
+  final AccommodationWatchersService _watchers =
+      AccommodationWatchersService();
   late final PageController _heroController;
 
   DateTime _checkIn = DateTime.now().add(const Duration(days: 1));
@@ -156,6 +160,9 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   bool _showSwipeHint = false;
   Timer? _swipeHintTimer;
   Timer? _heroAutoTimer;
+  Timer? _watchHeartbeat;
+  StreamSubscription<int>? _watchSub;
+  int _watchingCount = 0;
   static const _heroAutoInterval = Duration(seconds: 3);
   bool _openingChat = false;
   String _ownerUid = '';
@@ -207,6 +214,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     _heroController = PageController();
     _amenities = List<String>.from(widget.amenities ?? const []);
     _isLoggedIn = FirebaseAuth.instance.currentUser != null;
+    _startWatching();
     WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrap());
   }
 
@@ -243,6 +251,9 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   void dispose() {
     _swipeHintTimer?.cancel();
     _heroAutoTimer?.cancel();
+    _watchHeartbeat?.cancel();
+    _watchSub?.cancel();
+    unawaited(_watchers.leave(widget.accommodationId));
     _heroController.dispose();
     _nameController.dispose();
     _emailController.dispose();
@@ -706,6 +717,12 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
       id: widget.accommodationId,
       name: name,
       location: loc,
+      price: price,
+      period: _effectivePricePeriod.uiSuffix.trim(),
+      image: widget.photoSources.cast<String?>().firstWhere(
+            (s) => (s ?? '').startsWith('http'),
+            orElse: () => null,
+          ),
     );
     final buf = StringBuffer(
       'Check out this stay on Vero360 — $name',
@@ -729,6 +746,46 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
         subject: name.isEmpty ? 'Vero360 stay' : name,
       ),
     );
+  }
+
+  String _stayShareUrl() => accommodationShareUrl(
+        id: widget.accommodationId,
+        name: widget.propertyName,
+        location: widget.location,
+        price: NumberFormat('#,##0').format(widget.pricePerNight.round()),
+        period: _effectivePricePeriod.uiSuffix.trim(),
+        image: widget.photoSources.cast<String?>().firstWhere(
+              (s) => (s ?? '').startsWith('http'),
+              orElse: () => null,
+            ),
+      );
+
+  Future<void> _copyShareLink() async {
+    final url = _stayShareUrl();
+    await Clipboard.setData(ClipboardData(text: url));
+    if (!mounted) return;
+    ToastHelper.showCustomToast(
+      context,
+      'Link copied — share it so others can open this stay in Vero360.',
+      isSuccess: true,
+      errorMessage: '',
+    );
+  }
+
+  void _startWatching() {
+    final id = widget.accommodationId;
+    if (id <= 0) return;
+    unawaited(_watchers.join(id));
+    _watchingCount = 1;
+    _watchSub?.cancel();
+    _watchSub = _watchers.watchCount(id).listen((n) {
+      if (!mounted) return;
+      setState(() => _watchingCount = n < 1 ? 1 : n);
+    });
+    _watchHeartbeat?.cancel();
+    _watchHeartbeat = Timer.periodic(const Duration(seconds: 30), (_) {
+      unawaited(_watchers.heartbeat(id));
+    });
   }
 
   Future<void> _openMaps() async {
@@ -1505,6 +1562,11 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                   onPressed: _shareStay,
                   icon: const Icon(Icons.ios_share_rounded),
                 ),
+                IconButton(
+                  tooltip: 'Copy share link',
+                  onPressed: _copyShareLink,
+                  icon: const Icon(Icons.link_rounded),
+                ),
                 if (!_isLoggedIn)
                   Padding(
                     padding: const EdgeInsets.only(right: 8, top: 8, bottom: 8),
@@ -1732,6 +1794,13 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                 ),
               ),
             ),
+            if (_watchingCount > 0)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                  child: _WatchingNowBanner(count: _watchingCount),
+                ),
+              ),
             if (!_isLoggedIn)
               SliverToBoxAdapter(
                 child: Padding(
@@ -2014,6 +2083,42 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
             ],
           ],
         ),
+    );
+  }
+}
+
+class _WatchingNowBanner extends StatelessWidget {
+  final int count;
+  const _WatchingNowBanner({required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    final label = count <= 1
+        ? '1 person is watching this stay'
+        : '$count people are watching this stay';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF4E8),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFFF8A00).withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.visibility_rounded, color: Color(0xFFFF8A00), size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 13,
+                color: Color(0xFF16284C),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

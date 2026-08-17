@@ -4,6 +4,18 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:vero360_app/Home/myorders.dart';
+import 'package:vero360_app/GernalScreens/chat_list_page.dart';
+import 'package:vero360_app/Quickservices/jobs.dart';
+import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
+import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
+import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketPlace.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food.dart';
+import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/verocourier.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/bike_ride_share_map_screen.dart';
+import 'package:vero360_app/features/ride_share/ride_share_entry_resolver.dart';
+import 'package:vero360_app/utils/ExchangeRate.dart';
 
 /// In-app customer service chat agent for Vero360.
 /// English + Chichewa — user picks a language before chatting.
@@ -224,13 +236,50 @@ class _CustomerServicePageState extends State<CustomerServicePage> {
     switch (action) {
       case _BotAction.whatsapp:
         unawaited(_launchWhatsApp());
-        break;
+        return;
       case _BotAction.call:
         unawaited(_launchTel());
-        break;
+        return;
       case _BotAction.email:
         unawaited(_launchEmail());
+        return;
+      default:
         break;
+    }
+
+    final page = _pageForAction(action);
+    if (page == null) return;
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+  }
+
+  Widget? _pageForAction(_BotAction action) {
+    switch (action) {
+      case _BotAction.openRide:
+        return RideShareEntryResolver.buildLandingPage(isDriverHome: false);
+      case _BotAction.openBike:
+        return const BikeRideShareMapScreen();
+      case _BotAction.openFood:
+        return FoodPage();
+      case _BotAction.openCourier:
+        return const VerocourierPage();
+      case _BotAction.openMarketplace:
+        return MarketPage(
+          cartService: CartService('', apiPrefix: ApiConfig.apiPrefix),
+        );
+      case _BotAction.openStay:
+        return const AccommodationMainPage();
+      case _BotAction.openForex:
+        return const ExchangeRateScreen();
+      case _BotAction.openJobs:
+        return JobsPage();
+      case _BotAction.openOrders:
+        return const OrdersPage();
+      case _BotAction.openInbox:
+        return const ChatListPage();
+      case _BotAction.whatsapp:
+      case _BotAction.call:
+      case _BotAction.email:
+        return null;
     }
   }
 
@@ -599,7 +648,21 @@ class _LangCard extends StatelessWidget {
   }
 }
 
-enum _BotAction { whatsapp, call, email }
+enum _BotAction {
+  whatsapp,
+  call,
+  email,
+  openRide,
+  openBike,
+  openFood,
+  openCourier,
+  openMarketplace,
+  openStay,
+  openForex,
+  openJobs,
+  openOrders,
+  openInbox,
+}
 
 class _BotReply {
   final String text;
@@ -631,9 +694,10 @@ class _VeroSupportBot {
         'chakudya', 'restaurant', 'yitanitsani chakudya', 'njala', 'menyu',
       ],
       answerEn:
-          'To order food:\n1. Open Home → Food\n2. Pick a restaurant and items\n3. Checkout and pay\n\nYou’ll get order updates in My Orders and Notifications. Anything else?',
+          'To order food, open Food and pick a restaurant.\nYou’ll get updates in My Orders and Notifications.',
       answerNy:
-          'Kuyitanitsa chakudya:\n1. Tsegulani Home → Food\n2. Sankhani restoranti ndi zinthu\n3. Malipiro (Checkout)\n\nMudzalandira zidziwitso mu My Orders ndi Notifications. paliso China?',
+          'Kuyitanitsa chakudya, tsegulani Food ndikusankha restoranti.\nMudzalandira zidziwitso mu My Orders ndi Notifications.',
+      actions: [_BotAction.openFood],
     ),
     _Faq(
       keys: [
@@ -641,9 +705,10 @@ class _VeroSupportBot {
         'tsata', 'order ili kuti', 'katundu', 'yapita', 'status ya order',
       ],
       answerEn:
-          'Track orders under My Orders.\n• Marketplace / food: status + parcel & payment section\n• Courier: open Courier for live delivery updates\n\nIf payment was held in escrow, confirm receipt when your parcel arrives so the merchant is paid.',
+          'Track marketplace and food orders in My Orders. Courier deliveries are in Courier.\nIf payment is in escrow, confirm receipt when your parcel arrives.',
       answerNy:
-          'Tsataninani maoda mu My Orders.\n• Marketplace / chakudya: status + gawo la katundu & malipiro\n• Courier: tsegulani Courier kuti muone zotsatira\n\nNgati ndalama zili mu escrow, tsimikizirani kuti mwalandira katundu kuti merchant alandire malipiro.',
+          'Tsataninani maoda a marketplace ndi chakudya mu My Orders. Katundu wa Courier uli mu Courier.\nNgati ndalama zili mu escrow, tsimikizirani kulandira katundu.',
+      actions: [_BotAction.openOrders, _BotAction.openCourier],
     ),
     _Faq(
       keys: [
@@ -651,9 +716,10 @@ class _VeroSupportBot {
         'malipiro', 'lipira', 'ndalama', 'bwezerani',
       ],
       answerEn:
-          'Payments use PayChangu (card / mobile money).\nMarketplace orders hold funds in escrow until you confirm receipt.\nCheck wallet / My Orders for status. Refunds for failed payments may take a short time to reverse on mobile money.',
+          'Payments use PayChangu (card / mobile money).\nMarketplace orders hold funds in escrow until you confirm receipt. Check My Orders for status.',
       answerNy:
-          'Malipiro amagwiritsa ntchito PayChangu (khadi / mobile money).\nMaoda a Marketplace amasunga ndalama mu escrow mpaka mutsimikize kulandira.\nOnani wallet / My Orders. Kubweza ndalama kungatenge nthawi pang’ono pa mobile money.',
+          'Malipiro amagwiritsa ntchito PayChangu (khadi / mobile money).\nMaoda a Marketplace amasunga ndalama mu escrow mpaka mutsimikize kulandira. Onani My Orders.',
+      actions: [_BotAction.openOrders],
     ),
     _Faq(
       keys: [
@@ -661,9 +727,10 @@ class _VeroSupportBot {
         'ulendo', 'galimoto', 'woyendetsa', 'njinga',
       ],
       answerEn:
-          'Vero Ride / Vero Bike:\nOpen Home → Vero Ride or Vero Bike, set pickup & drop-off, then request.\nDrivers nearby can accept. Need help with a live trip? Say “talk to a human”.',
+          'Set pickup and drop-off, then request a trip. Nearby drivers can accept.\nNeed help with a live trip? Say “talk to a human”.',
       answerNy:
-          'Vero Ride / Vero Bike:\nTsegulani Home → Vero Ride kapena Vero Bike, ikani malo otenga & otsikira, kenako pempherani.\nOyendetsa pafupi atha kuvomereza. Mukufuna thandizo pa ulendo? Nenani “lankhulani ndi munthu”.',
+          'Ikani malo otenga ndi otsikira, kenako pempherani ulendo. Oyendetsa pafupi atha kuvomereza.\nMukufuna thandizo pa ulendo? Nenani “lankhulani ndi munthu”.',
+      actions: [_BotAction.openRide, _BotAction.openBike],
     ),
     _Faq(
       keys: [
@@ -671,9 +738,10 @@ class _VeroSupportBot {
         'tumizani', 'katundu', 'kutumiza',
       ],
       answerEn:
-          'Courier: Home → Courier to book a parcel delivery and track it. Have pickup address, drop-off, and package size ready.',
+          'Book a parcel delivery and track it in Courier. Have pickup, drop-off, and package size ready.',
       answerNy:
-          'Courier: Home → Courier kuti mubooke kutumiza katundu ndi kutsata. Khalani ndi adilesi yotenga, yotsikira, ndi kukula kwa phukusi.',
+          'Bookani kutumiza katundu ndi kutsata mu Courier. Khalani ndi adilesi yotenga, yotsikira, ndi kukula kwa phukusi.',
+      actions: [_BotAction.openCourier],
     ),
     _Faq(
       keys: [
@@ -681,9 +749,10 @@ class _VeroSupportBot {
         'gulitsa', 'gula', 'malonda', 'ngolo', 'sitolo',
       ],
       answerEn:
-          'Marketplace: browse products from Home or Marketplace.\nAdd to cart → Checkout.\nTo sell, create a merchant account and post listings from the merchant tools.',
+          'Browse products, add to cart, then checkout.\nTo sell, create a merchant account and post listings from merchant tools.',
       answerNy:
-          'Marketplace: yang’anani zinthu kuchokera ku Home kapena Marketplace.\nOnjezani ku cart → Checkout.\nKugulitsa, pangani akaunti ya merchant ndikuyika zinthu kuchokera ku zida za merchant.',
+          'Yang’anani zinthu, onjezani ku cart, kenako Checkout.\nKugulitsa, pangani akaunti ya merchant ndikuyika zinthu.',
+      actions: [_BotAction.openMarketplace],
     ),
     _Faq(
       keys: [
@@ -701,9 +770,10 @@ class _VeroSupportBot {
         'malo ogona', 'hotela', 'chipinda', 'kubooka',
       ],
       answerEn:
-          'Stay: Home → Stay to browse places and book. Booking details and support for stays appear in your bookings / notifications.',
+          'Browse places and book a stay. Booking details appear in My bookings and notifications.',
       answerNy:
-          'Stay: Home → Stay kuti muone malo ndikubooka. Zambiri za booking zimapezeka mu bookings / notifications.',
+          'Onani malo ndikubooka. Zambiri za booking zimapezeka mu My bookings ndi notifications.',
+      actions: [_BotAction.openStay],
     ),
     _Faq(
       keys: [
@@ -711,9 +781,10 @@ class _VeroSupportBot {
         'kusintha ndalama', 'mtengo',
       ],
       answerEn:
-          'Forex: Home → Forex for live exchange rates. Rates are informational — confirm with your bank or bureau before large trades.',
+          'Live exchange rates are in Forex. They are informational — confirm with your bank or bureau before large trades.',
       answerNy:
-          'Forex: Home → Forex kuti muone mitengo yamasinthidwe. Mitengoyi ndi chidziwitso chabe, ife sitisitha ndalama.',
+          'Mitengo yamasinthidwe ili mu Forex. Mitengoyi ndi chidziwitso chabe, ife sitisitha ndalama.',
+      actions: [_BotAction.openForex],
     ),
     _Faq(
       keys: [
@@ -721,9 +792,10 @@ class _VeroSupportBot {
         'ntchito', 'majob', 'kupanga ntchito',
       ],
       answerEn:
-          'Jobs: Home → Jobs to browse openings. Apply from the listing details when available.',
+          'Browse job openings and apply from the listing details when available.',
       answerNy:
-          'Jobs: Home → Jobs kuti muone mawayilo. Lembani kuchokera ku tsatanetsatane wa listing.',
+          'Onani mawayilo ndikulemba kuchokera ku tsatanetsatane wa listing.',
+      actions: [_BotAction.openJobs],
     ),
     _Faq(
       keys: [
@@ -744,6 +816,7 @@ class _VeroSupportBot {
           'Chat sellers from a product page (Message seller) or open your Inbox.\nRatings appear after a real chat or completed order.',
       answerNy:
           'Chezani ndi ogulitsa kuchokera ku tsamba la chinthu (Message seller) kapena Inbox.\nNdemanga zimapezeka mukatha kucheza kapena kutha order.',
+      actions: [_BotAction.openInbox, _BotAction.openMarketplace],
     ),
     _Faq(
       keys: [
@@ -826,7 +899,29 @@ class _VeroSupportBot {
     }
 
     if (best != null && bestScore >= 2) {
-      return _BotReply(best.answer(lang), actions: best.actions);
+      var actions = best.actions;
+      final isRideFaq = best.keys.contains('vero ride') ||
+          best.keys.contains('ride') ||
+          best.keys.contains('verobike');
+      if (isRideFaq) {
+        final wantsBike = q.contains('bike') ||
+            q.contains('verobike') ||
+            q.contains('vero bike') ||
+            q.contains('njinga');
+        final wantsRide = q.contains('ride') ||
+            q.contains('taxi') ||
+            q.contains('driver') ||
+            q.contains('galimoto') ||
+            q.contains('ulendo');
+        if (wantsBike && !wantsRide) {
+          actions = const [_BotAction.openBike];
+        } else if (wantsRide && !wantsBike) {
+          actions = const [_BotAction.openRide];
+        } else {
+          actions = const [_BotAction.openRide, _BotAction.openBike];
+        }
+      }
+      return _BotReply(best.answer(lang), actions: actions);
     }
 
     if (compact == 'help' ||
@@ -1067,14 +1162,19 @@ class _Bubble extends StatelessWidget {
                   runSpacing: 8,
                   children: [
                     for (final a in msg.actions)
-                      OutlinedButton(
+                      FilledButton.icon(
                         onPressed: () => onAction(a),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFFFF8A00),
-                          side: const BorderSide(color: Color(0xFFFF8A00)),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFFFF8A00),
+                          foregroundColor: Colors.white,
                           visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
                         ),
-                        child: Text(_label(a)),
+                        icon: Icon(_icon(a), size: 16),
+                        label: Text(_label(a)),
                       ),
                   ],
                 ),
@@ -1086,6 +1186,37 @@ class _Bubble extends StatelessWidget {
     );
   }
 
+  IconData _icon(_BotAction a) {
+    switch (a) {
+      case _BotAction.whatsapp:
+        return Icons.chat_rounded;
+      case _BotAction.call:
+        return Icons.call_rounded;
+      case _BotAction.email:
+        return Icons.email_outlined;
+      case _BotAction.openRide:
+        return Icons.local_taxi_rounded;
+      case _BotAction.openBike:
+        return Icons.pedal_bike_rounded;
+      case _BotAction.openFood:
+        return Icons.fastfood_rounded;
+      case _BotAction.openCourier:
+        return Icons.local_shipping_rounded;
+      case _BotAction.openMarketplace:
+        return Icons.storefront_rounded;
+      case _BotAction.openStay:
+        return Icons.hotel_rounded;
+      case _BotAction.openForex:
+        return Icons.currency_exchange_rounded;
+      case _BotAction.openJobs:
+        return Icons.work_outline_rounded;
+      case _BotAction.openOrders:
+        return Icons.receipt_long_rounded;
+      case _BotAction.openInbox:
+        return Icons.inbox_rounded;
+    }
+  }
+
   String _label(_BotAction a) {
     final ny = lang == 'ny';
     switch (a) {
@@ -1095,6 +1226,26 @@ class _Bubble extends StatelessWidget {
         return ny ? 'Imbani' : 'Call';
       case _BotAction.email:
         return ny ? 'Imelo' : 'Email';
+      case _BotAction.openRide:
+        return 'Vero Ride';
+      case _BotAction.openBike:
+        return 'Vero Bike';
+      case _BotAction.openFood:
+        return ny ? 'Tsegulani Food' : 'Open Food';
+      case _BotAction.openCourier:
+        return ny ? 'Tsegulani Courier' : 'Open Courier';
+      case _BotAction.openMarketplace:
+        return ny ? 'Tsegulani Marketplace' : 'Open Marketplace';
+      case _BotAction.openStay:
+        return ny ? 'Tsegulani Stay' : 'Open Stay';
+      case _BotAction.openForex:
+        return ny ? 'Tsegulani Forex' : 'Open Forex';
+      case _BotAction.openJobs:
+        return ny ? 'Tsegulani Jobs' : 'Open Jobs';
+      case _BotAction.openOrders:
+        return ny ? 'Maoda anga' : 'My Orders';
+      case _BotAction.openInbox:
+        return 'Inbox';
     }
   }
 }

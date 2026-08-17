@@ -3,16 +3,33 @@ String accommodationShareUrl({
   required int id,
   String? name,
   String? location,
+  String? price,
+  String? image,
+  String? period,
 }) {
   final q = [
     name?.trim(),
     location?.trim(),
   ].where((s) => s != null && s.isNotEmpty).join(' ');
+  final params = <String, String>{};
+  if (q.isNotEmpty) params['q'] = q;
+  final n = name?.trim() ?? '';
+  final loc = location?.trim() ?? '';
+  final p = price?.trim() ?? '';
+  final img = image?.trim() ?? '';
+  final per = period?.trim() ?? '';
+  if (n.isNotEmpty) params['name'] = n;
+  if (loc.isNotEmpty) params['loc'] = loc;
+  if (p.isNotEmpty) params['price'] = p;
+  if (per.isNotEmpty) params['period'] = per;
+  if (img.startsWith('http://') || img.startsWith('https://')) {
+    params['img'] = img;
+  }
   return Uri(
     scheme: 'https',
     host: 'vero360.app',
     path: id > 0 ? '/accommodation/$id' : '/accommodation',
-    queryParameters: q.isEmpty ? null : {'q': q},
+    queryParameters: params.isEmpty ? null : params,
   ).toString();
 }
 

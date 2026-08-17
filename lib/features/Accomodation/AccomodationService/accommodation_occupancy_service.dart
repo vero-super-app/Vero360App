@@ -163,40 +163,58 @@ class AccommodationOccupancyService {
   }
 
   /// Tonight's count for many listings — reads parent docs (global Discover badge).
-  Future<Map<int, int>> fetchTodayCounts(Iterable<int> accommodationIds) async {
+  Future<Map<int, int>> fetchTodayCounts(
+    Iterable<int> accommodationIds, {
+    bool legacyFallback = true,
+  }) async {
     final today = dayKey(DateTime.now());
     final ids = accommodationIds.where((id) => id > 0).toSet().toList();
     if (ids.isEmpty) return {};
 
     final out = <int, int>{};
-    for (var i = 0; i < ids.length; i += 10) {
-      final chunk = ids.sublist(i, min(i + 10, ids.length));
-      final docIds = chunk.map((id) => '$id').toList();
+    Future<void> readChunk(List<String> docIds, {required bool fromCache}) async {
       try {
         final snap = await _db
             .collection('accommodation_occupancy')
             .where(FieldPath.documentId, whereIn: docIds)
-            .get();
+            .get(GetOptions(source: fromCache ? Source.cache : Source.server));
         for (final doc in snap.docs) {
           final id = int.tryParse(doc.id) ?? 0;
           if (id <= 0) continue;
           final data = doc.data();
           final counts = _parseCountsMap(data['counts']);
           var n = counts[today] ?? 0;
-          // Legacy docs with no `counts` map. Do not trust stale bookedToday /
-          // tonightCount — those flags do not roll over to a new calendar day.
           if (n <= 0 && counts.isEmpty) {
             final tc = data['tonightCount'];
             n = tc is num ? tc.toInt() : int.tryParse('$tc') ?? 0;
           }
           if (n > 0) out[id] = n;
         }
-      } catch (e) {
-        if (kDebugMode) {
-          print('[AccommodationOccupancy] fetchTodayCounts batch: $e');
-        }
-      }
+      } catch (_) {}
     }
+
+    final chunks = <List<String>>[];
+    for (var i = 0; i < ids.length; i += 10) {
+      chunks.add(
+        ids.sublist(i, min(i + 10, ids.length)).map((id) => '$id').toList(),
+      );
+    }
+    await Future.wait(chunks.map((c) => readChunk(c, fromCache: true)));
+    final missingAfterCache = ids.where((id) => !out.containsKey(id)).toList();
+    if (missingAfterCache.isNotEmpty) {
+      final rest = <List<String>>[];
+      for (var i = 0; i < missingAfterCache.length; i += 10) {
+        rest.add(
+          missingAfterCache
+              .sublist(i, min(i + 10, missingAfterCache.length))
+              .map((id) => '$id')
+              .toList(),
+        );
+      }
+      await Future.wait(rest.map((c) => readChunk(c, fromCache: false)));
+    }
+
+    if (!legacyFallback) return out;
 
     // Fallback for listings with only night subdocs (pre-mirror writes).
     final missing = ids.where((id) => !out.containsKey(id)).toList();

@@ -87,6 +87,47 @@ List<Accommodation> _decodeAccommodationList(String body) {
 }
 
 class AccommodationService {
+  static List<Accommodation>? _memoryAll;
+
+  /// Instant Discover paint from the last `/accommodations/all` response.
+  static List<Accommodation>? peekMemoryAll() {
+    final list = _memoryAll;
+    if (list == null || list.isEmpty) return null;
+    return list;
+  }
+
+  static List<Accommodation>? peekFiltered({
+    String type = 'all',
+    String location = '',
+  }) =>
+      _filterMemory(type: type, location: location);
+
+  static List<Accommodation>? _filterMemory({
+    required String type,
+    required String location,
+  }) {
+    final all = peekMemoryAll();
+    if (all == null) return null;
+    var list = all;
+    final t = type.toLowerCase().trim();
+    if (t.isNotEmpty && t != 'all') {
+      list = list
+          .where((a) => a.accommodationType.toLowerCase() == t)
+          .toList();
+    }
+    final loc = location.trim().toLowerCase();
+    if (loc.isNotEmpty && !RegExp(r'^\d+$').hasMatch(loc)) {
+      list = list
+          .where((a) => a.location.toLowerCase().contains(loc))
+          .toList();
+    }
+    return list;
+  }
+
+  void _rememberAll(List<Accommodation> list) {
+    _memoryAll = List<Accommodation>.from(list);
+  }
+
   /// `POST /vero/uploads` — same token source as [ApiClient]. Validates `url` is https, not base64.
   Future<String> uploadListingImage(
     Uint8List bytes, {
@@ -190,7 +231,6 @@ class AccommodationService {
         return list;
       }
 
-      // Text location: load by type (or all), then match `location` field locally.
       if (loc.isNotEmpty && !locIsNumeric) {
         final http.Response res;
         if (typeFilter) {
@@ -200,6 +240,9 @@ class AccommodationService {
           );
         } else {
           res = await ApiClient.get('/accommodations/all');
+          try {
+            _rememberAll(_decodeAccommodationList(res.body));
+          } catch (_) {}
         }
         final list = _decodeAccommodationList(res.body);
         final q = loc.toLowerCase();
@@ -209,15 +252,20 @@ class AccommodationService {
       }
 
       if (typeFilter) {
+        final cached = _filterMemory(type: t, location: '');
         final res = await ApiClient.get(
           '/accommodations',
           queryParameters: {'type': t},
         );
-        return _decodeAccommodationList(res.body);
+        final list = _decodeAccommodationList(res.body);
+        return list.isNotEmpty ? list : (cached ?? list);
       }
 
+      final cachedAll = peekMemoryAll();
       final res = await ApiClient.get('/accommodations/all');
-      return _decodeAccommodationList(res.body);
+      final list = _decodeAccommodationList(res.body);
+      _rememberAll(list);
+      return list.isNotEmpty ? list : (cachedAll ?? list);
     } on ApiException {
       rethrow;
     } catch (_) {

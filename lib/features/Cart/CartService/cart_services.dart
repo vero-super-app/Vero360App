@@ -183,7 +183,7 @@ class CartService {
     return null;
   }
 
-  String _docIdFor(CartModel item) => '${item.item}_${item.merchantId}';
+  String _docIdFor(CartModel item) => item.firestoreDocId;
 
   String _key(int itemId, String merchantId) => '${itemId}_$merchantId';
 
@@ -227,13 +227,22 @@ class CartService {
       'pendingSync': pendingSync,
       if (item.availableStock != null) 'availableStock': item.availableStock,
       if (item.availableStock != null) 'stockQuantity': item.availableStock,
+      if (item.restaurantId != null && item.restaurantId!.trim().isNotEmpty)
+        'restaurantId': item.restaurantId!.trim(),
+      if (item.variant != null && item.variant!.trim().isNotEmpty)
+        'variant': item.variant!.trim(),
+      if (item.notes != null && item.notes!.trim().isNotEmpty)
+        'notes': item.notes!.trim(),
+      if (item.addOns.isNotEmpty) 'addOns': item.addOns,
     };
   }
 
   void _upsertMemory(CartModel item) {
     final next = List<CartModel>.from(_memoryCache);
-    final i = next.indexWhere(
-        (e) => e.item == item.item && e.merchantId == item.merchantId);
+    final i = next.indexWhere((e) =>
+        e.item == item.item &&
+        e.merchantId == item.merchantId &&
+        e.lineConfigKey == item.lineConfigKey);
     if (i >= 0) {
       next[i] = item;
     } else {
@@ -451,6 +460,16 @@ class CartService {
                   data['stockQuantity'] == null
               ? null
               : safeInt(data['availableStock'] ?? data['stockQuantity']),
+          restaurantId: (data['restaurantId'] ?? '').toString().trim().isEmpty
+              ? null
+              : (data['restaurantId'] ?? '').toString().trim(),
+          variant: (data['variant'] ?? '').toString().trim().isEmpty
+              ? null
+              : (data['variant'] ?? '').toString().trim(),
+          notes: (data['notes'] ?? '').toString().trim().isEmpty
+              ? null
+              : (data['notes'] ?? '').toString().trim(),
+          addOns: CartModel.parseAddOnNames(data['addOns'] ?? data['addons']),
         );
       }).toList();
 
@@ -475,6 +494,14 @@ class CartService {
       'serviceType': cartItem.serviceType,
       if (cartItem.comment != null && cartItem.comment!.trim().isNotEmpty)
         'comment': cartItem.comment!.trim(),
+      if (cartItem.restaurantId != null &&
+          cartItem.restaurantId!.trim().isNotEmpty)
+        'restaurantId': cartItem.restaurantId!.trim(),
+      if (cartItem.variant != null && cartItem.variant!.trim().isNotEmpty)
+        'variant': cartItem.variant!.trim(),
+      if (cartItem.notes != null && cartItem.notes!.trim().isNotEmpty)
+        'notes': cartItem.notes!.trim(),
+      if (cartItem.addOns.isNotEmpty) 'addOns': cartItem.addOns,
     };
   }
 

@@ -18,6 +18,7 @@ import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/config/api_config.dart';
 
 import 'package:vero360_app/Home/myorders.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_my_orders_page.dart';
 
 /* Inline pages displayed in bottom sheets (stay on same Profile screen) */
 import 'package:vero360_app/GeneralPages/ToRefund.dart';
@@ -1297,6 +1298,11 @@ class _ProfilePageState extends State<ProfilePage> {
               badgeRoute: NotificationStore.kBadgeMyOrders,
             ),
             _orderAction(
+              'My Food Orders',
+              Icons.restaurant_menu_rounded,
+              () => _openBottomSheet(const FoodMyOrdersPage()),
+            ),
+            _orderAction(
               'Received',
               Icons.move_to_inbox_outlined,
               () => _openBottomSheet(const DeliveredOrdersPage()),
@@ -1431,6 +1437,11 @@ class _ProfilePageState extends State<ProfilePage> {
           Icons.book,
           () => _openBottomSheet(const OrdersPage()),
           badgeRoute: NotificationStore.kBadgeMyOrders,
+        ),
+        _DetailItem(
+          'My Food Orders',
+          Icons.restaurant_menu_rounded,
+          () => _openBottomSheet(const FoodMyOrdersPage()),
         ),
         _DetailItem(
           'Received',

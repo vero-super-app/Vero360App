@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
-import 'package:vero360_app/features/ride_share/core/fleet_date_picker.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/car_rental/utils/car_rental_colors.dart';
 
@@ -20,14 +19,10 @@ class _CreateTaxiScreenState extends State<CreateTaxiScreen> {
 
   // Form fields
   String? _selectedTaxiClass = 'STANDARD';
-  final _makeController = TextEditingController();
   final _modelController = TextEditingController();
-  final _yearController = TextEditingController();
   final _licensePlateController = TextEditingController();
   final _colorController = TextEditingController();
   final _seatsController = TextEditingController(text: '4');
-  final _registrationNumberController = TextEditingController();
-  final _registrationExpiryController = TextEditingController();
   final List<String> _selectedFeatures = [];
 
   final List<String> _availableFeatures = [
@@ -41,14 +36,10 @@ class _CreateTaxiScreenState extends State<CreateTaxiScreen> {
 
   @override
   void dispose() {
-    _makeController.dispose();
     _modelController.dispose();
-    _yearController.dispose();
     _licensePlateController.dispose();
     _colorController.dispose();
     _seatsController.dispose();
-    _registrationNumberController.dispose();
-    _registrationExpiryController.dispose();
     super.dispose();
   }
 
@@ -62,15 +53,7 @@ class _CreateTaxiScreenState extends State<CreateTaxiScreen> {
     final checks = <String, bool>{};
 
     // Make and Model validation
-    checks['has_make'] = _makeController.text.isNotEmpty;
     checks['has_model'] = _modelController.text.isNotEmpty;
-
-    // Year validation (must be recent)
-    final year = int.tryParse(_yearController.text) ?? 0;
-    final currentYear = DateTime.now().year;
-    checks['valid_year'] = year >= (currentYear - 25) && year <= currentYear;
-
-    // License plate format validation
     checks['valid_license_plate'] = _licensePlateController.text.length >= 5;
 
     // Seats validation
@@ -79,11 +62,6 @@ class _CreateTaxiScreenState extends State<CreateTaxiScreen> {
 
     // Color validation
     checks['has_color'] = _colorController.text.isNotEmpty;
-
-    // Registration number (optional but good to have)
-    checks['has_registration'] = _registrationNumberController.text.isNotEmpty;
-
-    // Features (good to have at least 2)
     checks['has_features'] = _selectedFeatures.isNotEmpty;
 
     // Calculate score
@@ -112,16 +90,10 @@ class _CreateTaxiScreenState extends State<CreateTaxiScreen> {
     try {
       final taxiData = {
         'taxiClass': _selectedTaxiClass,
-        'make': _makeController.text.trim(),
         'model': _modelController.text.trim(),
-        'year': int.parse(_yearController.text),
         'licensePlate': _licensePlateController.text.trim().toUpperCase(),
         'color': _colorController.text.trim(),
         'seats': int.parse(_seatsController.text),
-        'registrationNumber': _registrationNumberController.text.trim(),
-        'registrationExpiry': _registrationExpiryController.text.isNotEmpty
-            ? _registrationExpiryController.text
-            : null,
         'features': _selectedFeatures,
       };
 
@@ -179,21 +151,6 @@ class _CreateTaxiScreenState extends State<CreateTaxiScreen> {
       if (mounted) {
         setState(() => _isLoading = false);
       }
-    }
-  }
-
-  Future<void> _selectDate(BuildContext context) async {
-    final now = DateTime.now();
-    final current = tryParseFleetDate(_registrationExpiryController.text);
-    final picked = await showFleetDatePicker(
-      context,
-      current: current ?? now.add(const Duration(days: 365)),
-      firstDate: DateTime(now.year, now.month, now.day),
-      lastDate: DateTime(now.year + 10, now.month, now.day),
-    );
-    if (picked != null) {
-      _registrationExpiryController.text = fleetDateIso(picked);
-      _validateAndAutoVerify();
     }
   }
 
@@ -299,123 +256,52 @@ class _CreateTaxiScreenState extends State<CreateTaxiScreen> {
               ),
               const SizedBox(height: 16),
 
-              // Make and Model Row
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      controller: _makeController,
-                      decoration: InputDecoration(
-                        labelText: 'Make*',
-                        hintText: 'e.g., Toyota',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide:
-                              const BorderSide(color: Color(0xFFE0E0E0)),
-                        ),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Required';
-                        }
-                        return null;
-                      },
-                    ),
+              TextFormField(
+                controller: _modelController,
+                decoration: InputDecoration(
+                  labelText: 'Model*',
+                  hintText: 'e.g., Corolla',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _modelController,
-                      decoration: InputDecoration(
-                        labelText: 'Model*',
-                        hintText: 'e.g., Corolla',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide:
-                              const BorderSide(color: Color(0xFFE0E0E0)),
-                        ),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Required';
-                        }
-                        return null;
-                      },
-                    ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
                   ),
-                ],
+                ),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Required';
+                  }
+                  return null;
+                },
               ),
               const SizedBox(height: 16),
 
-              // Year and Seats Row
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      controller: _yearController,
-                      decoration: InputDecoration(
-                        labelText: 'Year*',
-                        hintText: '2024',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide:
-                              const BorderSide(color: Color(0xFFE0E0E0)),
-                        ),
-                      ),
-                      keyboardType: TextInputType.number,
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Required';
-                        }
-                        final year = int.tryParse(value);
-                        if (year == null ||
-                            year < 1990 ||
-                            year > DateTime.now().year) {
-                          return 'Invalid year';
-                        }
-                        return null;
-                      },
-                    ),
+              TextFormField(
+                controller: _seatsController,
+                decoration: InputDecoration(
+                  labelText: 'Seats*',
+                  hintText: '4',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _seatsController,
-                      decoration: InputDecoration(
-                        labelText: 'Seats*',
-                        hintText: '4',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide:
-                              const BorderSide(color: Color(0xFFE0E0E0)),
-                        ),
-                      ),
-                      keyboardType: TextInputType.number,
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Required';
-                        }
-                        final seats = int.tryParse(value);
-                        if (seats == null || seats < 1 || seats > 8) {
-                          return 'Invalid';
-                        }
-                        return null;
-                      },
-                    ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
                   ),
-                ],
+                ),
+                keyboardType: TextInputType.number,
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Required';
+                  }
+                  final seats = int.tryParse(value);
+                  if (seats == null || seats < 1 || seats > 8) {
+                    return 'Invalid';
+                  }
+                  return null;
+                },
               ),
               const SizedBox(height: 16),
 
@@ -440,19 +326,8 @@ class _CreateTaxiScreenState extends State<CreateTaxiScreen> {
                   return null;
                 },
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
 
-              // Registration Information Section
-              Text(
-                'Registration Details',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: CarRentalColors.title,
-                      fontWeight: FontWeight.w600,
-                    ),
-              ),
-              const SizedBox(height: 12),
-
-              // License Plate
               TextFormField(
                 controller: _licensePlateController,
                 decoration: InputDecoration(
@@ -476,45 +351,6 @@ class _CreateTaxiScreenState extends State<CreateTaxiScreen> {
                   }
                   return null;
                 },
-              ),
-              const SizedBox(height: 16),
-
-              // Registration Number
-              TextFormField(
-                controller: _registrationNumberController,
-                decoration: InputDecoration(
-                  labelText: 'Registration Number',
-                  hintText: 'Optional',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Registration Expiry
-              TextFormField(
-                controller: _registrationExpiryController,
-                decoration: InputDecoration(
-                  labelText: 'Registration Expiry',
-                  hintText: 'YYYY-MM-DD',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
-                  ),
-                  suffixIcon: IconButton(
-                    icon: const Icon(Icons.calendar_today),
-                    onPressed: () => _selectDate(context),
-                  ),
-                ),
-                readOnly: true,
               ),
               const SizedBox(height: 20),
 

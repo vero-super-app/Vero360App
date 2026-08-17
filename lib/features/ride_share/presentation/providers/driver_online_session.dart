@@ -6,12 +6,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/GernalServices/location_permission_helper.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
 
 /// Driver "Go Online" session that survives leaving [DriverDashboard].
 ///
-/// Availability is only cleared on explicit [goOffline], logout, or when the
-/// backend marks the taxi busy/unavailable for other reasons (active trip,
-/// stale cleanup, inactive status).
+/// The toggle stays on until explicit [goOffline] or logout. Backgrounding,
+/// dashboard reloads, taxi cleanup, and trip-busy availability must not flip it.
 class DriverOnlineSessionState {
   final bool isOnline;
   final int? taxiId;
@@ -82,44 +83,49 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
       LocationPermissionHelper.onAppResumed();
       if (_resumeBroadcastAfterForeground && this.state.isOnline) {
         _resumeBroadcastAfterForeground = false;
-        _startBroadcastTimer();
+        unawaited(_reassertOnline());
       }
     }
   }
 
   /// Resume from backend taxi availability after returning to the dashboard.
   ///
-  /// [hasActiveTrip]: when true, `isAvailable=false` means busy — keep the
-  /// online session so location keeps updating. Only drop online when the taxi
-  /// is unavailable and the driver is not on a trip (manual offline, cleanup).
+  /// A live local session is sticky: the toggle does not turn off unless the
+  /// driver (or logout) calls [goOffline]. Stale profile cache, taxi cleanup,
+  /// and trip-busy `isAvailable=false` must not flip the switch.
   Future<void> syncFromDriverProfile(
     Map<String, dynamic> driver, {
     bool hasActiveTrip = false,
   }) async {
-    final taxiId = _primaryTaxiId(driver);
+    final taxiId = _primaryTaxiId(driver, preferId: state.taxiId);
     if (taxiId == null) {
-      if (state.isOnline) {
-        await goOffline(syncBackend: false);
-      }
       return;
     }
 
-    final available = _bool(_primaryTaxi(driver)?['isAvailable']);
+    final busy = hasActiveTrip || _onActiveTrip;
+    final available = _bool(_primaryTaxi(driver, preferId: taxiId)?['isAvailable']);
     final verified = _bool(driver['isVerified']);
     final hasTaxi =
         driver['taxis'] is List && (driver['taxis'] as List).isNotEmpty;
 
-    if ((available || hasActiveTrip) && verified && hasTaxi) {
-      if (!state.isOnline || state.taxiId != taxiId) {
-        await goOnline(
-          taxiId: taxiId,
-          // Trip holds availability=false; idle available already true.
-          setAvailabilityOnBackend: false,
-        );
+    if (state.isOnline) {
+      if (!busy && !available) {
+        // Cleanup / stale cache dropped availability. Keep the toggle on.
+        await _reassertOnline(taxiId: taxiId);
+      } else if (state.taxiId != taxiId) {
+        state = state.copyWith(taxiId: taxiId);
       }
-    } else if (state.isOnline && !available && !hasActiveTrip) {
-      _cancelBroadcastTimer();
-      state = state.copyWith(isOnline: false, taxiId: taxiId);
+      if (_broadcastTimer == null) {
+        _startBroadcastTimer();
+      }
+      return;
+    }
+
+    if ((available || hasActiveTrip) && verified && hasTaxi) {
+      await goOnline(
+        taxiId: taxiId,
+        setAvailabilityOnBackend: false,
+      );
     }
   }
 
@@ -129,17 +135,24 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
   }) async {
     if (state.isOnline &&
         state.taxiId == taxiId &&
-        _broadcastTimer != null) {
+        _broadcastTimer != null &&
+        !setAvailabilityOnBackend) {
       return;
     }
 
+    final previous = state;
     state = state.copyWith(isOnline: true, taxiId: taxiId);
 
-    if (setAvailabilityOnBackend) {
-      await _setTaxiAvailability(taxiId, true);
+    try {
+      if (setAvailabilityOnBackend) {
+        await _setTaxiAvailability(taxiId, true);
+      }
+      _startBroadcastTimer();
+    } catch (e) {
+      state = previous;
+      _cancelBroadcastTimer();
+      rethrow;
     }
-
-    _startBroadcastTimer();
   }
 
   /// Explicit offline (manual toggle / logout). Does not run on page leave.
@@ -152,6 +165,31 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
     if (syncBackend && taxiId != null) {
       await _setTaxiAvailability(taxiId, false);
     }
+  }
+
+  Future<void> _reassertOnline({int? taxiId}) async {
+    final id = taxiId ?? state.taxiId;
+    if (!state.isOnline || id == null) return;
+    if (_onActiveTrip) {
+      if (_broadcastTimer == null) _startBroadcastTimer();
+      return;
+    }
+    try {
+      await goOnline(taxiId: id, setAvailabilityOnBackend: true);
+    } catch (e) {
+      if (kDebugMode) {
+        print('[DriverOnlineSession] ✗ reassert online: $e');
+      }
+      if (_broadcastTimer == null) {
+        _startBroadcastTimer();
+      }
+    }
+  }
+
+  bool get _onActiveTrip {
+    final life = ref.read(rideLifecycleProvider);
+    return life is RideActive &&
+        (life.isAccepted || life.isDriverArrived || life.isInProgress);
   }
 
   void _startBroadcastTimer() {
@@ -216,16 +254,30 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
     }
   }
 
-  Map<String, dynamic>? _primaryTaxi(Map<String, dynamic> driver) {
+  Map<String, dynamic>? _primaryTaxi(
+    Map<String, dynamic> driver, {
+    int? preferId,
+  }) {
     final raw = driver['taxis'];
     if (raw is! List || raw.isEmpty) return null;
-    final first = raw.first;
-    if (first is Map) return Map<String, dynamic>.from(first);
-    return null;
+    final taxis = raw
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+    if (taxis.isEmpty) return null;
+    if (preferId != null) {
+      for (final taxi in taxis) {
+        if (int.tryParse('${taxi['id']}') == preferId) return taxi;
+      }
+    }
+    for (final taxi in taxis) {
+      if ((taxi['status']?.toString() ?? '') == 'ACTIVE') return taxi;
+    }
+    return taxis.first;
   }
 
-  int? _primaryTaxiId(Map<String, dynamic> driver) {
-    final taxi = _primaryTaxi(driver);
+  int? _primaryTaxiId(Map<String, dynamic> driver, {int? preferId}) {
+    final taxi = _primaryTaxi(driver, preferId: preferId);
     if (taxi == null) return null;
     return int.tryParse('${taxi['id']}');
   }

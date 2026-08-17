@@ -21,6 +21,7 @@ import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/engagement_notification_service.dart';
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/Home/notifications_page.dart';
+import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 import 'package:vero360_app/features/Promotions/presentation/promotions_page.dart';
 import 'package:vero360_app/features/Promotions/presentation/promo_detail_page.dart';
@@ -706,6 +707,13 @@ class NotificationService {
             initialStatus: status,
           ),
         ));
+        break;
+
+      case 'food_order':
+      case 'new_food_order':
+        if (kDebugMode) debugPrint("→ Open food merchant dashboard");
+        final email = FirebaseAuth.instance.currentUser?.email ?? '';
+        openVeroMainShell(navigator.context, email: email, tabIndex: 4);
         break;
 
       case 'accommodation_booking':

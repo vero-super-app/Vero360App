@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 
 class RoleSyncResult {
   final Map<String, dynamic>? user;
@@ -38,6 +39,7 @@ class RoleSessionService {
   static const intendedRoleKey = 'session_intended_role';
   static const intendedServiceKey = 'session_intended_merchant_service';
   static const intendedUidKey = 'session_intended_uid';
+  static const intendedRoleHeader = 'x-intended-role';
 
   static String? readToken(SharedPreferences prefs) =>
       prefs.getString('jwt_token') ??
@@ -49,6 +51,32 @@ class RoleSessionService {
         prefs.getString('user_role') ?? prefs.getString('role'),
       ) ??
       '';
+
+  /// Driver/merchant role the backend should use when inserting a new user row.
+  static String? intendedRoleForRequest(SharedPreferences prefs) {
+    final role = RoleHelper.normalizeAccountRole(
+      prefs.getString(intendedRoleKey) ??
+          prefs.getString('user_role') ??
+          prefs.getString('role'),
+    );
+    if (role == RoleHelper.driver || role == RoleHelper.merchant) {
+      return role;
+    }
+    return null;
+  }
+
+  static Future<void> applyIntendedRoleHeader(
+    Map<String, String> headers, {
+    SharedPreferences? prefs,
+  }) async {
+    try {
+      final sp = prefs ?? await SharedPreferences.getInstance();
+      final role = intendedRoleForRequest(sp);
+      if (role != null) {
+        headers[intendedRoleHeader] = role;
+      }
+    } catch (_) {}
+  }
 
   static Future<void> clearRoleKeys(SharedPreferences prefs) async {
     await prefs.remove('user_role');
@@ -187,11 +215,19 @@ class RoleSessionService {
     final phone = (user['phone'] ?? '').toString();
     final pic = (user['profilepicture'] ?? user['profilePicture'] ?? '').toString();
 
-    await prefs.setString('fullName', name.isEmpty ? 'Guest User' : name);
-    await prefs.setString('name', name.isEmpty ? 'Guest User' : name);
-    await prefs.setString('email', email);
-    await prefs.setString('phone', phone);
-    await prefs.setString('profilepicture', pic);
+    if (name.trim().isNotEmpty) {
+      await prefs.setString('fullName', name.trim());
+      await prefs.setString('name', name.trim());
+    }
+    if (email.trim().isNotEmpty) {
+      await prefs.setString('email', email.trim());
+    }
+    if (phone.trim().isNotEmpty) {
+      await prefs.setString('phone', phone.trim());
+    }
+    if (pic.trim().isNotEmpty) {
+      await prefs.setString('profilepicture', pic.trim());
+    }
 
     final uid = (user['uid'] ?? user['firebaseUid'] ?? user['id'] ?? '')
         .toString()
@@ -203,7 +239,11 @@ class RoleSessionService {
     final fbUid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
     final lookupUid = fbUid.isNotEmpty ? fbUid : uid;
 
-    final role = RoleHelper.roleFromUserMap(user);
+    final incomingRole = RoleHelper.tryRoleFromUserMap(user);
+    final existingRole = RoleHelper.normalizeAccountRole(
+      prefs.getString('user_role') ?? prefs.getString('role'),
+    );
+    final role = incomingRole ?? existingRole ?? RoleHelper.customer;
     await prefs.setString('user_role', role);
     await prefs.setString('role', role);
     await prefs.setBool('is_merchant', role == RoleHelper.merchant);
@@ -244,20 +284,142 @@ class RoleSessionService {
     }
   }
 
+  static Future<void> persistRoleToFirestore(String role) async {
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+      if (uid.isEmpty) return;
+      await FirebaseFirestore.instance.collection('users').doc(uid).set(
+        {
+          'role': role,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+    } catch (_) {}
+  }
+
+  /// Persist a backend user (e.g. after apply-as-driver) and keep Firestore in sync.
+  static Future<void> persistPromotedUser(Map<String, dynamic> user) async {
+    final prefs = await SharedPreferences.getInstance();
+    final role = RoleHelper.tryRoleFromUserMap(user) ?? RoleHelper.driver;
+    final fbUid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    await lockIntendedRole(
+      prefs: prefs,
+      role: role,
+      uid: fbUid.isNotEmpty ? fbUid : user['firebaseUid']?.toString(),
+    );
+    final merged = Map<String, dynamic>.from(user)..['role'] = role;
+    await persistUserToPrefs(prefs, merged);
+    await persistRoleToFirestore(role);
+  }
+
+  /// Retries PUT /users/me after signup. Must not depend on a widget being mounted.
+  static Future<bool> retryPromoteAccountRole({
+    required String role,
+    String? name,
+    String? email,
+    String? phone,
+    String? merchantService,
+    String? businessName,
+    String? businessAddress,
+  }) async {
+    final delays = [
+      const Duration(seconds: 2),
+      const Duration(seconds: 5),
+      const Duration(seconds: 10),
+    ];
+    for (final delay in delays) {
+      await Future.delayed(delay);
+      await persistRoleToFirestore(role);
+      final ok = await _putProfileToBackend(
+        role: role,
+        name: name,
+        email: email,
+        phone: phone,
+        merchantService: merchantService,
+        businessName: businessName,
+        businessAddress: businessAddress,
+      );
+      if (ok) return true;
+    }
+    return false;
+  }
+
+  static Future<bool> _putProfileToBackend({
+    required String role,
+    String? name,
+    String? email,
+    String? phone,
+    String? merchantService,
+    String? businessName,
+    String? businessAddress,
+  }) async {
+    try {
+      final token = await AuthHandler.getTokenForApi();
+      if (token == null || token.isEmpty) return false;
+      final headers = <String, String>{
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      };
+      await applyIntendedRoleHeader(headers);
+      if (await _putUsersMe(headers, {'role': role})) return true;
+
+      final body = <String, dynamic>{'role': role};
+      if ((name ?? '').trim().isNotEmpty) body['name'] = name!.trim();
+      if ((email ?? '').trim().isNotEmpty) body['email'] = email!.trim();
+      if ((phone ?? '').trim().isNotEmpty) body['phone'] = phone!.trim();
+      if (role == RoleHelper.merchant) {
+        if ((merchantService ?? '').trim().isNotEmpty) {
+          body['merchantService'] = merchantService!.trim();
+        }
+        if ((businessName ?? '').trim().isNotEmpty) {
+          body['businessName'] = businessName!.trim();
+        }
+        if ((businessAddress ?? '').trim().isNotEmpty) {
+          body['businessAddress'] = businessAddress!.trim();
+        }
+      }
+      return _putUsersMe(headers, body);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<bool> _putUsersMe(
+    Map<String, String> headers,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      final res = await http
+          .put(
+            ApiConfig.endpoint('/users/me'),
+            headers: headers,
+            body: json.encode(body),
+          )
+          .timeout(const Duration(seconds: 10));
+      return res.statusCode >= 200 && res.statusCode < 300;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<void> _putRoleToBackend(
     String token,
     String role,
     Duration timeout,
   ) async {
     try {
+      final headers = <String, String>{
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      };
+      await applyIntendedRoleHeader(headers);
       await http
           .put(
             ApiConfig.endpoint('/users/me'),
-            headers: {
-              'Authorization': 'Bearer $token',
-              'Accept': 'application/json',
-              'Content-Type': 'application/json',
-            },
+            headers: headers,
             body: json.encode({'role': role}),
           )
           .timeout(timeout);
@@ -284,13 +446,17 @@ class RoleSessionService {
     Duration timeout,
   ) async {
     try {
-      final resp = await http.get(
-        ApiConfig.endpoint('/users/me'),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Accept': 'application/json',
-        },
-      ).timeout(timeout);
+      final headers = <String, String>{
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      };
+      await applyIntendedRoleHeader(headers);
+      final resp = await http
+          .get(
+            ApiConfig.endpoint('/users/me'),
+            headers: headers,
+          )
+          .timeout(timeout);
 
       if (resp.statusCode == 401 || resp.statusCode == 403) {
         return const _FetchedUser(isUnauthorized: true);

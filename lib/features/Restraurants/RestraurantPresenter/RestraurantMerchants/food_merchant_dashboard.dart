@@ -2,6 +2,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -16,6 +17,7 @@ import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantsService/food_courier_dispatch.dart';
 
 final NumberFormat _mwk0Fmt =
     NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
@@ -42,7 +44,11 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
   late TabController _foodTabs;
+  /// Slow fallback for wallet + reviews only — orders arrive via [_ordersSub].
   Timer? _refreshTimer;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _ordersSub;
+  String _ordersSubscribedUid = '';
+  bool _ordersBaselineReady = false;
 
   /// Every Firestore read is capped so a hung network call cannot block the dashboard forever.
   static const Duration _firestoreTimeout = Duration(seconds: 12);
@@ -75,16 +81,18 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     super.initState();
     _foodTabs = TabController(length: 3, vsync: this);
     _loadMerchantData(showLoader: false);
-    _refreshTimer = Timer.periodic(const Duration(minutes: 3), (_) {
-      if (mounted) {
-        _loadMerchantData(showLoader: false);
-      }
+    // Orders are live via snapshots(); wallet/reviews are less time-critical.
+    _refreshTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+      if (!mounted || _uid.isEmpty) return;
+      unawaited(_loadWalletBalance());
+      unawaited(_loadReviews());
     });
   }
 
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _ordersSub?.cancel();
     _foodTabs.dispose();
     super.dispose();
   }
@@ -164,9 +172,9 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       _merchantPhone = prefs.getString('phone') ?? '';
 
       if (_uid.isNotEmpty) {
+        _subscribeToOrders();
         // Parallel + bounded timeouts: avoids serial 15s+ stalls and a stuck `_isFetching`.
         await Future.wait<void>([
-          _loadOrderSummary(),
           _loadMenuItems(),
           _loadWalletBalance(),
           _loadReviews(),
@@ -177,57 +185,116 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     }
   }
 
-  Future<void> _loadOrderSummary() async {
-    try {
-      final snapshot = await _firestore
-          .collection('food_orders')
-          .where('merchantId', isEqualTo: _uid)
-          .limit(120)
-          .get()
-          .timeout(_firestoreTimeout);
+  void _subscribeToOrders() {
+    if (_uid.isEmpty) return;
+    if (_ordersSubscribedUid == _uid && _ordersSub != null) return;
 
-      final rows = snapshot.docs.map((d) => {'id': d.id, ...d.data()}).toList();
-      rows.sort((a, b) {
-        final ad = a['createdAt'];
-        final bd = b['createdAt'];
-        DateTime at = DateTime.fromMillisecondsSinceEpoch(0);
-        DateTime bt = DateTime.fromMillisecondsSinceEpoch(0);
-        if (ad is Timestamp) at = ad.toDate();
-        if (bd is Timestamp) bt = bd.toDate();
-        return bt.compareTo(at);
-      });
+    _ordersSub?.cancel();
+    _ordersSubscribedUid = _uid;
+    _ordersBaselineReady = false;
+    _ordersSub = _firestore
+        .collection('food_orders')
+        .where('merchantId', isEqualTo: _uid)
+        .limit(120)
+        .snapshots()
+        .listen(
+          _onOrdersSnapshot,
+          onError: (Object e) {
+            final now = DateTime.now();
+            if (_lastOrdersSummaryErrorLog == null ||
+                now.difference(_lastOrdersSummaryErrorLog!) >
+                    const Duration(minutes: 1)) {
+              _lastOrdersSummaryErrorLog = now;
+              debugPrint('Error streaming orders summary: $e');
+            }
+          },
+        );
+  }
 
-      int completed = 0;
-      int pending = 0;
-      double revenue = 0;
-      for (final o in rows) {
-        final s = (o['status']?.toString().toLowerCase() ?? '').trim();
-        if (s == 'delivered' || s == 'completed') {
-          completed++;
-          final amt = o['totalAmount'];
-          revenue += amt is num ? amt.toDouble() : double.tryParse('$amt') ?? 0;
-        } else if (s == 'pending' || s == 'preparing' || s == 'ready') {
-          pending++;
-        }
-      }
+  void _onOrdersSnapshot(QuerySnapshot<Map<String, dynamic>> snapshot) {
+    final rows = snapshot.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+    rows.sort((a, b) {
+      final ad = a['createdAt'];
+      final bd = b['createdAt'];
+      DateTime at = DateTime.fromMillisecondsSinceEpoch(0);
+      DateTime bt = DateTime.fromMillisecondsSinceEpoch(0);
+      if (ad is Timestamp) at = ad.toDate();
+      if (bd is Timestamp) bt = bd.toDate();
+      return bt.compareTo(at);
+    });
 
-      if (!mounted) return;
-      setState(() {
-        _recentOrders = rows.take(10).toList();
-        _totalOrders = rows.length;
-        _completedOrders = completed;
-        _pendingOrders = pending;
-        _totalRevenue = revenue;
-      });
-    } catch (e) {
-      final now = DateTime.now();
-      if (_lastOrdersSummaryErrorLog == null ||
-          now.difference(_lastOrdersSummaryErrorLog!) >
-              const Duration(minutes: 1)) {
-        _lastOrdersSummaryErrorLog = now;
-        debugPrint('Error loading orders summary: $e');
+    int completed = 0;
+    int pending = 0;
+    double revenue = 0;
+    for (final o in rows) {
+      final s = (o['status']?.toString().toLowerCase() ?? '').trim();
+      if (s == 'delivered' || s == 'completed') {
+        completed++;
+        final amt = o['totalAmount'] ?? o['totalMwk'];
+        revenue += amt is num ? amt.toDouble() : double.tryParse('$amt') ?? 0;
+      } else if (s == 'pending' || s == 'preparing' || s == 'ready') {
+        pending++;
       }
     }
+
+    final newPending = <Map<String, dynamic>>[];
+    if (_ordersBaselineReady) {
+      for (final change in snapshot.docChanges) {
+        if (change.type != DocumentChangeType.added) continue;
+        final data = change.doc.data();
+        if (data == null) continue;
+        final s =
+            (data['status']?.toString().toLowerCase() ?? 'pending').trim();
+        if (s != 'pending') continue;
+        newPending.add({'id': change.doc.id, ...data});
+      }
+    }
+    _ordersBaselineReady = true;
+
+    if (!mounted) return;
+    setState(() {
+      _recentOrders = rows.take(10).toList();
+      _totalOrders = rows.length;
+      _completedOrders = completed;
+      _pendingOrders = pending;
+      _totalRevenue = revenue;
+    });
+
+    if (newPending.isNotEmpty) {
+      _alertNewPendingOrders(newPending);
+    }
+  }
+
+  /// Kitchen POS-style ping: haptic + system alert + banner. No extra package —
+  /// [audioplayers] is already used for voice notes, not ticket chimes.
+  void _alertNewPendingOrders(List<Map<String, dynamic>> orders) {
+    HapticFeedback.heavyImpact();
+    SystemSound.play(SystemSoundType.alert);
+
+    final n = orders.length;
+    late final String summary;
+    if (n == 1) {
+      final o = orders.first;
+      final customer = (o['customerName'] ?? 'A customer').toString().trim();
+      final who = customer.isEmpty ? 'A customer' : customer;
+      summary = 'New order from $who';
+    } else {
+      summary = '$n new food orders';
+    }
+
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.hideCurrentSnackBar();
+    messenger?.showSnackBar(
+      SnackBar(
+        content: Text(
+          summary,
+          style: const TextStyle(fontWeight: FontWeight.w800),
+        ),
+        backgroundColor: _brandOrange,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 6),
+      ),
+    );
   }
 
   Future<void> _loadMenuItems() async {
@@ -312,8 +379,39 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
-      // Delivered / completed → credit kitchen (90%) + platform wallet (10%).
       final s = status.toLowerCase();
+      if (s == 'ready') {
+        Map<String, dynamic> order = {};
+        for (final o in _recentOrders) {
+          if (o is! Map) continue;
+          final map = Map<String, dynamic>.from(o);
+          final oid = '${map['id'] ?? map['orderId'] ?? ''}';
+          if (oid == orderId) {
+            order = map;
+            break;
+          }
+        }
+        final code = await FoodCourierDispatch.dispatchForReadyOrder(
+          orderId: orderId,
+          order: order,
+          merchantPhone: _merchantPhone,
+          merchantEmail: _merchantEmail,
+          merchantName: _businessName,
+          merchantUid: _uid,
+        );
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            code == null || code.isEmpty
+                ? 'Marked ready. Vero Courier will pick up — add a restaurant address if dispatch failed.'
+                : 'Vero Courier dispatched · $code',
+            isSuccess: code != null && code.isNotEmpty,
+            errorMessage: code == null || code.isEmpty ? 'Courier dispatch' : '',
+          );
+        }
+      }
+
+      // Delivered / completed → credit kitchen (90%) + platform wallet (10%).
       if (s == 'delivered' || s == 'completed') {
         try {
           await OrderEscrowService.releaseFoodOrderByMerchant(orderId);
@@ -336,9 +434,8 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
             );
           }
         }
+        unawaited(_loadWalletBalance());
       }
-
-      _loadMerchantData();
     } catch (e) {
       debugPrint('Error updating order: $e');
     }
@@ -960,13 +1057,27 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                 leading:
                     const Icon(Icons.restaurant_menu_rounded, color: _brandOrange),
                 title: Text('Order #$shortId'),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Customer: ${orderMap['customerName'] ?? 'N/A'}'),
-                    Text('Amount: MWK ${orderMap['totalAmount'] ?? '0'}'),
-                  ],
-                ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Customer: ${orderMap['customerName'] ?? 'N/A'}'),
+                        Text('Amount: MWK ${orderMap['totalAmount'] ?? '0'}'),
+                        Text(
+                          () {
+                            final track =
+                                '${orderMap['courierTrackingNumber'] ?? ''}'
+                                    .trim();
+                            return track.isEmpty
+                                ? 'Vero Courier'
+                                : 'Vero Courier · $track';
+                          }(),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ],
+                    ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -1416,8 +1527,9 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.room_service_rounded),
+                leading: const Icon(Icons.delivery_dining_rounded),
                 title: const Text('Mark as ready'),
+                subtitle: const Text('Dispatch Vero Courier for pickup'),
                 onTap: () {
                   Navigator.pop(context);
                   if (docId.isNotEmpty) _updateOrderStatus(docId, 'ready');

@@ -1538,6 +1538,80 @@ exports.onOrderPartyAlertCreated = onDocumentCreated(
   },
 );
 
+/**
+ * New kitchen ticket: food_orders are written client-side after PayChangu
+ * (checkout_from_cart_page). Push the merchant so they hear about it even
+ * if the dashboard is backgrounded or killed.
+ *
+ * Token lookup: users/{merchantId}.fcmToken + fcmTokens[] (same as
+ * sendFcmToUser / marketplace moderation).
+ *
+ * Deploy: firebase deploy --only functions:onFoodOrderCreated
+ */
+function foodOrderItemSummary(data) {
+  const items = Array.isArray(data.lineItems)
+    ? data.lineItems
+    : Array.isArray(data.items)
+      ? data.items
+      : [];
+  const names = items
+    .map((it) => {
+      if (!it || typeof it !== 'object') return '';
+      const name = String(it.name || it.item || it.title || '').trim();
+      const qty = Number(it.quantity || it.qty) || 1;
+      if (!name) return '';
+      return qty > 1 ? `${name} x${qty}` : name;
+    })
+    .filter(Boolean);
+  if (!names.length) return 'a new order';
+  if (names.length <= 2) return names.join(', ');
+  return `${names.slice(0, 2).join(', ')} +${names.length - 2} more`;
+}
+
+exports.onFoodOrderCreated = onDocumentCreated(
+  {
+    document: 'food_orders/{orderId}',
+    serviceAccount: FUNCTIONS_SERVICE_ACCOUNT,
+  },
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    const data = snap.data() || {};
+    const status = String(data.status || 'pending').trim().toLowerCase();
+    if (status !== 'pending') {
+      console.log(`onFoodOrderCreated ${snap.id}: skip status=${status}`);
+      return;
+    }
+
+    const merchantId = String(data.merchantId || '').trim();
+    if (!merchantId) {
+      console.warn(`onFoodOrderCreated ${snap.id}: missing merchantId`);
+      return;
+    }
+
+    const customer = String(data.customerName || 'A customer').trim() || 'A customer';
+    const summary = foodOrderItemSummary(data);
+    const title = 'New food order';
+    const body = `${customer} ordered ${summary}`;
+
+    const dataPayload = stringifyDataPayload({
+      type: 'food_order',
+      orderId: snap.id,
+      status: 'pending',
+      toUid: merchantId,
+      title,
+      body,
+    });
+
+    try {
+      await sendFcmToUser(merchantId, title, body, dataPayload);
+      console.log(`onFoodOrderCreated FCM sent to merchant ${merchantId} for ${snap.id}`);
+    } catch (err) {
+      console.error(`onFoodOrderCreated FCM failed for ${merchantId}`, err);
+    }
+  },
+);
+
 // ───────────────────────────────────────────────
 //  Didit KYC
 // ───────────────────────────────────────────────

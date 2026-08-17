@@ -91,7 +91,17 @@ class OrderItem {
   // Date
   final DateTime? orderDate;
 
-  int get total => price * quantity;
+  /// API line/order total when the backend sends `totalAmount` (preferred).
+  final int? billedTotal;
+
+  int get total => lineTotal;
+
+  /// Paid amount for this row: billed total when present, else price × qty.
+  int get lineTotal {
+    final billed = billedTotal ?? 0;
+    if (billed > 0) return billed;
+    return price * quantity;
+  }
 
   OrderItem({
     required this.id,
@@ -117,6 +127,7 @@ class OrderItem {
     this.addressCity,
     this.addressDescription,
     this.orderDate,
+    this.billedTotal,
   });
 
   static T? _first<T>(Map m, List<String> keys) {
@@ -138,6 +149,22 @@ class OrderItem {
     final cat   = orderCategoryFrom(_first<String>(m, ['Category','category']));
     final price = int.tryParse((_first(m, ['Price','price']) ?? 0).toString()) ?? 0;
     final qty   = int.tryParse((_first(m, ['Quantity','quantity']) ?? 1).toString()) ?? 1;
+    final billedRaw = _first(m, [
+      'TotalAmount',
+      'totalAmount',
+      'GrandTotal',
+      'grandTotal',
+      'lineTotal',
+      'LineTotal',
+    ]);
+    int? billedTotal;
+    if (billedRaw is num) {
+      billedTotal = billedRaw.round();
+    } else if (billedRaw != null) {
+      billedTotal = int.tryParse(
+        billedRaw.toString().replaceAll(',', '').split('.').first,
+      );
+    }
     final desc  = _first<String>(m, ['Description','description']) ?? '';
     final stat  = orderStatusFrom(_first<String>(m, ['Status','status']));
     // Be tolerant of different backend payment keys and value types (string / number / bool).
@@ -186,7 +213,14 @@ class OrderItem {
 
     // merchant block
     int merchId = int.tryParse((_first(m, ['merchantId','MerchantId']) ?? 0).toString()) ?? 0;
-    String? merchUid;
+    String? merchUid = _first(m, [
+      'merchantUid',
+      'MerchantUid',
+      'sellerUid',
+      'SellerUid',
+      'merchantFirebaseUid',
+    ])?.toString().trim();
+    if (merchUid != null && merchUid.isEmpty) merchUid = null;
     String? merchName;
     String? merchPhone;
     double? merchAvg;
@@ -229,7 +263,13 @@ class OrderItem {
     final merchRaw = _first<Map>(m, ['merchant','Merchant']);
     if (merchRaw != null) {
       merchId    = int.tryParse((merchRaw['id'] ?? merchId).toString()) ?? merchId;
-      merchUid   = _first<String>(merchRaw, ['uid','merchantUid','firebaseUid','userId']);
+      merchUid ??= _first(merchRaw, ['uid', 'merchantUid', 'firebaseUid'])
+          ?.toString()
+          .trim();
+      final nestedUserId = merchRaw['userId']?.toString().trim() ?? '';
+      if ((merchUid == null || merchUid.isEmpty) && nestedUserId.length >= 20) {
+        merchUid = nestedUserId;
+      }
       merchName  = merchRaw['name']?.toString();
       merchPhone = merchRaw['phone']?.toString();
       merchAvg   = double.tryParse((merchRaw['averageRating'] ?? merchRaw['avgRating'] ?? '0').toString());
@@ -304,6 +344,7 @@ class OrderItem {
       addressCity: addrCity,
       addressDescription: addrDesc,
       orderDate: date,
+      billedTotal: billedTotal,
     );
   }
 

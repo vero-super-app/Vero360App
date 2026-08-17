@@ -645,6 +645,15 @@ class OrderService {
         .toList();
   }
 
+  /// Incoming sales for the signed-in merchant only (skips `/orders/me`).
+  Future<List<OrderItem>> getMerchantOrders() async {
+    final h = await _headers();
+    return _fetchOrdersFromPath(
+      path: '/orders/merchant/me',
+      headers: h,
+    );
+  }
+
   // Chooses the right “me” endpoint by role.
   Future<List<OrderItem>> getMyOrders({OrderStatus? status}) async {
     final isMerchant = await _isMerchant();

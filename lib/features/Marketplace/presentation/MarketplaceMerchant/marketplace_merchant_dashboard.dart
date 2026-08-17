@@ -226,6 +226,7 @@ class _MarketplaceMerchantDashboardState
   }
 
   static const String _prefsItemsCachePrefix = 'merchant_my_items_cache_v1_';
+  static const String _prefsEarningsCachePrefix = 'merchant_earnings_cache_v1_';
 
   // Filters (My Items)
   String _searchQuery = '';
@@ -808,6 +809,7 @@ class _MarketplaceMerchantDashboardState
     // 2) Items + wallet ASAP (cache-first). Don't flash skeleton if cache hit.
     unawaited(_loadItems(showLoading: _items.isEmpty));
     unawaited(_loadWalletBalance());
+    unawaited(_loadOrderStats());
 
     // 3) Heavier network work after first frame G?? don't block skeleton exit.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -835,6 +837,7 @@ class _MarketplaceMerchantDashboardState
   /// Prefs + clear loading shell without waiting on APIs.
   Future<void> _bootstrapFast() async {
     await _loadMerchantProfileFromPrefs();
+    await _hydrateEarningsFromPrefs();
     // Disk cache may be ready after prefs G?? apply if memory was empty.
     if (_items.isEmpty) {
       await _hydrateItemsFromPrefsCache();
@@ -1703,18 +1706,13 @@ class _MarketplaceMerchantDashboardState
 
           if (!mounted) return;
           setState(() {
-            // Recent sales come from real orders in _loadOrderStats(), not dashboard API
-
-            _totalEarnings = (dashboardData['totalRevenue'] is num)
-                ? (dashboardData['totalRevenue'] as num).toDouble()
-                : double.tryParse('${dashboardData['totalRevenue']}') ?? 0;
+            // Earnings / sold / recent sales come from real merchant orders
+            // in _loadOrderStats() — not the dashboard Firestore stub.
 
             final ti = dashboardData['totalItems'];
             final ai = dashboardData['activeItems'];
-            final si = dashboardData['soldItems'];
             if (ti is int) _totalItems = ti;
             if (ai is int) _activeItems = ai;
-            if (si is int) _soldItems = si;
 
             if (merchant is Map) {
               final mr = merchant['rating'];
@@ -1750,40 +1748,169 @@ class _MarketplaceMerchantDashboardState
     }
   }
 
-  /// Load sold items count, total earnings, and recent sales from real confirmed+paid orders.
+  /// Load sold items count, total earnings, and recent sales from this
+  /// merchant's incoming orders (and escrow as a fast/accurate fallback).
   Future<void> _loadOrderStats() async {
     if (!mounted) return;
+    final myFirebaseUid = (_auth.currentUser?.uid ?? _uid).trim();
+
+    // Escrow is local Firestore — paint a real figure immediately.
+    unawaited(_applyEscrowEarnings(myFirebaseUid));
+
     try {
-      final myFirebaseUid = (_auth.currentUser?.uid ?? '').trim();
-      final orders = await _orderService.getMyOrders();
+      final nestId = (await _getNestUserId(allowNetwork: false) ?? '').trim();
+      final orders = await _orderService.getMerchantOrders();
+
       final sold = orders.where((o) {
+        if (o.status == OrderStatus.cancelled) return false;
         final sellerUid = (o.merchantUid ?? '').trim();
-        // Merchant dashboard stats must only reflect orders sold by this merchant.
-        if (myFirebaseUid.isEmpty || sellerUid.isEmpty || sellerUid != myFirebaseUid) {
-          return false;
+        // `/orders/merchant/me` is already this merchant. Only drop rows that
+        // clearly belong to someone else (e.g. this merchant's own purchases).
+        if (sellerUid.isNotEmpty &&
+            myFirebaseUid.isNotEmpty &&
+            sellerUid != myFirebaseUid &&
+            (nestId.isEmpty || sellerUid != nestId)) {
+          final buyer = (o.customerUid ?? '').trim();
+          if (buyer == myFirebaseUid) return false;
         }
         if (o.status == OrderStatus.delivered) return true;
-        if (o.status == OrderStatus.confirmed && o.paymentStatus == PaymentStatus.paid) return true;
+        if (o.paymentStatus == PaymentStatus.paid) return true;
         return false;
       }).toList();
-      // Sort by date descending (most recent first)
+
       sold.sort((a, b) {
         final da = a.orderDate ?? DateTime(0);
         final db = b.orderDate ?? DateTime(0);
         return db.compareTo(da);
       });
-      final count = sold.length;
-      final earnings = sold.fold<double>(0, (sum, o) => sum + o.total.toDouble());
+
+      final orderEarnings =
+          sold.fold<double>(0, (sum, o) => sum + o.lineTotal.toDouble());
       if (!mounted) return;
+
       setState(() {
-        _soldItems = count;
-        _totalEarnings = earnings;
-        // Keep only recent rows in memory for the UI list.
-        _recentSalesOrders = sold.take(25).toList(growable: false);
+        if (sold.isNotEmpty) {
+          _soldItems = sold.length;
+          _recentSalesOrders = sold.take(25).toList(growable: false);
+        }
+        if (orderEarnings > _totalEarnings) {
+          _totalEarnings = orderEarnings;
+        }
       });
+      unawaited(_persistEarningsCache(
+        sold: _soldItems,
+        earnings: _totalEarnings,
+      ));
     } catch (e) {
       debugPrint('Error loading order stats: $e');
     }
+  }
+
+  Future<void> _applyEscrowEarnings(String uid) async {
+    final escrow = await _earningsFromEscrow(uid);
+    if (!mounted) return;
+    if (escrow.gross <= 0 && escrow.sold <= 0) return;
+    setState(() {
+      if (escrow.gross > _totalEarnings) _totalEarnings = escrow.gross;
+      if (escrow.sold > _soldItems) _soldItems = escrow.sold;
+    });
+    unawaited(_persistEarningsCache(
+      sold: _soldItems,
+      earnings: _totalEarnings,
+    ));
+  }
+
+  Future<({int sold, double gross})> _earningsFromEscrow(String uid) async {
+    if (uid.isEmpty) return (sold: 0, gross: 0.0);
+    try {
+      QuerySnapshot<Map<String, dynamic>> snap;
+      try {
+        snap = await _firestore
+            .collection('order_escrow')
+            .where('merchantUid', isEqualTo: uid)
+            .limit(400)
+            .get(const GetOptions(source: Source.cache));
+        if (snap.docs.isEmpty) {
+          snap = await _firestore
+              .collection('order_escrow')
+              .where('merchantUid', isEqualTo: uid)
+              .limit(400)
+              .get();
+        }
+      } catch (_) {
+        snap = await _firestore
+            .collection('order_escrow')
+            .where('merchantUid', isEqualTo: uid)
+            .limit(400)
+            .get();
+      }
+      int sold = 0;
+      double gross = 0;
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        final status = (data['status'] ?? '').toString().trim().toLowerCase();
+        if (status == 'refunded' || status == 'cancelled') continue;
+        final service = (data['serviceType'] ?? '').toString().trim().toLowerCase();
+        if (service.isNotEmpty && service != 'marketplace') continue;
+        sold++;
+        final gRaw = data['grossAmount'];
+        final mRaw = data['merchantAmount'];
+        final g = gRaw is num
+            ? gRaw.toDouble()
+            : double.tryParse('$gRaw') ?? 0;
+        final m = mRaw is num
+            ? mRaw.toDouble()
+            : double.tryParse('$mRaw') ?? 0;
+        if (g > 0) {
+          gross += g;
+        } else if (m > 0) {
+          gross += m;
+        }
+      }
+      return (sold: sold, gross: gross);
+    } catch (e) {
+      debugPrint('Error loading escrow earnings: $e');
+      return (sold: 0, gross: 0.0);
+    }
+  }
+
+  Future<void> _hydrateEarningsFromPrefs() async {
+    try {
+      final uid = (_auth.currentUser?.uid ?? _uid).trim();
+      if (uid.isEmpty) return;
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('$_prefsEarningsCachePrefix$uid');
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      final earnings = (decoded['earnings'] is num)
+          ? (decoded['earnings'] as num).toDouble()
+          : double.tryParse('${decoded['earnings']}') ?? 0;
+      final sold = (decoded['sold'] is int)
+          ? decoded['sold'] as int
+          : int.tryParse('${decoded['sold']}') ?? 0;
+      if (!mounted) return;
+      if (earnings <= 0 && sold <= 0) return;
+      setState(() {
+        if (earnings > 0) _totalEarnings = earnings;
+        if (sold > 0) _soldItems = sold;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _persistEarningsCache({
+    required int sold,
+    required double earnings,
+  }) async {
+    try {
+      final uid = (_auth.currentUser?.uid ?? _uid).trim();
+      if (uid.isEmpty) return;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        '$_prefsEarningsCachePrefix$uid',
+        jsonEncode({'sold': sold, 'earnings': earnings}),
+      );
+    } catch (_) {}
   }
 
   Future<void> _loadWalletBalance() async {

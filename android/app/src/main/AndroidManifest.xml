@@ -68,10 +68,12 @@
                 <data android:scheme="https" android:host="vero360.app" android:pathPrefix="/marketplace" />
                 <data android:scheme="https" android:host="vero360.app" android:pathPrefix="/shop" />
                 <data android:scheme="https" android:host="vero360.app" android:pathPrefix="/merchant" />
+                <data android:scheme="https" android:host="vero360.app" android:pathPrefix="/food" />
                 <data android:scheme="https" android:host="www.vero360.app" android:pathPrefix="/accommodation" />
                 <data android:scheme="https" android:host="www.vero360.app" android:pathPrefix="/stay" />
                 <data android:scheme="https" android:host="www.vero360.app" android:pathPrefix="/marketplace" />
                 <data android:scheme="https" android:host="www.vero360.app" android:pathPrefix="/shop" />
+                <data android:scheme="https" android:host="www.vero360.app" android:pathPrefix="/food" />
             </intent-filter>
 
             <!-- If you want to be more restrictive (only payment-complete path), use this instead: -->

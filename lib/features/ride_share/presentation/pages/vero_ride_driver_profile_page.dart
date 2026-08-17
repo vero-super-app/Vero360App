@@ -451,13 +451,12 @@ class _VeroRideDriverProfilePageState extends State<VeroRideDriverProfilePage> {
   }
 
   Widget _taxiCard(Map<String, dynamic> taxi) {
-    final make = (taxi['make'] ?? '').toString();
     final model = (taxi['model'] ?? '').toString();
     final plate = (taxi['licensePlate'] ?? taxi['plate'] ?? '').toString();
     final taxiClass = (taxi['taxiClass'] ?? taxi['class'] ?? 'STANDARD').toString();
     final color = (taxi['color'] ?? '').toString();
     final seats = taxi['seats'];
-    final title = [make, model].where((s) => s.trim().isNotEmpty).join(' ');
+    final title = model.trim().isNotEmpty ? model : 'Vehicle';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),

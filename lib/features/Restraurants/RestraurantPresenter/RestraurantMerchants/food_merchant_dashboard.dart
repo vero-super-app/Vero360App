@@ -17,6 +17,7 @@ import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantsService/food_courier_dispatch.dart';
 
 final NumberFormat _mwk0Fmt =
     NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
@@ -378,8 +379,39 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
-      // Delivered / completed → credit kitchen (90%) + platform wallet (10%).
       final s = status.toLowerCase();
+      if (s == 'ready') {
+        Map<String, dynamic> order = {};
+        for (final o in _recentOrders) {
+          if (o is! Map) continue;
+          final map = Map<String, dynamic>.from(o);
+          final oid = '${map['id'] ?? map['orderId'] ?? ''}';
+          if (oid == orderId) {
+            order = map;
+            break;
+          }
+        }
+        final code = await FoodCourierDispatch.dispatchForReadyOrder(
+          orderId: orderId,
+          order: order,
+          merchantPhone: _merchantPhone,
+          merchantEmail: _merchantEmail,
+          merchantName: _businessName,
+          merchantUid: _uid,
+        );
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            code == null || code.isEmpty
+                ? 'Marked ready. Vero Courier will pick up — add a restaurant address if dispatch failed.'
+                : 'Vero Courier dispatched · $code',
+            isSuccess: code != null && code.isNotEmpty,
+            errorMessage: code == null || code.isEmpty ? 'Courier dispatch' : '',
+          );
+        }
+      }
+
+      // Delivered / completed → credit kitchen (90%) + platform wallet (10%).
       if (s == 'delivered' || s == 'completed') {
         try {
           await OrderEscrowService.releaseFoodOrderByMerchant(orderId);
@@ -1025,13 +1057,27 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                 leading:
                     const Icon(Icons.restaurant_menu_rounded, color: _brandOrange),
                 title: Text('Order #$shortId'),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Customer: ${orderMap['customerName'] ?? 'N/A'}'),
-                    Text('Amount: MWK ${orderMap['totalAmount'] ?? '0'}'),
-                  ],
-                ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Customer: ${orderMap['customerName'] ?? 'N/A'}'),
+                        Text('Amount: MWK ${orderMap['totalAmount'] ?? '0'}'),
+                        Text(
+                          () {
+                            final track =
+                                '${orderMap['courierTrackingNumber'] ?? ''}'
+                                    .trim();
+                            return track.isEmpty
+                                ? 'Vero Courier'
+                                : 'Vero Courier · $track';
+                          }(),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ],
+                    ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -1481,8 +1527,9 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.room_service_rounded),
+                leading: const Icon(Icons.delivery_dining_rounded),
                 title: const Text('Mark as ready'),
+                subtitle: const Text('Dispatch Vero Courier for pickup'),
                 onTap: () {
                   Navigator.pop(context);
                   if (docId.isNotEmpty) _updateOrderStatus(docId, 'ready');

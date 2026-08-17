@@ -35,4 +35,17 @@ class RoleHelper {
       roleFromUserMap(u) == merchant;
 
   static bool isDriver(Map<String, dynamic> u) => roleFromUserMap(u) == driver;
+
+  /// Like [roleFromUserMap] but returns null when the map has no role fields.
+  static String? tryRoleFromUserMap(Map<String, dynamic> u) {
+    final direct = normalizeAccountRole(
+      u['role'] ?? u['userRole'] ?? u['user_role'] ?? u['accountRole'],
+    );
+    if (direct != null) return direct;
+    final roles = u['roles'];
+    if (roles is List && roles.isNotEmpty) {
+      return roleFromUserMap(u);
+    }
+    return null;
+  }
 }

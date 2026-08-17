@@ -259,7 +259,11 @@ class _LoginScreenState extends State<LoginScreen> {
       user,
       resolveMerchantVertical: false,
     );
-    final role = RoleHelper.roleFromUserMap(user);
+    final role = RoleHelper.tryRoleFromUserMap(user) ??
+        RoleHelper.normalizeAccountRole(
+          prefs.getString('user_role') ?? prefs.getString('role'),
+        ) ??
+        RoleHelper.customer;
     await loadDriverStatusFromPrefs();
 
     final uid = incomingUid.isNotEmpty ? incomingUid : null;
@@ -359,6 +363,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<Map<String, dynamic>> _buildResultFromUser(User user) async {
     Map<String, dynamic> profile = {};
+    bool profileReadFailed = false;
     try {
       final snap = await _firestore
           .collection('users')
@@ -369,28 +374,25 @@ class _LoginScreenState extends State<LoginScreen> {
         profile = Map<String, dynamic>.from(snap.data()!);
       }
     } catch (e) {
+      profileReadFailed = true;
       AppLogger.d('[Login] Firebase profile load failed', e);
     }
 
-    // Ensure at least a basic profile exists
-    if (profile.isEmpty) {
-      // Never copy a previous account's role from this device onto a new uid.
-      profile = {
-        'email': user.email,
-        'name': user.displayName,
-        'phone': '',
-        'role': 'customer',
-      };
+    // Never write role: customer on a failed/empty read — that permanently
+    // overwrites a driver/merchant Firestore backup.
+    if (!profileReadFailed && profile.isEmpty) {
       try {
         await _firestore.collection('users').doc(user.uid).set({
-          ...profile,
+          'email': user.email,
+          'name': user.displayName,
+          'phone': '',
           'createdAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
       } catch (_) {}
     }
 
-    final role = RoleHelper.roleFromUserMap(profile);
+    final role = RoleHelper.tryRoleFromUserMap(profile);
     final token = await AuthHandler.getFirebaseToken();
     final rawEmail = user.email ?? _identifier.text.trim();
     final isPhoneAccount = rawEmail.endsWith('@phone.vero360.app');
@@ -406,7 +408,7 @@ class _LoginScreenState extends State<LoginScreen> {
         'email': displayEmail,
         'phone': displayPhone,
         'name': profile['name']?.toString() ?? (user.displayName ?? ''),
-        'role': role,
+        if (role != null) 'role': role,
         'photoURL': user.photoURL ?? profile['photoURL'] ?? profile['profilepicture'],
         'merchantService': profile['merchantService'] ??
             profile['merchant_service'] ??
@@ -425,7 +427,7 @@ class _LoginScreenState extends State<LoginScreen> {
     // Start token + Firestore together; await separately so one failure doesn’t drop the other.
     final tokenFut = user.getIdToken(false);
     final snapFut = _firestore.collection('users').doc(user.uid).get();
-    String role = 'customer';
+    String? role;
     String? token;
     try {
       token = await tokenFut;
@@ -435,15 +437,12 @@ class _LoginScreenState extends State<LoginScreen> {
       final snap = await snapFut.timeout(const Duration(milliseconds: 1200));
       if (snap.exists && snap.data() != null) {
         final data = snap.data()!;
-        role = RoleHelper.roleFromUserMap(data);
+        role = RoleHelper.tryRoleFromUserMap(data);
         merchantService = data['merchantService']?.toString() ??
             data['merchant_service']?.toString() ??
             data['serviceType']?.toString();
       }
     } catch (_) {}
-    if (role.isEmpty) {
-      role = 'customer';
-    }
 
     return <String, dynamic>{
       'authProvider': 'firebase',
@@ -455,7 +454,7 @@ class _LoginScreenState extends State<LoginScreen> {
         'phone': user.phoneNumber ?? '',
         'name': user.displayName ?? '',
         'photoURL': user.photoURL,
-        'role': role,
+        if (role != null) 'role': role,
         'merchantService': merchantService,
         'businessName': null,
         'businessAddress': null,

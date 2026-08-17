@@ -107,6 +107,12 @@ class FoodOrder {
   final String paymentStatus;
   /// Denormalized kitchen name so customer lists skip a restaurants lookup.
   final String restaurantName;
+  /// Always Vero Courier for food. Legacy orders may be empty.
+  final String deliveryMethod;
+  final String courierProvider;
+  final String courierTrackingNumber;
+  final int? courierDeliveryId;
+  final String pickupAddress;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -130,6 +136,11 @@ class FoodOrder {
     this.paymentTxRef = '',
     this.paymentStatus = '',
     this.restaurantName = '',
+    this.deliveryMethod = 'Vero Courier',
+    this.courierProvider = 'vero_courier',
+    this.courierTrackingNumber = '',
+    this.courierDeliveryId,
+    this.pickupAddress = '',
     this.createdAt,
     this.updatedAt,
   });
@@ -171,6 +182,16 @@ class FoodOrder {
       if (s == 'completed') return 'delivered';
       if (statuses.contains(s)) return s;
       return 'pending';
+    }
+
+    int? courierId;
+    final rawCourierId = json['courierDeliveryId'];
+    if (rawCourierId is int) {
+      courierId = rawCourierId;
+    } else if (rawCourierId is num) {
+      courierId = rawCourierId.toInt();
+    } else {
+      courierId = int.tryParse(rawCourierId?.toString() ?? '');
     }
 
     final rawItems = json['lineItems'] ?? json['items'] ?? json['cartItems'];
@@ -216,6 +237,17 @@ class FoodOrder {
           : str(json['businessName']).trim().isNotEmpty
               ? str(json['businessName']).trim()
               : str(json['merchantName']).trim(),
+      deliveryMethod: str(json['deliveryMethod']).trim().isNotEmpty
+          ? str(json['deliveryMethod']).trim()
+          : 'Vero Courier',
+      courierProvider: str(json['courierProvider']).trim().isNotEmpty
+          ? str(json['courierProvider']).trim()
+          : 'vero_courier',
+      courierTrackingNumber: str(
+        json['courierTrackingNumber'] ?? json['trackingNumber'],
+      ).trim(),
+      courierDeliveryId: courierId,
+      pickupAddress: str(json['pickupAddress']),
       createdAt: asDate(json['createdAt']),
       updatedAt: asDate(json['updatedAt']),
     );
@@ -247,6 +279,16 @@ class FoodOrder {
         'paymentStatus': paymentStatus,
         if (restaurantName.trim().isNotEmpty) 'restaurantName': restaurantName,
         if (restaurantName.trim().isNotEmpty) 'businessName': restaurantName,
+        'deliveryMethod': deliveryMethod.trim().isEmpty
+            ? 'Vero Courier'
+            : deliveryMethod,
+        'courierProvider': courierProvider.trim().isEmpty
+            ? 'vero_courier'
+            : courierProvider,
+        if (courierTrackingNumber.trim().isNotEmpty)
+          'courierTrackingNumber': courierTrackingNumber.trim(),
+        if (courierDeliveryId != null) 'courierDeliveryId': courierDeliveryId,
+        if (pickupAddress.trim().isNotEmpty) 'pickupAddress': pickupAddress.trim(),
         if (createdAt != null) 'createdAt': createdAt!.toIso8601String(),
         if (updatedAt != null) 'updatedAt': updatedAt!.toIso8601String(),
       };

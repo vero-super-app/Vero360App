@@ -24,7 +24,7 @@ import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
-enum DeliveryType { speed, cts, ankolo, smart, pickup }
+enum DeliveryType { speed, cts, ankolo, smart, veroCourier, pickup }
 
 class CheckoutPage extends StatefulWidget {
   final MarketplaceDetailModel item;
@@ -343,6 +343,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
         return 'Ankolo';
       case DeliveryType.smart:
         return 'Smart';
+      case DeliveryType.veroCourier:
+        return 'Vero Courier';
       case DeliveryType.pickup:
         return 'Pickup';
     }
@@ -358,6 +360,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
         return 'Online tracking';
       case DeliveryType.smart:
         return 'Online tracking';
+      case DeliveryType.veroCourier:
+        return 'Same-city food delivery';
       case DeliveryType.pickup:
         return 'Collect at shop';
     }
@@ -373,6 +377,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
         return Icons.local_shipping_outlined;
       case DeliveryType.smart:
         return Icons.electric_moped_rounded;
+      case DeliveryType.veroCourier:
+        return Icons.delivery_dining_rounded;
       case DeliveryType.pickup:
         return Icons.storefront_rounded;
     }
@@ -522,7 +528,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 
   Widget _courierGrid() {
-    const options = DeliveryType.values;
+    // Marketplace parcels only — food checkout is locked to Vero Courier.
+    final options = DeliveryType.values
+        .where((d) => d != DeliveryType.veroCourier)
+        .toList();
     return LayoutBuilder(
       builder: (context, constraints) {
         final maxW = constraints.maxWidth.isFinite

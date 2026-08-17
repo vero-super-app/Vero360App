@@ -322,7 +322,7 @@ class _PassengerRideTrackingScreenState
               name: driver.fullName,
               subtitle: ride.taxi != null
                   ? [
-                      if (ride.taxi!.make.isNotEmpty) ride.taxi!.make,
+                      if (ride.taxi!.model.isNotEmpty) ride.taxi!.model,
                       if ((ride.taxi!.color ?? '').isNotEmpty) ride.taxi!.color!,
                     ].join(' • ')
                   : '${driver.completedRides} rides',

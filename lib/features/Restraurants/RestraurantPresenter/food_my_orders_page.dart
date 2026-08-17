@@ -311,6 +311,17 @@ class _FoodOrderCard extends StatelessWidget {
                         height: 1.3,
                       ),
                     ),
+                    const SizedBox(height: 4),
+                    Text(
+                      order.courierTrackingNumber.trim().isEmpty
+                          ? 'Vero Courier'
+                          : 'Vero Courier · ${order.courierTrackingNumber.trim()}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: _ink.withValues(alpha: 0.5),
+                      ),
+                    ),
                     const SizedBox(height: 8),
                     Row(
                       children: [
@@ -601,6 +612,16 @@ class _FoodOrderDetailSheetState extends State<_FoodOrderDetailSheet> {
               style: TextStyle(
                 height: 1.35,
                 color: _ink.withValues(alpha: 0.72),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              order.courierTrackingNumber.trim().isEmpty
+                  ? 'Delivered by Vero Courier'
+                  : 'Vero Courier · ${order.courierTrackingNumber.trim()}',
+              style: const TextStyle(
+                fontWeight: FontWeight.w800,
+                color: _veroOrange,
               ),
             ),
           ],

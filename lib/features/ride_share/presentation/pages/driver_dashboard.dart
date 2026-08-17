@@ -411,6 +411,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     if (session.isOnline) {
       try {
         await ref.read(driverOnlineSessionProvider.notifier).goOffline();
+        if (mounted) ref.invalidate(myDriverProfileProvider);
       } catch (e) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -492,6 +493,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
       await ref.read(driverOnlineSessionProvider.notifier).goOnline(
             taxiId: taxiId,
           );
+      if (mounted) ref.invalidate(myDriverProfileProvider);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
-import 'package:vero360_app/features/ride_share/core/fleet_date_picker.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/car_rental/utils/car_rental_colors.dart';
 
@@ -26,23 +25,14 @@ class _EditTaxiScreenState extends State<EditTaxiScreen> {
 
   // Form fields
   late String _selectedTaxiClass;
-  late final _makeController = TextEditingController(text: (widget.taxi['make'] ?? '').toString());
   late final _modelController =
       TextEditingController(text: (widget.taxi['model'] ?? '').toString());
-  late final _yearController =
-      TextEditingController(text: '${widget.taxi['year'] ?? ''}');
   late final _licensePlateController =
       TextEditingController(text: (widget.taxi['licensePlate'] ?? '').toString());
   late final _colorController =
       TextEditingController(text: (widget.taxi['color'] ?? '').toString());
   late final _seatsController =
       TextEditingController(text: '${widget.taxi['seats'] ?? ''}');
-  late final _registrationNumberController =
-      TextEditingController(text: (widget.taxi['registrationNumber'] ?? '').toString());
-  late final _registrationExpiryController = TextEditingController(
-      text: widget.taxi['registrationExpiry'] != null
-          ? (widget.taxi['registrationExpiry'] as String).split('T')[0]
-          : '');
   late final List<String> _selectedFeatures;
 
   final List<String> _availableFeatures = [
@@ -82,14 +72,10 @@ class _EditTaxiScreenState extends State<EditTaxiScreen> {
 
   @override
   void dispose() {
-    _makeController.dispose();
     _modelController.dispose();
-    _yearController.dispose();
     _licensePlateController.dispose();
     _colorController.dispose();
     _seatsController.dispose();
-    _registrationNumberController.dispose();
-    _registrationExpiryController.dispose();
     super.dispose();
   }
 
@@ -108,15 +94,7 @@ class _EditTaxiScreenState extends State<EditTaxiScreen> {
     final checks = <String, bool>{};
 
     // Make and Model validation
-    checks['has_make'] = _makeController.text.isNotEmpty;
     checks['has_model'] = _modelController.text.isNotEmpty;
-
-    // Year validation (must be recent)
-    final year = int.tryParse(_yearController.text) ?? 0;
-    final currentYear = DateTime.now().year;
-    checks['valid_year'] = year >= (currentYear - 25) && year <= currentYear;
-
-    // License plate format validation
     checks['valid_license_plate'] = _licensePlateController.text.length >= 5;
 
     // Seats validation
@@ -125,11 +103,6 @@ class _EditTaxiScreenState extends State<EditTaxiScreen> {
 
     // Color validation
     checks['has_color'] = _colorController.text.isNotEmpty;
-
-    // Registration number (optional but good to have)
-    checks['has_registration'] = _registrationNumberController.text.isNotEmpty;
-
-    // Features (good to have at least 2)
     checks['has_features'] = _selectedFeatures.isNotEmpty;
 
     // Calculate score
@@ -158,10 +131,8 @@ class _EditTaxiScreenState extends State<EditTaxiScreen> {
     try {
       final updateData = {
         'taxiClass': _selectedTaxiClass,
-        'make': _makeController.text.trim(),
         'model': _modelController.text.trim(),
         'color': _colorController.text.trim(),
-        'registrationNumber': _registrationNumberController.text.trim(),
         'features': _selectedFeatures,
       };
 
@@ -211,21 +182,6 @@ class _EditTaxiScreenState extends State<EditTaxiScreen> {
       if (mounted) {
         setState(() => _isLoading = false);
       }
-    }
-  }
-
-  Future<void> _selectDate(BuildContext context) async {
-    final now = DateTime.now();
-    final current = tryParseFleetDate(_registrationExpiryController.text);
-    final picked = await showFleetDatePicker(
-      context,
-      current: current ?? now.add(const Duration(days: 365)),
-      firstDate: DateTime(now.year, now.month, now.day),
-      lastDate: DateTime(now.year + 10, now.month, now.day),
-    );
-    if (picked != null) {
-      _registrationExpiryController.text = fleetDateIso(picked);
-      _validateAndAutoVerify();
     }
   }
 
@@ -331,57 +287,25 @@ class _EditTaxiScreenState extends State<EditTaxiScreen> {
               ),
               const SizedBox(height: 16),
 
-              // Make and Model Row
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      controller: _makeController,
-                      decoration: InputDecoration(
-                        labelText: 'Make*',
-                        hintText: 'e.g., Toyota',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide:
-                              const BorderSide(color: Color(0xFFE0E0E0)),
-                        ),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Required';
-                        }
-                        return null;
-                      },
-                    ),
+              TextFormField(
+                controller: _modelController,
+                decoration: InputDecoration(
+                  labelText: 'Model*',
+                  hintText: 'e.g., Corolla',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _modelController,
-                      decoration: InputDecoration(
-                        labelText: 'Model*',
-                        hintText: 'e.g., Corolla',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          borderSide:
-                              const BorderSide(color: Color(0xFFE0E0E0)),
-                        ),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Required';
-                        }
-                        return null;
-                      },
-                    ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
                   ),
-                ],
+                ),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Required';
+                  }
+                  return null;
+                },
               ),
               const SizedBox(height: 16),
 
@@ -418,24 +342,6 @@ class _EditTaxiScreenState extends State<EditTaxiScreen> {
               ),
               const SizedBox(height: 12),
 
-              // Year (read-only)
-              TextFormField(
-                initialValue: '${widget.taxi['year']}',
-                decoration: InputDecoration(
-                  labelText: 'Year',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
-                  ),
-                ),
-                readOnly: true,
-              ),
-              const SizedBox(height: 16),
-
-              // Seats (read-only)
               TextFormField(
                 initialValue: '${widget.taxi['seats']}',
                 decoration: InputDecoration(
@@ -463,55 +369,6 @@ class _EditTaxiScreenState extends State<EditTaxiScreen> {
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
                     borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
-                  ),
-                ),
-                readOnly: true,
-              ),
-              const SizedBox(height: 20),
-
-              // Registration Information Section
-              Text(
-                'Registration Details',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: CarRentalColors.title,
-                      fontWeight: FontWeight.w600,
-                    ),
-              ),
-              const SizedBox(height: 12),
-
-              // Registration Number
-              TextFormField(
-                controller: _registrationNumberController,
-                decoration: InputDecoration(
-                  labelText: 'Registration Number',
-                  hintText: 'Optional',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Registration Expiry
-              TextFormField(
-                controller: _registrationExpiryController,
-                decoration: InputDecoration(
-                  labelText: 'Registration Expiry',
-                  hintText: 'YYYY-MM-DD',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
-                  ),
-                  suffixIcon: IconButton(
-                    icon: const Icon(Icons.calendar_today),
-                    onPressed: () => _selectDate(context),
                   ),
                 ),
                 readOnly: true,

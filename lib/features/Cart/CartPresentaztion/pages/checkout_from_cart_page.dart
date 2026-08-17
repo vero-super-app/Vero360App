@@ -20,12 +20,15 @@ import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_order_model.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantsService/food_courier_dispatch.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantsService/restaurant_service.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GernalServices/order_service.dart' as order_svc;
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/Home/myorders.dart';
+import 'package:vero360_app/features/VeroCourier/VeroCourierService/courier_city.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -70,6 +73,20 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
 
   double get _total => max(0.0, _subtotal);
 
+  bool get _isFoodCheckout =>
+      _items.isNotEmpty && _items.every((e) => e.isFood);
+
+  bool get _hasMixedCart =>
+      _items.any((e) => e.isFood) && _items.any((e) => !e.isFood);
+
+  CourierServiceCity? get _foodCourierCity {
+    final addr = _defaultAddr;
+    if (addr == null) return null;
+    return CourierCityHelper.resolve(
+      [addr.city, addr.formattedAddress, addr.description].join(' '),
+    );
+  }
+
   String _deliveryLabel(DeliveryType d) {
     switch (d) {
       case DeliveryType.speed:
@@ -80,6 +97,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
         return 'Ankolo';
       case DeliveryType.smart:
         return 'Smart';
+      case DeliveryType.veroCourier:
+        return 'Vero Courier';
       case DeliveryType.pickup:
         return 'Pickup';
     }
@@ -95,6 +114,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
         return 'Online tracking';
       case DeliveryType.smart:
         return 'Online tracking';
+      case DeliveryType.veroCourier:
+        return 'Same-city food delivery';
       case DeliveryType.pickup:
         return 'Collect at shop';
     }
@@ -110,6 +131,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
         return Icons.local_shipping_outlined;
       case DeliveryType.smart:
         return Icons.electric_moped_rounded;
+      case DeliveryType.veroCourier:
+        return Icons.delivery_dining_rounded;
       case DeliveryType.pickup:
         return Icons.storefront_rounded;
     }
@@ -192,12 +215,12 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     );
   }
 
-  Widget _courierTile(DeliveryType type) {
+  Widget _courierTile(DeliveryType type, {bool locked = false}) {
     final selected = _deliveryType == type;
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: () => setState(() => _deliveryType = type),
+        onTap: locked ? null : () => setState(() => _deliveryType = type),
         borderRadius: BorderRadius.circular(14),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
@@ -259,7 +282,12 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   }
 
   Widget _courierGrid() {
-    const options = DeliveryType.values;
+    if (_isFoodCheckout) {
+      return _courierTile(DeliveryType.veroCourier, locked: true);
+    }
+    final options = DeliveryType.values
+        .where((d) => d != DeliveryType.veroCourier)
+        .toList();
     return LayoutBuilder(
       builder: (context, constraints) {
         final maxW = constraints.maxWidth.isFinite
@@ -284,6 +312,9 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   void initState() {
     super.initState();
     _items = List<CartModel>.from(widget.items);
+    if (_isFoodCheckout) {
+      _deliveryType = DeliveryType.veroCourier;
+    }
     for (final it in _items) {
       _qtyCtrls[_qtyKey(it)] =
           TextEditingController(text: '${it.quantity}');
@@ -638,6 +669,27 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       );
       return;
     }
+    if (_hasMixedCart) {
+      ToastHelper.showCustomToast(
+        context,
+        'Food is delivered by Vero Courier only. Checkout food separately from marketplace items.',
+        isSuccess: false,
+        errorMessage: 'Mixed cart',
+      );
+      return;
+    }
+    if (_isFoodCheckout) {
+      _deliveryType = DeliveryType.veroCourier;
+      if (_foodCourierCity == null) {
+        ToastHelper.showCustomToast(
+          context,
+          'Vero Courier delivers in Lilongwe, Blantyre, and Zomba. Update your address city.',
+          isSuccess: false,
+          errorMessage: 'City not supported',
+        );
+        return;
+      }
+    }
     if (!await _ensureDefaultAddressIfNeeded()) return;
 
     setState(() => _paying = true);
@@ -763,8 +815,11 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
 
   @override
   Widget build(BuildContext context) {
+    final foodCityOk = !_isFoodCheckout || _foodCourierCity != null;
     final canPay = !_paying &&
         _items.isNotEmpty &&
+        !_hasMixedCart &&
+        foodCityOk &&
         (_deliveryType == DeliveryType.pickup || _defaultAddr != null);
 
     return Scaffold(
@@ -974,11 +1029,35 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
+                if (_hasMixedCart) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF3E8),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: _brandOrange.withValues(alpha: 0.35)),
+                    ),
+                    child: const Text(
+                      'Food is delivered by Vero Courier only. Remove marketplace items and checkout food separately.',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        height: 1.35,
+                        color: _brandNavy,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 _section(
                   title: 'Courier',
-                  subtitle: _deliveryType == DeliveryType.pickup
-                      ? 'Pickup selected — no delivery address needed'
-                      : 'Choose how you want your order delivered',
+                  subtitle: _isFoodCheckout
+                      ? (_foodCourierCity == null
+                          ? 'Vero Courier delivers in Lilongwe, Blantyre, and Zomba'
+                          : 'Food is delivered by Vero Courier only')
+                      : (_deliveryType == DeliveryType.pickup
+                          ? 'Pickup selected — no delivery address needed'
+                          : 'Choose how you want your order delivered'),
                   child: _courierGrid(),
                 ),
                 const SizedBox(height: 12),
@@ -1548,6 +1627,8 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         return 'Ankolo';
       case DeliveryType.smart:
         return 'Smart';
+      case DeliveryType.veroCourier:
+        return 'Vero Courier';
       case DeliveryType.pickup:
         return 'Pickup';
     }
@@ -1637,6 +1718,17 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
       const serviceFeeMwk = 0.0;
       final totalMwk = subtotalMwk + deliveryFeeMwk + serviceFeeMwk;
 
+      String pickupAddress = '';
+      try {
+        final restSvc = RestaurantService();
+        final rest = restaurantId.trim().isNotEmpty
+            ? await restSvc.fetchRestaurantById(restaurantId)
+            : await restSvc.fetchRestaurantByOwnerUid(merchantId);
+        pickupAddress = (rest?.address ?? '').trim();
+      } catch (e) {
+        debugPrint('[InAppPaymentPage] restaurant pickup lookup failed: $e');
+      }
+
       final order = FoodOrder(
         id: ref.id,
         restaurantId: restaurantId,
@@ -1657,6 +1749,9 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         paymentTxRef: widget.txRef,
         paymentStatus: 'paid',
         restaurantName: merchantName,
+        deliveryMethod: FoodCourierDispatch.methodLabel,
+        courierProvider: FoodCourierDispatch.provider,
+        pickupAddress: pickupAddress,
       );
 
       await ref.set({

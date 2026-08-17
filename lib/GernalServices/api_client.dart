@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
+import 'package:vero360_app/GernalServices/role_session_service.dart';
 
 class ApiClient {
   static const Duration _defaultTimeout = Duration(seconds: 20);
@@ -151,6 +152,8 @@ class ApiClient {
       if (body != null) 'Content-Type': 'application/json',
       ...?headers,
     };
+
+    await RoleSessionService.applyIntendedRoleHeader(allHeaders);
 
     // 🔐 Single source of truth: AuthHandler (Firebase first, then SP)
     try {

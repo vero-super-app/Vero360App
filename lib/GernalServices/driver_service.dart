@@ -1,6 +1,8 @@
 import 'package:dio/dio.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/GernalServices/role_helper.dart';
+import 'package:vero360_app/GernalServices/role_session_service.dart';
 
 class DriverService {
   late Dio _dio;
@@ -14,6 +16,11 @@ class DriverService {
 
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
+        try {
+          final roleHeaders = <String, String>{};
+          await RoleSessionService.applyIntendedRoleHeader(roleHeaders);
+          options.headers.addAll(roleHeaders);
+        } catch (_) {}
         // ✅ Get fresh Firebase ID token (auto-refreshed if expired)
         final firebaseUser = FirebaseAuth.instance.currentUser;
         if (firebaseUser != null) {
@@ -119,11 +126,30 @@ class DriverService {
         '/vero/drivers/apply',
         data: data,
       );
-      final body = response.data;
-      if (body is Map && body['driver'] is Map) {
-        return Map<String, dynamic>.from(body['driver'] as Map);
+      var body = response.data;
+      if (body is Map && body['data'] is Map) {
+        body = body['data'];
       }
-      if (body is Map) return Map<String, dynamic>.from(body);
+      Map<String, dynamic>? driver;
+      if (body is Map && body['driver'] is Map) {
+        driver = Map<String, dynamic>.from(body['driver'] as Map);
+      } else if (body is Map) {
+        driver = Map<String, dynamic>.from(body);
+      }
+      if (body is Map && body['user'] is Map) {
+        try {
+          await RoleSessionService.persistPromotedUser(
+            Map<String, dynamic>.from(body['user'] as Map),
+          );
+        } catch (_) {}
+      } else {
+        try {
+          await RoleSessionService.persistPromotedUser(
+            {'role': RoleHelper.driver},
+          );
+        } catch (_) {}
+      }
+      if (driver != null) return driver;
       return await getMyDriverProfile();
     } catch (e) {
       throw _handleError(e);

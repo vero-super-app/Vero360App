@@ -113,10 +113,22 @@ function extractRejectionReason(decision) {
 }
 
 function normalizeSessionStatus(status) {
-  const s = String(status || '').trim();
+  const raw = String(status || '').trim();
+  const lower = raw.toLowerCase().replace(/_/g, ' ');
   // Docs sometimes use "Kyc Expired"; console/tests may send "KYC Expired".
-  if (s.toLowerCase() === 'kyc expired') return 'KYC Expired';
-  return s;
+  if (lower === 'kyc expired') return 'KYC Expired';
+  // Didit console shows APPROVED; webhooks may send Approved / approved.
+  const aliases = {
+    approved: 'Approved',
+    declined: 'Declined',
+    'in review': 'In Review',
+    'in progress': 'In Progress',
+    resubmitted: 'Resubmitted',
+    abandoned: 'Abandoned',
+    expired: 'Expired',
+    'not started': 'Not Started',
+  };
+  return aliases[lower] || raw;
 }
 
 /**

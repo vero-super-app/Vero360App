@@ -88,6 +88,18 @@ class RestaurantService {
     return RestaurantModel.fromFirestore(doc);
   }
 
+  Future<RestaurantModel?> fetchRestaurantByOwnerUid(String ownerUid) async {
+    final uid = ownerUid.trim();
+    if (uid.isEmpty) return null;
+    final snap = await _db
+        .collection('restaurants')
+        .where('ownerUid', isEqualTo: uid)
+        .limit(1)
+        .get();
+    if (snap.docs.isEmpty) return null;
+    return RestaurantModel.fromFirestore(snap.docs.first);
+  }
+
   /// Menu rows for [restaurantId]. Legacy docs without that field are loaded
   /// via the restaurant's [RestaurantModel.ownerUid] as `merchantId`.
   Future<List<FoodModel>> fetchMenuForRestaurant(String restaurantId) async {

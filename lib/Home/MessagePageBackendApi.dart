@@ -60,6 +60,10 @@ class MessagePageBackendApi extends StatefulWidget {
   /// In-flight marketplace resolve started before navigation (shared request).
   final Future<MerchantChatResult>? pendingMerchantChat;
 
+  /// When set, send this text once after the chat opens (order shipping request).
+  final String? autoSendMessage;
+  final String? autoSendClientMessageId;
+
   const MessagePageBackendApi({
     super.key,
     required this.peerId,
@@ -69,6 +73,8 @@ class MessagePageBackendApi extends StatefulWidget {
     this.peerMerchantId,
     this.peerUserId,
     this.sendProductEnquiry = false,
+    this.autoSendMessage,
+    this.autoSendClientMessageId,
     this.resolveSqlItemId,
     this.resolveOwnerId,
     this.resolveSellerUserId,
@@ -336,7 +342,10 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       await authFuture;
       final userId = await BackendChatService.getUserId();
 
-      unawaited(_loadMessages(silent: cached.isNotEmpty));
+      unawaited(() async {
+        await _loadMessages(silent: cached.isNotEmpty);
+        if (mounted) await _maybeSendAutoMessage(userId);
+      }());
       unawaited(_maybeSendProductEnquiry(userId));
       unawaited(_markUnreadAsRead(userId));
 
@@ -379,8 +388,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     return !tagged.isMine(myId);
   }
 
-  String _enquiryClientMessageId(String productId) =>
-      'mp-enquiry-${_chatId}-$productId';
+  String _enquiryClientMessageId(String productId) => const Uuid().v4();
 
   bool _hasExistingProductEnquiry(int myUserId, String productId) {
     if (_hasProductTagInMessages(_messages, productId: productId)) {
@@ -435,6 +443,62 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     } catch (_) {
       // Buyer can still attach the product on their first manual message.
+    }
+  }
+
+  Future<void> _maybeSendAutoMessage(int myUserId) async {
+    final text = widget.autoSendMessage?.trim();
+    if (text == null || text.isEmpty || _chatId.isEmpty) return;
+
+    final rawClientId = (widget.autoSendClientMessageId ?? '').trim();
+    if (rawClientId.isNotEmpty &&
+        _messages.any((m) => (m.clientMessageId ?? '') == rawClientId)) {
+      return;
+    }
+
+    final normalized = text.replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+    for (final msg in _messages) {
+      if (!msg.isMine(myUserId)) continue;
+      final existing = (msg.content ?? '')
+          .trim()
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .toLowerCase();
+      if (existing == normalized) return;
+      if (existing.contains('please arrange shipping') &&
+          existing.contains('order:')) {
+        return;
+      }
+    }
+
+    try {
+      final product = widget.productContext;
+      final saved = await BackendChatService.sendMessage(
+        chatId: _chatId,
+        content: text,
+        type: 'text',
+        tags: product == null ? null : [product.toMessageTag()],
+        clientMessageId: const Uuid().v4(),
+        metadata: {
+          'source': 'orders',
+          'autoOrderShipping': true,
+          if (rawClientId.isNotEmpty) 'orderClientKey': rawClientId,
+          if (product != null) 'productId': product.productId,
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _upsertMessage(saved);
+        if (product != null) _productTagAttached = true;
+      });
+      BackendChatService.refreshThreads();
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    } catch (_) {
+      if (!mounted) return;
+      if (_input.text.trim().isEmpty) {
+        _input.text = text;
+        _input.selection = TextSelection.collapsed(offset: _input.text.length);
+        setState(() {});
+      }
     }
   }
 

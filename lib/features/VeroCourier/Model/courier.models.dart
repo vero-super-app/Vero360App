@@ -46,8 +46,11 @@ enum CourierStatus {
   const CourierStatus(this.value);
 
   static CourierStatus fromValue(String raw) {
+    final v = raw.toUpperCase().trim().replaceAll(' ', '_');
+    if (v == 'COMING') return CourierStatus.onTheWay;
+    if (v == 'REJECTED') return CourierStatus.cancelled;
     return CourierStatus.values.firstWhere(
-      (s) => s.value == raw.toUpperCase(),
+      (s) => s.value == v,
       orElse: () => CourierStatus.pending,
     );
   }

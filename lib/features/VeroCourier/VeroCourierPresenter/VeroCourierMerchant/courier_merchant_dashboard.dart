@@ -51,12 +51,6 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
     CourierDelivery d,
     CourierStatus status,
   ) async {
-    if (status != CourierStatus.accepted &&
-        status != CourierStatus.cancelled &&
-        status != CourierStatus.delivered) {
-      return;
-    }
-
     var uid = (d.view.senderUid ?? '').trim();
     if (uid.isEmpty) {
       uid = (await OrderPartyNotificationService.resolveUidByEmail(
@@ -289,8 +283,10 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
               value: status.value,
               child: Text(
                 status == CourierStatus.cancelled
-                    ? 'Reject (CANCELLED)'
-                    : 'Set ${status.value}',
+                    ? 'Reject'
+                    : status == CourierStatus.onTheWay
+                        ? 'Set coming'
+                        : 'Set ${status.value}',
               ),
             ),
           ),

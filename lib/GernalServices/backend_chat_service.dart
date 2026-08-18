@@ -14,11 +14,81 @@ import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
 
+/// Backend `@IsUUID('4')` rejects anything else (v5, `order-shipping-…`, etc.).
+final _uuidV4Re = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+  caseSensitive: false,
+);
+
+String? _apiClientMessageId(String? id) {
+  final s = (id ?? '').trim();
+  if (s.isEmpty) return null;
+  if (_uuidV4Re.hasMatch(s)) return s;
+  return null;
+}
+
 int _jsonInt(dynamic raw, [int fallback = 0]) {
   if (raw == null) return fallback;
   if (raw is int) return raw;
   if (raw is num) return raw.toInt();
   return int.tryParse(raw.toString()) ?? fallback;
+}
+
+bool _chatNameLooksLikeEmailLocal(String name, String email) {
+  final n = name.trim().toLowerCase();
+  final e = email.trim().toLowerCase();
+  if (n.isEmpty || !e.contains('@')) return false;
+  return n == e.split('@').first;
+}
+
+bool _isPlaceholderChatName(String name) {
+  final n = name.trim().toLowerCase();
+  return n.isEmpty ||
+      n == 'user' ||
+      n == 'unknown' ||
+      n == 'contact' ||
+      n == 'someone';
+}
+
+String? _businessNameFromProfileMap(Map<dynamic, dynamic> src) {
+  for (final key in [
+    'businessName',
+    'merchantName',
+    'shopName',
+    'companyName',
+    'storeName',
+  ]) {
+    final raw = src[key]?.toString().trim() ?? '';
+    if (raw.isEmpty || _isPlaceholderChatName(raw) || raw.contains('@')) {
+      continue;
+    }
+    if (_chatNameLooksLikeEmailLocal(raw, src['email']?.toString() ?? '')) {
+      continue;
+    }
+    return raw;
+  }
+  return null;
+}
+
+String _chatDisplayNameFromProfileMap(Map<dynamic, dynamic> src, String email) {
+  final biz = _businessNameFromProfileMap(src);
+  if (biz != null) return biz;
+  for (final key in ['name', 'fullName', 'displayName']) {
+    final raw = src[key]?.toString().trim() ?? '';
+    if (raw.isEmpty || _isPlaceholderChatName(raw)) continue;
+    if (_chatNameLooksLikeEmailLocal(raw, email)) continue;
+    if (raw.contains('@')) continue;
+    return raw;
+  }
+  final first = (src['firstName'] ?? src['firstname'] ?? '').toString().trim();
+  final last = (src['lastName'] ?? src['lastname'] ?? '').toString().trim();
+  final combined = '$first $last'.trim();
+  if (combined.isNotEmpty &&
+      !_isPlaceholderChatName(combined) &&
+      !_chatNameLooksLikeEmailLocal(combined, email)) {
+    return combined;
+  }
+  return 'Contact';
 }
 
 class BackendChatThread {
@@ -89,12 +159,9 @@ class BackendChatThread {
     final others = participants.where((p) => !isMe(p)).toList();
     if (others.isEmpty) return null;
 
-    // Prefer a participant with a real display name.
+    // Prefer a participant with a real business / display name.
     for (final p in others) {
-      final n = p.name.trim().toLowerCase();
-      if (n.isNotEmpty && n != 'contact' && n != 'user' && n != 'unknown') {
-        return p;
-      }
+      if (!p.needsBusinessNameLookup) return p;
     }
     return others.first;
   }
@@ -343,13 +410,50 @@ class ChatParticipant {
   final String name;
   final String email;
   final String? profilePicture;
+  final String? businessName;
+  final String? firebaseUid;
 
   ChatParticipant({
     required this.id,
     required this.name,
     required this.email,
     this.profilePicture,
+    this.businessName,
+    this.firebaseUid,
   });
+
+  String get displayLookupKey {
+    final e = email.trim().toLowerCase();
+    if (e.contains('@') && !e.startsWith('+firebase_')) return 'e:$e';
+    if (id > 0) return 'i:$id';
+    final uid = (firebaseUid ?? '').trim();
+    if (uid.isNotEmpty) return 'u:$uid';
+    return 'n:${name.trim().toLowerCase()}';
+  }
+
+  bool get needsBusinessNameLookup {
+    final biz = (businessName ?? '').trim();
+    if (biz.isNotEmpty) return false;
+    return isPlaceholderName(name) ||
+        looksLikeEmailLocalName(name, email) ||
+        name.contains('@');
+  }
+
+  String get preferredDisplayName {
+    final biz = (businessName ?? '').trim();
+    if (biz.isNotEmpty) return biz;
+    if (!isPlaceholderName(name) &&
+        !looksLikeEmailLocalName(name, email) &&
+        !name.contains('@')) {
+      return name;
+    }
+    return biz.isNotEmpty ? biz : 'Contact';
+  }
+
+  static bool isPlaceholderName(String name) => _isPlaceholderChatName(name);
+
+  static bool looksLikeEmailLocalName(String name, String email) =>
+      _chatNameLooksLikeEmailLocal(name, email);
 
   factory ChatParticipant.fromJson(Map<String, dynamic> json) {
     // Some payloads nest the user under `user` / `profile`.
@@ -386,39 +490,51 @@ class ChatParticipant {
             json['profilepicture'])
         ?.toString();
 
-    String name = '';
-    for (final key in [
-      'name',
-      'fullName',
-      'displayName',
-      'businessName',
-      'username',
-    ]) {
-      final raw = (src[key] ?? json[key])?.toString().trim() ?? '';
-      if (raw.isNotEmpty &&
-          raw.toLowerCase() != 'user' &&
-          raw.toLowerCase() != 'unknown' &&
-          raw.toLowerCase() != 'contact') {
-        name = raw;
-        break;
-      }
-    }
-    if (name.isEmpty) {
-      final first =
-          (src['firstName'] ?? src['firstname'] ?? '').toString().trim();
-      final last = (src['lastName'] ?? src['lastname'] ?? '').toString().trim();
-      name = '$first $last'.trim();
-    }
-    if (name.isEmpty && email.contains('@') && !email.startsWith('+firebase_')) {
-      name = email.split('@').first;
-    }
-    if (name.isEmpty) name = 'Contact';
+    final merged = <String, dynamic>{...json, ...src};
+    final businessName = _businessNameFromProfileMap(merged);
+    final name = _chatDisplayNameFromProfileMap(merged, email);
+    final firebaseUid = (src['firebaseUid'] ??
+            src['firebase_uid'] ??
+            src['uid'] ??
+            json['firebaseUid'] ??
+            json['firebase_uid'])
+        ?.toString()
+        .trim();
 
-    return ChatParticipant(
+    var participant = ChatParticipant(
       id: id,
       name: name,
       email: email,
       profilePicture: picture != null && picture.isNotEmpty ? picture : null,
+      businessName: businessName,
+      firebaseUid: firebaseUid != null && firebaseUid.isNotEmpty
+          ? firebaseUid
+          : null,
+    );
+    final memo = BackendChatService.peekCachedBusinessName(
+      participant.displayLookupKey,
+    );
+    if (memo != null && memo.isNotEmpty) {
+      participant = participant.copyWith(name: memo, businessName: memo);
+    }
+    return participant;
+  }
+
+  ChatParticipant copyWith({
+    int? id,
+    String? name,
+    String? email,
+    String? profilePicture,
+    String? businessName,
+    String? firebaseUid,
+  }) {
+    return ChatParticipant(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      email: email ?? this.email,
+      profilePicture: profilePicture ?? this.profilePicture,
+      businessName: businessName ?? this.businessName,
+      firebaseUid: firebaseUid ?? this.firebaseUid,
     );
   }
 
@@ -429,6 +545,10 @@ class ChatParticipant {
       'name': name,
       'email': email,
       'profilepicture': profilePicture,
+      if (businessName != null && businessName!.isNotEmpty)
+        'businessName': businessName,
+      if (firebaseUid != null && firebaseUid!.isNotEmpty)
+        'firebaseUid': firebaseUid,
     };
   }
 }
@@ -701,14 +821,9 @@ class BackendChatService {
   static String _senderDisplayNameFromMessage(BackendChatMessage message) {
     final sender = message.sender;
     if (sender != null) {
-      for (final key in ['name', 'fullName', 'displayName', 'username']) {
-        final raw = sender[key]?.toString().trim() ?? '';
-        if (raw.isNotEmpty && raw.toLowerCase() != 'user') return raw;
-      }
       final email = sender['email']?.toString().trim() ?? '';
-      if (email.contains('@') && !email.startsWith('+firebase_')) {
-        return email.split('@').first;
-      }
+      final name = _chatDisplayNameFromProfileMap(sender, email);
+      if (name.isNotEmpty && name != 'Contact') return name;
     }
     return 'New message';
   }
@@ -819,14 +934,10 @@ class BackendChatService {
       );
       var senderName = _senderDisplayNameFromMessage(message);
       if (senderName == 'New message') {
-        senderName = sender.name.trim();
-        if (senderName.isEmpty || senderName.toLowerCase() == 'user') {
-          final email = sender.email.trim();
-          if (email.contains('@') && !email.startsWith('+firebase_')) {
-            senderName = email.split('@').first;
-          } else {
-            senderName = 'New message';
-          }
+        senderName = sender.preferredDisplayName;
+        if (_isPlaceholderChatName(senderName) ||
+            _chatNameLooksLikeEmailLocal(senderName, sender.email)) {
+          senderName = 'New message';
         }
       }
 
@@ -930,6 +1041,7 @@ class BackendChatService {
 
   static Future<void> _reloadThreadCache() async {
     await BackendMessagingCache.initialize();
+    await ensureBusinessNameCacheLoaded();
     await ensureAuth();
     final userId = _userId;
 
@@ -951,8 +1063,10 @@ class BackendChatService {
       final diskThreads = BackendMessagingCache.peekThreads(userId);
       if (diskThreads.isNotEmpty && prior.isEmpty) {
         _cachedThreads = _filterDeletedThreads(diskThreads);
+        _applyMemoToCachedThreads();
         _threadsWatchReady = true;
         _emitCachedThreads();
+        unawaited(_enrichCachedThreadNames());
       }
     }
 
@@ -961,8 +1075,10 @@ class BackendChatService {
       // Server list is source of truth. Merging "extras" from prior memory/disk
       // previously leaked another account's chats onto new accounts.
       _cachedThreads = _filterDeletedThreads(fresh);
+      _applyMemoToCachedThreads();
       _threadsWatchReady = true;
       _emitCachedThreads();
+      unawaited(_enrichCachedThreadNames());
       if (userId != null) {
         await BackendMessagingCache.saveThreads(userId, _cachedThreads);
       }
@@ -2022,6 +2138,296 @@ class BackendChatService {
     return null;
   }
 
+  static final Map<String, String> _businessNameMemo = {};
+  static bool _businessNameMemoLoaded = false;
+  static bool _enrichingThreadNames = false;
+  static const _kBusinessNamePrefs = 'chat_peer_business_names_v1';
+  static const Duration _nameLookupTimeout = Duration(seconds: 2);
+
+  static String peerDisplayLookupKey(ChatParticipant p) => p.displayLookupKey;
+
+  static String? peekCachedBusinessName(String key) {
+    final k = key.trim();
+    if (k.isEmpty) return null;
+    final v = _businessNameMemo[k];
+    if (v == null || v.trim().isEmpty) return null;
+    return v.trim();
+  }
+
+  static Future<void> ensureBusinessNameCacheLoaded() async {
+    if (_businessNameMemoLoaded) return;
+    _businessNameMemoLoaded = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_kBusinessNamePrefs);
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      decoded.forEach((key, value) {
+        final k = key.toString().trim();
+        final n = value.toString().trim();
+        if (k.isEmpty || n.isEmpty || _isPlaceholderChatName(n)) return;
+        _businessNameMemo.putIfAbsent(k, () => n);
+      });
+    } catch (_) {}
+  }
+
+  static void _rememberBusinessName(ChatParticipant p, String name) {
+    final n = name.trim();
+    if (n.isEmpty || _isPlaceholderChatName(n)) return;
+    void put(String key) {
+      if (key.trim().isEmpty) return;
+      _businessNameMemo[key] = n;
+    }
+
+    put(p.displayLookupKey);
+    if (p.id > 0) put('i:${p.id}');
+    final email = p.email.trim().toLowerCase();
+    if (email.contains('@') && !email.startsWith('+firebase_')) {
+      put('e:$email');
+    }
+    final uid = (p.firebaseUid ?? '').trim();
+    if (uid.isNotEmpty) put('u:$uid');
+  }
+
+  static void _persistBusinessNameMemo() {
+    unawaited(() async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_kBusinessNamePrefs, jsonEncode(_businessNameMemo));
+      } catch (_) {}
+    }());
+  }
+
+  static bool _applyMemoToCachedThreads() {
+    var changed = false;
+    for (var i = 0; i < _cachedThreads.length; i++) {
+      final t = _cachedThreads[i];
+      var threadChanged = false;
+      final next = <ChatParticipant>[];
+      for (final p in t.participants) {
+        final memo = peekCachedBusinessName(p.displayLookupKey) ??
+            (p.id > 0 ? peekCachedBusinessName('i:${p.id}') : null);
+        if (memo == null ||
+            ((p.businessName ?? '').trim() == memo && p.name.trim() == memo)) {
+          next.add(p);
+          continue;
+        }
+        threadChanged = true;
+        next.add(p.copyWith(name: memo, businessName: memo));
+      }
+      if (threadChanged) {
+        changed = true;
+        _cachedThreads[i] = t.copyWith(participants: next);
+      }
+    }
+    return changed;
+  }
+
+  static Future<void> _enrichCachedThreadNames() async {
+    if (_enrichingThreadNames || _cachedThreads.isEmpty) return;
+    _enrichingThreadNames = true;
+    try {
+      await ensureBusinessNameCacheLoaded();
+      if (_applyMemoToCachedThreads()) _emitCachedThreads();
+
+      final myId = _userId ?? 0;
+      final peers = <ChatParticipant>[];
+      for (final t in _cachedThreads) {
+        final other = t.otherParticipant(myId);
+        if (other != null) peers.add(other);
+      }
+      if (peers.isEmpty) return;
+
+      await resolveBusinessNames(
+        peers,
+        onResolved: (_, __) {
+          if (_applyMemoToCachedThreads()) _emitCachedThreads();
+        },
+      );
+      if (_applyMemoToCachedThreads()) {
+        _emitCachedThreads();
+        final userId = _userId;
+        if (userId != null) {
+          unawaited(BackendMessagingCache.saveThreads(userId, _cachedThreads));
+        }
+      }
+    } catch (_) {
+    } finally {
+      _enrichingThreadNames = false;
+    }
+  }
+
+  /// Resolve store / business names for chat list rows (never email local-part).
+  static Future<Map<String, String>> resolveBusinessNames(
+    List<ChatParticipant> peers, {
+    void Function(String key, String name)? onResolved,
+  }) async {
+    await ensureBusinessNameCacheLoaded();
+    final out = <String, String>{};
+    final pending = <ChatParticipant>[];
+    for (final p in peers) {
+      final key = p.displayLookupKey;
+      final memo = peekCachedBusinessName(key) ??
+          (p.id > 0 ? peekCachedBusinessName('i:${p.id}') : null);
+      if (memo != null) {
+        _rememberBusinessName(p, memo);
+        out[key] = memo;
+        onResolved?.call(key, memo);
+        continue;
+      }
+      final known = (p.businessName ?? '').trim();
+      if (known.isNotEmpty && !_isPlaceholderChatName(known)) {
+        _rememberBusinessName(p, known);
+        out[key] = known;
+        onResolved?.call(key, known);
+        continue;
+      }
+      if (!p.needsBusinessNameLookup) continue;
+      pending.add(p);
+    }
+
+    if (pending.isEmpty) {
+      if (out.isNotEmpty) _persistBusinessNameMemo();
+      return out;
+    }
+
+    await Future.wait(pending.map((p) async {
+      final key = p.displayLookupKey;
+      final found = await _lookupBusinessNameForPeer(p);
+      if (found == null || found.isEmpty) return;
+      _rememberBusinessName(p, found);
+      out[key] = found;
+      onResolved?.call(key, found);
+    }));
+    _persistBusinessNameMemo();
+    return out;
+  }
+
+  static Future<String?> _firstNonEmpty(List<Future<String?>> jobs) {
+    if (jobs.isEmpty) return Future<String?>.value(null);
+    final done = Completer<String?>();
+    var remaining = jobs.length;
+    for (final job in jobs) {
+      job.then((value) {
+        if (done.isCompleted) return;
+        final n = (value ?? '').trim();
+        if (n.isNotEmpty && !_isPlaceholderChatName(n)) {
+          done.complete(n);
+          return;
+        }
+        remaining--;
+        if (remaining == 0) done.complete(null);
+      }).catchError((_) {
+        if (done.isCompleted) return;
+        remaining--;
+        if (remaining == 0) done.complete(null);
+      });
+    }
+    return done.future;
+  }
+
+  static Future<String?> _nameFromQuery(
+    String collection,
+    String field,
+    String value,
+  ) async {
+    final q = FirebaseFirestore.instance
+        .collection(collection)
+        .where(field, isEqualTo: value)
+        .limit(1);
+    try {
+      final cached = await q.get(const GetOptions(source: Source.cache));
+      final fromCache = _businessNameFromProfileMap(
+        cached.docs.isEmpty ? const {} : cached.docs.first.data(),
+      );
+      if (fromCache != null) return fromCache;
+    } catch (_) {}
+    try {
+      final snap = await q.get(const GetOptions(source: Source.serverAndCache));
+      return _businessNameFromProfileMap(
+        snap.docs.isEmpty ? const {} : snap.docs.first.data(),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<String?> _nameFromDoc(String collection, String id) async {
+    if (id.isEmpty) return null;
+    final ref = FirebaseFirestore.instance.collection(collection).doc(id);
+    try {
+      final cached = await ref.get(const GetOptions(source: Source.cache));
+      final fromCache = _businessNameFromProfileMap(cached.data() ?? const {});
+      if (fromCache != null) return fromCache;
+    } catch (_) {}
+    try {
+      final doc = await ref.get(const GetOptions(source: Source.serverAndCache));
+      return _businessNameFromProfileMap(doc.data() ?? const {});
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<String?> _nameFromApiUser(int userId) async {
+    if (userId <= 0) return null;
+    try {
+      final response = await http
+          .get(
+            ApiConfig.endpoint('/users/$userId'),
+            headers: {
+              'Authorization': _authHeader,
+              'Accept': 'application/json',
+            },
+          )
+          .timeout(_nameLookupTimeout);
+      if (response.statusCode != 200) return null;
+      final json = jsonDecode(response.body);
+      final data = json is Map
+          ? (json['data'] is Map ? json['data'] as Map : json)
+          : null;
+      if (data is! Map) return null;
+      return _businessNameFromProfileMap(data);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<String?> _lookupBusinessNameForPeer(ChatParticipant p) async {
+    try {
+      final email = p.email.trim();
+      final uid = (p.firebaseUid ?? '').trim();
+      final firstWave = <Future<String?>>[];
+      if (email.contains('@') && !email.startsWith('+firebase_')) {
+        firstWave.add(_nameFromQuery('users', 'email', email));
+        firstWave.add(_nameFromQuery('marketplace_merchants', 'email', email));
+      }
+      if (uid.isNotEmpty) {
+        firstWave.add(_nameFromDoc('users', uid));
+        firstWave.add(_nameFromDoc('marketplace_merchants', uid));
+      }
+      if (p.id > 0) {
+        firstWave.add(_nameFromApiUser(p.id));
+      }
+      final hit = await _firstNonEmpty(firstWave);
+      if (hit != null) return hit;
+
+      final secondWave = <Future<String?>>[];
+      if (email.contains('@') && !email.startsWith('+firebase_')) {
+        secondWave.add(_nameFromQuery('users', 'userEmail', email));
+        secondWave.add(
+          _nameFromQuery('accommodation_merchants', 'email', email),
+        );
+      }
+      if (uid.isNotEmpty) {
+        secondWave.add(_nameFromDoc('accommodation_merchants', uid));
+      }
+      return _firstNonEmpty(secondWave);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Resolve a backend user's Firebase UID (used for merchant shop pages).
   static Future<String?> getFirebaseUidByUserId(
     int userId, {
@@ -2229,8 +2635,9 @@ class BackendChatService {
         payload['attachments'] = attachments;
       }
       if (metadata != null && metadata.isNotEmpty) payload['metadata'] = metadata;
-      if (clientMessageId != null && clientMessageId.isNotEmpty) {
-        payload['clientMessageId'] = clientMessageId;
+      final apiClientId = _apiClientMessageId(clientMessageId);
+      if (apiClientId != null) {
+        payload['clientMessageId'] = apiClientId;
       }
 
       final response = await http
@@ -2379,8 +2786,9 @@ class BackendChatService {
     for (final attempt in attempts) {
       try {
         final payload = Map<String, dynamic>.from(attempt);
-        if (clientMessageId != null && clientMessageId.isNotEmpty) {
-          payload['clientMessageId'] = clientMessageId;
+        final apiClientId = _apiClientMessageId(clientMessageId);
+        if (apiClientId != null) {
+          payload['clientMessageId'] = apiClientId;
         }
         if (metadata != null && metadata.isNotEmpty) {
           final existing = payload['metadata'];
@@ -2481,8 +2889,9 @@ class BackendChatService {
     for (final attempt in attempts) {
       try {
         final payload = Map<String, dynamic>.from(attempt);
-        if (clientMessageId != null && clientMessageId.isNotEmpty) {
-          payload['clientMessageId'] = clientMessageId;
+        final apiClientId = _apiClientMessageId(clientMessageId);
+        if (apiClientId != null) {
+          payload['clientMessageId'] = apiClientId;
         }
 
         final response = await http

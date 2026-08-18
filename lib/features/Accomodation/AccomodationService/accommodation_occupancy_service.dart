@@ -509,6 +509,18 @@ class AccommodationOccupancyService {
         requireCheckedOut: false,
       );
 
+  /// Frees calendar nights when a paid stay is cancelled / refunded before check-in.
+  Future<void> releaseCancelledStay({
+    required int accommodationId,
+    required String bookingRef,
+  }) =>
+      _releaseStayInternal(
+        accommodationId: accommodationId,
+        bookingRef: bookingRef,
+        allowPaid: true,
+        requireCheckedOut: false,
+      );
+
   /// Frees calendar nights after the guest's check-out morning (paid stays included).
   Future<void> releaseCompletedStay({
     required int accommodationId,

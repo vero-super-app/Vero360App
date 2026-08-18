@@ -407,6 +407,226 @@ class GooglePlacesService {
     return _placeFromDetails(_asMap(results.first), prediction);
   }
 
+  /// GPS → street / place name (never a Plus Code like `65QR+`).
+  Future<Place?> reverseGeocode({
+    required double latitude,
+    required double longitude,
+  }) async {
+    try {
+      final uri = Uri.parse(_geocodeUrl).replace(
+        queryParameters: {
+          'latlng': '$latitude,$longitude',
+          'key': _apiKey,
+          'language': 'en',
+        },
+      );
+      final response = await http.get(uri).timeout(_timeout);
+      if (response.statusCode != 200) return null;
+      final jsonResponse = jsonDecode(response.body) as Map<String, dynamic>;
+      if ((jsonResponse['status'] as String? ?? '') != 'OK') return null;
+      final results = jsonResponse['results'] as List<dynamic>? ?? [];
+      final parsed = _bestHumanPlace(
+        results,
+        latitude: latitude,
+        longitude: longitude,
+      );
+      return parsed;
+    } catch (e) {
+      if (kDebugMode) debugPrint('[GooglePlaces] reverseGeocode failed: $e');
+      return null;
+    }
+  }
+
+  /// Plus Code (`65QR+XX`) or any address → street / place name in Lilongwe.
+  Future<Place?> lookupStreetName(
+    String query, {
+    String cityHint = 'Lilongwe, Malawi',
+    double? biasLat,
+    double? biasLng,
+  }) async {
+    final q = query.trim();
+    if (q.isEmpty) return null;
+
+    var search = q;
+    if (looksLikePlusCode(q) && !q.toLowerCase().contains('lilongwe')) {
+      search = '$q $cityHint';
+    } else if (!q.toLowerCase().contains('malawi') &&
+        !q.toLowerCase().contains('lilongwe')) {
+      search = '$q, $cityHint';
+    }
+
+    try {
+      final params = <String, String>{
+        'address': search,
+        'components': 'country:MW',
+        'region': 'mw',
+        'key': _apiKey,
+        'language': 'en',
+      };
+      if (biasLat != null && biasLng != null) {
+        params['bounds'] =
+            '${biasLat - 0.12},${biasLng - 0.12}|${biasLat + 0.12},${biasLng + 0.12}';
+      }
+      final uri = Uri.parse(_geocodeUrl).replace(queryParameters: params);
+      final response = await http.get(uri).timeout(_timeout);
+      if (response.statusCode != 200) return null;
+      final jsonResponse = jsonDecode(response.body) as Map<String, dynamic>;
+      if ((jsonResponse['status'] as String? ?? '') != 'OK') return null;
+      final results = jsonResponse['results'] as List<dynamic>? ?? [];
+      final coords = results.isNotEmpty
+          ? extractLatLng(_asMap(results.first) ?? const {})
+          : null;
+      return _bestHumanPlace(
+        results,
+        latitude: coords?.$1 ?? biasLat ?? 0,
+        longitude: coords?.$2 ?? biasLng ?? 0,
+      );
+    } catch (e) {
+      if (kDebugMode) debugPrint('[GooglePlaces] lookupStreetName failed: $e');
+      return null;
+    }
+  }
+
+  static bool looksLikePlusCode(String raw) {
+    final t = raw.trim().toUpperCase().replaceAll(' ', '');
+    if (t.contains('+')) {
+      return RegExp(
+        r'[2-9C-HJKMNP-RTVWXYZ]{4,8}\+[2-9C-HJKMNP-RTVWXYZ]{0,4}',
+      ).hasMatch(t);
+    }
+    return false;
+  }
+
+  static bool isPlusCodeLabel(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return false;
+    if (looksLikePlusCode(t)) return true;
+    return RegExp(r'^[2-9C-HJKMNP-RTVWXYZ]{4,8}\+', caseSensitive: false)
+        .hasMatch(t);
+  }
+
+  Place? _bestHumanPlace(
+    List<dynamic> results, {
+    required double latitude,
+    required double longitude,
+  }) {
+    String? bestName;
+    String? bestAddress;
+    double lat = latitude;
+    double lng = longitude;
+
+    for (final raw in results) {
+      final row = _asMap(raw);
+      if (row == null) continue;
+      final coords = extractLatLng(row);
+      if (coords != null) {
+        lat = coords.$1;
+        lng = coords.$2;
+      }
+      final street = _streetLabelFromResult(row);
+      if (street != null && street.isNotEmpty) {
+        bestName = street;
+        bestAddress = (row['formatted_address'] as String?)?.trim();
+        if (bestAddress != null && isPlusCodeLabel(bestAddress)) {
+          bestAddress = street;
+        }
+        break;
+      }
+    }
+
+    if (bestName == null || bestName.isEmpty) {
+      for (final raw in results) {
+        final row = _asMap(raw);
+        if (row == null) continue;
+        final formatted = (row['formatted_address'] as String?)?.trim() ?? '';
+        if (formatted.isEmpty || isPlusCodeLabel(formatted)) continue;
+        bestName = formatted.split(',').first.trim();
+        bestAddress = formatted;
+        break;
+      }
+    }
+
+    if (bestName == null || bestName.isEmpty) return null;
+    return Place(
+      id: 'rev_${lat}_$lng',
+      name: bestName,
+      address: (bestAddress != null && bestAddress.isNotEmpty)
+          ? bestAddress
+          : bestName,
+      latitude: lat,
+      longitude: lng,
+      type: PlaceType.RECENT,
+    );
+  }
+
+  static String? _streetLabelFromResult(Map<String, dynamic> row) {
+    final comps = row['address_components'] as List<dynamic>? ?? [];
+    var streetNumber = '';
+    var route = '';
+    var premise = '';
+    var neighborhood = '';
+    var sublocality = '';
+    var locality = '';
+    for (final raw in comps) {
+      final c = _asMap(raw);
+      if (c == null) continue;
+      final types =
+          (c['types'] as List<dynamic>? ?? []).map((e) => e.toString()).toSet();
+      final name = (c['long_name'] as String?)?.trim() ?? '';
+      if (name.isEmpty || isPlusCodeLabel(name)) continue;
+      if (types.contains('street_number')) streetNumber = name;
+      if (types.contains('route')) route = name;
+      if (types.contains('premise') || types.contains('point_of_interest')) {
+        premise = name;
+      }
+      if (types.contains('neighborhood')) neighborhood = name;
+      if (types.contains('sublocality') ||
+          types.contains('sublocality_level_1')) {
+        sublocality = name;
+      }
+      if (types.contains('locality')) locality = name;
+    }
+
+    if (route.isNotEmpty) {
+      final street =
+          streetNumber.isNotEmpty ? '$streetNumber $route' : route;
+      final area = neighborhood.isNotEmpty
+          ? neighborhood
+          : (sublocality.isNotEmpty ? sublocality : locality);
+      return area.isNotEmpty && !street.toLowerCase().contains(area.toLowerCase())
+          ? '$street, $area'
+          : street;
+    }
+    if (premise.isNotEmpty) {
+      final area = sublocality.isNotEmpty ? sublocality : locality;
+      return area.isNotEmpty ? '$premise, $area' : premise;
+    }
+    if (neighborhood.isNotEmpty) {
+      return locality.isNotEmpty ? '$neighborhood, $locality' : neighborhood;
+    }
+    if (sublocality.isNotEmpty) {
+      return locality.isNotEmpty ? '$sublocality, $locality' : sublocality;
+    }
+    if (locality.isNotEmpty) return locality;
+    return null;
+  }
+
+  /// Free-text address in Malawi → coordinates.
+  Future<Place?> geocodeAddress(String address) async {
+    final q = address.trim();
+    if (q.isEmpty) return null;
+    final looked = await lookupStreetName(q);
+    if (looked != null) return looked;
+    final dummy = PlacePrediction(
+      placeId: '',
+      mainText: q.split(',').first.trim(),
+      secondaryText: '',
+      fullText: q,
+      types: const [],
+    );
+    return _geocodeHttp(q.contains('Malawi') ? q : '$q, Malawi', dummy);
+  }
+
   static (double, double)? extractLatLng(Map<String, dynamic> details) {
     final geometry = _asMap(details['geometry']);
     final location =

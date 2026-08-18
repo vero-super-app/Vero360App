@@ -28,6 +28,7 @@ import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_seller_loader.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
@@ -166,6 +167,7 @@ class _DetailsPageState extends State<DetailsPage> {
     unawaited(BackendMessagingSocket.connect().catchError((_) {}));
     _pc = PageController();
     _seedOpeningHoursFast();
+    _seedSellerFast();
     _sellerFuture = _loadSeller().then((s) {
       if (mounted) {
         setState(() {
@@ -262,6 +264,72 @@ class _DetailsPageState extends State<DetailsPage> {
   }
 
   // seller/data
+  bool _isWeakSellerName(String? raw) {
+    final v = (raw ?? '').trim();
+    if (v.isEmpty) return true;
+    final n = v.toLowerCase();
+    return v.contains('@') ||
+        n == 'merchant' ||
+        n == 'user' ||
+        n == 'unknown' ||
+        n == 'unknown merchant' ||
+        n == 'contact' ||
+        n == 'seller';
+  }
+
+  String? _shopNameFromItemAndCache() {
+    final i = widget.item;
+    for (final c in [
+      i.sellerBusinessName,
+      MerchantSellerLoader.peekBusinessName(i.merchantId),
+      MerchantSellerLoader.peekBusinessName(i.sellerUserId),
+    ]) {
+      final v = (c ?? '').trim();
+      if (v.isNotEmpty && !_isWeakSellerName(v)) return v;
+    }
+    return null;
+  }
+
+  void _applySellerSnapshot(MerchantSellerInfo seller) {
+    final next = _SellerInfo(
+      businessName: !_isWeakSellerName(seller.businessName)
+          ? seller.businessName
+          : _seller?.businessName,
+      openingHours: seller.openingHours,
+      status: seller.status,
+      description: seller.description,
+      rating: seller.rating,
+      reviewCount: seller.reviewCount,
+      logoUrl: seller.logoUrl,
+      serviceProviderId: seller.serviceProviderId,
+      backendMerchantId: seller.backendMerchantId,
+      recentReviews: seller.recentReviews,
+    );
+    _seller = next;
+    final h = (next.openingHours ?? '').trim();
+    if (h.isNotEmpty) _openingHours = h;
+  }
+
+  void _seedSellerFast() {
+    final i = widget.item;
+    final bid = i.merchantBackendId;
+    final reviews = (bid != null && bid > 0)
+        ? MerchantReviewService.peekCache(bid)
+        : null;
+    _seller = _SellerInfo(
+      businessName: _shopNameFromItemAndCache(),
+      openingHours: i.sellerOpeningHours ?? _openingHours,
+      status: i.sellerStatus,
+      description: i.sellerBusinessDescription,
+      rating: reviews?.summary.average ?? i.sellerRating,
+      reviewCount: reviews?.summary.count ?? 0,
+      logoUrl: i.sellerLogoUrl,
+      serviceProviderId: i.serviceProviderId,
+      backendMerchantId: bid,
+      recentReviews: reviews?.reviews.take(3).toList() ?? const [],
+    );
+  }
+
   void _seedOpeningHoursFast() {
     final i = widget.item;
     final mid = (i.merchantId ?? '').trim();
@@ -293,12 +361,21 @@ class _DetailsPageState extends State<DetailsPage> {
         await MerchantSellerLoader.peekOpeningHoursPersisted(sid);
     final diskDays = await MerchantSellerLoader.peekOpeningDaysPersisted(mid) ??
         await MerchantSellerLoader.peekOpeningDaysPersisted(sid);
+    final diskName = await MerchantSellerLoader.peekBusinessNamePersisted(mid) ??
+        await MerchantSellerLoader.peekBusinessNamePersisted(sid);
     if (!mounted) return;
     var dirty = false;
     if (diskHours != null &&
         diskHours.isNotEmpty &&
         _openingHours != diskHours) {
       _openingHours = diskHours;
+      dirty = true;
+    }
+    if (diskName != null &&
+        diskName.isNotEmpty &&
+        _isWeakSellerName(_seller?.businessName)) {
+      _seller ??= _SellerInfo();
+      _seller!.businessName = diskName;
       dirty = true;
     }
     if (diskDays != null &&
@@ -371,6 +448,10 @@ class _DetailsPageState extends State<DetailsPage> {
       sellerRating: i.sellerRating,
       sellerLogoUrl: i.sellerLogoUrl,
       backendUserIdHint: i.merchantBackendId,
+      onUpdate: (snapshot) {
+        if (!mounted) return;
+        setState(() => _applySellerSnapshot(snapshot));
+      },
     );
     final info = _SellerInfo(
       businessName: seller.businessName,
@@ -685,9 +766,11 @@ class _DetailsPageState extends State<DetailsPage> {
                   _merchantDetailRow(
                     icon: Icons.badge_outlined,
                     label: 'Business name',
-                    value: businessName ??
-                        item.sellerBusinessName ??
-                        item.merchantName,
+                    value: !_isWeakSellerName(businessName)
+                        ? businessName
+                        : (!_isWeakSellerName(item.sellerBusinessName)
+                            ? item.sellerBusinessName
+                            : null),
                   ),
                   const SizedBox(height: 8),
                   _merchantDetailRow(
@@ -1649,7 +1732,12 @@ class _DetailsPageState extends State<DetailsPage> {
   Widget build(BuildContext context) {
     final item = widget.item;
     final s = _seller;
-    final businessName = s?.businessName ?? item.sellerBusinessName;
+    final businessName = !_isWeakSellerName(s?.businessName)
+        ? s!.businessName
+        : (!_isWeakSellerName(item.sellerBusinessName)
+            ? item.sellerBusinessName
+            : MerchantSellerLoader.peekBusinessName(item.merchantId) ??
+                MerchantSellerLoader.peekBusinessName(item.sellerUserId));
     final openingHours = _resolvedOpeningHours;
     final openingDays = _resolvedOpeningDays;
     final rating = s?.rating ?? item.sellerRating;
@@ -1659,15 +1747,27 @@ class _DetailsPageState extends State<DetailsPage> {
     final logo = s?.logoUrl ?? item.sellerLogoUrl;
 
     final hasMerchant =
-        (item.merchantId != null && item.merchantId!.isNotEmpty) ||
+        (item.merchantId != null && item.merchantId!.trim().isNotEmpty) ||
+            (item.sellerUserId != null && item.sellerUserId!.trim().isNotEmpty) ||
             (item.serviceProviderId != null &&
-                item.serviceProviderId!.isNotEmpty);
+                item.serviceProviderId!.trim().isNotEmpty);
 
-    final merchantId = item.merchantId ?? item.serviceProviderId ?? '';
-    final merchantDisplayName = businessName ??
-        item.sellerBusinessName ??
-        item.merchantName ??
-        'Merchant';
+    String pickMerchantId() {
+      for (final c in [
+        item.merchantId,
+        item.sellerUserId,
+        item.serviceProviderId,
+      ]) {
+        final s = (c ?? '').trim();
+        if (s.isNotEmpty && s.toLowerCase() != 'unknown') return s;
+      }
+      return '';
+    }
+
+    final merchantId = pickMerchantId();
+    final merchantDisplayName = !_isWeakSellerName(businessName)
+        ? businessName!.trim()
+        : 'Merchant';
 
     return Scaffold(
       backgroundColor: _bg,

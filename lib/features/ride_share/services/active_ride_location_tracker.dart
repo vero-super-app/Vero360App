@@ -39,7 +39,7 @@ class ActiveRideLocationTracker {
       await LocationPermissionHelper.requestAccess();
     }
 
-    final settings = _buildLocationSettings();
+    final settings = await _buildLocationSettings();
     _positionSub = Geolocator.getPositionStream(locationSettings: settings)
         .listen(
       (position) => _publish(position.latitude, position.longitude),
@@ -61,7 +61,7 @@ class ActiveRideLocationTracker {
     });
   }
 
-  LocationSettings _buildLocationSettings() {
+  Future<LocationSettings> _buildLocationSettings() async {
     if (!kIsWeb && Platform.isAndroid) {
       return AndroidSettings(
         accuracy: LocationAccuracy.high,
@@ -74,12 +74,14 @@ class ActiveRideLocationTracker {
       );
     }
     if (!kIsWeb && Platform.isIOS) {
+      final allowBackground =
+          await LocationPermissionHelper.isAlwaysGranted();
       return AppleSettings(
         accuracy: LocationAccuracy.high,
         activityType: ActivityType.automotiveNavigation,
         distanceFilter: 8,
-        allowBackgroundLocationUpdates: true,
-        showBackgroundLocationIndicator: true,
+        allowBackgroundLocationUpdates: allowBackground,
+        showBackgroundLocationIndicator: allowBackground,
       );
     }
     return const LocationSettings(

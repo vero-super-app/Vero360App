@@ -10,6 +10,7 @@ import 'package:vero360_app/config/map_style_constants.dart';
 import 'package:vero360_app/providers/ride_share/nearby_vehicles_provider.dart';
 import 'package:vero360_app/GernalServices/nearby_vehicles_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
+import 'package:vero360_app/GernalServices/location_permission_helper.dart';
 import 'package:vero360_app/utils/low_ram_android.dart';
 
 class MapViewWidget extends ConsumerStatefulWidget {
@@ -46,23 +47,28 @@ class MapViewWidget extends ConsumerStatefulWidget {
   ConsumerState<MapViewWidget> createState() => _MapViewWidgetState();
 }
 
-class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
-  late GoogleMapController _mapController;
+class _MapViewWidgetState extends ConsumerState<MapViewWidget>
+    with WidgetsBindingObserver {
+  GoogleMapController? _mapController;
   late Set<Marker> _markers;
   late Set<Polyline> _polylines;
   late CameraPosition _initialCameraPosition;
-  late BitmapDescriptor _taxiMarkerIcon;
+  BitmapDescriptor _taxiMarkerIcon = BitmapDescriptor.defaultMarker;
+  bool _myLocationEnabled = false;
 
   bool get _nearbyEnabled => !widget.trackingMode && widget.showNearbyVehicles;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _markers = {};
     _polylines = {};
+    _myLocationEnabled = LocationPermissionHelper.isKnownGranted;
     _initializeCameraPosition();
 
     _loadMapStyle();
+    _refreshLocationEnabled();
 
     if (_nearbyEnabled) {
       _loadTaxiMarkerIcon();
@@ -87,6 +93,19 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
             );
       }
     });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refreshLocationEnabled();
+    }
+  }
+
+  Future<void> _refreshLocationEnabled() async {
+    final granted = await LocationPermissionHelper.isAccessGranted();
+    if (!mounted || granted == _myLocationEnabled) return;
+    setState(() => _myLocationEnabled = granted);
   }
 
   Future<void> _loadMapStyle() async {
@@ -138,6 +157,8 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
     if (oldWidget.driverLocation != widget.driverLocation) {
       _updateDriverMarker();
     }
+
+    _refreshLocationEnabled();
 
     final oldPos = oldWidget.initialPosition;
     final newPos = widget.initialPosition;
@@ -411,7 +432,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
     // Smooth animation with more padding and longer duration
     Future.delayed(const Duration(milliseconds: 100), () {
       if (mounted) {
-        _mapController.animateCamera(
+        _mapController?.animateCamera(
           CameraUpdate.newLatLngBounds(bounds, 150),
         );
       }
@@ -426,7 +447,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
   }) {
     Future.delayed(const Duration(milliseconds: 50), () {
       if (mounted) {
-        _mapController.animateCamera(
+        _mapController?.animateCamera(
           CameraUpdate.newCameraPosition(
             CameraPosition(
               target: LatLng(latitude, longitude),
@@ -538,8 +559,8 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
       style: MapStyleConstants.mapStyle.isNotEmpty
           ? MapStyleConstants.mapStyle
           : null,
-      myLocationEnabled: true,
-      myLocationButtonEnabled: true,
+      myLocationEnabled: _myLocationEnabled,
+      myLocationButtonEnabled: _myLocationEnabled,
       zoomControlsEnabled: !LowRamAndroid.isAndroid,
       mapToolbarEnabled: false,
       compassEnabled: !LowRamAndroid.isAndroid,
@@ -551,7 +572,9 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
 
   @override
   void dispose() {
-    _mapController.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    // GoogleMap owns the native controller; disposing it here can crash iOS.
+    _mapController = null;
     super.dispose();
   }
 }

@@ -4,6 +4,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
+import 'package:vero360_app/GernalServices/location_permission_helper.dart';
 
 /// Full-screen map to pick a destination by dragging / tapping.
 class MapLocationPickerScreen extends ConsumerStatefulWidget {
@@ -29,11 +30,21 @@ class _MapLocationPickerScreenState
   LatLng? _selected;
   String _address = 'Move the map to choose a location';
   bool _resolving = false;
+  bool _myLocationEnabled = false;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    _myLocationEnabled = LocationPermissionHelper.isKnownGranted;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final granted = await LocationPermissionHelper.ensureLocationAccess(
+        context,
+        showDialogIfBlocked: false,
+      );
+      if (mounted && granted != _myLocationEnabled) {
+        setState(() => _myLocationEnabled = granted);
+      }
+      if (!mounted) return;
       final pos = ref.read(currentLocationProvider).maybeWhen(
             data: (p) => p,
             orElse: () => null,
@@ -131,7 +142,7 @@ class _MapLocationPickerScreenState
           GoogleMap(
             initialCameraPosition: CameraPosition(target: initial, zoom: 15),
             mapType: MapType.hybrid,
-            myLocationEnabled: true,
+            myLocationEnabled: _myLocationEnabled,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,
             buildingsEnabled: false,

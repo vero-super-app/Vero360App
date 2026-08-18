@@ -4,16 +4,20 @@ import 'package:vero360_app/utils/app_logger.dart';
 
 /// Google Maps API Configuration
 class GoogleMapsConfig {
-  static late final String apiKey;
+  static String apiKey =
+      const String.fromEnvironment('GOOGLE_MAPS_API_KEY', defaultValue: '');
+  static bool _initialized = false;
 
   /// Initialize configuration from .env file or dart-define
   static Future<void> initialize() async {
-    // First try to get from dart-define
+    if (_initialized && apiKey.isNotEmpty) return;
+
     const String dartDefineKey =
         String.fromEnvironment('GOOGLE_MAPS_API_KEY', defaultValue: '');
 
     if (dartDefineKey.isNotEmpty) {
       apiKey = dartDefineKey;
+      _initialized = true;
       return;
     }
 
@@ -29,6 +33,8 @@ class GoogleMapsConfig {
       AppLogger.d('[GoogleMapsConfig] Error loading env', e);
       apiKey = '';
     }
+
+    _initialized = true;
 
     if (kDebugMode && !isConfigured) {
       AppLogger.w(

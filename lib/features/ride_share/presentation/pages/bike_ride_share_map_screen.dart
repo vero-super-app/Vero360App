@@ -13,6 +13,7 @@ import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
+import 'package:vero360_app/GernalServices/location_permission_helper.dart';
 
 /// Bike-only variant of the ride share map screen.
 /// Reuses the same flow but restricts vehicle selection to `VehicleClass.bike`.
@@ -140,7 +141,11 @@ class _BikeRideShareMapScreenState extends ConsumerState<BikeRideShareMapScreen>
 
     _checkConnectivity();
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      if (!LocationPermissionHelper.isKnownGranted) {
+        await LocationPermissionHelper.ensureLocationAccess(context);
+      }
       if (!mounted) return;
       RecentPlacesManager.loadAndSet(ref);
       ref.invalidate(currentLocationProvider);

@@ -54,6 +54,7 @@ import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:vero360_app/widgets/messaging_skeleton_loaders.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_share_link.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart'
     show veroFloatingNavClearance;
 
@@ -1340,16 +1341,41 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   }
 
   void _shareProductFromSheet(MarketplaceDetailModel item) {
-    final id = item.hasValidSqlItemId ? item.sqlItemId! : _stablePositiveIdFromString(item.id);
-    final merchantName = item.merchantName ?? item.sellerBusinessName ?? 'A merchant';
-    final productUrl = 'https://vero360.app/marketplace/$id';
+    final id = marketplaceProductShareId(
+      sqlItemId: item.sqlItemId,
+      firestoreDocId: item.id,
+    );
+    final merchantName =
+        item.merchantName ?? item.sellerBusinessName ?? 'A merchant';
     final priceStr = NumberFormat('#,###', 'en').format(item.price.truncate());
-    Share.share('$merchantName is selling this on Vero360 - Check out ${item.name} - MWK $priceStr\n$productUrl');
+    final url = marketplaceProductShareUrl(
+      id: id,
+      name: item.name,
+      location: item.location,
+      price: priceStr,
+      merchant: merchantName,
+      description: item.description,
+      image: marketplaceShareImageUrl(item.image, item.gallery),
+    );
+    Share.share(
+      '$merchantName is selling this on Vero360 — ${item.name} — MWK $priceStr\n$url',
+    );
   }
 
   void _copyProductLinkFromSheet(MarketplaceDetailModel item) {
-    final id = item.hasValidSqlItemId ? item.sqlItemId! : _stablePositiveIdFromString(item.id);
-    Clipboard.setData(ClipboardData(text: 'https://vero360.app/marketplace/$id'));
+    final url = marketplaceProductShareUrl(
+      id: marketplaceProductShareId(
+        sqlItemId: item.sqlItemId,
+        firestoreDocId: item.id,
+      ),
+      name: item.name,
+      location: item.location,
+      price: NumberFormat('#,###', 'en').format(item.price.truncate()),
+      merchant: item.merchantName ?? item.sellerBusinessName,
+      description: item.description,
+      image: marketplaceShareImageUrl(item.image, item.gallery),
+    );
+    Clipboard.setData(ClipboardData(text: url));
     if (!mounted) return;
     ToastHelper.showCustomToast(context, 'Product link copied', isSuccess: true, errorMessage: 'OK');
   }

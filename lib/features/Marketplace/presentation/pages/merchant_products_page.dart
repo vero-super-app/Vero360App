@@ -34,6 +34,7 @@ import 'package:vero360_app/widgets/app_skeleton.dart';
 import 'package:vero360_app/Home/story_ring_widget.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/vero_ride_driver_profile_page.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_share_link.dart';
 
 int? _stayListingApiId(Map<String, dynamic> d) {
   final direct = d['apiAccommodationId'];
@@ -1212,11 +1213,14 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     }
   }
 
-  String get _merchantShopUrl =>
-      'https://vero360.app/merchant/${widget.merchantId.trim()}';
+  String get _merchantShopUrl => marketplaceShopShareUrl(
+        merchantId: widget.merchantId.trim(),
+        name: _shopDisplayName,
+        image: _merchantProfileUrl,
+      );
 
   String get _shareMessage =>
-      'Check out this merchant on Vero360 - ${_shopDisplayName}\n$_merchantShopUrl';
+      'Check out this shop on Vero360 — $_shopDisplayName\n$_merchantShopUrl';
 
   void _copyMerchantLink() {
     Clipboard.setData(ClipboardData(text: _merchantShopUrl));

@@ -31,6 +31,8 @@ import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_share_link.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_share_link.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_share_navigation.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/app_nav_key.dart';
@@ -300,13 +302,11 @@ class _AppBootstrapState extends State<AppBootstrap> {
     super.initState();
     _bootFuture = _boot();
 
-    // Maps config is cheap (env read) and must be ready before Vero Ride opens.
-    // Keep notification init staggered so 2GB Android phones finish first paint.
+    unawaited(GoogleMapsConfig.initialize());
+
+    // Stagger notification init so 2GB phones finish first paint without LMK.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(() async {
-        try {
-          await GoogleMapsConfig.initialize();
-        } catch (_) {}
         await Future<void>.delayed(const Duration(milliseconds: 2400));
         try {
           await NotificationService.instance.initialize();
@@ -335,6 +335,10 @@ class _AppBootstrapState extends State<AppBootstrap> {
           await Firebase.initializeApp(options: _kFirebaseOptions);
         } catch (_) {}
       }
+
+      try {
+        await GoogleMapsConfig.initialize();
+      } catch (_) {}
 
       if (mounted) {
         setState(() {
@@ -630,6 +634,14 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         );
       } else if (isAccommodationShareUri(uri)) {
         _openAccommodationFromShare(uri);
+      } else if (isMarketplaceProductShareUri(uri) ||
+          isMarketplaceShopShareUri(uri)) {
+        unawaited(
+          MarketplaceShareNavigation.openFromUri(
+            uri,
+            CartServiceProvider.getInstance(),
+          ),
+        );
       }
     }, onError: (_) {});
 
@@ -641,6 +653,14 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             _openPasswordResetFromDeepLink(initial);
           } else if (isAccommodationShareUri(initial)) {
             _openAccommodationFromShare(initial);
+          } else if (isMarketplaceProductShareUri(initial) ||
+              isMarketplaceShopShareUri(initial)) {
+            unawaited(
+              MarketplaceShareNavigation.openFromUri(
+                initial,
+                CartServiceProvider.getInstance(),
+              ),
+            );
           }
         });
       }

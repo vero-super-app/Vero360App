@@ -1,0 +1,16 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "TEAMID.com.vero265.app",
+        "paths": [
+          "/accommodation/*",
+          "/stay/*",
+          "/stays/*",
+          "/marketplace/*"
+        ]
+      }
+    ]
+  }
+}

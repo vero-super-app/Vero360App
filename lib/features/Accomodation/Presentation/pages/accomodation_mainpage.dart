@@ -10,6 +10,7 @@ import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/Accomodation_service.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/accommodation_occupancy_service.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationService/accommodation_watchers_service.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/mybookingData_service.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accommodation_booking_page.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accommodation_my_bookings_tab.dart';
@@ -110,7 +111,11 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
     'Phalombe',
   ];
 
-  Future<List<Accommodation>>? _future;
+  List<Accommodation> _listings = [];
+  bool _listingsLoading = true;
+  Object? _listingsError;
+  Map<int, int> _watcherCounts = {};
+  final AccommodationWatchersService _watchers = AccommodationWatchersService();
 
   final GlobalKey _focusCardKey = GlobalKey();
   bool _didScrollToFocus = false;
@@ -149,6 +154,14 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
     if (sharedQ.isNotEmpty) {
       _searchController.text = sharedQ;
       _searchQuery = sharedQ.toLowerCase();
+    }
+    final cached = AccommodationService.peekFiltered(
+      type: _selectedType,
+      location: _locationQuery,
+    );
+    if (cached != null && cached.isNotEmpty) {
+      _listings = cached;
+      _listingsLoading = false;
     }
     _loadFromService();
     _refreshSession();
@@ -277,7 +290,10 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
     bool replace = false,
   }) async {
     try {
-      final map = await _occupancy.fetchTodayCounts(ids);
+      final map = await _occupancy.fetchTodayCounts(
+        ids,
+        legacyFallback: false,
+      );
       if (!mounted) return;
       setState(() {
         if (replace) {
@@ -541,19 +557,51 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
   }
 
   void _loadFromService() {
-    _future = _fetchDiscoverListWithPricing();
+    unawaited(_reloadDiscover());
   }
 
-  /// API listings often omit `pricingPeriod`; merge from `accommodation_rooms` when hosts saved it.
-  Future<List<Accommodation>> _fetchDiscoverListWithPricing() async {
-    final list = await _service.fetch(
-      type: _selectedType,
-      location: _locationQuery.isEmpty ? null : _locationQuery,
-    );
+  Future<void> _reloadDiscover() async {
+    _listingsError = null;
+    if (_listings.isEmpty && mounted) {
+      setState(() => _listingsLoading = true);
+    }
+    try {
+      final list = await _service.fetch(
+        type: _selectedType,
+        location: _locationQuery.isEmpty ? null : _locationQuery,
+      );
+      if (!mounted) return;
+      setState(() {
+        _listings = list;
+        _listingsLoading = false;
+      });
+      unawaited(_enrichDiscover(list));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _listingsError = e;
+        if (_listings.isEmpty) _listingsLoading = false;
+      });
+    }
+  }
+
+  Future<void> _enrichDiscover(List<Accommodation> list) async {
     final merged = await _mergePricingPeriodFromFirestore(list);
-    // Await so Discover cards get global "Booked today" before first paint.
-    await _loadSharedTonightCounts(merged.map((a) => a.id), replace: true);
-    return merged;
+    if (!mounted) return;
+    setState(() => _listings = merged);
+    unawaited(_loadSharedTonightCounts(
+      merged.map((a) => a.id),
+      replace: true,
+    ));
+    unawaited(_loadWatcherCounts(merged.map((a) => a.id)));
+  }
+
+  Future<void> _loadWatcherCounts(Iterable<int> ids) async {
+    try {
+      final map = await _watchers.fetchCounts(ids);
+      if (!mounted) return;
+      setState(() => _watcherCounts = map);
+    } catch (_) {}
   }
 
   Future<List<Accommodation>> _mergePricingPeriodFromFirestore(
@@ -571,8 +619,11 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
     final byApiIdAmenities = <int, List<String>>{};
     try {
       final idList = ids.toList();
+      final chunks = <List<int>>[];
       for (var i = 0; i < idList.length; i += 10) {
-        final chunk = idList.sublist(i, min(i + 10, idList.length));
+        chunks.add(idList.sublist(i, min(i + 10, idList.length)));
+      }
+      await Future.wait(chunks.map((chunk) async {
         final snap = await FirebaseFirestore.instance
             .collection('accommodation_rooms')
             .where('apiAccommodationId', whereIn: chunk)
@@ -626,7 +677,7 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
             byApiIdAmenities[apiId] = amenities;
           }
         }
-      }
+      }));
     } catch (_) {
       return list;
     }
@@ -780,123 +831,120 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
           child: RefreshIndicator(
             color: _brandOrange,
             onRefresh: () async {
-              setState(() {
-                _loadFromService();
-              });
-              final list = await _future ?? const <Accommodation>[];
+              await _reloadDiscover();
               await Future.wait([
                 _loadGuestPaidStays(),
-                _loadSharedTonightCounts(list.map((a) => a.id)),
+                _loadSharedTonightCounts(_listings.map((a) => a.id)),
+                _loadWatcherCounts(_listings.map((a) => a.id)),
               ]);
             },
-            child: FutureBuilder<List<Accommodation>>(
-              future: _future,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return AppSkeletonShimmer(
-                    child: ListView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                      children: [
-                        for (var i = 0; i < 5; i++) ...[
-                          AppSkeletonAccommodationCardCore(isDark: isDark),
-                          if (i < 4) const SizedBox(height: 12),
-                        ],
-                      ],
-                    ),
-                  );
-                }
-                if (snapshot.hasError) {
-                  return _buildErrorState(
-                    context,
-                    UserFacingError.from(snapshot.error),
-                    isDark,
-                  );
-                }
-                final raw = snapshot.data ?? [];
-                final data = _applySearchFilter(raw);
-
-                if (data.isEmpty) {
-                  return _buildEmptyState(context, isDark);
-                }
-
-                final focusId = widget.focusAccommodationId;
-                if (widget.openFocusedStay &&
-                    !_didOpenFocusedStay &&
-                    focusId != null &&
-                    focusId > 0) {
-                  Accommodation? match;
-                  for (final e in data) {
-                    if (e.id == focusId) {
-                      match = e;
-                      break;
-                    }
-                  }
-                  if (match != null) {
-                    _didOpenFocusedStay = true;
-                    final stay = match;
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (!mounted) return;
-                      unawaited(_openBookingFlow(stay));
-                    });
-                  }
-                }
-                if (focusId != null && !_didScrollToFocus) {
-                  final hit = data.any((e) => e.id == focusId);
-                  if (hit) {
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (!mounted) return;
-                      final ctx = _focusCardKey.currentContext;
-                      if (ctx != null) {
-                        Scrollable.ensureVisible(
-                          ctx,
-                          alignment: 0.12,
-                          duration: const Duration(milliseconds: 420),
-                          curve: Curves.easeOutCubic,
-                        );
-                        setState(() => _didScrollToFocus = true);
-                      }
-                    });
-                  } else {
-                    _didScrollToFocus = true;
-                  }
-                }
-
-                return ListView.separated(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                  itemBuilder: (context, index) {
-                    final item = data[index];
-                    final isFocus = focusId != null && item.id == focusId;
-                    Widget card = _AccommodationCard(
-                      accommodation: item,
-                      isDark: isDark,
-                      highlight: isFocus,
-                      authReady: _authReady,
-                      isLoggedIn: _isLoggedIn,
-                      bookedToday: _isBookedTodayForListing(item),
-                      isOpening: _openingAccommodationId == item.id,
-                      hostelGender: _hostelGenderByApiId[item.id],
-                      hostelRoomType: _hostelRoomTypeByApiId[item.id],
-                      hostelAvailable: _hostelAvailabilityByApiId[item.id],
-                      onBookStay: _openBookingFlow,
-                    );
-                    if (isFocus) {
-                      card = KeyedSubtree(
-                        key: _focusCardKey,
-                        child: card,
-                      );
-                    }
-                    return card;
-                  },
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
-                  itemCount: data.length,
-                );
-              },
-            ),
+            child: _buildDiscoverList(context, isDark),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildDiscoverList(BuildContext context, bool isDark) {
+    if (_listingsLoading && _listings.isEmpty) {
+      return AppSkeletonShimmer(
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          children: [
+            for (var i = 0; i < 5; i++) ...[
+              AppSkeletonAccommodationCardCore(isDark: isDark),
+              if (i < 4) const SizedBox(height: 12),
+            ],
+          ],
+        ),
+      );
+    }
+    if (_listingsError != null && _listings.isEmpty) {
+      return _buildErrorState(
+        context,
+        UserFacingError.from(_listingsError),
+        isDark,
+      );
+    }
+    final data = _applySearchFilter(_listings);
+
+    if (data.isEmpty) {
+      return _buildEmptyState(context, isDark);
+    }
+
+    final focusId = widget.focusAccommodationId;
+    if (widget.openFocusedStay &&
+        !_didOpenFocusedStay &&
+        focusId != null &&
+        focusId > 0) {
+      Accommodation? match;
+      for (final e in data) {
+        if (e.id == focusId) {
+          match = e;
+          break;
+        }
+      }
+      if (match != null) {
+        _didOpenFocusedStay = true;
+        final stay = match;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          unawaited(_openBookingFlow(stay));
+        });
+      }
+    }
+    if (focusId != null && !_didScrollToFocus) {
+      final hit = data.any((e) => e.id == focusId);
+      if (hit) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          final ctx = _focusCardKey.currentContext;
+          if (ctx != null) {
+            Scrollable.ensureVisible(
+              ctx,
+              alignment: 0.12,
+              duration: const Duration(milliseconds: 420),
+              curve: Curves.easeOutCubic,
+            );
+            setState(() => _didScrollToFocus = true);
+          }
+        });
+      } else {
+        _didScrollToFocus = true;
+      }
+    }
+
+    return ListView.separated(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      itemBuilder: (context, index) {
+        final item = data[index];
+        final isFocus = focusId != null && item.id == focusId;
+        Widget card = _AccommodationCard(
+          accommodation: item,
+          isDark: isDark,
+          highlight: isFocus,
+          authReady: _authReady,
+          isLoggedIn: _isLoggedIn,
+          bookedToday: _isBookedTodayForListing(item),
+          watchingCount: _watcherCounts[item.id] ?? 0,
+          isOpening: _openingAccommodationId == item.id,
+          hostelGender: _hostelGenderByApiId[item.id],
+          hostelRoomType: _hostelRoomTypeByApiId[item.id],
+          hostelAvailable: _hostelAvailabilityByApiId[item.id],
+          onBookStay: _openBookingFlow,
+        );
+        if (isFocus) {
+          card = KeyedSubtree(
+            key: _focusCardKey,
+            child: card,
+          );
+        }
+        return card;
+      },
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemCount: data.length,
     );
   }
 
@@ -1375,6 +1423,7 @@ class _AccommodationCard extends StatelessWidget {
   /// Paid stay covers **today** for this listing — badge on the photo only.
   /// Guests can still tap Book now and pick another date.
   final bool bookedToday;
+  final int watchingCount;
   final bool isOpening;
   final String? hostelGender;
   final String? hostelRoomType;
@@ -1388,6 +1437,7 @@ class _AccommodationCard extends StatelessWidget {
     required this.authReady,
     required this.isLoggedIn,
     this.bookedToday = false,
+    this.watchingCount = 0,
     this.isOpening = false,
     this.hostelGender,
     this.hostelRoomType,
@@ -1627,6 +1677,39 @@ class _AccommodationCard extends StatelessWidget {
                               style: TextStyle(
                                 color: Colors.teal.shade50,
                                 fontWeight: FontWeight.w900,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  if (watchingCount > 0)
+                    Positioned(
+                      bottom: 10,
+                      left: 10,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.62),
+                          borderRadius: BorderRadius.circular(30),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.visibility_rounded,
+                                size: 14, color: Colors.white),
+                            const SizedBox(width: 5),
+                            Text(
+                              watchingCount == 1
+                                  ? '1 person watching'
+                                  : '$watchingCount people watching',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
                                 fontSize: 11,
                               ),
                             ),

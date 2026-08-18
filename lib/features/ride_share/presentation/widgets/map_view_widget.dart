@@ -47,12 +47,13 @@ class MapViewWidget extends ConsumerStatefulWidget {
   ConsumerState<MapViewWidget> createState() => _MapViewWidgetState();
 }
 
-class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
+class _MapViewWidgetState extends ConsumerState<MapViewWidget>
+    with WidgetsBindingObserver {
   GoogleMapController? _mapController;
   late Set<Marker> _markers;
   late Set<Polyline> _polylines;
   late CameraPosition _initialCameraPosition;
-  BitmapDescriptor? _taxiMarkerIcon;
+  BitmapDescriptor _taxiMarkerIcon = BitmapDescriptor.defaultMarker;
   bool _myLocationEnabled = false;
 
   bool get _nearbyEnabled => !widget.trackingMode && widget.showNearbyVehicles;
@@ -60,12 +61,14 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _markers = {};
     _polylines = {};
+    _myLocationEnabled = LocationPermissionHelper.isKnownGranted;
     _initializeCameraPosition();
 
     _loadMapStyle();
-    _enableMyLocationIfPermitted();
+    _refreshLocationEnabled();
 
     if (_nearbyEnabled) {
       _loadTaxiMarkerIcon();
@@ -92,6 +95,19 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
     });
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refreshLocationEnabled();
+    }
+  }
+
+  Future<void> _refreshLocationEnabled() async {
+    final granted = await LocationPermissionHelper.isAccessGranted();
+    if (!mounted || granted == _myLocationEnabled) return;
+    setState(() => _myLocationEnabled = granted);
+  }
+
   Future<void> _loadMapStyle() async {
     try {
       final styleString = await MapStyleConstants.loadMapStyle();
@@ -106,14 +122,6 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
         debugPrint('[MapViewWidget] Error loading map style: $e');
       }
     }
-  }
-
-  Future<void> _enableMyLocationIfPermitted() async {
-    try {
-      final granted = await LocationPermissionHelper.isAccessGranted();
-      if (!mounted || !granted) return;
-      setState(() => _myLocationEnabled = true);
-    } catch (_) {}
   }
 
   Future<void> _loadTaxiMarkerIcon() async {
@@ -137,6 +145,8 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
     if (oldWidget.driverLocation != widget.driverLocation) {
       _updateDriverMarker();
     }
+
+    _refreshLocationEnabled();
 
     final oldPos = oldWidget.initialPosition;
     final newPos = widget.initialPosition;
@@ -409,9 +419,8 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
 
     // Smooth animation with more padding and longer duration
     Future.delayed(const Duration(milliseconds: 100), () {
-      final map = _mapController;
-      if (mounted && map != null) {
-        map.animateCamera(
+      if (mounted) {
+        _mapController?.animateCamera(
           CameraUpdate.newLatLngBounds(bounds, 150),
         );
       }
@@ -425,9 +434,8 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
     Duration duration = const Duration(milliseconds: 800),
   }) {
     Future.delayed(const Duration(milliseconds: 50), () {
-      final map = _mapController;
-      if (mounted && map != null) {
-        map.animateCamera(
+      if (mounted) {
+        _mapController?.animateCamera(
           CameraUpdate.newCameraPosition(
             CameraPosition(
               target: LatLng(latitude, longitude),
@@ -468,7 +476,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
 
   /// Get custom marker icon for all taxi classes
   BitmapDescriptor _getTaxiMarkerIcon(String taxiClass) {
-    return _taxiMarkerIcon ?? BitmapDescriptor.defaultMarker;
+    return _taxiMarkerIcon;
   }
 
   @override
@@ -555,11 +563,8 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
 
   @override
   void dispose() {
-    // Disposing the native controller while the iOS platform view detaches
-    // can SIGABRT. Let the engine tear the view down instead.
-    if (defaultTargetPlatform != TargetPlatform.iOS) {
-      _mapController?.dispose();
-    }
+    WidgetsBinding.instance.removeObserver(this);
+    // GoogleMap owns the native controller; disposing it here can crash iOS.
     _mapController = null;
     super.dispose();
   }

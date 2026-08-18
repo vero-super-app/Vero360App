@@ -82,6 +82,8 @@
 	<string>We use your location to fill your address, show nearby places, and share your position during active rides.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Vero needs background location during active trips so passengers can track your ride when the app is in the background.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Vero needs background location during active trips so passengers can track your ride when the app is in the background.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>

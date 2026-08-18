@@ -9,5 +9,29 @@
   "functions": {
     "source": "functions",
     "runtime": "nodejs22"
+  },
+  "hosting": {
+    "public": "hosting",
+    "ignore": ["firebase.json", "**/node_modules/**"],
+    "headers": [
+      {
+        "source": "/.well-known/apple-app-site-association",
+        "headers": [{ "key": "Content-Type", "value": "application/json" }]
+      },
+      {
+        "source": "/.well-known/assetlinks.json",
+        "headers": [{ "key": "Content-Type", "value": "application/json" }]
+      }
+    ],
+    "rewrites": [
+      { "source": "/accommodation", "destination": "/open.html" },
+      { "source": "/accommodation/**", "destination": "/open.html" },
+      { "source": "/stay", "destination": "/open.html" },
+      { "source": "/stay/**", "destination": "/open.html" },
+      { "source": "/stays", "destination": "/open.html" },
+      { "source": "/stays/**", "destination": "/open.html" },
+      { "source": "/marketplace", "destination": "/open.html" },
+      { "source": "/marketplace/**", "destination": "/open.html" }
+    ]
   }
 }

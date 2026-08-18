@@ -7,6 +7,7 @@ import 'package:vero360_app/features/Restraurants/RestraurantsService/restaurant
 import 'package:vero360_app/features/VeroCourier/Model/courier.models.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierService/courier_city.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierService/vero_courier_service.dart';
+import 'package:vero360_app/utils/merchant_contact_display.dart';
 
 /// Creates a Vero Courier job when a kitchen marks a food order ready.
 class FoodCourierDispatch {
@@ -66,9 +67,19 @@ class FoodCourierDispatch {
           : 'no-email@vero.local';
       final customerName = '${merged['customerName'] ?? ''}'.trim();
       final customerPhone = CourierService.normalizePhone(
-        '${merged['customerPhone'] ?? merged['phone'] ?? ''}',
+        sanitizedPhoneOrEmpty(
+          '${merged['customerPhone'] ?? merged['phone'] ?? ''}',
+        ),
       );
       final dishSummary = _dishSummary(merged);
+      final dropLat = _asDouble(merged['deliveryLat'] ?? merged['lat']);
+      final dropLng = _asDouble(merged['deliveryLng'] ?? merged['lng']);
+      final pickLat = _asDouble(
+        merged['pickupLat'] ?? restaurant?.latitude,
+      );
+      final pickLng = _asDouble(
+        merged['pickupLng'] ?? restaurant?.longitude,
+      );
 
       final additional = [
         'Sender: ${merchantName.trim().isEmpty ? 'Kitchen' : merchantName.trim()}',
@@ -76,6 +87,10 @@ class FoodCourierDispatch {
         if (customerName.isNotEmpty) 'Recipient: $customerName',
         if (customerPhone.isNotEmpty) 'Recipient Phone: $customerPhone',
         'Recipient Address: $dropoff',
+        if (dropLat != null) 'DropoffLat: ${dropLat.toStringAsFixed(6)}',
+        if (dropLng != null) 'DropoffLng: ${dropLng.toStringAsFixed(6)}',
+        if (pickLat != null) 'PickupLat: ${pickLat.toStringAsFixed(6)}',
+        if (pickLng != null) 'PickupLng: ${pickLng.toStringAsFixed(6)}',
         'FoodOrderId: $id',
         'ServiceCity: $city',
         'IntraCityOnly: yes',
@@ -104,6 +119,10 @@ class FoodCourierDispatch {
         'courierTrackingNumber': code,
         if (created.courierId > 0) 'courierDeliveryId': created.courierId,
         'pickupAddress': pickup,
+        if (pickLat != null) 'pickupLat': pickLat,
+        if (pickLng != null) 'pickupLng': pickLng,
+        if (dropLat != null) 'deliveryLat': dropLat,
+        if (dropLng != null) 'deliveryLng': dropLng,
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
@@ -180,5 +199,11 @@ class FoodCourierDispatch {
     }
     if (names.isEmpty) return 'Food order';
     return names.join(', ');
+  }
+
+  static double? _asDouble(dynamic v) {
+    if (v == null) return null;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString());
   }
 }

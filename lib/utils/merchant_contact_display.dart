@@ -1,17 +1,24 @@
 /// Merchant phone / contact shown in order UIs — never expose Firebase UIDs or junk strings.
 String safeMerchantPhone(String? raw) {
+  final cleaned = sanitizedPhoneOrEmpty(raw);
+  return cleaned.isEmpty ? 'No phone number' : cleaned;
+}
+
+/// Real phone or empty. Drops Firebase UIDs like `+firebase_…`.
+String sanitizedPhoneOrEmpty(String? raw) {
   final s = (raw ?? '').trim();
-  if (s.isEmpty) return 'No phone number';
+  if (s.isEmpty) return '';
 
   final lower = s.toLowerCase();
-  if (lower.contains('firebase')) return 'No phone number';
-
-  // Real phone: mostly digits (E.164 / local), optional +, spaces, dashes, parens.
-  final digitsOnly = s.replaceAll(RegExp(r'[^\d]'), '');
-  if (digitsOnly.length >= 7 && digitsOnly.length <= 15) {
-    // Reject if it still looks like an encoded id (many letters)
-    if (!RegExp(r'[a-zA-Z]').hasMatch(s)) return s;
+  if (lower.contains('firebase') ||
+      lower.contains('firestore') ||
+      lower.contains('uid_') ||
+      lower.startsWith('+firebase')) {
+    return '';
   }
 
-  return 'No phone number';
+  final digitsOnly = s.replaceAll(RegExp(r'\D'), '');
+  if (digitsOnly.length < 8 || digitsOnly.length > 15) return '';
+  if (RegExp(r'[A-Za-z]').hasMatch(s)) return '';
+  return s;
 }

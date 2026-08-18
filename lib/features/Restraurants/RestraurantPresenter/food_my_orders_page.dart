@@ -7,6 +7,7 @@ import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_order_model.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_review_service.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_order_tracking_page.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
 
@@ -116,11 +117,20 @@ class _FoodMyOrdersPageState extends State<FoodMyOrdersPage> {
                       canRate: _isDelivered(order) &&
                           !_reviewedOrderIds.contains(order.id),
                       onTap: () => _openDetail(order),
+                      onTrack: () => _openTracking(order),
                     );
                   },
                 );
               },
             ),
+    );
+  }
+
+  void _openTracking(FoodOrder order) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => FoodOrderTrackingPage(orderId: order.id),
+      ),
     );
   }
 
@@ -142,6 +152,10 @@ class _FoodMyOrdersPageState extends State<FoodMyOrdersPage> {
           alreadyReviewed: _reviewedOrderIds.contains(order.id),
           onReviewed: () {
             setState(() => _reviewedOrderIds.add(order.id));
+          },
+          onTrack: () {
+            Navigator.pop(context);
+            _openTracking(order);
           },
         ),
       ),
@@ -224,11 +238,13 @@ class _FoodOrderCard extends StatelessWidget {
   const _FoodOrderCard({
     required this.order,
     required this.onTap,
+    required this.onTrack,
     this.canRate = false,
   });
 
   final FoodOrder order;
   final VoidCallback onTap;
+  final VoidCallback onTrack;
   final bool canRate;
 
   @override
@@ -333,6 +349,18 @@ class _FoodOrderCard extends StatelessWidget {
                           ),
                         ),
                         const Spacer(),
+                        TextButton(
+                          onPressed: onTrack,
+                          style: TextButton.styleFrom(
+                            foregroundColor: _veroOrange,
+                            visualDensity: VisualDensity.compact,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
+                          child: const Text(
+                            'Track',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
                         if (canRate)
                           const Text(
                             'Rate this order',
@@ -368,11 +396,13 @@ class _FoodOrderDetailSheet extends StatefulWidget {
     required this.order,
     required this.alreadyReviewed,
     required this.onReviewed,
+    required this.onTrack,
   });
 
   final FoodOrder order;
   final bool alreadyReviewed;
   final VoidCallback onReviewed;
+  final VoidCallback onTrack;
 
   @override
   State<_FoodOrderDetailSheet> createState() => _FoodOrderDetailSheetState();
@@ -622,6 +652,26 @@ class _FoodOrderDetailSheetState extends State<_FoodOrderDetailSheet> {
               style: const TextStyle(
                 fontWeight: FontWeight.w800,
                 color: _veroOrange,
+              ),
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: widget.onTrack,
+                style: FilledButton.styleFrom(
+                  backgroundColor: _veroOrange,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                icon: const Icon(Icons.delivery_dining_rounded),
+                label: const Text(
+                  'Track on map',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
               ),
             ),
           ],

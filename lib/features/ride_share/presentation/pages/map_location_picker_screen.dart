@@ -12,9 +12,15 @@ class MapLocationPickerScreen extends ConsumerStatefulWidget {
   /// When false, only returns the place without setting dropoff.
   final bool selectAsDropoff;
 
+  /// Optional camera start (food delivery pin, etc.).
+  final double? initialLatitude;
+  final double? initialLongitude;
+
   const MapLocationPickerScreen({
     this.saveAsType,
     this.selectAsDropoff = true,
+    this.initialLatitude,
+    this.initialLongitude,
     super.key,
   });
 
@@ -34,6 +40,13 @@ class _MapLocationPickerScreenState
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (widget.initialLatitude != null && widget.initialLongitude != null) {
+        setState(() {
+          _selected = LatLng(widget.initialLatitude!, widget.initialLongitude!);
+        });
+        _resolveAddress(_selected!);
+        return;
+      }
       final pos = ref.read(currentLocationProvider).maybeWhen(
             data: (p) => p,
             orElse: () => null,
@@ -118,6 +131,9 @@ class _MapLocationPickerScreenState
   Widget build(BuildContext context) {
     final current = ref.watch(currentLocationProvider);
     final initial = _selected ??
+        (widget.initialLatitude != null && widget.initialLongitude != null
+            ? LatLng(widget.initialLatitude!, widget.initialLongitude!)
+            : null) ??
         current.maybeWhen(
           data: (p) => p != null ? LatLng(p.latitude, p.longitude) : null,
           orElse: () => null,
@@ -129,7 +145,10 @@ class _MapLocationPickerScreenState
       body: Stack(
         children: [
           GoogleMap(
-            initialCameraPosition: CameraPosition(target: initial, zoom: 15),
+            initialCameraPosition: CameraPosition(
+              target: initial,
+              zoom: widget.initialLatitude != null ? 17.5 : 15,
+            ),
             mapType: MapType.hybrid,
             myLocationEnabled: true,
             myLocationButtonEnabled: false,

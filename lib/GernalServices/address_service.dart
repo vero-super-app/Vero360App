@@ -50,6 +50,43 @@ class AddressService {
     return list.isNotEmpty ? list.first : null;
   }
 
+  /// Pin a food drop-off so checkout uses these exact coordinates.
+  static void seedLocalDefaultPin({
+    required String description,
+    required String city,
+    required double lat,
+    required double lng,
+  }) {
+    final existing = _cachedAddresses ?? const <Address>[];
+    Address? previous;
+    for (final a in existing) {
+      if (a.isDefault) {
+        previous = a;
+        break;
+      }
+    }
+    previous ??= existing.isNotEmpty ? existing.first : null;
+    final id = (previous?.id ?? '').trim();
+    final pinned = Address(
+      id: id.isEmpty ? 'local-food-pin' : id,
+      addressType: previous?.addressType ?? AddressType.home,
+      city: city.trim().isEmpty ? (previous?.city ?? '') : city.trim(),
+      description: description.trim(),
+      isDefault: true,
+      isGoogle: true,
+      formattedAddress: description.trim(),
+      placeId: previous?.placeId ?? '',
+      lat: lat,
+      lng: lng,
+    );
+    final rest = existing
+        .where((a) => a.id != pinned.id)
+        .map((a) => a.copyWith(isDefault: false))
+        .toList();
+    _cachedAddresses = [pinned, ...rest];
+    _addressesFetchedAt = DateTime.now();
+  }
+
   Future<void> _persistDiskCache(List<Address> list) async {
     try {
       final prefs = await SharedPreferences.getInstance();

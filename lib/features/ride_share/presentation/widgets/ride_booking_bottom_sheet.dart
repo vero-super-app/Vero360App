@@ -90,6 +90,7 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
 
     try {
       final directionsService = ref.read(googleDirectionsServiceProvider);
+      if (directionsService == null) return;
       final routeInfo = await directionsService.getRouteInfo(
         originLat: pickup.latitude,
         originLng: pickup.longitude,

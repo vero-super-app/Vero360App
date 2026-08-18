@@ -94,7 +94,10 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
   void dispose() {
     // Do NOT go offline here — leaving the page must not drop availability
     // or stop the keepAlive [driverOnlineSessionProvider] broadcast.
-    mapController?.dispose();
+    if (defaultTargetPlatform != TargetPlatform.iOS) {
+      mapController?.dispose();
+    }
+    mapController = null;
     _stopMapCentering();
     _http.dispose();
     super.dispose();

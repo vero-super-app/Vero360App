@@ -55,6 +55,10 @@
 	<!-- 🔸 Google Maps API key (for google_maps_flutter) -->
 	<key>GMSApiKey</key>
 	<string>AIzaSyBqvHbaR4EooNVrk9sgULwmIFJydKhERiE</string>
+	<key>io.flutter.plugins.googlemaps.API_KEY</key>
+	<string>AIzaSyBqvHbaR4EooNVrk9sgULwmIFJydKhERiE</string>
+	<key>io.flutter.embedded_views_preview</key>
+	<true/>
 
 	<key>CFBundleURLTypes</key>
 	<array>

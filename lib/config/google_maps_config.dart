@@ -4,7 +4,9 @@ import 'package:vero360_app/utils/app_logger.dart';
 
 /// Google Maps API Configuration
 class GoogleMapsConfig {
-  static late final String apiKey;
+  static String _apiKey = '';
+
+  static String get apiKey => _apiKey;
 
   /// Initialize configuration from .env file or dart-define
   static Future<void> initialize() async {
@@ -13,7 +15,7 @@ class GoogleMapsConfig {
         String.fromEnvironment('GOOGLE_MAPS_API_KEY', defaultValue: '');
 
     if (dartDefineKey.isNotEmpty) {
-      apiKey = dartDefineKey;
+      _apiKey = dartDefineKey;
       return;
     }
 
@@ -24,10 +26,10 @@ class GoogleMapsConfig {
       } catch (_) {
         await dotenv.load(fileName: '.env.example');
       }
-      apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
+      _apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
     } catch (e) {
       AppLogger.d('[GoogleMapsConfig] Error loading env', e);
-      apiKey = '';
+      _apiKey = '';
     }
 
     if (kDebugMode && !isConfigured) {
@@ -43,12 +45,12 @@ class GoogleMapsConfig {
 
   /// Get API key with fallback
   static String getApiKey() {
-    if (apiKey.isEmpty) {
+    if (_apiKey.isEmpty) {
       throw Exception(
           'Google Maps API key not configured. '
           'Add GOOGLE_MAPS_API_KEY to .env file or run with: '
           'flutter run --dart-define=GOOGLE_MAPS_API_KEY=your_api_key');
     }
-    return apiKey;
+    return _apiKey;
   }
 }

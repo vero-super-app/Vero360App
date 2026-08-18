@@ -10,16 +10,20 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
 
+import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_model.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_review_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
+import 'package:vero360_app/features/VeroCourier/VeroCourierService/courier_city.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/map_location_picker_screen.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
+import 'package:vero360_app/utils/merchant_contact_display.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
@@ -308,12 +312,33 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     try {
       final sp = await SharedPreferences.getInstance();
       final name = sp.getString('user_full_name') ?? sp.getString('name');
-      final phone = sp.getString('user_phone') ?? sp.getString('phone');
       final email = sp.getString('email');
+      var phone = sanitizedPhoneOrEmpty(
+        sp.getString('user_phone') ?? sp.getString('phone'),
+      );
+      phone = sanitizedPhoneOrEmpty(
+            FirebaseAuth.instance.currentUser?.phoneNumber,
+          ).isNotEmpty
+          ? sanitizedPhoneOrEmpty(FirebaseAuth.instance.currentUser?.phoneNumber)
+          : phone;
+      if (phone.isEmpty) {
+        final uid = FirebaseAuth.instance.currentUser?.uid;
+        if (uid != null && uid.isNotEmpty) {
+          try {
+            final doc = await FirebaseFirestore.instance
+                .collection('users')
+                .doc(uid)
+                .get();
+            phone = sanitizedPhoneOrEmpty(
+              '${doc.data()?['phone'] ?? doc.data()?['phoneNumber'] ?? ''}',
+            );
+          } catch (_) {}
+        }
+      }
       if (mounted) {
         setState(() {
           if (name?.trim().isNotEmpty == true) _nameCtrl.text = name!;
-          if (phone?.trim().isNotEmpty == true) _phoneCtrl.text = phone!;
+          _phoneCtrl.text = phone;
           if (email?.trim().isNotEmpty == true) _emailCtrl.text = email!;
         });
       }
@@ -426,15 +451,26 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
   void _toast(String msg, bool ok) =>
       ToastHelper.showCustomToast(context, msg, isSuccess: ok, errorMessage: '');
 
-  Future<void> _openMaps() async {
-    final q = _locationCtrl.text.trim();
-    final uri = Uri.parse(
-        'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(q.isEmpty ? 'delivery address' : q)}');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
-      _toast('Could not open Maps', false);
-    }
+  Future<void> _openMapPicker() async {
+    final place = await Navigator.of(context).push<Place>(
+      MaterialPageRoute(
+        builder: (_) => MapLocationPickerScreen(
+          selectAsDropoff: false,
+          initialLatitude: _deliveryLat,
+          initialLongitude: _deliveryLng,
+        ),
+      ),
+    );
+    if (!mounted || place == null) return;
+    setState(() {
+      _deliveryLat = place.latitude;
+      _deliveryLng = place.longitude;
+      if (place.address.trim().isNotEmpty) {
+        _locationCtrl.text = place.address.trim();
+      }
+    });
+    await _persistDropoffPin();
+    _toast('Exact pin saved', true);
   }
 
   Future<bool> _gpsSilent() async {
@@ -450,8 +486,8 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
       }
       final pos = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.medium,
-          timeLimit: Duration(seconds: 8),
+          accuracy: LocationAccuracy.best,
+          timeLimit: Duration(seconds: 12),
         ),
       );
       if (!mounted) return false;
@@ -480,6 +516,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
       await _fillAddressFromCoords(_deliveryLat!, _deliveryLng!);
     }
     if (mounted) _toast('Location pinned', true);
+    await _persistDropoffPin();
   }
 
   Future<bool> _geocodeSilent() async {
@@ -521,6 +558,64 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     }
   }
 
+  Future<void> _persistDropoffPin() async {
+    final lat = _deliveryLat;
+    final lng = _deliveryLng;
+    if (lat == null || lng == null) return;
+    final addr = _locationCtrl.text.trim();
+    final city = CourierCityHelper.resolve(addr);
+    final cityName =
+        city == null ? '' : CourierCityHelper.displayName(city);
+    AddressService.seedLocalDefaultPin(
+      description: addr.isEmpty
+          ? '${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}'
+          : addr,
+      city: cityName,
+      lat: lat,
+      lng: lng,
+    );
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setDouble('food_dropoff_lat', lat);
+      await sp.setDouble('food_dropoff_lng', lng);
+      if (addr.isNotEmpty) await sp.setString('food_dropoff_address', addr);
+    } catch (_) {}
+  }
+
+  Future<bool> _persistDeliveryForCheckout() async {
+    final phone = sanitizedPhoneOrEmpty(_phoneCtrl.text);
+    if (phone.isEmpty) {
+      _toast('Enter a real phone number (not a Firebase id).', false);
+      return false;
+    }
+    if (_nameCtrl.text.trim().isEmpty) {
+      _toast('Enter your name.', false);
+      return false;
+    }
+    if (_locationCtrl.text.trim().isEmpty) {
+      _toast('Enter your delivery address.', false);
+      return false;
+    }
+    if (_deliveryLat == null || _deliveryLng == null) {
+      final pinned = await _autoPinDelivery();
+      if (!pinned || _deliveryLat == null || _deliveryLng == null) {
+        _toast('Pin your exact location on the map so the courier can find you.', false);
+        return false;
+      }
+    }
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setString('phone', phone);
+      await sp.setString('user_phone', phone);
+      await sp.setString('user_full_name', _nameCtrl.text.trim());
+      await sp.setString('name', _nameCtrl.text.trim());
+      final email = _emailCtrl.text.trim();
+      if (email.isNotEmpty) await sp.setString('email', email);
+    } catch (_) {}
+    await _persistDropoffPin();
+    return true;
+  }
+
   String _kitchenKeyForFood(FoodModel item) {
     final rid = item.restaurantId?.trim();
     if (rid != null && rid.isNotEmpty) return 'r:$rid';
@@ -557,6 +652,11 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
 
   Future<void> _addFoodToCart({required bool goToCheckout}) async {
     if (_cartBusy) return;
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      _toast('Check your delivery details.', false);
+      return;
+    }
+    if (!await _persistDeliveryForCheckout()) return;
     final item = widget.foodItem;
     final mid = item.merchantId?.trim();
     if (mid == null || mid.isEmpty) {
@@ -993,7 +1093,14 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                         _field(ctrl: _phoneCtrl, label: 'Phone',
                             hint: '+265 99 123 4567',
                             keyboard: TextInputType.phone,
-                            required: true),
+                            required: true,
+                            customValidator: (v) {
+                              final t = sanitizedPhoneOrEmpty(v);
+                              if (t.isEmpty) {
+                                return 'Enter a real phone number';
+                              }
+                              return null;
+                            }),
                         const SizedBox(height: 10),
                         _field(ctrl: _emailCtrl,
                             label: 'Email (for receipt)',
@@ -1021,7 +1128,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                             const SizedBox(width: 10),
                             Column(children: [
                               const SizedBox(height: 22),
-                              _iconBtn(Icons.map_rounded, 'Maps', _openMaps),
+                              _iconBtn(Icons.map_rounded, 'Maps', _openMapPicker),
                               const SizedBox(height: 6),
                               _iconBtn(Icons.my_location_rounded, 'GPS',
                                   _gps),
@@ -1031,10 +1138,10 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                         Align(
                           alignment: Alignment.centerLeft,
                           child: TextButton.icon(
-                            onPressed: _geocodeTyped,
+                            onPressed: _openMapPicker,
                             icon: const Icon(Icons.pin_drop_outlined,
                                 size: 16, color: _veroOrange),
-                            label: const Text('Pin on map',
+                            label: const Text('Pin exact location on map',
                                 style: TextStyle(
                                     color: _veroOrange,
                                     fontWeight: FontWeight.w600,
@@ -1046,17 +1153,54 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                         ),
                         if (_deliveryLat != null && _deliveryLng != null)
                           Padding(
-                            padding: const EdgeInsets.only(bottom: 6),
-                            child: Row(children: [
-                              Icon(Icons.check_circle_rounded,
-                                  color: Colors.green.shade600, size: 14),
-                              const SizedBox(width: 4),
-                              Text('Coordinates saved',
-                                  style: TextStyle(
-                                      fontSize: 11,
-                                      color: Colors.green.shade700,
-                                      fontWeight: FontWeight.w600)),
-                            ]),
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(children: [
+                                  Icon(Icons.check_circle_rounded,
+                                      color: Colors.green.shade600, size: 14),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'Pin saved  ${_deliveryLat!.toStringAsFixed(5)}, ${_deliveryLng!.toStringAsFixed(5)}',
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.green.shade700,
+                                        fontWeight: FontWeight.w600),
+                                  ),
+                                ]),
+                                const SizedBox(height: 8),
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(14),
+                                  child: SizedBox(
+                                    height: 140,
+                                    width: double.infinity,
+                                    child: GoogleMap(
+                                      key: ValueKey(
+                                          'pin-${_deliveryLat!.toStringAsFixed(5)}-${_deliveryLng!.toStringAsFixed(5)}'),
+                                      initialCameraPosition: CameraPosition(
+                                        target: LatLng(
+                                            _deliveryLat!, _deliveryLng!),
+                                        zoom: 17.5,
+                                      ),
+                                      mapType: MapType.hybrid,
+                                      liteModeEnabled: true,
+                                      myLocationEnabled: false,
+                                      zoomControlsEnabled: false,
+                                      markers: {
+                                        Marker(
+                                          markerId:
+                                              const MarkerId('food_dropoff'),
+                                          position: LatLng(
+                                              _deliveryLat!, _deliveryLng!),
+                                        ),
+                                      },
+                                      onTap: (_) => _openMapPicker(),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
 
                         // Space so content clears the fixed bottom bar

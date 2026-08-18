@@ -37,26 +37,16 @@ final placeServiceProvider = Provider<PlaceService>((ref) {
   return PlaceService();
 });
 
-final googlePlacesServiceProvider = Provider<GooglePlacesService>((ref) {
+final googlePlacesServiceProvider = Provider<GooglePlacesService?>((ref) {
   final apiKey = GoogleMapsConfig.apiKey;
-  if (apiKey.isEmpty) {
-    throw Exception(
-      'Google Maps API key not configured. '
-      'Run: flutter run --dart-define=GOOGLE_MAPS_API_KEY=your_key'
-    );
-  }
+  if (apiKey.isEmpty) return null;
   return GooglePlacesService(apiKey: apiKey);
 });
 
 final googleDirectionsServiceProvider =
-    Provider<GoogleDirectionsService>((ref) {
+    Provider<GoogleDirectionsService?>((ref) {
   final apiKey = GoogleMapsConfig.apiKey;
-  if (apiKey.isEmpty) {
-    throw Exception(
-      'Google Maps API key not configured. '
-      'Run: flutter run --dart-define=GOOGLE_MAPS_API_KEY=your_key'
-    );
-  }
+  if (apiKey.isEmpty) return null;
   return GoogleDirectionsService(apiKey: apiKey);
 });
 
@@ -186,6 +176,7 @@ final placeSearchProvider =
   if (query.isEmpty) return [];
 
   final googlePlacesService = ref.watch(googlePlacesServiceProvider);
+  if (googlePlacesService == null) return [];
   return await googlePlacesService.autocompleteSearch(query);
 });
 
@@ -196,6 +187,7 @@ final placeDetailsProvider =
   if (placeId.isEmpty) return {};
 
   final googlePlacesService = ref.watch(googlePlacesServiceProvider);
+  if (googlePlacesService == null) return {};
   return await googlePlacesService.getPlaceDetails(placeId);
 });
 
@@ -238,6 +230,7 @@ final serpapiPlacesAutocompleteProvider =
   if (query.isEmpty) return [];
 
   final googlePlacesService = ref.watch(googlePlacesServiceProvider);
+  if (googlePlacesService == null) return [];
   return await googlePlacesService.autocompleteSearch(query);
 });
 
@@ -523,6 +516,14 @@ final routeProvider =
   (ref, places) async {
     final (pickupPlace, dropoffPlace) = places;
     final directionsService = ref.watch(googleDirectionsServiceProvider);
+    if (directionsService == null) {
+      return {
+        'distanceKm': 0.0,
+        'durationMinutes': 0,
+        'polyline': '',
+        'error': 'directions_unavailable',
+      };
+    }
 
     try {
       final routeInfo = await directionsService.getRouteInfo(
@@ -551,16 +552,17 @@ final routeProvider =
 /// Get accurate distance in kilometers between pickup and dropoff
 final distanceKmProvider =
     FutureProvider.family<double, (Place, Place)>((ref, places) async {
-  final (pickupPlace, dropoffPlace) = places;
-  final directionsService = ref.watch(googleDirectionsServiceProvider);
+    final (pickupPlace, dropoffPlace) = places;
+    final directionsService = ref.watch(googleDirectionsServiceProvider);
+    if (directionsService == null) return 0.0;
 
-  try {
-    final routeInfo = await directionsService.getRouteInfo(
-      originLat: pickupPlace.latitude,
-      originLng: pickupPlace.longitude,
-      destLat: dropoffPlace.latitude,
-      destLng: dropoffPlace.longitude,
-    );
+    try {
+      final routeInfo = await directionsService.getRouteInfo(
+        originLat: pickupPlace.latitude,
+        originLng: pickupPlace.longitude,
+        destLat: dropoffPlace.latitude,
+        destLng: dropoffPlace.longitude,
+      );
     return routeInfo.distanceKm;
   } catch (e) {
     return 0.0;
@@ -570,16 +572,17 @@ final distanceKmProvider =
 /// Get estimated duration in minutes between pickup and dropoff
 final durationMinutesProvider =
     FutureProvider.family<int, (Place, Place)>((ref, places) async {
-  final (pickupPlace, dropoffPlace) = places;
-  final directionsService = ref.watch(googleDirectionsServiceProvider);
+    final (pickupPlace, dropoffPlace) = places;
+    final directionsService = ref.watch(googleDirectionsServiceProvider);
+    if (directionsService == null) return 0;
 
-  try {
-    final routeInfo = await directionsService.getRouteInfo(
-      originLat: pickupPlace.latitude,
-      originLng: pickupPlace.longitude,
-      destLat: dropoffPlace.latitude,
-      destLng: dropoffPlace.longitude,
-    );
+    try {
+      final routeInfo = await directionsService.getRouteInfo(
+        originLat: pickupPlace.latitude,
+        originLng: pickupPlace.longitude,
+        destLat: dropoffPlace.latitude,
+        destLng: dropoffPlace.longitude,
+      );
     return routeInfo.durationMinutes;
   } catch (e) {
     return 0;

@@ -29,6 +29,7 @@ import 'package:vero360_app/GernalServices/order_service.dart' as order_svc;
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierService/courier_city.dart';
+import 'package:vero360_app/utils/merchant_contact_display.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -551,13 +552,44 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
         _defaultAddr = def;
         _loadingAddr = false;
       });
+      await _applyFoodDropoffPin();
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _loggedIn = true;
         _loadingAddr = false;
       });
+      await _applyFoodDropoffPin();
     }
+  }
+
+  Future<void> _applyFoodDropoffPin() async {
+    if (!_isFoodCheckout || !mounted) return;
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final lat = sp.getDouble('food_dropoff_lat');
+      final lng = sp.getDouble('food_dropoff_lng');
+      if (lat == null || lng == null) return;
+      final addrText = (sp.getString('food_dropoff_address') ?? '').trim();
+      if (!mounted) return;
+      final cur = _defaultAddr;
+      setState(() {
+        _defaultAddr = Address(
+          id: cur?.id ?? 'local-food-pin',
+          addressType: cur?.addressType ?? AddressType.home,
+          city: cur?.city ?? '',
+          description:
+              addrText.isNotEmpty ? addrText : (cur?.description ?? ''),
+          isDefault: true,
+          isGoogle: true,
+          formattedAddress:
+              addrText.isNotEmpty ? addrText : (cur?.formattedAddress ?? ''),
+          placeId: cur?.placeId ?? '',
+          lat: lat,
+          lng: lng,
+        );
+      });
+    } catch (_) {}
   }
 
   Future<bool> _ensureDefaultAddressIfNeeded() async {
@@ -1683,10 +1715,11 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
                 prefs.getString('name') ??
                 '')
             .trim();
-        customerPhone = (prefs.getString('user_phone') ??
-                prefs.getString('phone') ??
-                '')
-            .trim();
+        customerPhone = sanitizedPhoneOrEmpty(
+          prefs.getString('user_phone') ??
+              prefs.getString('phone') ??
+              FirebaseAuth.instance.currentUser?.phoneNumber,
+        );
         customerEmail = (prefs.getString('email') ??
                 FirebaseAuth.instance.currentUser?.email ??
                 '')
@@ -1695,8 +1728,12 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
           addr?.description,
           addr?.city,
         ].where((e) => e != null && e.trim().isNotEmpty).join(', ');
-        deliveryLat = addr?.lat;
-        deliveryLng = addr?.lng;
+        final pinAddr = (prefs.getString('food_dropoff_address') ?? '').trim();
+        if (deliveryAddress.trim().isEmpty && pinAddr.isNotEmpty) {
+          deliveryAddress = pinAddr;
+        }
+        deliveryLat = prefs.getDouble('food_dropoff_lat') ?? addr?.lat;
+        deliveryLng = prefs.getDouble('food_dropoff_lng') ?? addr?.lng;
         for (final line in foodLines) {
           lineItems.add(FoodOrderLineItem(
             menuItemId: '${line.item}',
@@ -1719,12 +1756,16 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
       final totalMwk = subtotalMwk + deliveryFeeMwk + serviceFeeMwk;
 
       String pickupAddress = '';
+      double? pickupLat;
+      double? pickupLng;
       try {
         final restSvc = RestaurantService();
         final rest = restaurantId.trim().isNotEmpty
             ? await restSvc.fetchRestaurantById(restaurantId)
             : await restSvc.fetchRestaurantByOwnerUid(merchantId);
         pickupAddress = (rest?.address ?? '').trim();
+        pickupLat = rest?.latitude;
+        pickupLng = rest?.longitude;
       } catch (e) {
         debugPrint('[InAppPaymentPage] restaurant pickup lookup failed: $e');
       }
@@ -1772,6 +1813,8 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
             .toList(),
         if (customerNote != null && customerNote.trim().isNotEmpty)
           'customerNote': customerNote.trim(),
+        if (pickupLat != null) 'pickupLat': pickupLat,
+        if (pickupLng != null) 'pickupLng': pickupLng,
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });

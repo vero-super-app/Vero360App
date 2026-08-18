@@ -223,7 +223,14 @@ class RoleSessionService {
       await prefs.setString('email', email.trim());
     }
     if (phone.trim().isNotEmpty) {
-      await prefs.setString('phone', phone.trim());
+      final cleaned = phone.trim();
+      final lower = cleaned.toLowerCase();
+      final looksLikeFirebaseId = lower.contains('firebase') ||
+          lower.contains('firestore') ||
+          lower.startsWith('+firebase');
+      if (!looksLikeFirebaseId) {
+        await prefs.setString('phone', cleaned);
+      }
     }
     if (pic.trim().isNotEmpty) {
       await prefs.setString('profilepicture', pic.trim());

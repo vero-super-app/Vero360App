@@ -344,8 +344,11 @@ class _SearchInputState extends ConsumerState<_SearchInput> {
         );
       }
 
-      final place = await ref
-          .read(googlePlacesServiceProvider)
+      final placesService = ref.read(googlePlacesServiceProvider);
+      if (placesService == null) {
+        throw Exception('Places is unavailable');
+      }
+      final place = await placesService
           .resolvePrediction(placePrediction)
           .timeout(const Duration(seconds: 20));
 
@@ -533,8 +536,12 @@ class _SearchInputState extends ConsumerState<_SearchInput> {
                         ),
                         onPressed: () async {
                           try {
-                            final place = await ref
-                                .read(googlePlacesServiceProvider)
+                            final placesService =
+                                ref.read(googlePlacesServiceProvider);
+                            if (placesService == null) {
+                              throw Exception('Places is unavailable');
+                            }
+                            final place = await placesService
                                 .resolvePrediction(prediction);
                             await BookmarkedPlacesManager.toggleFavorite(
                               ref,

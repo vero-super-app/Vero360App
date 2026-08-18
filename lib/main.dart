@@ -97,7 +97,7 @@ void _openPasswordResetFromDeepLink(Uri uri) {
 Widget merchantDashboardFromPrefs(String email, SharedPreferences prefs) {
   final displayEmail =
       email.trim().isNotEmpty ? email : (prefs.getString('email') ?? '');
-  return Bottomnavbar(email: displayEmail, initialIndex: 4);
+  return Bottomnavbar(email: displayEmail, initialIndex: 0);
 }
 
 /// Set in [MyApp] initState; used by [OnboardingGate] to re-run role-based shell redirect.
@@ -302,14 +302,12 @@ class _AppBootstrapState extends State<AppBootstrap> {
     super.initState();
     _bootFuture = _boot();
 
-    // Stagger heavy native init so 2GB phones finish first paint without LMK.
+    unawaited(GoogleMapsConfig.initialize());
+
+    // Stagger notification init so 2GB phones finish first paint without LMK.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(() async {
-        await Future<void>.delayed(const Duration(milliseconds: 1800));
-        try {
-          await GoogleMapsConfig.initialize();
-        } catch (_) {}
-        await Future<void>.delayed(const Duration(milliseconds: 600));
+        await Future<void>.delayed(const Duration(milliseconds: 2400));
         try {
           await NotificationService.instance.initialize();
           NotificationService.setNavigatorKey(navKey);
@@ -337,6 +335,10 @@ class _AppBootstrapState extends State<AppBootstrap> {
           await Firebase.initializeApp(options: _kFirebaseOptions);
         } catch (_) {}
       }
+
+      try {
+        await GoogleMapsConfig.initialize();
+      } catch (_) {}
 
       if (mounted) {
         setState(() {

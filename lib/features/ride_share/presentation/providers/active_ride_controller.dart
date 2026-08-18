@@ -1,18 +1,14 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
-import 'package:vero360_app/features/ride_share/presentation/pages/driver_ride_execution_screen.dart';
-import 'package:vero360_app/features/ride_share/presentation/pages/passenger_ride_tracking_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/features/ride_share/services/active_ride_location_tracker.dart';
 import 'package:vero360_app/features/ride_share/services/active_ride_storage.dart';
-import 'package:vero360_app/app_nav_key.dart';
 
 /// Coordinates persistence, location tracking, and cold-start resume for active rides.
 class ActiveRideController {
@@ -122,7 +118,7 @@ class ActiveRideController {
           status: match.first.status,
           taxiId: persisted.taxiId,
         );
-        _navigateToDriverExecution(persisted.rideId);
+        // Stay on Home — do not auto-push the ride map on launch.
       } else {
         final http = _ref.read(rideShareHttpServiceProvider);
         final active = await http.getActiveRidesForPassenger();
@@ -135,33 +131,13 @@ class ActiveRideController {
         await _ref
             .read(rideLifecycleProvider.notifier)
             .subscribeToRideAsPassenger(persisted.rideId);
-        _navigateToPassengerTracking(persisted.rideId);
+        // Stay on Home — user opens tracking from Ride Share when they want it.
       }
     } catch (e) {
       if (kDebugMode) {
         debugPrint('[ActiveRideController] resume failed: $e');
       }
     }
-  }
-
-  void _navigateToDriverExecution(int rideId) {
-    final nav = appNavKey.currentState;
-    if (nav == null) return;
-    nav.push(
-      MaterialPageRoute(
-        builder: (_) => DriverRideExecutionScreen(rideId: rideId),
-      ),
-    );
-  }
-
-  void _navigateToPassengerTracking(int rideId) {
-    final nav = appNavKey.currentState;
-    if (nav == null) return;
-    nav.push(
-      MaterialPageRoute(
-        builder: (_) => PassengerRideTrackingScreen(rideId: rideId),
-      ),
-    );
   }
 
   void dispose() {

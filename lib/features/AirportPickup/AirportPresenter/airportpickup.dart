@@ -76,6 +76,7 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
   String? _serviceCity; // Lilongwe / Blantyre / null
   bool _locating = true;
   bool _submitting = false;
+  bool _myLocationEnabled = false;
 
   _Airport? _selectedAirport;
   LatLng? _dropoff;
@@ -239,6 +240,10 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
           perm == LocationPermission.deniedForever) {
         _setOutsideOrUnknownLocation();
         return;
+      }
+
+      if (mounted) {
+        setState(() => _myLocationEnabled = true);
       }
 
       final pos = await Geolocator.getCurrentPosition(
@@ -614,8 +619,8 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
                 GoogleMap(
                   initialCameraPosition: _initialCamera,
                   mapType: MapType.hybrid,
-                  myLocationEnabled: true,
-                  myLocationButtonEnabled: true,
+                  myLocationEnabled: _myLocationEnabled,
+                  myLocationButtonEnabled: _myLocationEnabled,
                   markers: _markers,
                   polylines: _routePolylines,
                   onMapCreated: _onMapCreated,

@@ -235,7 +235,10 @@ class _LoginScreenState extends State<LoginScreen> {
       await prefs.remove('name');
     }
     final phoneVal = (user['phone'] ?? user['phoneNumber'] ?? user['mobile'] ?? '').toString().trim();
-    if (phoneVal.isNotEmpty) {
+    final phoneLower = phoneVal.toLowerCase();
+    if (phoneVal.isNotEmpty &&
+        !phoneLower.contains('firebase') &&
+        !phoneLower.startsWith('+firebase')) {
       await prefs.setString('phone', phoneVal);
     }
 

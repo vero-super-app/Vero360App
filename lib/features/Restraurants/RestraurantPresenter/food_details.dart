@@ -11,17 +11,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:vero360_app/GeneralPages/address.dart';
 import 'package:vero360_app/GeneralModels/address_model.dart';
+import 'package:vero360_app/GeneralModels/place_model.dart';
+import 'package:vero360_app/GeneralPages/address.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_share_link.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_review_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
+import 'package:vero360_app/features/VeroCourier/VeroCourierService/courier_city.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/map_location_picker_screen.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
@@ -353,6 +358,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
         _deliveryLng = addr.lng;
       }
     });
+    unawaited(_persistDropoffPin());
   }
 
   /// Prefill delivery from account address cache (checkout uses the same data).
@@ -451,6 +457,28 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     } catch (_) {}
   }
 
+  Future<void> _openMapPicker() async {
+    final place = await Navigator.of(context).push<Place>(
+      MaterialPageRoute(
+        builder: (_) => MapLocationPickerScreen(
+          selectAsDropoff: false,
+          initialLatitude: _deliveryLat,
+          initialLongitude: _deliveryLng,
+        ),
+      ),
+    );
+    if (!mounted || place == null) return;
+    setState(() {
+      _deliveryLat = place.latitude;
+      _deliveryLng = place.longitude;
+      if (place.address.trim().isNotEmpty) {
+        _deliveryAddressLine = place.address.trim();
+      }
+    });
+    await _persistDropoffPin();
+    _toast('Exact pin saved', true);
+  }
+
   Future<bool> _gpsSilent() async {
     try {
       if (!await Geolocator.isLocationServiceEnabled()) return false;
@@ -464,8 +492,8 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
       }
       final pos = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.medium,
-          timeLimit: Duration(seconds: 8),
+          accuracy: LocationAccuracy.best,
+          timeLimit: Duration(seconds: 12),
         ),
       );
       if (!mounted) return false;
@@ -480,6 +508,29 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     } catch (_) {
       return false;
     }
+  }
+
+  Future<void> _persistDropoffPin() async {
+    final lat = _deliveryLat;
+    final lng = _deliveryLng;
+    if (lat == null || lng == null) return;
+    final addr = _deliveryAddressLine.trim();
+    final city = CourierCityHelper.resolve(addr);
+    final cityName = city == null ? '' : CourierCityHelper.displayName(city);
+    AddressService.seedLocalDefaultPin(
+      description: addr.isEmpty
+          ? '${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}'
+          : addr,
+      city: cityName,
+      lat: lat,
+      lng: lng,
+    );
+    try {
+      final sp = await SharedPreferences.getInstance();
+      await sp.setDouble('food_dropoff_lat', lat);
+      await sp.setDouble('food_dropoff_lng', lng);
+      if (addr.isNotEmpty) await sp.setString('food_dropoff_address', addr);
+    } catch (_) {}
   }
 
   String _kitchenKeyForFood(FoodModel item) {
@@ -518,6 +569,14 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
 
   Future<void> _addFoodToCart({required bool goToCheckout}) async {
     if (_cartBusy) return;
+    if (_deliveryLat == null || _deliveryLng == null) {
+      final pinned = await _autoPinDelivery();
+      if (!pinned || _deliveryLat == null || _deliveryLng == null) {
+        _toast('Pin your exact location so the courier can find you.', false);
+        return;
+      }
+    }
+    await _persistDropoffPin();
     final item = widget.foodItem;
     final mid = item.merchantId?.trim();
     if (mid == null || mid.isEmpty) {
@@ -718,7 +777,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                 ),
               ],
             ),
-          if (_loggedIn) ...[
+            if (_loggedIn) ...[
             const SizedBox(height: 8),
             Text(
               'Name, email, and phone are filled from your account at checkout.',
@@ -728,6 +787,51 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                 height: 1.35,
               ),
             ),
+            const SizedBox(height: 4),
+            TextButton.icon(
+              onPressed: _openMapPicker,
+              icon: const Icon(Icons.pin_drop_outlined, size: 16),
+              label: const Text(
+                'Pin exact location on map',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+              ),
+              style: TextButton.styleFrom(
+                foregroundColor: _veroOrange,
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(0, 30),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+            if (_deliveryLat != null && _deliveryLng != null) ...[
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: SizedBox(
+                  height: 140,
+                  width: double.infinity,
+                  child: GoogleMap(
+                    key: ValueKey(
+                      'pin-${_deliveryLat!.toStringAsFixed(5)}-${_deliveryLng!.toStringAsFixed(5)}',
+                    ),
+                    initialCameraPosition: CameraPosition(
+                      target: LatLng(_deliveryLat!, _deliveryLng!),
+                      zoom: 17.5,
+                    ),
+                    mapType: MapType.normal,
+                    liteModeEnabled: true,
+                    myLocationEnabled: false,
+                    zoomControlsEnabled: false,
+                    markers: {
+                      Marker(
+                        markerId: const MarkerId('food_dropoff'),
+                        position: LatLng(_deliveryLat!, _deliveryLng!),
+                      ),
+                    },
+                    onTap: (_) => _openMapPicker(),
+                  ),
+                ),
+              ),
+            ],
           ],
         ],
       ),

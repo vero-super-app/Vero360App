@@ -98,6 +98,13 @@ class LocationPermissionHelper {
     return issue;
   }
 
+  /// Returns `true` when the user has granted always (background) location.
+  static Future<bool> isAlwaysGranted({bool forceRefresh = false}) async {
+    if (!await isAccessGranted(forceRefresh: forceRefresh)) return false;
+    final permission = await Geolocator.checkPermission();
+    return permission == LocationPermission.always;
+  }
+
   /// Returns `true` when location services and permission are available.
   static Future<bool> isAccessGranted({bool forceRefresh = false}) async {
     if (!forceRefresh && isKnownGranted) {

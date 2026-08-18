@@ -10,6 +10,7 @@ import 'package:vero360_app/config/map_style_constants.dart';
 import 'package:vero360_app/providers/ride_share/nearby_vehicles_provider.dart';
 import 'package:vero360_app/GernalServices/nearby_vehicles_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
+import 'package:vero360_app/GernalServices/location_permission_helper.dart';
 import 'package:vero360_app/utils/low_ram_android.dart';
 
 class MapViewWidget extends ConsumerStatefulWidget {
@@ -46,23 +47,28 @@ class MapViewWidget extends ConsumerStatefulWidget {
   ConsumerState<MapViewWidget> createState() => _MapViewWidgetState();
 }
 
-class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
-  late GoogleMapController _mapController;
+class _MapViewWidgetState extends ConsumerState<MapViewWidget>
+    with WidgetsBindingObserver {
+  GoogleMapController? _mapController;
   late Set<Marker> _markers;
   late Set<Polyline> _polylines;
   late CameraPosition _initialCameraPosition;
-  late BitmapDescriptor _taxiMarkerIcon;
+  BitmapDescriptor _taxiMarkerIcon = BitmapDescriptor.defaultMarker;
+  bool _myLocationEnabled = false;
 
   bool get _nearbyEnabled => !widget.trackingMode && widget.showNearbyVehicles;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _markers = {};
     _polylines = {};
+    _myLocationEnabled = LocationPermissionHelper.isKnownGranted;
     _initializeCameraPosition();
 
     _loadMapStyle();
+    _refreshLocationEnabled();
 
     if (_nearbyEnabled) {
       _loadTaxiMarkerIcon();
@@ -89,6 +95,19 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
     });
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refreshLocationEnabled();
+    }
+  }
+
+  Future<void> _refreshLocationEnabled() async {
+    final granted = await LocationPermissionHelper.isAccessGranted();
+    if (!mounted || granted == _myLocationEnabled) return;
+    setState(() => _myLocationEnabled = granted);
+  }
+
   Future<void> _loadMapStyle() async {
     try {
       final styleString = await MapStyleConstants.loadMapStyle();
@@ -106,22 +125,10 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
   }
 
   Future<void> _loadTaxiMarkerIcon() async {
-    try {
-      // Load the custom car marker PNG (2000x2000) and scale to 120x120 for map display
-      _taxiMarkerIcon = await BitmapDescriptor.fromAssetImage(
-        const ImageConfiguration(size: Size(120, 120)),
-        'assets/icons/car-location-marker.png',
-      );
-      if (kDebugMode) {
-        debugPrint('[MapViewWidget] Taxi marker icon loaded successfully');
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[MapViewWidget] Error loading taxi marker icon: $e');
-      }
-      // Fallback to default marker
-      _taxiMarkerIcon = BitmapDescriptor.defaultMarker;
-    }
+    // Custom PNG is not in the bundle; a missing asset decode can abort iOS.
+    _taxiMarkerIcon = BitmapDescriptor.defaultMarkerWithHue(
+      BitmapDescriptor.hueOrange,
+    );
   }
 
   @override
@@ -138,6 +145,8 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
     if (oldWidget.driverLocation != widget.driverLocation) {
       _updateDriverMarker();
     }
+
+    _refreshLocationEnabled();
 
     final oldPos = oldWidget.initialPosition;
     final newPos = widget.initialPosition;
@@ -411,7 +420,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
     // Smooth animation with more padding and longer duration
     Future.delayed(const Duration(milliseconds: 100), () {
       if (mounted) {
-        _mapController.animateCamera(
+        _mapController?.animateCamera(
           CameraUpdate.newLatLngBounds(bounds, 150),
         );
       }
@@ -426,7 +435,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
   }) {
     Future.delayed(const Duration(milliseconds: 50), () {
       if (mounted) {
-        _mapController.animateCamera(
+        _mapController?.animateCamera(
           CameraUpdate.newCameraPosition(
             CameraPosition(
               target: LatLng(latitude, longitude),
@@ -529,21 +538,24 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
   }
 
   Widget _buildGoogleMap() {
+    final isiOS = defaultTargetPlatform == TargetPlatform.iOS;
     return GoogleMap(
       onMapCreated: _onMapCreated,
       initialCameraPosition: _initialCameraPosition,
       markers: _markers,
       polylines: _polylines,
-      mapType: MapType.hybrid,
-      style: MapStyleConstants.mapStyle.isNotEmpty
+      mapType: isiOS ? MapType.normal : MapType.hybrid,
+      style: (!LowRamAndroid.isAndroid &&
+              !isiOS &&
+              MapStyleConstants.mapStyle.isNotEmpty)
           ? MapStyleConstants.mapStyle
           : null,
-      myLocationEnabled: true,
-      myLocationButtonEnabled: true,
+      myLocationEnabled: _myLocationEnabled,
+      myLocationButtonEnabled: _myLocationEnabled,
       zoomControlsEnabled: !LowRamAndroid.isAndroid,
       mapToolbarEnabled: false,
       compassEnabled: !LowRamAndroid.isAndroid,
-      buildingsEnabled: !LowRamAndroid.isAndroid,
+      buildingsEnabled: !isiOS && !LowRamAndroid.isAndroid,
       indoorViewEnabled: false,
       trafficEnabled: false,
     );
@@ -551,7 +563,9 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget> {
 
   @override
   void dispose() {
-    _mapController.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    // GoogleMap owns the native controller; disposing it here can crash iOS.
+    _mapController = null;
     super.dispose();
   }
 }

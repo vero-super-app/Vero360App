@@ -94,6 +94,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
     try {
       // Get accurate distance and duration from Google Directions API
       final directionsService = ref.read(googleDirectionsServiceProvider);
+      if (directionsService == null) return;
       final routeInfo = await directionsService.getRouteInfo(
         originLat: widget.userLat,
         originLng: widget.userLng,

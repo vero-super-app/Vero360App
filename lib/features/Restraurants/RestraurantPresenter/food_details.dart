@@ -24,6 +24,7 @@ import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_
 import 'package:vero360_app/features/Restraurants/Models/food_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_share_link.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_review_service.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantsService/food_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierService/courier_city.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/map_location_picker_screen.dart';
@@ -204,6 +205,8 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
   String _deliveryAddressLine = '';
   Timer? _heroAutoSlide;
   final _addressService = AddressService();
+  List<FoodModel> _moreFromKitchen = [];
+  bool _moreKitchenLoading = true;
 
   List<String> get _heroImages {
     final item = widget.foodItem;
@@ -274,6 +277,27 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     }
     _hydrateDefaultsFast();
     _startHeroAutoSlide();
+    unawaited(_loadMoreFromKitchen());
+  }
+
+  Future<void> _loadMoreFromKitchen() async {
+    final item = widget.foodItem;
+    try {
+      final list = await FoodService().fetchFromSameKitchen(
+        restaurantId: item.restaurantId,
+        merchantId: item.merchantId,
+        kitchenName: item.RestrauntName,
+        exclude: item,
+        limit: 24,
+      );
+      if (!mounted) return;
+      setState(() {
+        _moreFromKitchen = list;
+        _moreKitchenLoading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _moreKitchenLoading = false);
+    }
   }
 
   void _startHeroAutoSlide() {
@@ -686,6 +710,155 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
 
   void _toast(String msg, bool ok) =>
       ToastHelper.showCustomToast(context, msg, isSuccess: ok, errorMessage: '');
+
+  String _coverFor(FoodModel item) {
+    final primary = item.FoodImage.trim();
+    if (primary.isNotEmpty) return primary;
+    for (final g in item.gallery) {
+      if (g.trim().isNotEmpty) return g.trim();
+    }
+    return '';
+  }
+
+  void _openKitchenExplore() {
+    final kitchen = widget.foodItem.RestrauntName.trim().isEmpty
+        ? 'this kitchen'
+        : widget.foodItem.RestrauntName.trim();
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _KitchenExplorePage(
+          kitchenName: kitchen,
+          items: _moreFromKitchen,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMoreFromKitchen() {
+    if (_moreKitchenLoading) {
+      return const SizedBox(
+        height: 80,
+        child: Center(
+          child: SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(strokeWidth: 2, color: _veroOrange),
+          ),
+        ),
+      );
+    }
+    if (_moreFromKitchen.isEmpty) return const SizedBox.shrink();
+    final preview = _moreFromKitchen.take(6).toList();
+    final kitchen = widget.foodItem.RestrauntName.trim().isEmpty
+        ? 'this kitchen'
+        : widget.foodItem.RestrauntName.trim();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'More from $kitchen',
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+            color: _ink,
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 168,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: preview.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            itemBuilder: (context, i) {
+              final f = preview[i];
+              final img = _coverFor(f);
+              return InkWell(
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => FoodDetailsPage(foodItem: f),
+                    ),
+                  );
+                },
+                borderRadius: BorderRadius.circular(16),
+                child: SizedBox(
+                  width: 132,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(14),
+                        child: SizedBox(
+                          height: 100,
+                          width: 132,
+                          child: img.isEmpty
+                              ? Container(
+                                  color: const Color(0xFFFFF4E8),
+                                  child: const Icon(
+                                    Icons.restaurant_menu_rounded,
+                                    color: _veroOrange,
+                                  ),
+                                )
+                              : ResilientCachedNetworkImage(
+                                  url: img,
+                                  height: 100,
+                                  width: 132,
+                                  memCacheWidth: 264,
+                                  showSpinner: false,
+                                  placeholderColor: const Color(0xFFFFF4E8),
+                                ),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        f.FoodName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12.5,
+                          color: _ink,
+                        ),
+                      ),
+                      Text(
+                        'MWK ${NumberFormat('#,##0').format(f.price.round())}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 12,
+                          color: _veroOrange,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton(
+            onPressed: _openKitchenExplore,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _veroOrange,
+              side: const BorderSide(color: _veroOrange, width: 1.4),
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            child: const Text(
+              'Explore more food',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _buildDeliverToCard() {
     return Container(
@@ -1133,6 +1306,13 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                           ),
                         ),
 
+                        if (_moreKitchenLoading || _moreFromKitchen.isNotEmpty) ...[
+                          const SizedBox(height: 24),
+                          const Divider(height: 1, color: _divider),
+                          const SizedBox(height: 20),
+                          _buildMoreFromKitchen(),
+                        ],
+
                         const SizedBox(height: 24),
                         const Divider(height: 1, color: _divider),
                         const SizedBox(height: 20),
@@ -1530,6 +1710,130 @@ class _KitchenReviewsPane extends StatelessWidget {
           },
         );
       },
+    );
+  }
+}
+
+class _KitchenExplorePage extends StatelessWidget {
+  const _KitchenExplorePage({
+    required this.kitchenName,
+    required this.items,
+  });
+
+  final String kitchenName;
+  final List<FoodModel> items;
+
+  String _cover(FoodModel item) {
+    final primary = item.FoodImage.trim();
+    if (primary.isNotEmpty) return primary;
+    for (final g in item.gallery) {
+      if (g.trim().isNotEmpty) return g.trim();
+    }
+    return '';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        title: Text('More from $kitchenName'),
+        backgroundColor: _veroOrange,
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      body: items.isEmpty
+          ? Center(
+              child: Text(
+                'No other dishes from this kitchen yet.',
+                style: TextStyle(color: Colors.grey.shade600),
+              ),
+            )
+          : ListView.separated(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+              itemCount: items.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 12),
+              itemBuilder: (context, i) {
+                final f = items[i];
+                final img = _cover(f);
+                return Material(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: () {
+                      Navigator.of(context).pushReplacement(
+                        MaterialPageRoute<void>(
+                          builder: (_) => FoodDetailsPage(foodItem: f),
+                        ),
+                      );
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: _divider),
+                      ),
+                      child: Row(
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: SizedBox(
+                              width: 72,
+                              height: 72,
+                              child: img.isEmpty
+                                  ? Container(
+                                      color: const Color(0xFFFFF4E8),
+                                      child: const Icon(
+                                        Icons.restaurant_menu_rounded,
+                                        color: _veroOrange,
+                                      ),
+                                    )
+                                  : ResilientCachedNetworkImage(
+                                      url: img,
+                                      width: 72,
+                                      height: 72,
+                                      memCacheWidth: 160,
+                                      showSpinner: false,
+                                      placeholderColor: const Color(0xFFFFF4E8),
+                                    ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  f.FoodName,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 15,
+                                    color: _ink,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'MWK ${NumberFormat('#,##0').format(f.price.round())}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    color: _veroOrange,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Icon(Icons.chevron_right_rounded,
+                              color: Colors.black26),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
     );
   }
 }

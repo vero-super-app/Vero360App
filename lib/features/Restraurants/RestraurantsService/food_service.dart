@@ -173,6 +173,7 @@ class FoodService {
         final mid = data['merchantId']?.toString().trim();
         final rid = data['restaurantId']?.toString().trim();
         final cat = '${data['category'] ?? ''}'.trim();
+        final gallery = _pickGallery(data);
         out.add(FoodModel.fromJson({
           ...Map<String, dynamic>.from(data),
           'id': doc.id.hashCode.abs() % 2000000000,
@@ -181,7 +182,9 @@ class FoodService {
           'RestrauntName': seller,
           'price': price,
           'category': cat.isEmpty ? 'Meals' : cat,
-          'gallery': img.isEmpty ? const [] : [img],
+          'gallery': gallery.isNotEmpty
+              ? gallery
+              : (img.isEmpty ? const [] : [img]),
           'merchantId': (mid != null && mid.isNotEmpty) ? mid : null,
           'restaurantId': (rid != null && rid.isNotEmpty) ? rid : null,
           'firestoreListingId': doc.id,
@@ -382,6 +385,67 @@ class FoodService {
       return sortByDistanceToUser(filtered, latitude, longitude);
     }
     return filtered;
+  }
+
+  static bool isSameKitchen(
+    FoodModel item, {
+    String? restaurantId,
+    String? merchantId,
+    String? kitchenName,
+  }) {
+    final rid = restaurantId?.trim() ?? '';
+    final mid = merchantId?.trim() ?? '';
+    final name = kitchenName?.trim().toLowerCase() ?? '';
+    final fr = item.restaurantId?.trim() ?? '';
+    final fm = item.merchantId?.trim() ?? '';
+    final fn = item.RestrauntName.trim().toLowerCase();
+    if (rid.isNotEmpty && fr == rid) return true;
+    if (mid.isNotEmpty && fm == mid) return true;
+    if (rid.isEmpty &&
+        mid.isEmpty &&
+        name.isNotEmpty &&
+        fn == name) {
+      return true;
+    }
+    return false;
+  }
+
+  static bool isSameDish(FoodModel a, FoodModel b) {
+    final aid = a.firestoreListingId?.trim() ?? '';
+    final bid = b.firestoreListingId?.trim() ?? '';
+    if (aid.isNotEmpty && aid == bid) return true;
+    if (a.id != 0 && a.id == b.id) return true;
+    return a.FoodName.trim().toLowerCase() == b.FoodName.trim().toLowerCase() &&
+        a.RestrauntName.trim().toLowerCase() ==
+            b.RestrauntName.trim().toLowerCase();
+  }
+
+  /// Other dishes from the same kitchen (menu + marketplace food listings).
+  Future<List<FoodModel>> fetchFromSameKitchen({
+    String? restaurantId,
+    String? merchantId,
+    String? kitchenName,
+    FoodModel? exclude,
+    int limit = 24,
+  }) async {
+    final menu = await _fetchFirestoreFoodMenuItems();
+    final listings = await _fetchFirestoreFoodListings();
+    final merged = _mergeFoodLists(menu, listings);
+    final out = <FoodModel>[];
+    for (final f in merged) {
+      if (exclude != null && isSameDish(f, exclude)) continue;
+      if (!isSameKitchen(
+        f,
+        restaurantId: restaurantId,
+        merchantId: merchantId,
+        kitchenName: kitchenName,
+      )) {
+        continue;
+      }
+      out.add(f);
+      if (out.length >= limit) break;
+    }
+    return out;
   }
 
   /// Photo search

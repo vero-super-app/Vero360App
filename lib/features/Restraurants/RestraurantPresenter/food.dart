@@ -26,7 +26,21 @@ import 'package:vero360_app/widgets/app_skeleton.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 class FoodPage extends StatefulWidget {
-  const FoodPage({super.key});
+  const FoodPage({
+    super.key,
+    this.kitchenRestaurantId,
+    this.kitchenMerchantId,
+    this.kitchenName,
+  });
+
+  final String? kitchenRestaurantId;
+  final String? kitchenMerchantId;
+  final String? kitchenName;
+
+  bool get _kitchenFilter =>
+      (kitchenRestaurantId?.trim().isNotEmpty ?? false) ||
+      (kitchenMerchantId?.trim().isNotEmpty ?? false) ||
+      (kitchenName?.trim().isNotEmpty ?? false);
 
   @override
   _FoodPageState createState() => _FoodPageState();
@@ -190,6 +204,18 @@ class _FoodPageState extends State<FoodPage> {
     super.dispose();
   }
 
+  List<FoodModel> _filterKitchen(List<FoodModel> items) {
+    if (!widget._kitchenFilter) return items;
+    return items
+        .where((f) => FoodService.isSameKitchen(
+              f,
+              restaurantId: widget.kitchenRestaurantId,
+              merchantId: widget.kitchenMerchantId,
+              kitchenName: widget.kitchenName,
+            ))
+        .toList();
+  }
+
   // ── Data helpers ───────────────────────────────────────────────────────────
   List<FoodModel> _sortByDistanceIfPossible(List<FoodModel> items) {
     final p = _userPosition;
@@ -205,7 +231,7 @@ class _FoodPageState extends State<FoodPage> {
         longitude: _userPosition?.longitude,
         radiusKm:  _radiusKm,
       );
-      final sorted = _sortByDistanceIfPossible(items);
+      final sorted = _sortByDistanceIfPossible(_filterKitchen(items));
       _precacheFoodImages(sorted);
       return sorted;
     } finally {
@@ -224,7 +250,7 @@ class _FoodPageState extends State<FoodPage> {
         longitude: _userPosition?.longitude,
         radiusKm:  _radiusKm,
       );
-      final sorted = _sortByDistanceIfPossible(items);
+      final sorted = _sortByDistanceIfPossible(_filterKitchen(items));
       _precacheFoodImages(sorted);
       return sorted;
     } finally {
@@ -236,7 +262,7 @@ class _FoodPageState extends State<FoodPage> {
     setState(() { _loading = true; _photoMode = true; });
     try {
       final items = await foodService.searchFoodByPhoto(file);
-      final sorted = _sortByDistanceIfPossible(items);
+      final sorted = _sortByDistanceIfPossible(_filterKitchen(items));
       _precacheFoodImages(sorted);
       return sorted;
     } finally {
@@ -724,7 +750,11 @@ class _FoodPageState extends State<FoodPage> {
                   ),
                 ),
                 Text(
-                  'your favourite Food',
+                  widget._kitchenFilter
+                      ? (widget.kitchenName?.trim().isNotEmpty == true
+                          ? 'More from ${widget.kitchenName!.trim()}'
+                          : 'More from this kitchen')
+                      : 'your favourite Food',
                   style: TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.w700,

@@ -144,6 +144,7 @@ class RestaurantService {
       final mid = data['merchantId']?.toString().trim();
       final linked = data['restaurantId']?.toString().trim();
       final cat = '${data['category'] ?? ''}'.trim();
+      final gallery = _pickGallery(data);
       out.add(FoodModel.fromJson({
         ...Map<String, dynamic>.from(data),
         'id': doc.id.hashCode.abs() % 2000000000,
@@ -152,7 +153,9 @@ class RestaurantService {
         'RestrauntName': seller,
         'price': price,
         'category': cat.isEmpty ? 'Meals' : cat,
-        'gallery': img.isEmpty ? const [] : [img],
+        'gallery': gallery.isNotEmpty
+            ? gallery
+            : (img.isEmpty ? const [] : [img]),
         'merchantId': (mid != null && mid.isNotEmpty) ? mid : null,
         'restaurantId':
             (linked != null && linked.isNotEmpty) ? linked : rid,
@@ -178,5 +181,21 @@ class RestaurantService {
       if (s.isNotEmpty) return s;
     }
     return '';
+  }
+
+  static List<String> _pickGallery(Map<String, dynamic> data) {
+    final out = <String>[];
+    void addList(dynamic raw) {
+      if (raw is! List) return;
+      for (final e in raw) {
+        final s = '$e'.trim();
+        if (s.isNotEmpty && !out.contains(s)) out.add(s);
+      }
+    }
+
+    addList(data['gallery']);
+    addList(data['galleryUrls']);
+    addList(data['images']);
+    return out;
   }
 }

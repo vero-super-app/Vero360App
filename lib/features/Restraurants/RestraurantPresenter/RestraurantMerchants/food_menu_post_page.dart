@@ -20,9 +20,16 @@ class FoodMenuPostPage extends StatefulWidget {
   State<FoodMenuPostPage> createState() => _FoodMenuPostPageState();
 }
 
+class _PickedDishPhoto {
+  _PickedDishPhoto({required this.bytes, required this.name});
+  final Uint8List bytes;
+  final String name;
+}
+
 class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
   static const Color _brandOrange = Color(0xFFFF8A00);
   static const Color _brandNavy = Color(0xFF16284C);
+  static const int _maxPhotos = 5;
 
   final _form = GlobalKey<FormState>();
   final _name = TextEditingController();
@@ -30,9 +37,7 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
   final _desc = TextEditingController();
   final _prep = TextEditingController();
   final _picker = ImagePicker();
-
-  Uint8List? _imageBytes;
-  String? _imageName;
+  final _photos = <_PickedDishPhoto>[];
   String? _category;
   bool _isAvailable = true;
   bool _submitting = false;
@@ -58,9 +63,47 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
     super.dispose();
   }
 
-  Future<void> _pickImage() async {
+  Future<void> _pickImages() async {
+    final remaining = _maxPhotos - _photos.length;
+    if (remaining <= 0) {
+      ToastHelper.showCustomToast(
+        context,
+        'You can add up to $_maxPhotos photos.',
+        isSuccess: false,
+        errorMessage: 'Photo limit',
+      );
+      return;
+    }
+    final xs = await _picker.pickMultiImage(
+      maxWidth: 1600,
+      imageQuality: 82,
+    );
+    if (xs.isEmpty) return;
+    final batch = xs.take(remaining);
+    final added = <_PickedDishPhoto>[];
+    for (final x in batch) {
+      final bytes = await x.readAsBytes();
+      added.add(_PickedDishPhoto(
+        bytes: bytes,
+        name: x.name.isNotEmpty ? x.name : 'dish.jpg',
+      ));
+    }
+    if (!mounted) return;
+    setState(() => _photos.addAll(added));
+    if (xs.length > remaining && mounted) {
+      ToastHelper.showCustomToast(
+        context,
+        'You can add up to $_maxPhotos photos.',
+        isSuccess: false,
+        errorMessage: 'Photo limit',
+      );
+    }
+  }
+
+  Future<void> _pickOneFromCamera() async {
+    if (_photos.length >= _maxPhotos) return;
     final x = await _picker.pickImage(
-      source: ImageSource.gallery,
+      source: ImageSource.camera,
       maxWidth: 1600,
       imageQuality: 82,
     );
@@ -68,8 +111,10 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
     final bytes = await x.readAsBytes();
     if (!mounted) return;
     setState(() {
-      _imageBytes = bytes;
-      _imageName = x.name.isNotEmpty ? x.name : 'dish.jpg';
+      _photos.add(_PickedDishPhoto(
+        bytes: bytes,
+        name: x.name.isNotEmpty ? x.name : 'dish.jpg',
+      ));
     });
   }
 
@@ -85,10 +130,10 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
       );
       return;
     }
-    if (_imageBytes == null || _imageBytes!.isEmpty) {
+    if (_photos.isEmpty) {
       ToastHelper.showCustomToast(
         context,
-        'Add a photo of your dish.',
+        'Add at least one photo of your dish.',
         isSuccess: false,
         errorMessage: 'Photo required',
       );
@@ -98,12 +143,22 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
     setState(() => _submitting = true);
     try {
       final svc = MarketplaceService();
-      final mime = lookupMimeType(_imageName ?? 'dish.jpg', headerBytes: _imageBytes);
-      final url = await svc.uploadBytes(
-        _imageBytes!,
-        filename: _imageName ?? 'dish.jpg',
-        mimeType: mime,
-      );
+      final urls = <String>[];
+      for (var i = 0; i < _photos.length; i++) {
+        final photo = _photos[i];
+        final mime = lookupMimeType(photo.name, headerBytes: photo.bytes);
+        final url = await svc.uploadBytes(
+          photo.bytes,
+          filename: photo.name,
+          mimeType: mime,
+        );
+        if (url.trim().isNotEmpty) urls.add(url.trim());
+      }
+      if (urls.isEmpty) {
+        throw Exception('Could not upload photos.');
+      }
+      final cover = urls.first;
+      final gallery = urls;
 
       final prefs = await SharedPreferences.getInstance();
       final businessName = prefs.getString('business_name') ?? '';
@@ -144,7 +199,9 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
         'name': _name.text.trim(),
         'price': double.tryParse(_price.text.trim()) ?? 0,
         'description': _desc.text.trim().isEmpty ? null : _desc.text.trim(),
-        'imageUrl': url,
+        'imageUrl': cover,
+        'gallery': gallery,
+        'galleryUrls': gallery,
         'category': _category,
         'isAvailable': _isAvailable,
         if (businessName.isNotEmpty) 'businessName': businessName,
@@ -296,45 +353,147 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                Material(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  child: InkWell(
-                    onTap: _submitting ? null : _pickImage,
-                    borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      height: 200,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: Colors.black12),
+                Row(
+                  children: [
+                    const Text(
+                      'Photos',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15,
+                        color: _brandNavy,
                       ),
-                      child: _imageBytes == null
-                          ? Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.add_photo_alternate_outlined,
-                                    size: 48, color: Colors.grey.shade400),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Tap to add dish photo',
-                                  style: TextStyle(color: Colors.grey.shade600),
+                    ),
+                    const Spacer(),
+                    Text(
+                      '${_photos.length}/$_maxPhotos',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: 118,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [
+                      ..._photos.asMap().entries.map((e) {
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 10),
+                          child: Stack(
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(14),
+                                child: Image.memory(
+                                  e.value.bytes,
+                                  width: 118,
+                                  height: 118,
+                                  fit: BoxFit.cover,
                                 ),
-                              ],
-                            )
-                          : ClipRRect(
-                              borderRadius: BorderRadius.circular(15),
-                              child: Image.memory(
-                                _imageBytes!,
-                                width: double.infinity,
-                                height: 200,
-                                fit: BoxFit.cover,
+                              ),
+                              Positioned(
+                                top: 4,
+                                right: 4,
+                                child: Material(
+                                  color: Colors.black54,
+                                  shape: const CircleBorder(),
+                                  child: InkWell(
+                                    customBorder: const CircleBorder(),
+                                    onTap: _submitting
+                                        ? null
+                                        : () => setState(
+                                            () => _photos.removeAt(e.key)),
+                                    child: const Padding(
+                                      padding: EdgeInsets.all(4),
+                                      child: Icon(Icons.close_rounded,
+                                          size: 16, color: Colors.white),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              if (e.key == 0)
+                                Positioned(
+                                  left: 6,
+                                  bottom: 6,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: _brandOrange,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: const Text(
+                                      'Cover',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        );
+                      }),
+                      if (_photos.length < _maxPhotos)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 10),
+                          child: Material(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(14),
+                            child: InkWell(
+                              onTap: _submitting ? null : _pickImages,
+                              borderRadius: BorderRadius.circular(14),
+                              child: Container(
+                                width: 118,
+                                height: 118,
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(color: Colors.black12),
+                                ),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.add_photo_alternate_outlined,
+                                        size: 28, color: Colors.grey.shade500),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      _photos.isEmpty ? 'Add photos' : 'Add more',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: _submitting || _photos.length >= _maxPhotos
+                        ? null
+                        : _pickOneFromCamera,
+                    icon: const Icon(Icons.photo_camera_outlined,
+                        color: _brandOrange),
+                    label: const Text(
+                      'Take a photo',
+                      style: TextStyle(
+                          color: _brandOrange, fontWeight: FontWeight.w700),
                     ),
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 8),
                 TextFormField(
                   controller: _name,
                   decoration: _decoration('Dish name'),

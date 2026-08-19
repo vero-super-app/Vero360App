@@ -148,11 +148,15 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   static final Map<String, List<MarketplaceDetailModel>> _itemsMemCache = {};
   static final Map<String, bool> _accommodationMemCache = {};
   static final Map<String, _MerchantShopHeaderCache> _headerMemCache = {};
+  static final Map<String, Set<String>> _identityMemCache = {};
+  static final Map<String, Future<Set<String>>> _identityInflight = {};
 
   static void clearSessionCaches() {
     _itemsMemCache.clear();
     _accommodationMemCache.clear();
     _headerMemCache.clear();
+    _identityMemCache.clear();
+    _identityInflight.clear();
   }
 
   // Small cache for Firebase download URLs (gs:// or storage paths)
@@ -209,6 +213,190 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       }
     } catch (_) {}
     return ref.get(const GetOptions(source: Source.serverAndCache));
+  }
+
+  bool _looksLikeFirebaseUid(String value) {
+    return RegExp(r'^[A-Za-z0-9_-]{20,}$').hasMatch(value);
+  }
+
+  void _addIdentityValue(Set<String> keys, dynamic raw) {
+    final s = raw?.toString().trim() ?? '';
+    if (s.isEmpty || s.toLowerCase() == 'null' || s.toLowerCase() == 'undefined') {
+      return;
+    }
+    keys.add(s);
+  }
+
+  void _addIdentityFromMap(Set<String> keys, Map<String, dynamic>? data) {
+    if (data == null) return;
+    for (final key in [
+      'firebaseUid',
+      'firebase_uid',
+      'uid',
+      'merchantId',
+      'sellerUserId',
+      'backendUserId',
+      'userId',
+      'ownerId',
+      'hostId',
+      'id',
+    ]) {
+      _addIdentityValue(keys, data[key]);
+    }
+  }
+
+  Future<Set<String>> _resolveMerchantIdentityKeys() async {
+    final mid = widget.merchantId.trim();
+    final cached = _identityMemCache[mid];
+    if (cached != null && cached.isNotEmpty) return cached;
+    final inflight = _identityInflight[mid];
+    if (inflight != null) return inflight;
+
+    final future = _resolveMerchantIdentityKeysUncached(mid);
+    _identityInflight[mid] = future;
+    try {
+      final keys = await future;
+      _identityMemCache[mid] = keys;
+      return keys;
+    } finally {
+      _identityInflight.remove(mid);
+    }
+  }
+
+  Future<Set<String>> _resolveMerchantIdentityKeysUncached(String mid) async {
+    final keys = <String>{};
+    _addIdentityValue(keys, mid);
+    if (_merchantBackendId != null) {
+      _addIdentityValue(keys, _merchantBackendId);
+    }
+
+    void absorbDoc(DocumentSnapshot<Map<String, dynamic>> snap) {
+      if (!snap.exists) return;
+      keys.add(snap.id);
+      _addIdentityFromMap(keys, snap.data());
+    }
+
+    try {
+      final snaps = await Future.wait([
+        _docFast(_firestore.collection('users').doc(mid)),
+        _docFast(_firestore.collection('marketplace_merchants').doc(mid)),
+      ]);
+      for (final s in snaps) {
+        absorbDoc(s);
+      }
+    } catch (_) {}
+
+    // Firebase UID shops already have the listing key — skip slow numeric bridges.
+    if (!_looksLikeFirebaseUid(mid)) {
+      final numeric = int.tryParse(mid) ?? _merchantBackendId;
+      if (numeric != null && numeric > 0) {
+        try {
+          final merchantF =
+              MerchantSellerLoader.lookupMerchantDocByBackendId(numeric);
+          final userIdF = _firestore
+              .collection('users')
+              .where('userId', isEqualTo: numeric)
+              .limit(1)
+              .get();
+          final backendIdF = _firestore
+              .collection('users')
+              .where('backendUserId', isEqualTo: numeric)
+              .limit(1)
+              .get();
+          final merchant = await merchantF;
+          if (merchant != null) {
+            keys.add(merchant.docId);
+            _addIdentityFromMap(keys, merchant.data);
+          }
+          for (final snap in await Future.wait([userIdF, backendIdF])) {
+            if (snap.docs.isEmpty) continue;
+            keys.add(snap.docs.first.id);
+            _addIdentityFromMap(keys, snap.docs.first.data());
+            break;
+          }
+        } catch (_) {}
+      }
+    }
+
+    if (keys.length <= 8) return keys;
+    final preferred = <String>{};
+    if (mid.isNotEmpty) preferred.add(mid);
+    preferred.addAll(keys.where(_looksLikeFirebaseUid).take(4));
+    preferred.addAll(keys.where((k) => int.tryParse(k) != null).take(2));
+    for (final k in keys) {
+      if (preferred.length >= 8) break;
+      preferred.add(k);
+    }
+    return preferred;
+  }
+
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _queryDocsByOwner({
+    required String collection,
+    required Set<String> keys,
+    required List<String> fields,
+    String? merchantName,
+  }) async {
+    final col = _firestore.collection(collection);
+    final futures = <Future<QuerySnapshot<Map<String, dynamic>>>>[];
+    final seen = <String>{};
+
+    void enqueue(String field, dynamic value) {
+      final sig = '$field=$value';
+      if (!seen.add(sig)) return;
+      futures.add(
+        _queryFast(col.where(field, isEqualTo: value).limit(40)),
+      );
+    }
+
+    for (final key in keys) {
+      if (_looksLikeFirebaseUid(key)) {
+        if (fields.contains('merchantId')) enqueue('merchantId', key);
+        if (fields.contains('firebaseUid')) enqueue('firebaseUid', key);
+        continue;
+      }
+      final n = int.tryParse(key);
+      if (n != null && n > 0) {
+        if (fields.contains('sellerUserId')) {
+          enqueue('sellerUserId', key);
+          enqueue('sellerUserId', n);
+        }
+        if (fields.contains('merchantId')) enqueue('merchantId', key);
+        enqueue('merchantBackendId', n);
+        continue;
+      }
+      for (final field in fields) {
+        enqueue(field, key);
+      }
+    }
+    final name = (merchantName ?? '').trim();
+    if (futures.isEmpty &&
+        name.isNotEmpty &&
+        name.toLowerCase() != 'merchant') {
+      enqueue('merchantName', name);
+    }
+
+    if (futures.isEmpty) return const [];
+    final snaps = await Future.wait(futures);
+    final byId = <String, QueryDocumentSnapshot<Map<String, dynamic>>>{};
+    for (final snap in snaps) {
+      for (final doc in snap.docs) {
+        byId[doc.id] = doc;
+      }
+    }
+    if (byId.isEmpty &&
+        name.isNotEmpty &&
+        name.toLowerCase() != 'merchant' &&
+        !seen.contains('merchantName=$name')) {
+      try {
+        final nameSnap = await _queryFast(
+          col.where('merchantName', isEqualTo: name).limit(40),
+        );
+        for (final doc in nameSnap.docs) {
+          byId[doc.id] = doc;
+        }
+      } catch (_) {}
+    }
+    return byId.values.toList();
   }
 
   bool _looksLikeBase64(String s) {
@@ -604,7 +792,9 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       }
     }
 
-    _staysFuture = _loadMerchantStays();
+    _staysFuture = memAccom == true
+        ? _loadMerchantStays()
+        : Future<List<_MerchantStayPreview>>.value(const []);
     unawaited(_resolveAccommodationMode());
     unawaited(_prefetchOpeningHoursFast(id));
     unawaited(_loadMerchantHeader());
@@ -704,9 +894,11 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     final v = await _detectAccommodationMerchant();
     _accommodationMemCache[widget.merchantId.trim()] = v;
     if (!mounted) return;
-    if (_isAccommodationHost != v) {
-      setState(() => _isAccommodationHost = v);
-    }
+    if (_isAccommodationHost == v) return;
+    setState(() {
+      _isAccommodationHost = v;
+      if (v) _staysFuture = _loadMerchantStays();
+    });
   }
 
   @override
@@ -720,63 +912,104 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     final id = widget.merchantId.trim();
     if (id.isEmpty) return false;
     try {
-      final results = await Future.wait([
-        _docFast(_firestore.collection('accommodation_merchants').doc(id)),
-        _queryFast(
+      final doc = await _docFast(
+        _firestore.collection('accommodation_merchants').doc(id),
+      );
+      if (doc.exists) return true;
+      final rooms = await _queryFast(
+        _firestore
+            .collection('accommodation_rooms')
+            .where('merchantId', isEqualTo: id)
+            .limit(1),
+      );
+      if (rooms.docs.isNotEmpty) return true;
+      if (_looksLikeFirebaseUid(id)) return false;
+
+      final keys = await _resolveMerchantIdentityKeys();
+      for (final key in keys.where(_looksLikeFirebaseUid).take(2)) {
+        if (key == id) continue;
+        final extraDoc = await _docFast(
+          _firestore.collection('accommodation_merchants').doc(key),
+        );
+        if (extraDoc.exists) return true;
+        final extraRooms = await _queryFast(
           _firestore
               .collection('accommodation_rooms')
-              .where('merchantId', isEqualTo: id)
+              .where('merchantId', isEqualTo: key)
               .limit(1),
-        ),
-      ]);
-      final doc = results[0] as DocumentSnapshot<Map<String, dynamic>>;
-      if (doc.exists) return true;
-      final rooms = results[1] as QuerySnapshot<Map<String, dynamic>>;
-      if (rooms.docs.isNotEmpty) return true;
+        );
+        if (extraRooms.docs.isNotEmpty) return true;
+      }
     } catch (e) {
       debugPrint('detect accommodation: $e');
     }
     return false;
   }
 
+  List<MarketplaceDetailModel> _parseMerchantItemDocs(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs, {
+    required Set<String> keys,
+  }) {
+    final viewerUid = (_auth.currentUser?.uid ?? '').trim();
+    final viewingOwnShop = viewerUid.isNotEmpty && keys.contains(viewerUid);
+    final all = <MarketplaceDetailModel>[];
+    for (final doc in docs) {
+      final review =
+          (doc.data()['reviewStatus'] ?? '').toString().trim().toLowerCase();
+      if (review == 'rejected') continue;
+      final item = MarketplaceDetailModel.fromFirestore(doc);
+      if (viewingOwnShop || item.isActive) {
+        all.add(item);
+      }
+    }
+    all.sort((a, b) {
+      final da = a.createdAt;
+      final db = b.createdAt;
+      if (da == null && db == null) return 0;
+      if (da == null) return 1;
+      if (db == null) return -1;
+      return db.compareTo(da);
+    });
+    return all;
+  }
+
   Future<List<MarketplaceDetailModel>> _loadMerchantItems() async {
     try {
       final String id = widget.merchantId.trim();
-      final String name = _shopDisplayName;
-
-      // 1) Try match by merchantId (cache-first)
-      final idSnap = await _queryFast(
-        _firestore
-            .collection('marketplace_items')
-            .where('merchantId', isEqualTo: id),
-      );
-
-      var docs = idSnap.docs;
-
-      // 2) Fallback: older items may only have merchantName
-      if (docs.isEmpty && name.isNotEmpty) {
-        final nameSnap = await _queryFast(
-          _firestore
-              .collection('marketplace_items')
-              .where('merchantName', isEqualTo: name),
-        );
-        docs = nameSnap.docs;
+      final primaryKeys = <String>{id};
+      if (_merchantBackendId != null) {
+        primaryKeys.add('${_merchantBackendId}');
       }
 
-      final all = docs
-          .map((doc) => MarketplaceDetailModel.fromFirestore(doc))
-          .where((item) => item.isActive)
-          .toList();
+      // Fast first paint: query the id this shop was opened with.
+      final primaryDocs = await _queryDocsByOwner(
+        collection: 'marketplace_items',
+        keys: primaryKeys,
+        fields: _looksLikeFirebaseUid(id)
+            ? const ['merchantId']
+            : const ['merchantId', 'sellerUserId'],
+      );
+      var all = _parseMerchantItemDocs(primaryDocs, keys: primaryKeys);
+      _itemsMemCache[id] = all;
 
-      all.sort((a, b) {
-        final da = a.createdAt;
-        final db = b.createdAt;
-        if (da == null && db == null) return 0;
-        if (da == null) return 1;
-        if (db == null) return -1;
-        return db.compareTo(da);
-      });
+      if (all.isNotEmpty) {
+        unawaited(_expandMerchantItems(id, all));
+        return all;
+      }
 
+      final keys = await _resolveMerchantIdentityKeys();
+      final docs = await _queryDocsByOwner(
+        collection: 'marketplace_items',
+        keys: keys,
+        fields: const [
+          'merchantId',
+          'sellerUserId',
+          'firebaseUid',
+          'ownerId',
+        ],
+        merchantName: _shopDisplayName,
+      );
+      all = _parseMerchantItemDocs(docs, keys: keys);
       _itemsMemCache[id] = all;
       return all;
     } catch (e) {
@@ -785,19 +1018,52 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     }
   }
 
+  Future<void> _expandMerchantItems(
+    String id,
+    List<MarketplaceDetailModel> already,
+  ) async {
+    try {
+      final keys = await _resolveMerchantIdentityKeys();
+      if (keys.length <= 1) return;
+      final docs = await _queryDocsByOwner(
+        collection: 'marketplace_items',
+        keys: keys,
+        fields: const [
+          'merchantId',
+          'sellerUserId',
+          'firebaseUid',
+          'ownerId',
+        ],
+        merchantName: _shopDisplayName,
+      );
+      final merged = _parseMerchantItemDocs(docs, keys: keys);
+      if (merged.length <= already.length) return;
+      _itemsMemCache[id] = merged;
+      if (!mounted || _redirectingToDriver) return;
+      setState(() => _future = Future.value(merged));
+    } catch (e) {
+      debugPrint('expand merchant items: $e');
+    }
+  }
+
   Future<List<_MerchantStayPreview>> _loadMerchantStays() async {
     final id = widget.merchantId.trim();
     final merged = <_MerchantStayPreview>[];
     final apiIds = <int>{};
+    final keys = await _resolveMerchantIdentityKeys();
 
-    // Resolve email from likely sources in parallel.
     var email = '';
     try {
-      final snaps = await Future.wait([
+      final docReads = <Future<DocumentSnapshot<Map<String, dynamic>>>>[
         _docFast(_firestore.collection('users').doc(id)),
         _docFast(_firestore.collection('marketplace_merchants').doc(id)),
         _docFast(_firestore.collection('accommodation_merchants').doc(id)),
-      ]);
+      ];
+      for (final key in keys.take(6)) {
+        if (key == id) continue;
+        docReads.add(_docFast(_firestore.collection('users').doc(key)));
+      }
+      final snaps = await Future.wait(docReads);
       for (final snap in snaps) {
         final d = snap.data();
         if (d == null) continue;
@@ -809,11 +1075,13 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       }
     } catch (_) {}
 
-    // Firestore rooms + optional API ownership in parallel.
-    final roomsFuture = _queryFast(
-      _firestore
-          .collection('accommodation_rooms')
-          .where('merchantId', isEqualTo: id),
+    final roomsFuture = _queryDocsByOwner(
+      collection: 'accommodation_rooms',
+      keys: keys,
+      fields: const [
+        'merchantId',
+        'firebaseUid',
+      ],
     );
 
     Future<List<_MerchantStayPreview>> apiFuture() async {
@@ -838,8 +1106,9 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     merged.addAll(fromApi);
 
     try {
-      final fs = results[0] as QuerySnapshot<Map<String, dynamic>>;
-      for (final doc in fs.docs) {
+      final fs =
+          results[0] as List<QueryDocumentSnapshot<Map<String, dynamic>>>;
+      for (final doc in fs) {
         final d = doc.data();
         final pid = _stayListingApiId(d);
         if (pid != null && apiIds.contains(pid)) continue;
@@ -2684,174 +2953,10 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    if (_redirectingToDriver) {
-      return const Scaffold(
-        backgroundColor: _pageBg,
-        body: AppSkeletonListPlaceholder(items: 8),
-      );
-    }
-    if (_blockedByViewer) {
-      return Scaffold(
-        backgroundColor: _pageBg,
-        appBar: AppBar(
-          elevation: 0,
-          backgroundColor: _brandOrange,
-          foregroundColor: Colors.white,
-          title: const Text('Shop'),
-        ),
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.block_rounded, size: 64, color: Colors.red.shade400),
-                const SizedBox(height: 20),
-                Text(
-                  'You blocked ${_shopDisplayName}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w900,
-                    color: _brandNavy,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  'Their shop, products, stories, and promotions are hidden from your app.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 14,
-                    height: 1.45,
-                    color: Colors.grey.shade700,
-                  ),
-                ),
-                const SizedBox(height: 28),
-                FilledButton.icon(
-                  onPressed: _unblockMerchant,
-                  icon: const Icon(Icons.lock_open_rounded),
-                  label: const Text('Unblock merchant'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: _brandOrange,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 14,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-    return Scaffold(
-      backgroundColor: _pageBg,
-      appBar: AppBar(
-        elevation: 0,
-        scrolledUnderElevation: 0.5,
-        backgroundColor: _brandOrange,
-        foregroundColor: Colors.white,
-        centerTitle: false,
-        titleSpacing: 16,
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(Icons.storefront_rounded, size: 22),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Builder(
-                builder: (context) {
-                  final isAccommodation = _isAccommodationHost == true;
-                  final baseName = _shopDisplayName;
-                  final title =
-                      isAccommodation ? baseName : '$baseName Store';
-                  return Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w900,
-                      fontSize: 17,
-                      letterSpacing: -0.2,
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.link_rounded),
-            onPressed: _copyMerchantLink,
-            tooltip: 'Copy merchant link',
-          ),
-          IconButton(
-            icon: const Icon(Icons.share_rounded),
-            onPressed: _shareMerchantShop,
-            tooltip: 'Share merchant shop',
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          _MerchantProfileCard(
-            merchantId: widget.merchantId,
-            name: _shopDisplayName,
-            rating: _merchantRating,
-            reviewCount: _merchantReviewCount,
-            openingHours: _merchantOpeningHours,
-            openingDays: _merchantOpeningDays,
-            profileUrl: _merchantProfileUrl,
-            businessDescription: _merchantBusinessDescription,
-            loading: _loadingHeader,
-            following: _following,
-            followerCount: _followerCount,
-            onToggleFollow: _toggleFollow,
-            onBlock: _blockMerchant,
-            onReport: _reportMerchant,
-            onViewProfile: _showMerchantProfileViewer,
-            onOpenReviews: _openMerchantReviews,
-          ),
-          _buildRecentReviewsSection(),
-          Expanded(
-            child: Builder(
-              builder: (context) {
-                // Don't block products on accommodation detect — show products
-                // unless we already know this is a Stay host.
-                final isAccommodationHost = _isAccommodationHost == true;
-                if (isAccommodationHost) {
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                        child: _buildModernSearchBar(
-                          'Search ${_shopDisplayName == 'Merchant' ? 'this host' : _shopDisplayName}…',
-                        ),
-                      ),
-                      Expanded(
-                        child: FutureBuilder<List<_MerchantStayPreview>>(
-                          future: _staysFuture,
-                          builder: (context, snap) =>
-                              _buildStaysGridBody(context, snap),
-                        ),
-                      ),
-                    ],
-                  );
-                }
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
+  Widget _buildProductsBrowseColumn(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                       child: Column(
@@ -3049,8 +3154,190 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                         },
                       ),
                     ),
-                  ],
-                );
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_redirectingToDriver) {
+      return const Scaffold(
+        backgroundColor: _pageBg,
+        body: AppSkeletonListPlaceholder(items: 8),
+      );
+    }
+    if (_blockedByViewer) {
+      return Scaffold(
+        backgroundColor: _pageBg,
+        appBar: AppBar(
+          elevation: 0,
+          backgroundColor: _brandOrange,
+          foregroundColor: Colors.white,
+          title: const Text('Shop'),
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.block_rounded, size: 64, color: Colors.red.shade400),
+                const SizedBox(height: 20),
+                Text(
+                  'You blocked ${_shopDisplayName}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: _brandNavy,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Their shop, products, stories, and promotions are hidden from your app.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    height: 1.45,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+                const SizedBox(height: 28),
+                FilledButton.icon(
+                  onPressed: _unblockMerchant,
+                  icon: const Icon(Icons.lock_open_rounded),
+                  label: const Text('Unblock merchant'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _brandOrange,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 14,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    return Scaffold(
+      backgroundColor: _pageBg,
+      appBar: AppBar(
+        elevation: 0,
+        scrolledUnderElevation: 0.5,
+        backgroundColor: _brandOrange,
+        foregroundColor: Colors.white,
+        centerTitle: false,
+        titleSpacing: 16,
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.storefront_rounded, size: 22),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Builder(
+                builder: (context) {
+                  final isAccommodation = _isAccommodationHost == true;
+                  final baseName = _shopDisplayName;
+                  final title =
+                      isAccommodation ? baseName : '$baseName Store';
+                  return Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 17,
+                      letterSpacing: -0.2,
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.link_rounded),
+            onPressed: _copyMerchantLink,
+            tooltip: 'Copy merchant link',
+          ),
+          IconButton(
+            icon: const Icon(Icons.share_rounded),
+            onPressed: _shareMerchantShop,
+            tooltip: 'Share merchant shop',
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          _MerchantProfileCard(
+            merchantId: widget.merchantId,
+            name: _shopDisplayName,
+            rating: _merchantRating,
+            reviewCount: _merchantReviewCount,
+            openingHours: _merchantOpeningHours,
+            openingDays: _merchantOpeningDays,
+            profileUrl: _merchantProfileUrl,
+            businessDescription: _merchantBusinessDescription,
+            loading: _loadingHeader,
+            following: _following,
+            followerCount: _followerCount,
+            onToggleFollow: _toggleFollow,
+            onBlock: _blockMerchant,
+            onReport: _reportMerchant,
+            onViewProfile: _showMerchantProfileViewer,
+            onOpenReviews: _openMerchantReviews,
+          ),
+          _buildRecentReviewsSection(),
+          Expanded(
+            child: Builder(
+              builder: (context) {
+                // Don't block products on accommodation detect — show products
+                // unless we already know this is a Stay host.
+                final isAccommodationHost = _isAccommodationHost == true;
+                if (isAccommodationHost) {
+                  return FutureBuilder<List<_MerchantStayPreview>>(
+                    future: _staysFuture,
+                    builder: (context, staySnap) {
+                      if (staySnap.connectionState ==
+                          ConnectionState.waiting) {
+                        return const Padding(
+                          padding: EdgeInsets.fromLTRB(16, 4, 16, 20),
+                          child: AppSkeletonLatestArrivalsGrid(),
+                        );
+                      }
+                      final stays =
+                          staySnap.data ?? const <_MerchantStayPreview>[];
+                      if (stays.isNotEmpty) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                              child: _buildModernSearchBar(
+                                'Search ${_shopDisplayName == 'Merchant' ? 'this host' : _shopDisplayName}…',
+                              ),
+                            ),
+                            Expanded(
+                              child: _buildStaysGridBody(context, staySnap),
+                            ),
+                          ],
+                        );
+                      }
+                      // Host profile with no stay rooms — show marketplace listings.
+                      return _buildProductsBrowseColumn(context);
+                    },
+                  );
+                }
+                return _buildProductsBrowseColumn(context);
               },
             ),
           ),

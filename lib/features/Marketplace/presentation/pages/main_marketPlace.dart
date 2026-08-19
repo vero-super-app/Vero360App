@@ -1372,8 +1372,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       location: item.location,
       price: NumberFormat('#,###', 'en').format(item.price.truncate()),
       merchant: item.merchantName ?? item.sellerBusinessName,
-      description: item.description,
-      image: marketplaceShareImageUrl(item.image, item.gallery),
+ 
     );
     Clipboard.setData(ClipboardData(text: url));
     if (!mounted) return;

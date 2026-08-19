@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -53,15 +54,18 @@ class MerchantSellerLoader {
 
   static const String _kHoursPrefsPrefix = 'merchant_opening_hours_v1_';
   static const String _kDaysPrefsPrefix = 'merchant_opening_days_v1_';
+  static const String _kNamePrefsPrefix = 'merchant_business_name_v1_';
 
   /// Instant OPEN/CLOSED: merchantId → openingHours (e.g. `08:00–17:00`).
   static final Map<String, String> _openingHoursByMerchantId = {};
   /// merchantId → weekday ints (1=Mon … 7=Sun). Empty/missing = every day.
   static final Map<String, List<int>> _openingDaysByMerchantId = {};
+  static final Map<String, String> _businessNameByMerchantId = {};
 
   static void clearSessionCaches() {
     _openingHoursByMerchantId.clear();
     _openingDaysByMerchantId.clear();
+    _businessNameByMerchantId.clear();
   }
 
   static String? peekOpeningHours(String? merchantId) {
@@ -98,6 +102,39 @@ class MerchantSellerLoader {
     SharedPreferences.getInstance().then((p) {
       p.setString('$_kDaysPrefsPrefix$id', cleaned.join(','));
     }).catchError((_) {});
+  }
+
+  static String? peekBusinessName(String? merchantId) {
+    final id = (merchantId ?? '').trim();
+    if (id.isEmpty) return null;
+    final n = _businessNameByMerchantId[id];
+    return (n == null || n.trim().isEmpty) ? null : n.trim();
+  }
+
+  static void cacheBusinessName(String? merchantId, String? name) {
+    final id = (merchantId ?? '').trim();
+    final n = (name ?? '').trim();
+    if (id.isEmpty || n.isEmpty || _isWeakSellerName(n)) return;
+    _businessNameByMerchantId[id] = n;
+    SharedPreferences.getInstance().then((p) {
+      p.setString('$_kNamePrefsPrefix$id', n);
+    }).catchError((_) {});
+  }
+
+  static Future<String?> peekBusinessNamePersisted(String? merchantId) async {
+    final id = (merchantId ?? '').trim();
+    if (id.isEmpty) return null;
+    final mem = peekBusinessName(id);
+    if (mem != null) return mem;
+    try {
+      final p = await SharedPreferences.getInstance();
+      final n = (p.getString('$_kNamePrefsPrefix$id') ?? '').trim();
+      if (n.isEmpty || _isWeakSellerName(n)) return null;
+      _businessNameByMerchantId[id] = n;
+      return n;
+    } catch (_) {
+      return null;
+    }
   }
 
   static Future<List<int>?> peekOpeningDaysPersisted(String? merchantId) async {
@@ -269,6 +306,71 @@ class MerchantSellerLoader {
     return s.isEmpty ? null : s;
   }
 
+  static bool _isWeakSellerName(String? raw) {
+    final v = (raw ?? '').trim();
+    if (v.isEmpty) return true;
+    final n = v.toLowerCase();
+    if (v.contains('@')) return true;
+    if (n == 'merchant' ||
+        n == 'user' ||
+        n == 'unknown' ||
+        n == 'unknown merchant' ||
+        n == 'contact' ||
+        n == 'seller') {
+      return true;
+    }
+    return false;
+  }
+
+  static String? _shopNameFromMap(Map<dynamic, dynamic> data) {
+    for (final key in [
+      'businessName',
+      'shopName',
+      'storeName',
+      'companyName',
+    ]) {
+      final v = _trimmed(data[key]);
+      if (v != null && !_isWeakSellerName(v)) return v;
+    }
+    final merchantName = _trimmed(data['merchantName']);
+    if (merchantName == null || _isWeakSellerName(merchantName)) return null;
+    final personal = _trimmed(
+      data['fullName'] ?? data['displayName'] ?? data['name'],
+    );
+    if (personal != null &&
+        merchantName.toLowerCase() == personal.toLowerCase()) {
+      return null;
+    }
+    return merchantName;
+  }
+
+  static void _setShopName(
+    MerchantSellerInfo info,
+    String? name, {
+    bool strong = false,
+  }) {
+    final v = _trimmed(name);
+    if (v == null || _isWeakSellerName(v)) return;
+    if (strong || _isWeakSellerName(info.businessName)) {
+      info.businessName = v;
+    }
+    cacheBusinessName(info.merchantRef, info.businessName);
+    cacheBusinessName(info.sellerUserId, info.businessName);
+  }
+
+  static Future<DocumentSnapshot<Map<String, dynamic>>> _docCacheFirst(
+    DocumentReference<Map<String, dynamic>> ref,
+  ) async {
+    try {
+      final cached = await ref.get(const GetOptions(source: Source.cache));
+      if (cached.exists) {
+        unawaited(ref.get(const GetOptions(source: Source.serverAndCache)));
+        return cached;
+      }
+    } catch (_) {}
+    return ref.get(const GetOptions(source: Source.serverAndCache));
+  }
+
   /// Promo API returns numeric `merchantId`; Firestore shops use Firebase UID doc ids.
   static Future<({String firebaseUid, Map<String, dynamic> item})?>
       lookupViaMarketplaceItems(int backendId) async {
@@ -343,7 +445,7 @@ class MerchantSellerLoader {
               'Accept': 'application/json',
             },
           )
-          .timeout(const Duration(seconds: 12));
+          .timeout(const Duration(seconds: 3));
 
       if (res.statusCode != 200) return null;
 
@@ -364,8 +466,11 @@ class MerchantSellerLoader {
     MerchantSellerInfo info,
     Map<String, dynamic> item,
   ) {
-    info.businessName ??= _trimmed(
-      item['merchantName'] ?? item['sellerBusinessName'] ?? item['businessName'],
+    info.businessName ??= _shopNameFromMap(item);
+    _setShopName(
+      info,
+      item['sellerBusinessName'] ?? item['businessName'],
+      strong: true,
     );
     info.description ??= _trimmed(item['sellerBusinessDescription']);
     info.status ??= _trimmed(item['sellerStatus']);
@@ -389,8 +494,13 @@ class MerchantSellerLoader {
     MerchantSellerInfo info,
     Map<String, dynamic> user,
   ) {
-    info.businessName ??= _trimmed(
-      user['businessName'] ?? user['fullName'] ?? user['name'] ?? user['displayName'],
+    _setShopName(
+      info,
+      user['businessName'] ??
+          user['shopName'] ??
+          user['companyName'] ??
+          user['storeName'],
+      strong: true,
     );
     info.description ??= _trimmed(
       user['businessDescription'] ?? user['description'] ?? user['bio'],
@@ -429,9 +539,14 @@ class MerchantSellerLoader {
     info.merchantRef = docId;
     info.sellerUserId ??= docId;
 
-    info.businessName ??= _trimmed(
-      m['businessName'] ?? m['merchantName'] ?? m['name'],
+    _setShopName(
+      info,
+      m['businessName'] ?? m['shopName'] ?? m['storeName'] ?? m['companyName'],
+      strong: true,
     );
+    if (_isWeakSellerName(info.businessName)) {
+      _setShopName(info, m['merchantName']);
+    }
     info.description ??= _trimmed(
       m['businessDescription'] ?? m['description'] ?? m['about'],
     );
@@ -479,8 +594,9 @@ class MerchantSellerLoader {
     String uid,
   ) async {
     try {
-      final uDoc =
-          await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      final uDoc = await _docCacheFirst(
+        FirebaseFirestore.instance.collection('users').doc(uid),
+      );
       if (!uDoc.exists) return;
       _applyBackendUserProfile(info, uDoc.data() ?? <String, dynamic>{});
     } catch (_) {}
@@ -488,7 +604,7 @@ class MerchantSellerLoader {
 
   static void _applyServiceProvider(MerchantSellerInfo info, ServiceProvider sp) {
     final name = sp.businessName.trim();
-    if (name.isNotEmpty) info.businessName ??= name;
+    if (name.isNotEmpty) _setShopName(info, name, strong: true);
 
     final desc = (sp.businessDescription ?? '').trim();
     if (desc.isNotEmpty) info.description ??= desc;
@@ -568,6 +684,15 @@ class MerchantSellerLoader {
       info.backendMerchantId = backendId;
 
       const reviewService = MerchantReviewService();
+      final cached = MerchantReviewService.peekCache(backendId);
+      if (cached != null) {
+        if (cached.summary.count > 0 || cached.summary.average > 0) {
+          info.rating = cached.summary.average;
+        }
+        info.reviewCount = cached.summary.count;
+        info.recentReviews = cached.reviews.take(3).toList();
+      }
+
       final bundle = await reviewService.loadMerchantReviewsBundle(backendId);
       if (bundle.summary.count > 0 || bundle.summary.average > 0) {
         info.rating = bundle.summary.average;
@@ -591,12 +716,17 @@ class MerchantSellerLoader {
     String? sellerLogoUrl,
     int? backendUserIdHint,
     int? backendMerchantIdForReviews,
+    void Function(MerchantSellerInfo snapshot)? onUpdate,
   }) async {
     var merchantRef = (merchantId ?? '').trim();
     var sellerUid = sellerUserId?.trim();
 
+    final seededName = !_isWeakSellerName(sellerBusinessName)
+        ? sellerBusinessName!.trim()
+        : (peekBusinessName(merchantRef) ?? peekBusinessName(sellerUid));
+
     final info = MerchantSellerInfo(
-      businessName: sellerBusinessName,
+      businessName: seededName,
       openingHours: sellerOpeningHours,
       status: sellerStatus,
       description: sellerBusinessDescription,
@@ -605,105 +735,144 @@ class MerchantSellerLoader {
       serviceProviderId: serviceProviderId?.trim(),
       merchantRef: merchantRef,
       sellerUserId: sellerUid,
+      backendMerchantId: backendUserIdHint,
     );
-    // Prefer any previously cached hours immediately.
-    info.openingHours ??= peekOpeningHours(merchantRef) ??
-        peekOpeningHours(sellerUid);
+
+    void ping() {
+      final cb = onUpdate;
+      if (cb == null) return;
+      scheduleMicrotask(() => cb(info));
+    }
+
+    info.openingHours ??=
+        peekOpeningHours(merchantRef) ?? peekOpeningHours(sellerUid);
     if ((sellerOpeningHours ?? '').trim().isNotEmpty) {
       cacheOpeningHours(merchantRef, sellerOpeningHours);
       cacheOpeningHours(sellerUid, sellerOpeningHours);
     }
+    if (!_isWeakSellerName(info.businessName)) {
+      cacheBusinessName(merchantRef, info.businessName);
+      cacheBusinessName(sellerUid, info.businessName);
+    }
 
-    // Promo API: numeric merchantId → find Firebase UID via marketplace items.
-    if (backendUserIdHint != null && backendUserIdHint > 0) {
-      final bridge = await lookupViaMarketplaceItems(backendUserIdHint);
-      if (bridge != null) {
-        merchantRef = bridge.firebaseUid;
-        sellerUid ??= bridge.firebaseUid;
-        info.merchantRef = bridge.firebaseUid;
-        info.sellerUserId ??= bridge.firebaseUid;
-        _applyMarketplaceItemData(info, bridge.item);
-      }
-
-      final merchantDoc = await lookupMerchantDocByBackendId(backendUserIdHint);
-      if (merchantDoc != null) {
-        merchantRef = merchantDoc.docId;
-        sellerUid ??= merchantDoc.docId;
-        _applyFirestoreMerchantData(info, merchantDoc.docId, merchantDoc.data);
-      }
-
-      final userProfile = await fetchBackendUserProfile(backendUserIdHint);
-      if (userProfile != null) {
-        _applyBackendUserProfile(info, userProfile);
-        final uid = info.merchantRef.trim();
-        if (_looksLikeFirebaseUid(uid)) {
-          merchantRef = uid;
-          sellerUid ??= uid;
+    final reviewsId = backendMerchantIdForReviews ??
+        backendUserIdHint ??
+        info.backendMerchantId ??
+        0;
+    if (reviewsId > 0) {
+      final cachedReviews = MerchantReviewService.peekCache(reviewsId);
+      if (cachedReviews != null) {
+        info.backendMerchantId = reviewsId;
+        if (cachedReviews.summary.count > 0 ||
+            cachedReviews.summary.average > 0) {
+          info.rating = cachedReviews.summary.average;
         }
+        info.reviewCount = cachedReviews.summary.count;
+        info.recentReviews = cachedReviews.reviews.take(3).toList();
       }
+    }
+    ping();
 
-      if (merchantRef.isEmpty) {
-        merchantRef = backendUserIdHint.toString();
-        sellerUid ??= backendUserIdHint.toString();
-      }
-      info.merchantRef = info.merchantRef.isNotEmpty ? info.merchantRef : merchantRef;
+    bool isUid(String? value) {
+      final v = (value ?? '').trim();
+      return v.isNotEmpty && _looksLikeFirebaseUid(v);
     }
 
-    if (merchantRef.isEmpty &&
-        backendUserIdHint != null &&
-        backendUserIdHint > 0) {
-      merchantRef = backendUserIdHint.toString();
-      sellerUid ??= backendUserIdHint.toString();
-      info.merchantRef = merchantRef;
-    }
-
-    final merchantUid = merchantRef.trim();
-    if (merchantUid.isNotEmpty && _looksLikeFirebaseUid(merchantUid)) {
+    Future<void> loadFirestoreShop(String uid) async {
+      if (uid.isEmpty || !_looksLikeFirebaseUid(uid)) return;
       try {
-        final mDoc = await FirebaseFirestore.instance
-            .collection('marketplace_merchants')
-            .doc(merchantUid)
-            .get();
+        final mDoc = await _docCacheFirst(
+          FirebaseFirestore.instance
+              .collection('marketplace_merchants')
+              .doc(uid),
+        );
         if (mDoc.exists) {
           _applyFirestoreMerchantData(
             info,
             mDoc.id,
             mDoc.data() ?? <String, dynamic>{},
           );
+          merchantRef = mDoc.id;
+          sellerUid ??= mDoc.id;
+          ping();
         }
       } catch (_) {}
-
-      await _applyFirestoreUserData(info, merchantUid);
+      await _applyFirestoreUserData(info, uid);
+      ping();
     }
 
-    await _enrichFromServiceProvider(info, [
-      info.serviceProviderId ?? '',
-      serviceProviderId ?? '',
-      if (backendUserIdHint != null && backendUserIdHint > 0)
-        backendUserIdHint.toString(),
-      merchantRef,
-      sellerUid ?? '',
-    ]);
+    // Fast path: Firebase UID shops — don't wait on numeric API bridges.
+    final shopUid = isUid(merchantRef)
+        ? merchantRef
+        : (isUid(sellerUid) ? sellerUid!.trim() : '');
+    if (shopUid.isNotEmpty) {
+      await loadFirestoreShop(shopUid);
+    }
 
-    final reviewsId = backendMerchantIdForReviews ??
-        backendUserIdHint ??
-        info.backendMerchantId ??
-        0;
-
-    await _loadReviews(
+    final reviewsF = _loadReviews(
       info,
       reviewsMerchantId: reviewsId,
-      merchantRef: _looksLikeFirebaseUid(info.merchantRef)
-          ? info.merchantRef
-          : merchantRef,
+      merchantRef: isUid(info.merchantRef) ? info.merchantRef : merchantRef,
       serviceProviderId: info.serviceProviderId ?? serviceProviderId,
       sellerUserId: info.sellerUserId ?? sellerUid,
     );
+
+    final extraF = () async {
+      final needsUid = !isUid(info.merchantRef) && !isUid(sellerUid);
+      if (needsUid && backendUserIdHint != null && backendUserIdHint > 0) {
+        try {
+          final merchantDoc =
+              await lookupMerchantDocByBackendId(backendUserIdHint);
+          if (merchantDoc != null) {
+            merchantRef = merchantDoc.docId;
+            sellerUid ??= merchantDoc.docId;
+            _applyFirestoreMerchantData(
+              info,
+              merchantDoc.docId,
+              merchantDoc.data,
+            );
+            ping();
+            if (_looksLikeFirebaseUid(merchantDoc.docId)) {
+              await loadFirestoreShop(merchantDoc.docId);
+            }
+          }
+        } catch (_) {}
+        try {
+          final userProfile = await fetchBackendUserProfile(backendUserIdHint);
+          if (userProfile != null) {
+            _applyBackendUserProfile(info, userProfile);
+            ping();
+            final uid = info.merchantRef.trim();
+            if (_looksLikeFirebaseUid(uid)) {
+              merchantRef = uid;
+              sellerUid ??= uid;
+              await loadFirestoreShop(uid);
+            }
+          }
+        } catch (_) {}
+      }
+
+      await _enrichFromServiceProvider(info, [
+        info.serviceProviderId ?? '',
+        serviceProviderId ?? '',
+        if (backendUserIdHint != null && backendUserIdHint > 0)
+          backendUserIdHint.toString(),
+      ]);
+      ping();
+    }();
+
+    await Future.wait([reviewsF, extraF]);
+    ping();
 
     if ((info.openingHours ?? '').trim().isNotEmpty) {
       cacheOpeningHours(info.merchantRef, info.openingHours);
       cacheOpeningHours(info.sellerUserId, info.openingHours);
       cacheOpeningHours(merchantId, info.openingHours);
+    }
+    if (!_isWeakSellerName(info.businessName)) {
+      cacheBusinessName(info.merchantRef, info.businessName);
+      cacheBusinessName(info.sellerUserId, info.businessName);
+      cacheBusinessName(merchantId, info.businessName);
     }
 
     return info;

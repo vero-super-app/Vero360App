@@ -3,9 +3,15 @@ import 'dart:async';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
+import 'package:vero360_app/GernalServices/google_directions_service.dart';
+import 'package:vero360_app/GernalServices/google_places_service.dart';
+import 'package:vero360_app/GeneralModels/place_model.dart';
+import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
+import 'package:vero360_app/config/google_maps_config.dart';
 import 'package:vero360_app/utils/merchant_contact_display.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
@@ -14,6 +20,7 @@ import 'package:vero360_app/features/VeroCourier/Model/courier.models.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/courier_onboarding_page.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/courier_widgets.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierService/courier_city.dart';
+import 'package:vero360_app/features/VeroCourier/VeroCourierService/courier_pricing.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierService/vero_courier_service.dart';
 
 class VerocourierPage extends StatefulWidget {
@@ -80,6 +87,16 @@ class _VerocourierPageState extends State<VerocourierPage> {
   bool _isLoggedIn = false;
   bool _bootstrapped = false;
   StreamSubscription<User?>? _authSub;
+  StreamSubscription<Position>? _livePosSub;
+  Timer? _liveGeocodeDebounce;
+  Timer? _quoteDebounce;
+  String _liveAreaLabel = '';
+  double? _liveLat;
+  double? _liveLng;
+  CourierPriceQuote? _priceQuote;
+  bool _quoting = false;
+  bool _decodingLocation = false;
+  bool _pickupFromLive = false;
 
   /// Never treat Firebase UIDs / junk as a phone number.
   static String _sanitizePhone(String? raw) {
@@ -93,6 +110,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
   void initState() {
     super.initState();
     _registerSendingDetailsListeners();
+    _registerQuoteListeners();
     _authSub = FirebaseAuth.instance.authStateChanges().listen((_) {
       _checkAuth();
     });
@@ -122,6 +140,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
     } else {
       _bootstrapped = false;
       _progressPollingTimer?.cancel();
+      _livePosSub?.cancel();
     }
   }
 
@@ -150,6 +169,151 @@ class _VerocourierPageState extends State<VerocourierPage> {
       _recipientAddressCtrl,
     ]) {
       ctrl.addListener(onSendingFieldChanged);
+    }
+  }
+
+  void _registerQuoteListeners() {
+    void bump() {
+      if (_decodingLocation) return;
+      if (_pickupCtrl.text.trim() != _liveAreaLabel.trim()) {
+        _pickupFromLive = false;
+      }
+      _quoteDebounce?.cancel();
+      _quoteDebounce = Timer(const Duration(milliseconds: 700), () {
+        unawaited(_decodePlusCodeFields());
+        unawaited(_refreshPriceQuote());
+      });
+    }
+
+    _pickupCtrl.addListener(bump);
+    _dropoffCtrl.addListener(bump);
+    _descriptionCtrl.addListener(bump);
+  }
+
+  String _placeStreetLabel(Place place) {
+    final name = place.name.trim();
+    final address = place.address.trim();
+    if (name.isNotEmpty && !GooglePlacesService.isPlusCodeLabel(name)) {
+      if (address.isNotEmpty &&
+          !GooglePlacesService.isPlusCodeLabel(address) &&
+          address.toLowerCase() != name.toLowerCase() &&
+          !address.toLowerCase().startsWith(name.toLowerCase())) {
+        return '$name, ${address.split(',').take(2).join(', ').trim()}';
+      }
+      return name;
+    }
+    if (address.isNotEmpty && !GooglePlacesService.isPlusCodeLabel(address)) {
+      return address;
+    }
+    return name.isNotEmpty ? name : address;
+  }
+
+  Future<void> _setDecodedText(TextEditingController ctrl, String value) async {
+    final next = value.trim();
+    if (next.isEmpty || next == ctrl.text.trim()) return;
+    _decodingLocation = true;
+    ctrl.text = next;
+    ctrl.selection = TextSelection.collapsed(offset: ctrl.text.length);
+    _decodingLocation = false;
+  }
+
+  Future<void> _decodePlusCodeFields() async {
+    if (_decodingLocation) return;
+    await _decodeControllerIfNeeded(_pickupCtrl);
+    await _decodeControllerIfNeeded(_dropoffCtrl);
+    await _decodeControllerIfNeeded(_senderAddressCtrl);
+    await _decodeControllerIfNeeded(_recipientAddressCtrl);
+  }
+
+  Future<void> _decodeControllerIfNeeded(TextEditingController ctrl) async {
+    final raw = ctrl.text.trim();
+    if (raw.isEmpty || !GooglePlacesService.isPlusCodeLabel(raw)) return;
+    final places = _tryPlaces();
+    if (places == null) return;
+    try {
+      final found = await places.lookupStreetName(
+        raw,
+        biasLat: _liveLat,
+        biasLng: _liveLng,
+      );
+      if (found == null || !mounted) return;
+      final label = _placeStreetLabel(found);
+      if (label.isEmpty || GooglePlacesService.isPlusCodeLabel(label)) return;
+      await _setDecodedText(ctrl, label);
+    } catch (e) {
+      if (kDebugMode) debugPrint('[VeroCourier] plus-code decode: $e');
+    }
+  }
+
+  Future<void> _useLiveLocationFor(TextEditingController ctrl) async {
+    Position? pos;
+    try {
+      pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 8),
+        ),
+      );
+    } catch (_) {
+      pos = await Geolocator.getLastKnownPosition();
+    }
+    if (pos == null) {
+      if (mounted) {
+        _toast('Could not read live GPS. Turn on location and try again.', isError: true);
+      }
+      return;
+    }
+    _liveLat = pos.latitude;
+    _liveLng = pos.longitude;
+    final places = _tryPlaces();
+    Place? found;
+    if (places != null) {
+      found = await places.reverseGeocode(
+        latitude: pos.latitude,
+        longitude: pos.longitude,
+      );
+    }
+    var label = found != null ? _placeStreetLabel(found) : '';
+    if (label.isEmpty || GooglePlacesService.isPlusCodeLabel(label)) {
+      try {
+        final marks = await placemarkFromCoordinates(pos.latitude, pos.longitude);
+        final p = marks.isNotEmpty ? marks.first : null;
+        label = [
+          p?.street,
+          p?.subLocality,
+          p?.locality,
+        ].where((e) => (e ?? '').trim().isNotEmpty).join(', ');
+      } catch (_) {}
+    }
+    if (label.isEmpty) {
+      if (mounted) {
+        _toast('Could not decode this GPS point to a street name.', isError: true);
+      }
+      return;
+    }
+    await _setDecodedText(ctrl, label);
+    if (identical(ctrl, _pickupCtrl)) _pickupFromLive = true;
+    if (mounted) {
+      _toast('Using $label');
+      unawaited(_refreshPriceQuote());
+    }
+  }
+
+  GooglePlacesService? _tryPlaces() {
+    try {
+      if (!GoogleMapsConfig.isConfigured) return null;
+      return GooglePlacesService();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  GoogleDirectionsService? _tryDirections() {
+    try {
+      if (!GoogleMapsConfig.isConfigured) return null;
+      return GoogleDirectionsService();
+    } catch (_) {
+      return null;
     }
   }
 
@@ -257,6 +421,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
     if (_dropoffCtrl.text.trim().isEmpty) {
       _dropoffCtrl.text = _recipientAddressCtrl.text.trim();
     }
+    unawaited(_decodePlusCodeFields());
   }
 
   Future<void> _onServiceTabChanged(int index) async {
@@ -420,8 +585,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
           _serviceCity = null;
           _detectedCity = 'Unknown';
           _cityGateMessage =
-              'Allow location access so Vero Courier can match your city '
-              '(Lilongwe, Blantyre, or Zomba).';
+              'Allow location access so Vero Courier can confirm you are in Lilongwe.';
         });
         return;
       }
@@ -431,64 +595,8 @@ class _VerocourierPageState extends State<VerocourierPage> {
           accuracy: LocationAccuracy.high,
         ),
       );
-      final placemarks = await placemarkFromCoordinates(
-        position.latitude,
-        position.longitude,
-      );
-      final place = placemarks.isNotEmpty ? placemarks.first : null;
-      final rawCity = (place?.locality?.trim().isNotEmpty == true
-              ? place!.locality!
-              : (place?.subAdministrativeArea?.trim().isNotEmpty == true
-                  ? place!.subAdministrativeArea!
-                  : (place?.administrativeArea ?? 'Unknown')))
-          .trim();
-
-      final detected = CourierCityHelper.resolve(rawCity);
-
-      if (!mounted) return;
-
-      if (detected == null) {
-        setState(() {
-          _detectingCity = false;
-          _citySupported = false;
-          _serviceCity = null;
-          _detectedCity = rawCity.isEmpty ? 'Unknown' : rawCity;
-          _cityGateMessage =
-              'Vero Courier is only available in Lilongwe (LLZ), '
-              'Blantyre (BTZ), and Zomba — within the same city only.';
-        });
-        return;
-      }
-
-      final canonical = CourierCityHelper.displayName(detected);
-      final code = CourierCityHelper.shortCode(detected);
-      final addr = _senderAddressCtrl.text.trim();
-      final addrCity = CourierCityHelper.resolve(addr);
-      final cityOnlyMismatch = addrCity != null &&
-          addrCity != detected &&
-          addr.toLowerCase() ==
-              CourierCityHelper.displayName(addrCity).toLowerCase();
-
-      // Replace bare wrong-city drafts (e.g. "Lilongwe") with detected city.
-      final effectiveAddress =
-          (addr.isEmpty || cityOnlyMismatch) ? canonical : addr;
-      final addressMismatch = CourierCityHelper.conflictMessage(
-        text: effectiveAddress,
-        requiredCity: detected,
-        fieldLabel: 'Sender pickup address',
-      );
-
-      setState(() {
-        _detectingCity = false;
-        _serviceCity = detected;
-        _detectedCity = canonical;
-        _senderCity = canonical;
-        _senderAddressCtrl.text = effectiveAddress;
-        _citySupported = addressMismatch == null;
-        _cityGateMessage = addressMismatch ??
-            'Within $canonical only ($code → $code). '
-                'Pickup and delivery must stay in the same city ';
-      });
+      await _applyLivePosition(position, updateAddressIfEmpty: true);
+      _startLiveLocationWatch();
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -497,8 +605,242 @@ class _VerocourierPageState extends State<VerocourierPage> {
         _serviceCity = null;
         _detectedCity = 'Unknown';
         _cityGateMessage =
-            'Could not detect your city. Check GPS and try again.';
+            'Could not detect your live location. Check GPS and try again.';
       });
+    }
+  }
+
+  Future<void> _applyLivePosition(
+    Position position, {
+    required bool updateAddressIfEmpty,
+  }) async {
+    _liveLat = position.latitude;
+    _liveLng = position.longitude;
+
+    String rawCity = '';
+    String areaLabel = '';
+
+    final places = _tryPlaces();
+    if (places != null) {
+      try {
+        final rev = await places.reverseGeocode(
+          latitude: position.latitude,
+          longitude: position.longitude,
+        );
+        if (rev != null) {
+          rawCity = '${rev.name} ${rev.address}';
+          areaLabel = _placeStreetLabel(rev);
+        }
+      } catch (e) {
+        if (kDebugMode) debugPrint('[VeroCourier] Google reverse geocode: $e');
+      }
+    }
+
+    if (rawCity.isEmpty) {
+      try {
+        final placemarks = await placemarkFromCoordinates(
+          position.latitude,
+          position.longitude,
+        );
+        final place = placemarks.isNotEmpty ? placemarks.first : null;
+        rawCity = [
+          place?.street,
+          place?.subLocality,
+          place?.locality,
+          place?.subAdministrativeArea,
+        ].where((e) => (e ?? '').trim().isNotEmpty).join(', ');
+        areaLabel = [
+          place?.street,
+          place?.subLocality,
+          place?.locality,
+        ].where((e) => (e ?? '').trim().isNotEmpty).join(', ');
+      } catch (_) {}
+    }
+
+    var detected = CourierCityHelper.resolve(rawCity);
+    if (detected == null &&
+        CourierCityHelper.isInLilongweBounds(
+          position.latitude,
+          position.longitude,
+        )) {
+      detected = CourierServiceCity.lilongwe;
+      if (areaLabel.isEmpty) areaLabel = 'Lilongwe';
+    }
+
+    if (!mounted) return;
+
+    if (detected == null || !CourierCityHelper.isLive(detected)) {
+      setState(() {
+        _detectingCity = false;
+        _citySupported = false;
+        _serviceCity = detected;
+        _detectedCity = areaLabel.isNotEmpty
+            ? areaLabel
+            : (rawCity.isEmpty ? 'Unknown' : rawCity);
+        _liveAreaLabel = _detectedCity;
+        _cityGateMessage = CourierCityHelper.expandingSoonMessage(
+          detected: detected,
+        );
+      });
+      return;
+    }
+
+    final canonical = CourierCityHelper.displayName(detected);
+    final addr = _senderAddressCtrl.text.trim();
+    final addrCity = CourierCityHelper.resolve(addr);
+    final cityOnlyMismatch = addrCity != null &&
+        addrCity != detected &&
+        addr.toLowerCase() ==
+            CourierCityHelper.displayName(addrCity).toLowerCase();
+
+    final liveLine = areaLabel.isNotEmpty ? areaLabel : canonical;
+    final pickupRaw = _pickupCtrl.text.trim();
+    final shouldFillPickup = pickupRaw.isEmpty ||
+        GooglePlacesService.isPlusCodeLabel(pickupRaw) ||
+        _pickupFromLive;
+    final shouldFillSender = addr.isEmpty ||
+        cityOnlyMismatch ||
+        GooglePlacesService.isPlusCodeLabel(addr);
+
+    final effectiveAddress = shouldFillSender
+        ? (updateAddressIfEmpty ? liveLine : addr)
+        : addr;
+    final addressMismatch = CourierCityHelper.conflictMessage(
+      text: effectiveAddress.isEmpty ? liveLine : effectiveAddress,
+      requiredCity: detected,
+      fieldLabel: 'Sender pickup address',
+    );
+
+    setState(() {
+      _detectingCity = false;
+      _serviceCity = detected;
+      _detectedCity = canonical;
+      _senderCity = canonical;
+      _liveAreaLabel = liveLine;
+      if (updateAddressIfEmpty && shouldFillSender) {
+        _senderAddressCtrl.text = liveLine;
+      }
+      if (shouldFillPickup && liveLine.isNotEmpty) {
+        _decodingLocation = true;
+        _pickupCtrl.text = liveLine;
+        _decodingLocation = false;
+        _pickupFromLive = true;
+      }
+      _citySupported = addressMismatch == null;
+      _cityGateMessage = addressMismatch ??
+          'Live location: $liveLine. '
+              '${CourierCityHelper.expandingSoonMessage(detected: detected)}';
+    });
+  }
+
+  void _startLiveLocationWatch() {
+    _livePosSub?.cancel();
+    _livePosSub = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 120,
+      ),
+    ).listen(
+      (pos) {
+        _liveGeocodeDebounce?.cancel();
+        _liveGeocodeDebounce = Timer(const Duration(seconds: 4), () {
+          unawaited(_applyLivePosition(pos, updateAddressIfEmpty: false));
+        });
+      },
+      onError: (e) {
+        if (kDebugMode) debugPrint('[VeroCourier] live GPS: $e');
+      },
+    );
+  }
+
+  Future<void> _refreshPriceQuote() async {
+    final pickup = _pickupCtrl.text.trim();
+    final dropoff = _dropoffCtrl.text.trim();
+    if (pickup.length < 3 || dropoff.length < 3) {
+      if (mounted && _priceQuote != null) setState(() => _priceQuote = null);
+      return;
+    }
+    if (mounted) setState(() => _quoting = true);
+    try {
+      double? dKm;
+      int? eta;
+
+      final places = _tryPlaces();
+      final dirs = _tryDirections();
+      if (places != null) {
+        final from = await places.geocodeAddress('$pickup, Lilongwe');
+        final to = await places.geocodeAddress('$dropoff, Lilongwe');
+        if (from != null && to != null) {
+          if (dirs != null) {
+            try {
+              final route = await dirs.getRouteInfo(
+                originLat: from.latitude,
+                originLng: from.longitude,
+                destLat: to.latitude,
+                destLng: to.longitude,
+              );
+              dKm = route.distanceKm;
+              eta = route.durationMinutes;
+            } catch (_) {}
+          }
+          dKm ??= CourierPricing.haversineKm(
+            lat1: from.latitude,
+            lng1: from.longitude,
+            lat2: to.latitude,
+            lng2: to.longitude,
+          );
+        }
+      }
+
+      if (dKm == null && _liveLat != null && _liveLng != null) {
+        try {
+          final to = places != null
+              ? await places.geocodeAddress('$dropoff, Lilongwe')
+              : null;
+          if (to != null) {
+            dKm = CourierPricing.haversineKm(
+              lat1: _liveLat!,
+              lng1: _liveLng!,
+              lat2: to.latitude,
+              lng2: to.longitude,
+            );
+          }
+        } catch (_) {}
+      }
+
+      if (dKm == null) {
+        try {
+          final a = await locationFromAddress('$pickup, Lilongwe, Malawi');
+          final b = await locationFromAddress('$dropoff, Lilongwe, Malawi');
+          if (a.isNotEmpty && b.isNotEmpty) {
+            dKm = CourierPricing.haversineKm(
+              lat1: a.first.latitude,
+              lng1: a.first.longitude,
+              lat2: b.first.latitude,
+              lng2: b.first.longitude,
+            );
+          }
+        } catch (_) {}
+      }
+
+      if (dKm == null || dKm <= 0) {
+        if (mounted) setState(() => _quoting = false);
+        return;
+      }
+
+      final quote = CourierPricing.estimate(
+        distanceKm: dKm,
+        goodsType: _selectedGoodsType,
+        description: _descriptionCtrl.text,
+        etaMinutes: eta,
+      );
+      if (!mounted) return;
+      setState(() {
+        _priceQuote = quote;
+        _quoting = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _quoting = false);
     }
   }
 
@@ -506,6 +848,9 @@ class _VerocourierPageState extends State<VerocourierPage> {
   void dispose() {
     _authSub?.cancel();
     _progressPollingTimer?.cancel();
+    _livePosSub?.cancel();
+    _liveGeocodeDebounce?.cancel();
+    _quoteDebounce?.cancel();
     _pickupCtrl.dispose();
     _dropoffCtrl.dispose();
     _descriptionCtrl.dispose();
@@ -668,6 +1013,8 @@ class _VerocourierPageState extends State<VerocourierPage> {
         'Recipient Address: ${_recipientAddressCtrl.text.trim()}',
       'ServiceCity: $_senderCity',
       'IntraCityOnly: yes',
+      if (_priceQuote != null)
+        'Estimate: MWK ${_priceQuote!.amountMwk} · ${_priceQuote!.distanceKm.toStringAsFixed(1)} km',
     ].where((e) => e.isNotEmpty).join(' | ');
 
     final email = _senderEmail.trim().isNotEmpty
@@ -695,6 +1042,17 @@ class _VerocourierPageState extends State<VerocourierPage> {
           ? created.trackingCode
           : '#${created.courierId}';
       _toast('Delivery created: $code');
+      if (senderUid.isNotEmpty) {
+        unawaited(
+          OrderPartyNotificationService.publishCourierStatusToSender(
+            senderUid: senderUid,
+            trackingCode: code,
+            statusValue: CourierStatus.pending.value,
+            pickup: created.pickupLocation,
+            dropoff: created.dropoffLocation,
+          ),
+        );
+      }
       _formKey.currentState?.reset();
       _pickupCtrl.clear();
       _dropoffCtrl.clear();
@@ -941,7 +1299,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
               ),
               const SizedBox(height: 16),
               const Text(
-                'City courier, made simple',
+                'Lilongwe courier, made simple',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 18,
@@ -951,7 +1309,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Book pickup, hand off securely, follow progress live.',
+                'Book pickup in Lilongwe, follow every step live. Expanding soon.',
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: 0.82),
                   fontSize: 13,
@@ -1042,21 +1400,23 @@ class _VerocourierPageState extends State<VerocourierPage> {
         _serviceTypesRow(),
         const SizedBox(height: 10),
         if (_detectingCity)
-          const Card(
+          Card(
             elevation: 0,
             child: Padding(
-              padding: EdgeInsets.all(12),
+              padding: const EdgeInsets.all(12),
               child: Row(
                 children: [
-                  SizedBox(
+                  const SizedBox(
                     width: 16,
                     height: 16,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
-                  SizedBox(width: 10),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      'Detecting your city for courier availability...',
+                      _liveAreaLabel.isNotEmpty
+                          ? 'Updating live Google location…'
+                          : 'Detecting your live Google location…',
                     ),
                   ),
                 ],
@@ -1083,10 +1443,12 @@ class _VerocourierPageState extends State<VerocourierPage> {
                 _cityGateMessage.isNotEmpty
                     ? _cityGateMessage
                     : (_citySupported
-                        ? 'Vero Courier is available in $_detectedCity '
-                            '(same-city only).'
-                        : 'Sorry, Vero Courier is not available in your city. '
-                            'We are expanding soon.'),
+                        ? (_liveAreaLabel.isNotEmpty
+                            ? 'Live location: $_liveAreaLabel. Vero Courier is Lilongwe-only for now — expanding soon.'
+                            : 'Vero Courier is available in Lilongwe (same-city only). Expanding soon.')
+                        : CourierCityHelper.expandingSoonMessage(
+                            detected: _serviceCity,
+                          )),
                 style: TextStyle(
                   color: _citySupported
                       ? const Color(0xFF1E7A38)
@@ -1433,13 +1795,15 @@ class _VerocourierPageState extends State<VerocourierPage> {
                     children: [
                       _field(
                         _pickupCtrl,
-                        'pickupLocation',
-                        hint: 'Area in $_serviceCityLabel',
+                        'Pickup location',
+                        hint: 'Street / place in Lilongwe (Plus Codes are decoded)',
+                        locationAction: () => _useLiveLocationFor(_pickupCtrl),
                       ),
                       _field(
                         _dropoffCtrl,
-                        'dropoffLocation',
-                        hint: 'Also in $_serviceCityLabel (same city)',
+                        'Drop-off location',
+                        hint: 'Street / place in Lilongwe (or paste a Plus Code)',
+                        locationAction: () => _useLiveLocationFor(_dropoffCtrl),
                       ),
                       Padding(
                         padding: const EdgeInsets.only(bottom: 10),
@@ -1469,8 +1833,10 @@ class _VerocourierPageState extends State<VerocourierPage> {
                                 ),
                               )
                               .toList(),
-                          onChanged: (value) =>
-                              setState(() => _selectedGoodsType = value),
+                          onChanged: (value) {
+                            setState(() => _selectedGoodsType = value);
+                            unawaited(_refreshPriceQuote());
+                          },
                         ),
                       ),
                       _field(
@@ -1485,6 +1851,73 @@ class _VerocourierPageState extends State<VerocourierPage> {
                         required: false,
                         maxLines: 2,
                       ),
+                      if (_quoting || _priceQuote != null) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFF7ED),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: _veroOrange.withValues(alpha: 0.28),
+                            ),
+                          ),
+                          child: _quoting && _priceQuote == null
+                              ? const Row(
+                                  children: [
+                                    SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                    SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        'Estimating price from distance and goods…',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              : Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'Estimated fare',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 13,
+                                        color: Color(0xFF16284C),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      _priceQuote?.summary ?? '',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 14,
+                                        color: _veroOrange,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      'Based on goods (${_selectedGoodsType ?? 'type'}), description, and live route distance in Lilongwe. Final price may be confirmed by the courier.',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        height: 1.35,
+                                        color: Colors.grey.shade700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                        ),
+                      ],
                       const SizedBox(height: 12),
                       SizedBox(
                         width: double.infinity,
@@ -1728,6 +2161,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
     bool required = true,
     int maxLines = 1,
     TextInputType? keyboardType,
+    VoidCallback? locationAction,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -1735,6 +2169,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
         controller: controller,
         maxLines: maxLines,
         keyboardType: keyboardType,
+        onFieldSubmitted: (_) => unawaited(_decodePlusCodeFields()),
         validator: required
             ? (v) => (v == null || v.trim().isEmpty) ? 'Required' : null
             : null,
@@ -1743,6 +2178,13 @@ class _VerocourierPageState extends State<VerocourierPage> {
           hintText: hint,
           filled: true,
           fillColor: const Color(0xFFF9FAFB),
+          suffixIcon: locationAction == null
+              ? null
+              : IconButton(
+                  tooltip: 'Use live GPS (street name)',
+                  onPressed: locationAction,
+                  icon: const Icon(Icons.my_location_rounded, color: _veroOrange),
+                ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
             borderSide: const BorderSide(color: Color(0xFFE5E7EB)),

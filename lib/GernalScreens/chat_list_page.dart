@@ -40,6 +40,10 @@ class _ChatListPageState extends State<ChatListPage> {
   StreamSubscription<BackendChatMessage>? _messageSub;
   late final Stream<List<BackendChatThread>> _threadsStream;
   Timer? _pollTimer;
+  final Map<String, String> _resolvedPeerNames = {};
+  String _hydrateSig = '';
+  bool _hydratingNames = false;
+  Timer? _nameFlush;
 
   @override
   void initState() {
@@ -58,6 +62,7 @@ class _ChatListPageState extends State<ChatListPage> {
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _nameFlush?.cancel();
     _messageSub?.cancel();
     _wsConnectionSub?.cancel();
     _searchCtrl.dispose();
@@ -68,6 +73,7 @@ class _ChatListPageState extends State<ChatListPage> {
     // Fast path: use cached backend user id so the list can render immediately.
     try {
       final prefs = await SharedPreferences.getInstance();
+      await BackendChatService.ensureBusinessNameCacheLoaded();
       final cached = prefs.getInt('userId') ??
           prefs.getInt('user_id') ??
           int.tryParse(
@@ -168,13 +174,32 @@ class _ChatListPageState extends State<ChatListPage> {
     final tiles = raw
         .where((t) => !_hiddenIds.contains(t.id))
         .map(
-          (t) => _ThreadTile.fromThread(
-            t,
-            me,
-            myEmail: _myEmail,
-            myName: _myName,
-            isPinned: _pinnedIds.contains(t.id),
-          ),
+          (t) {
+            final other = t.otherParticipant(
+              me,
+              myEmail: _myEmail,
+              myName: _myName,
+            );
+            final resolved = other == null
+                ? null
+                : (_resolvedPeerNames[other.displayLookupKey] ??
+                    BackendChatService.peekCachedBusinessName(
+                      other.displayLookupKey,
+                    ) ??
+                    (other.id > 0
+                        ? BackendChatService.peekCachedBusinessName(
+                            'i:${other.id}',
+                          )
+                        : null));
+            return _ThreadTile.fromThread(
+              t,
+              me,
+              myEmail: _myEmail,
+              myName: _myName,
+              isPinned: _pinnedIds.contains(t.id),
+              resolvedBusinessName: resolved,
+            );
+          },
         )
         .where((tile) => q.isEmpty || tile.searchKey.contains(q))
         .toList();
@@ -194,6 +219,71 @@ class _ChatListPageState extends State<ChatListPage> {
     );
     rest.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     return [...pinned, ...rest];
+  }
+
+  void _schedulePeerNameHydration(List<BackendChatThread> threads, int me) {
+    final peers = <ChatParticipant>[];
+    for (final t in threads) {
+      if (_hiddenIds.contains(t.id)) continue;
+      final other = t.otherParticipant(
+        me,
+        myEmail: _myEmail,
+        myName: _myName,
+      );
+      if (other != null) peers.add(other);
+    }
+    for (final p in peers) {
+      final key = p.displayLookupKey;
+      final memo = BackendChatService.peekCachedBusinessName(key) ??
+          (p.id > 0
+              ? BackendChatService.peekCachedBusinessName('i:${p.id}')
+              : null) ??
+          ((p.businessName ?? '').trim().isNotEmpty ? p.businessName!.trim() : null);
+      if (memo != null &&
+          memo.isNotEmpty &&
+          !ChatParticipant.isPlaceholderName(memo)) {
+        _resolvedPeerNames[key] = memo;
+      }
+    }
+    final pending = peers.where((p) {
+      final have = _resolvedPeerNames[p.displayLookupKey];
+      return have == null || have.isEmpty || p.needsBusinessNameLookup;
+    }).where((p) {
+      final have = _resolvedPeerNames[p.displayLookupKey];
+      return have == null || ChatParticipant.isPlaceholderName(have);
+    }).toList();
+    final sig = peers.map((p) => p.displayLookupKey).join('|');
+    if (pending.isEmpty) {
+      _hydrateSig = sig;
+      return;
+    }
+    if (sig.isEmpty || (sig == _hydrateSig && _hydratingNames)) return;
+    unawaited(_hydratePeerBusinessNames(pending, sig));
+  }
+
+  Future<void> _hydratePeerBusinessNames(
+    List<ChatParticipant> peers,
+    String sig,
+  ) async {
+    _hydratingNames = true;
+    try {
+      await BackendChatService.resolveBusinessNames(
+        peers,
+        onResolved: (key, value) {
+          if (!mounted || value.trim().isEmpty) return;
+          if (_resolvedPeerNames[key] == value) return;
+          _resolvedPeerNames[key] = value;
+          _nameFlush?.cancel();
+          _nameFlush = Timer(const Duration(milliseconds: 16), () {
+            if (mounted) setState(() {});
+          });
+        },
+      );
+      _hydrateSig = sig;
+    } catch (_) {
+    } finally {
+      _hydratingNames = false;
+    }
   }
 
   Future<void> _togglePin(_ThreadTile tile) async {
@@ -302,7 +392,9 @@ class _ChatListPageState extends State<ChatListPage> {
             return const ChatListSkeleton();
           }
 
-          final tiles = _mapThreads(snap.data ?? const [], me);
+          final threads = snap.data ?? const [];
+          _schedulePeerNameHydration(threads, me);
+          final tiles = _mapThreads(threads, me);
 
           if (tiles.isEmpty) {
             final q = _searchCtrl.text.trim();
@@ -562,6 +654,7 @@ class _ThreadTile {
     String? myEmail,
     String? myName,
     bool isPinned = false,
+    String? resolvedBusinessName,
   }) {
     // Never fall back to the current user — that made the list show your own name.
     final otherParticipant = t.otherParticipant(
@@ -585,38 +678,45 @@ class _ThreadTile {
       return false;
     }
 
-    var peerName = (otherParticipant?.name ?? '').trim();
-    if (peerName.isEmpty ||
-        peerName.toLowerCase() == 'user' ||
-        peerName.toLowerCase() == 'unknown' ||
-        peerName.toLowerCase() == 'contact' ||
-        looksLikeMe(peerName)) {
+    bool usablePeerName(String raw) {
+      final n = raw.trim();
+      if (n.isEmpty || looksLikeMe(n) || ChatParticipant.isPlaceholderName(n)) {
+        return false;
+      }
+      if (n.contains('@')) return false;
       final email = (otherParticipant?.email ?? '').trim();
-      if (email.contains('@') &&
-          !email.startsWith('+firebase_') &&
-          email.toLowerCase() != myEmailNorm) {
-        peerName = email.split('@').first;
-      } else if (threadTitle.isNotEmpty &&
+      if (ChatParticipant.looksLikeEmailLocalName(n, email)) return false;
+      return true;
+    }
+
+    var peerName = (resolvedBusinessName ?? '').trim();
+    if (!usablePeerName(peerName)) {
+      peerName = (otherParticipant?.preferredDisplayName ?? '').trim();
+    }
+    if (!usablePeerName(peerName)) {
+      peerName = (otherParticipant?.businessName ?? '').trim();
+    }
+    if (!usablePeerName(peerName)) {
+      peerName = (otherParticipant?.name ?? '').trim();
+    }
+    if (!usablePeerName(peerName)) {
+      if (threadTitle.isNotEmpty &&
           threadTitle.toLowerCase() != 'direct' &&
-          threadTitle.toLowerCase() != 'user' &&
-          !looksLikeMe(threadTitle)) {
+          usablePeerName(threadTitle)) {
         peerName = threadTitle;
       } else {
-        // Last resort: any other participant we haven't tried.
         for (final p in t.participants) {
           if (me > 0 && p.id > 0 && p.id == me) continue;
           if (looksLikeMe(p.name) || looksLikeMe(p.email)) continue;
-          final candidate = p.name.trim();
-          if (candidate.isNotEmpty &&
-              candidate.toLowerCase() != 'contact' &&
-              candidate.toLowerCase() != 'user') {
+          final candidate = (p.businessName ?? p.preferredDisplayName).trim();
+          if (usablePeerName(candidate)) {
             peerName = candidate;
             break;
           }
         }
       }
     }
-    if (peerName.isEmpty || looksLikeMe(peerName)) peerName = 'Contact';
+    if (!usablePeerName(peerName)) peerName = 'Contact';
 
     final product = t.lastProductTag;
     final display = BackendChatService.describeLastMessagePreview(

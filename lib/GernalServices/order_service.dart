@@ -61,6 +61,10 @@ class OrderService {
   static const String _orderNotifWindowStartKey = 'order_notif_window_start_v1';
   static const String _orderNotifWindowCountKey = 'order_notif_window_count_v1';
   static const int _orderNotifWindowSeconds = 45;
+  static List<OrderItem> _myOrdersMemCache = const [];
+
+  static List<OrderItem> peekCachedMyOrders() =>
+      List<OrderItem>.from(_myOrdersMemCache);
 
   /* --------------------- infra helpers --------------------- */
 
@@ -439,12 +443,13 @@ class OrderService {
     Future<http.Response> Function() run, {
     int retries = 2,
     required String action,
+    Duration timeout = const Duration(seconds: 45),
   }) async {
     int attempt = 0;
 
     while (true) {
       try {
-        final res = await run().timeout(const Duration(seconds: 45));
+        final res = await run().timeout(timeout);
 
         // Retry on temporary gateway issues
         if ((res.statusCode == 502 || res.statusCode == 503 || res.statusCode == 504) && attempt < retries) {
@@ -624,7 +629,12 @@ class OrderService {
     Map<String, String>? queryParameters,
   }) async {
     final uri = ApiConfig.endpoint(path).replace(queryParameters: queryParameters);
-    final r = await _retry(() => http.get(uri, headers: headers), action: 'load your orders');
+    final r = await _retry(
+      () => http.get(uri, headers: headers),
+      action: 'load your orders',
+      retries: 1,
+      timeout: const Duration(seconds: 12),
+    );
 
     if (r.statusCode == 404) return <OrderItem>[];
     if (r.statusCode == 403) return <OrderItem>[];
@@ -688,17 +698,24 @@ class OrderService {
       }
 
       final all = byId.values.toList();
+      _myOrdersMemCache = all;
 
-      // If backend ignored the filter, narrow client-side.
-      await _syncOrderStatusNotifications(
+      // Don't block the list on notification bookkeeping.
+      unawaited(_syncOrderStatusNotifications(
         all,
         incomingMerchantOrderIds: incomingMerchantOrderIds,
-      );
+      ));
       if (status != null) {
         return all.where((o) => o.status == status).toList();
       }
       return all;
     } catch (e, st) {
+      if (_myOrdersMemCache.isNotEmpty) {
+        if (status != null) {
+          return _myOrdersMemCache.where((o) => o.status == status).toList();
+        }
+        return List<OrderItem>.from(_myOrdersMemCache);
+      }
       dev.log('[OrderService] JSON parse error', name: 'OrderService', error: e, stackTrace: st);
       throw FriendlyApiException('We couldn’t load your orders. Please check your internet connection and try again.');
     }

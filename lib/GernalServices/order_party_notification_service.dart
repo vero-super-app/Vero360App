@@ -243,7 +243,7 @@ class OrderPartyNotificationService {
     }
   }
 
-  /// Sender: parcel accepted / rejected / delivered (Vero Courier).
+  /// Sender: parcel accepted / coming / delivered / rejected (Vero Courier).
   static Future<void> publishCourierStatusToSender({
     required String senderUid,
     required String trackingCode,
@@ -262,12 +262,24 @@ class OrderPartyNotificationService {
     late final String event;
 
     switch (status) {
+      case 'PENDING':
+        title = 'Parcel request received';
+        body = 'We received your parcel $code. A courier will accept it shortly.';
+        event = 'pending';
+        break;
       case 'ACCEPTED':
         title = 'Parcel accepted';
         body = 'Your parcel $code has been accepted by Vero Courier.';
         event = 'accepted';
         break;
+      case 'ON_THE_WAY':
+      case 'COMING':
+        title = 'Courier is coming';
+        body = 'Your parcel $code is on the way. The courier is coming now.';
+        event = 'coming';
+        break;
       case 'CANCELLED':
+      case 'REJECTED':
         title = 'Parcel rejected';
         body = 'Your parcel $code was rejected. Contact support if you need help.';
         event = 'rejected';
@@ -278,7 +290,10 @@ class OrderPartyNotificationService {
         event = 'delivered';
         break;
       default:
-        return;
+        title = 'Parcel update';
+        body = 'Your parcel $code status is now $status.';
+        event = status.toLowerCase();
+        break;
     }
 
     final from = (pickup ?? '').trim();

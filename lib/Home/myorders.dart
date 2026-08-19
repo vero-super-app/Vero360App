@@ -19,6 +19,7 @@ import 'package:vero360_app/GernalServices/merchant_phone_resolver.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_seller_loader.dart';
 import 'package:vero360_app/features/Marketplace/presentation/widgets/merchant_review_prompt.dart';
 import 'package:vero360_app/utils/app_wallet_pin.dart';
 import 'package:vero360_app/utils/merchant_contact_display.dart';
@@ -154,6 +155,9 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
   /// Single future: fetch all orders once; filter by status in each tab.
   /// Backend may not support ?status=, so we filter client-side.
   late Future<List<OrderItem>> _ordersFuture;
+  List<OrderItem> _orders = const [];
+  bool _refreshing = false;
+  int _reloadGen = 0;
 
   // Backup path: when we see confirmed + paid marketplace orders that expose
   // itemSqlId, mark those listings as sold so they disappear from shelves.
@@ -185,9 +189,14 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
       (v) => v != null && _statusLabel(v).toLowerCase() == s,
     );
     if (idx >= 0) _tab.index = idx;
-    // Paint from the first API response (refund-page speed), then hydrate
-    // proofs / escrow / phones in the background without a second fetch.
-    _ordersFuture = _svc.getMyOrders();
+    // Paint last known orders immediately, then fetch fresh status.
+    _orders = OrderService.peekCachedMyOrders();
+    if (_orders.isNotEmpty) {
+      _ordersFuture = Future<List<OrderItem>>.value(_orders);
+      unawaited(_reloadCurrent());
+    } else {
+      _ordersFuture = _svc.getMyOrders();
+    }
     unawaited(_bootstrapOrders());
   }
 
@@ -200,6 +209,7 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     try {
       final list = await _ordersFuture;
       if (!mounted) return;
+      setState(() => _orders = list);
       await Future.wait([
         _hydrateFirestoreDelivery(list),
         _hydrateEscrow(list),
@@ -323,6 +333,14 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
       String chatId = '';
       int? peerUserId;
       Future<MerchantChatResult>? pendingMerchantChat;
+      var chatPeerName = peerName;
+      String? autoSend;
+      String? autoKey;
+      if (!messageBuyer) {
+        chatPeerName = await _sellerBusinessName(o);
+        autoSend = _orderShippingMessage(o, businessName: chatPeerName);
+        autoKey = 'order-shipping-${o.id}';
+      }
 
       if (messageBuyer) {
         peerUserId = await BackendChatService.getUserIdByFirebaseUidValidated(
@@ -338,7 +356,7 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
         } else {
           final chat = await BackendChatService.ensureChat(
             peerUserId: peerUserId,
-            peerName: peerName,
+            peerName: chatPeerName,
           );
           chatId = chat.id;
         }
@@ -377,10 +395,12 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
         MaterialPageRoute(
           builder: (_) => MessagePageBackendApi(
             peerId: chatId,
-            peerName: peerName,
+            peerName: chatPeerName,
             productContext: productContext,
             peerMerchantId: sellerUid.isEmpty ? null : sellerUid,
             peerUserId: peerUserId,
+            autoSendMessage: autoSend,
+            autoSendClientMessageId: autoKey,
             resolveSqlItemId: (o.itemSqlId ?? 0) > 0 ? o.itemSqlId : null,
             resolveOwnerId: o.merchantId > 0 ? o.merchantId : null,
             resolveMerchantId: sellerUid.isEmpty ? null : sellerUid,
@@ -760,15 +780,85 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     );
   }
 
-  Future<void> _reloadCurrent() async {
+  Future<String> _sellerBusinessName(OrderItem o) async {
+    final ids = <String>[
+      (o.merchantUid ?? '').trim(),
+      if (o.merchantId > 0) '${o.merchantId}',
+    ].where((id) => id.isNotEmpty).toList();
+
+    for (final id in ids) {
+      final n = MerchantSellerLoader.peekBusinessName(id);
+      if (n != null && n.isNotEmpty) return n;
+    }
+    await BackendChatService.ensureBusinessNameCacheLoaded();
+    for (final id in ids) {
+      final n = BackendChatService.peekCachedBusinessName(id);
+      if (n != null && !_isWeakShopName(n)) return n;
+    }
+    for (final id in ids) {
+      final n = await MerchantSellerLoader.peekBusinessNamePersisted(id);
+      if (n != null && n.isNotEmpty) return n;
+    }
+
+    final fromOrder = (o.merchantName ?? '').trim();
+    if (fromOrder.isNotEmpty && !_isWeakShopName(fromOrder)) return fromOrder;
+    return 'Merchant';
+  }
+
+  bool _isWeakShopName(String raw) {
+    final v = raw.trim();
+    if (v.isEmpty || v.contains('@')) return true;
+    const weak = {
+      'seller',
+      'merchant',
+      'user',
+      'unknown',
+      'unknown merchant',
+      'contact',
+      'buyer',
+    };
+    return weak.contains(v.toLowerCase());
+  }
+
+  String _orderShippingMessage(OrderItem o, {String? businessName}) {
+    final city = (o.addressCity ?? '').trim();
+    final addr = (o.addressDescription ?? '').trim();
+    final delivery = [
+      if (city.isNotEmpty) city,
+      if (addr.isNotEmpty) addr,
+    ].join(' • ');
+    final shop = (businessName ?? o.merchantName ?? '').trim();
+    final hello = _isWeakShopName(shop) ? 'Hi' : 'Hi @$shop';
+
+    return [
+      hello,
+      '',
+      'I have bought this order. Please arrange shipping.',
+      '',
+      'Order: ${o.orderNumber}',
+      'Item: ${o.itemName}',
+      if (o.quantity > 1) 'Qty: ${o.quantity}',
+      'Total: ${_money.format(o.total)}',
+      'Status: ${_statusLabel(o.status)} / ${_paymentLabel(o.paymentStatus)}',
+      if (delivery.isNotEmpty) 'Delivery: $delivery',
+    ].join('\n');
+  }
+
+  Future<void> _reloadCurrent({bool followUp = false}) async {
+    final gen = ++_reloadGen;
     await _loadShippingPrefs();
     await _loadDeliveryMetaPrefs();
-    if (!mounted) return;
-    setState(() {
-      _ordersFuture = _fetchOrdersWithProofs();
-    });
+    if (!mounted || gen != _reloadGen) return;
+    setState(() => _refreshing = true);
+
     try {
-      final orders = await _ordersFuture;
+      final orders = await _fetchOrdersWithProofs();
+      if (!mounted || gen != _reloadGen) return;
+      setState(() {
+        _orders = orders;
+        _ordersFuture = Future<List<OrderItem>>.value(orders);
+        _refreshing = false;
+      });
       for (final o in orders) {
         if (o.itemSqlId == null) continue;
         if (o.status != OrderStatus.delivered) continue;
@@ -777,11 +867,27 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
         _syncedSoldOrders.add(o.id);
         unawaited(_marketplaceService.markItemSold(o.itemSqlId!));
       }
-    } catch (_) {
-      // Error shown by FutureBuilder
+
+      final maybeConfirming = orders.any(
+        (o) =>
+            o.status == OrderStatus.pending &&
+            o.paymentStatus == PaymentStatus.paid,
+      );
+      if (!followUp && maybeConfirming) {
+        unawaited(Future<void>.delayed(const Duration(milliseconds: 1500), () async {
+          if (!mounted || gen != _reloadGen) return;
+          await _reloadCurrent(followUp: true);
+        }));
+      }
+    } catch (e) {
+      if (!mounted || gen != _reloadGen) return;
+      setState(() {
+        _refreshing = false;
+        if (_orders.isEmpty) {
+          _ordersFuture = Future<List<OrderItem>>.error(e);
+        }
+      });
     }
-    if (!mounted) return;
-    setState(() {});
   }
 
   Color _statusColor(OrderStatus s) {
@@ -1265,10 +1371,14 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
       child: FutureBuilder<List<OrderItem>>(
         future: _ordersFuture,
         builder: (context, snap) {
-          if (snap.connectionState != ConnectionState.done) {
+          final all = (snap.connectionState == ConnectionState.done &&
+                  snap.data != null)
+              ? snap.data!
+              : _orders;
+          if (snap.connectionState != ConnectionState.done && all.isEmpty) {
             return const Center(child: CircularProgressIndicator());
           }
-          if (snap.hasError) {
+          if (snap.hasError && all.isEmpty) {
             return ListView(
               children: [
                 const SizedBox(height: 80),
@@ -1281,7 +1391,6 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
               ],
             );
           }
-          final all = snap.data ?? const <OrderItem>[];
           final byStatus =
               s == null ? all : all.where((o) => o.status == s).toList();
           final items = byStatus
@@ -1380,6 +1489,12 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
       ),
       body: Column(
         children: [
+          if (_refreshing && _orders.isNotEmpty)
+            LinearProgressIndicator(
+              minHeight: 2,
+              color: _brand,
+              backgroundColor: _brand.withValues(alpha: 0.18),
+            ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: TextField(

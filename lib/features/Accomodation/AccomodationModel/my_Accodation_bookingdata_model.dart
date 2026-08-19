@@ -508,16 +508,16 @@ class BookingItem {
     final t = raw?.trim() ?? '';
     if (t.isEmpty) return null;
     final lower = t.toLowerCase();
-    if (lower.contains('firebase_') ||
-        lower.startsWith('firebase_') ||
-        lower.startsWith('+firebase_')) {
+    if (lower.contains('firebase') ||
+        lower.contains('firestore') ||
+        lower.contains('uid_') ||
+        lower.startsWith('+firebase')) {
       return null;
     }
-    // Looks like uid / token-ish blob instead of phone.
-    final compact = t.replaceAll(RegExp(r'[\s\-\(\)]'), '');
-    if (compact.length > 20 && !compact.contains('@')) {
-      return null;
-    }
+    final digits = t.replaceAll(RegExp(r'\D'), '');
+    if (digits.length < 8 || digits.length > 15) return null;
+    final letterCount = RegExp(r'[a-zA-Z]').allMatches(t).length;
+    if (letterCount > 4) return null;
     return t;
   }
 

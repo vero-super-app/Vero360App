@@ -1155,6 +1155,7 @@ class OrderEscrowSnapshot {
 
   bool get isHeld => status == 'held';
   bool get isReleased => status == 'released' || status == 'auto_released';
+  bool get isRefunded => status == 'refunded';
 
   bool get isAutoReleaseDue {
     if (!isHeld || releaseDueAt == null) return false;

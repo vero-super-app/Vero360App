@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_categories.dart';
+import 'package:vero360_app/utils/kyc_gate.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 /// Add a dish to the merchant's Firestore `food_menu_items`.
@@ -139,6 +140,16 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
       );
       return;
     }
+    final kycOk = await KycGate.ensureVerified(
+      context,
+      title: 'KYC required for food merchants',
+      message:
+          'Verify your identity before posting dishes. This protects customers '
+          'and lets you receive kitchen payouts.',
+      pendingMessage:
+          'KYC is still pending. You can post dishes once verification is approved.',
+    );
+    if (!kycOk || !mounted) return;
 
     setState(() => _submitting = true);
     try {

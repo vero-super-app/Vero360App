@@ -13,9 +13,12 @@ import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchan
 import 'package:vero360_app/utils/app_wallet_pin.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_menu_post_page.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/kyc_verification_screen.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/settings/Settings.dart';
+import 'package:vero360_app/utils/kyc_gate.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/kyc_status_card.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_courier_dispatch.dart';
 
@@ -72,6 +75,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
   double _totalRevenue = 0;
   double _rating = 0.0;
   String _status = 'pending';
+  KycStatusSnapshot _kyc = const KycStatusSnapshot();
 
   static const Color _brandOrange = Color(0xFFFF8A00);
   static const Color _brandNavy = Color(0xFF16284C);
@@ -178,6 +182,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
           _loadMenuItems(),
           _loadWalletBalance(),
           _loadReviews(),
+          _loadKycStatus(),
         ]);
       }
     } finally {
@@ -441,7 +446,35 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     }
   }
 
+  Future<void> _loadKycStatus() async {
+    final snap = await KycGate.loadStatus(uid: _uid);
+    if (!mounted) return;
+    setState(() => _kyc = snap);
+  }
+
+  Future<void> _openKycVerification() async {
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const KycVerificationScreen()),
+    );
+    if (!mounted) return;
+    await _loadKycStatus();
+  }
+
+  Future<bool> _ensureKycForPosting() {
+    return KycGate.ensureVerified(
+      context,
+      title: 'KYC required for food merchants',
+      message:
+          'Verify your identity before posting dishes. This protects customers '
+          'and lets you receive kitchen payouts.',
+      pendingMessage:
+          'KYC is still pending. You can post dishes once verification is approved.',
+    );
+  }
+
   Future<void> _openPostFood() async {
+    if (!mounted) return;
+    if (!await _ensureKycForPosting()) return;
     if (!mounted) return;
     final added = await Navigator.push<bool>(
       context,
@@ -1403,6 +1436,11 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildModernHeaderCard(),
+            const SizedBox(height: 12),
+            KycStatusCard(
+              snapshot: _kyc,
+              onTap: _openKycVerification,
+            ),
             const SizedBox(height: 12),
             _buildStatsSection(),
             const SizedBox(height: 12),

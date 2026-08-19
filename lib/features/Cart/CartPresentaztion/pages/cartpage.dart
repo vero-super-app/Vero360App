@@ -14,6 +14,7 @@ import 'package:intl/intl.dart'; // ✅ ADD (commas formatter)
 
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_checkout_page.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
@@ -286,6 +287,9 @@ class _CartPageState extends State<CartPage> {
               ? null
               : (data['notes'] ?? '').toString().trim(),
           addOns: CartModel.parseAddOnNames(data['addOns'] ?? data['addons']),
+          location: (data['location'] ?? '').toString().trim().isEmpty
+              ? null
+              : (data['location'] ?? '').toString().trim(),
         );
       }).toList();
     } catch (_) {
@@ -544,11 +548,15 @@ class _CartPageState extends State<CartPage> {
     }
 
     final itemsForCheckout = List<CartModel>.from(_items);
+    final foodOnly = itemsForCheckout.isNotEmpty &&
+        itemsForCheckout.every((e) => e.isFood);
 
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => CheckoutFromCartPage(items: itemsForCheckout),
+        builder: (_) => foodOnly
+            ? FoodCheckoutPage(items: itemsForCheckout)
+            : CheckoutFromCartPage(items: itemsForCheckout),
       ),
     );
 

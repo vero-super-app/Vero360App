@@ -348,17 +348,14 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       await AuthStorage.syncBackendUserIdFromMe();
     } catch (_) {}
-    try {
-      await hydrateMerchantServiceFromFirestore(prefs);
-      final lookupUid =
-          (FirebaseAuth.instance.currentUser?.uid ?? uid ?? '').trim();
-      if (lookupUid.isNotEmpty) {
-        final discovered = await resolveMerchantServiceForUid(lookupUid);
-        if (discovered != null && discovered.isNotEmpty) {
-          await persistMerchantServiceFromApi(prefs, discovered);
-        }
-      }
-    } catch (_) {}
+    final role = RoleSessionService.readCachedRole(prefs);
+    if (role == RoleHelper.merchant) {
+      try {
+        await hydrateMerchantServiceFromFirestore(prefs);
+      } catch (_) {}
+    } else {
+      await prefs.remove('merchant_service');
+    }
     await loadDriverStatusFromPrefs();
   }
 

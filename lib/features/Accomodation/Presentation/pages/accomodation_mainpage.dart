@@ -17,6 +17,7 @@ import 'package:vero360_app/features/Accomodation/Presentation/pages/accommodati
 import 'package:vero360_app/features/Accomodation/Presentation/widgets/accommodation_listing_image.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
+import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
 
@@ -202,9 +203,21 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
     final uid = _auth.currentUser?.uid.trim() ?? '';
     if (uid.isEmpty) return false;
     try {
-      final doc =
-          await FirebaseFirestore.instance.collection('accommodation_merchants').doc(uid).get();
-      if (doc.exists) return true;
+      final userDoc =
+          await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      final service = normalizeMerchantServiceKey(
+        userDoc.data()?['merchantService']?.toString() ??
+            userDoc.data()?['merchant_service']?.toString(),
+      );
+      if (service == 'accommodation') return true;
+      if (service != null && service != 'accommodation') return false;
+    } catch (_) {}
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('accommodation_merchants')
+          .doc(uid)
+          .get();
+      if (doc.exists && looksLikeRealMerchantShopDoc(doc.data())) return true;
     } catch (_) {}
     try {
       final rooms = await FirebaseFirestore.instance

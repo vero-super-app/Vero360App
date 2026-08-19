@@ -1504,6 +1504,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
         serviceType: item.serviceType ?? 'marketplace',
         comment: note,
         availableStock: item.stockQuantity,
+        location: item.location,
       );
 
       // Local cart write returns immediately; Firestore/API sync in background.

@@ -203,7 +203,6 @@ class _MarketplaceMerchantDashboardState
   final List<LocalMedia> _gallery = <LocalMedia>[];
 
   static const List<String> _kCategories = <String>[
-    'food',
     'drinks',
     'electronics',
     'clothes',
@@ -2949,7 +2948,10 @@ class _MarketplaceMerchantDashboardState
     );
     int stockQty = int.tryParse(stockCtrl.text) ?? 1;
 
-    String category = (item['category'] ?? 'other').toString();
+    String category = (item['category'] ?? 'other').toString().toLowerCase().trim();
+    if (category == 'food' || !_kCategories.contains(category)) {
+      category = 'other';
+    }
     bool isActive = item['isActive'] == true;
 
     LocalMedia? newCover;
@@ -3150,13 +3152,16 @@ class _MarketplaceMerchantDashboardState
                   'price': p,
                   'location': loc,
                   'category': category,
-                  'description': descCtrl.text.trim().isEmpty
-                      ? null
-                      : descCtrl.text.trim(),
                   'stockQuantity': stockQty,
                   'quantity': stockQty,
                   'updatedAt': FieldValue.serverTimestamp(),
                 };
+                final desc = descCtrl.text.trim();
+                if (desc.isEmpty) {
+                  patch['description'] = FieldValue.delete();
+                } else {
+                  patch['description'] = desc;
+                }
 
                 if (prevReview == 'rejected' || prevReview == 'pending') {
                   // Resubmit for auto-moderation.
@@ -3171,14 +3176,37 @@ class _MarketplaceMerchantDashboardState
                 }
 
                 if (newCover != null) {
-                  patch['image'] = base64Encode(newCover!.bytes);
-                  final coverHash = await MarketplaceService().computeVisualHash(newCover!.bytes);
+                  final svc = MarketplaceService();
+                  try {
+                    final coverUrl = await svc.uploadBytes(
+                      newCover!.bytes,
+                      filename: (newCover!.filename ?? '').trim().isEmpty
+                          ? 'cover.jpg'
+                          : newCover!.filename!,
+                      mimeType: newCover!.mime,
+                    );
+                    patch['imageUrl'] = coverUrl;
+                    patch['image'] = FieldValue.delete();
+                    patch['photo'] = FieldValue.delete();
+                    patch['picture'] = FieldValue.delete();
+                  } catch (uploadErr) {
+                    debugPrint('Edit cover upload failed: $uploadErr');
+                    ToastHelper.showCustomToast(
+                      rootCtx,
+                      'Could not upload the new cover photo. Check your internet and try again.',
+                      isSuccess: false,
+                      errorMessage: '',
+                    );
+                    setSheet(() => saving = false);
+                    return;
+                  }
+                  final coverHash =
+                      await svc.computeVisualHash(newCover!.bytes);
                   if (coverHash != null) {
                     patch['imageHash'] = coverHash;
                     patch['imageHashes'] = FieldValue.arrayUnion([coverHash]);
                   }
                   if (prevReview == 'approved') {
-                    // New cover on live item G?? re-review.
                     patch['isActive'] = false;
                     patch['reviewStatus'] = 'pending';
                   }
@@ -3330,7 +3358,9 @@ class _MarketplaceMerchantDashboardState
                     ),
                     const SizedBox(height: 10),
                     DropdownButtonFormField<String>(
-                      initialValue: category,
+                      value: _kCategories.contains(category)
+                          ? category
+                          : 'other',
                       items: _kCategories
                           .map((c) => DropdownMenuItem(
                                 value: c,
@@ -5234,7 +5264,7 @@ class _MarketplaceMerchantDashboardState
               ),
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(
-                initialValue: _category,
+                value: _kCategories.contains(_category) ? _category : 'other',
                 items: _kCategories
                     .map((c) => DropdownMenuItem(
                           value: c,

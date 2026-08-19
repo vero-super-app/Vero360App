@@ -113,10 +113,19 @@ class _MarketplaceEditPageState extends State<MarketplaceEditPage> {
       maxWidth: 2048,
     );
     if (x == null) return;
-    final url = await svc.uploadBytes(await x.readAsBytes(), filename: x.name);
-    setState(() {
-      _cover = url;
-    });
+    try {
+      final url = await svc.uploadBytes(await x.readAsBytes(), filename: x.name);
+      if (!mounted) return;
+      setState(() => _cover = url);
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Could not upload cover photo. Try again.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+    }
   }
 
   Future<void> _save() async {
@@ -186,6 +195,7 @@ class _MarketplaceEditPageState extends State<MarketplaceEditPage> {
       if (_cover.isNotEmpty) {
         if (_cover.startsWith('http')) {
           patch['imageUrl'] = _cover;
+          patch['image'] = FieldValue.delete();
         } else {
           patch['image'] = _cover;
         }

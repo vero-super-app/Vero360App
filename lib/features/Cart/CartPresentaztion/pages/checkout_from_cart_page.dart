@@ -31,12 +31,19 @@ import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierService/courier_city.dart';
 import 'package:vero360_app/utils/merchant_contact_display.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/modern_confirm_dialog.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 class CheckoutFromCartPage extends StatefulWidget {
   final List<CartModel> items;
-  const CheckoutFromCartPage({super.key, required this.items});
+  final bool foodCheckoutMode;
+
+  const CheckoutFromCartPage({super.key, required this.items})
+      : foodCheckoutMode = false;
+
+  const CheckoutFromCartPage.food({super.key, required this.items})
+      : foodCheckoutMode = true;
 
   @override
   State<CheckoutFromCartPage> createState() => _CheckoutFromCartPageState();
@@ -58,6 +65,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   Address? _defaultAddr;
   bool _loadingAddr = true;
   bool _loggedIn = false;
+  bool _merchantsInLilongwe = false;
 
   /// raw image string → resolved http URL (or empty if failed / not network)
   final Map<String, String> _resolvedHttpUrls = {};
@@ -75,17 +83,37 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   double get _total => max(0.0, _subtotal);
 
   bool get _isFoodCheckout =>
-      _items.isNotEmpty && _items.every((e) => e.isFood);
+      widget.foodCheckoutMode ||
+      (_items.isNotEmpty && _items.every((e) => e.isFood));
 
   bool get _hasMixedCart =>
       _items.any((e) => e.isFood) && _items.any((e) => !e.isFood);
 
   CourierServiceCity? get _foodCourierCity {
+    if (!_buyerInLilongwe || !_merchantsInLilongwe) return null;
+    return CourierServiceCity.lilongwe;
+  }
+
+  bool get _buyerInLilongwe {
     final addr = _defaultAddr;
-    if (addr == null) return null;
-    return CourierCityHelper.resolve(
-      [addr.city, addr.formattedAddress, addr.description].join(' '),
+    if (addr == null) return false;
+    return CourierCityHelper.isLilongwe(
+      text: [addr.city, addr.formattedAddress, addr.description].join(' '),
+      lat: addr.lat,
+      lng: addr.lng,
     );
+  }
+
+  bool get _veroCourierAvailable {
+    if (_isFoodCheckout) return _foodCourierCity != null;
+    return _buyerInLilongwe && _merchantsInLilongwe;
+  }
+
+  void _clampDeliveryType() {
+    if (_isFoodCheckout) return;
+    if (_deliveryType == DeliveryType.veroCourier && !_veroCourierAvailable) {
+      _deliveryType = DeliveryType.speed;
+    }
   }
 
   String _deliveryLabel(DeliveryType d) {
@@ -116,7 +144,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       case DeliveryType.smart:
         return 'Online tracking';
       case DeliveryType.veroCourier:
-        return 'Same-city food delivery';
+        return 'Lilongwe same-city';
       case DeliveryType.pickup:
         return 'Collect at shop';
     }
@@ -286,9 +314,10 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     if (_isFoodCheckout) {
       return _courierTile(DeliveryType.veroCourier, locked: true);
     }
-    final options = DeliveryType.values
-        .where((d) => d != DeliveryType.veroCourier)
-        .toList();
+    final options = DeliveryType.values.where((d) {
+      if (d == DeliveryType.veroCourier) return _veroCourierAvailable;
+      return true;
+    }).toList();
     return LayoutBuilder(
       builder: (context, constraints) {
         final maxW = constraints.maxWidth.isFinite
@@ -307,6 +336,42 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
         );
       },
     );
+  }
+
+  Future<bool> _foodKitchenAllowsLilongwe(CartModel it) async {
+    if (CourierCityHelper.isLilongwe(text: it.location)) return true;
+    final mentioned = CourierCityHelper.citiesMentioned(it.location);
+    if (mentioned.any((c) => c != CourierServiceCity.lilongwe)) {
+      return false;
+    }
+    if (await CourierCityHelper.merchantIsInLilongwe(it.merchantId)) {
+      return true;
+    }
+    if (await CourierCityHelper.merchantIsInLilongwe(it.restaurantId)) {
+      return true;
+    }
+    return mentioned.isEmpty;
+  }
+
+  Future<void> _resolveMerchantCourierCities() async {
+    if (_items.isEmpty) {
+      if (mounted) setState(() => _merchantsInLilongwe = false);
+      return;
+    }
+    final checks = await Future.wait(_items.map((it) async {
+      if (_isFoodCheckout) return _foodKitchenAllowsLilongwe(it);
+      if (CourierCityHelper.isLilongwe(text: it.location)) return true;
+      if (await CourierCityHelper.merchantIsInLilongwe(it.merchantId)) {
+        return true;
+      }
+      return CourierCityHelper.merchantIsInLilongwe(it.restaurantId);
+    }));
+    final ok = checks.isNotEmpty && checks.every((v) => v);
+    if (!mounted) return;
+    setState(() {
+      _merchantsInLilongwe = ok;
+      _clampDeliveryType();
+    });
   }
 
   @override
@@ -330,6 +395,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       _hydrateAddressFromCache();
     }
     _initAuthAndAddress();
+    unawaited(_resolveMerchantCourierCities());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _precacheCartImages();
@@ -551,6 +617,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
         _loggedIn = true;
         _defaultAddr = def;
         _loadingAddr = false;
+        _clampDeliveryType();
       });
       await _applyFoodDropoffPin();
     } catch (_) {
@@ -712,17 +779,37 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     }
     if (_isFoodCheckout) {
       _deliveryType = DeliveryType.veroCourier;
-      if (_foodCourierCity == null) {
+      if (!_buyerInLilongwe) {
         ToastHelper.showCustomToast(
           context,
-          'Vero Courier delivers in Lilongwe, Blantyre, and Zomba. Update your address city.',
+          'Vero Courier is only in Lilongwe. Set your delivery pin in Lilongwe.',
           isSuccess: false,
           errorMessage: 'City not supported',
         );
         return;
       }
+      if (!_merchantsInLilongwe) {
+        ToastHelper.showCustomToast(
+          context,
+          'This restaurant is outside Lilongwe. Food delivery is Lilongwe-only for now.',
+          isSuccess: false,
+          errorMessage: 'City not supported',
+        );
+        return;
+      }
+    } else if (_deliveryType == DeliveryType.veroCourier &&
+        !_veroCourierAvailable) {
+      ToastHelper.showCustomToast(
+        context,
+        'Vero Courier is only in Lilongwe, and both you and the shop must be in Lilongwe.',
+        isSuccess: false,
+        errorMessage: 'City not supported',
+      );
+      return;
     }
     if (!await _ensureDefaultAddressIfNeeded()) return;
+    if (!await showEscrowPayNoticeDialog(context)) return;
+    if (!mounted) return;
 
     setState(() => _paying = true);
 
@@ -863,9 +950,9 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
         foregroundColor: Colors.white,
         centerTitle: false,
         titleSpacing: 0,
-        title: const Text(
-          'Checkout',
-          style: TextStyle(
+        title: Text(
+          _isFoodCheckout ? 'Food checkout' : 'Checkout',
+          style: const TextStyle(
             fontWeight: FontWeight.w900,
             fontSize: 20,
             letterSpacing: -0.4,
@@ -915,6 +1002,51 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                   ),
                 ),
                 const SizedBox(height: 14),
+                if (_isFoodCheckout) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: _foodCourierCity != null
+                          ? const Color(0xFFEEF8F1)
+                          : const Color(0xFFFFF3E8),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: (_foodCourierCity != null
+                                ? const Color(0xFF2E7D32)
+                                : _brandOrange)
+                            .withValues(alpha: 0.35),
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.delivery_dining_rounded,
+                          color: _foodCourierCity != null
+                              ? const Color(0xFF2E7D32)
+                              : _brandOrange,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            _foodCourierCity != null
+                                ? 'Vero Courier will deliver this food order in Lilongwe only (same-city).'
+                                : (!_buyerInLilongwe
+                                    ? 'Vero Courier delivers food only in Lilongwe. Pin your drop-off in Lilongwe to continue.'
+                                    : 'This restaurant must also be in Lilongwe. Vero Courier is Lilongwe-only for now.'),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              height: 1.35,
+                              color: _brandNavy,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                ],
                 _section(
                   title: 'Your items',
                   subtitle:
@@ -1085,11 +1217,13 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                   title: 'Courier',
                   subtitle: _isFoodCheckout
                       ? (_foodCourierCity == null
-                          ? 'Vero Courier delivers in Lilongwe, Blantyre, and Zomba'
-                          : 'Food is delivered by Vero Courier only')
+                          ? 'Vero Courier is only in Lilongwe for now'
+                          : 'Food is delivered by Vero Courier in Lilongwe only')
                       : (_deliveryType == DeliveryType.pickup
                           ? 'Pickup selected — no delivery address needed'
-                          : 'Choose how you want your order delivered'),
+                          : (_veroCourierAvailable
+                              ? 'Vero Courier is available — you and the shop are both in Lilongwe'
+                              : 'Choose how you want your order delivered')),
                   child: _courierGrid(),
                 ),
                 const SizedBox(height: 12),

@@ -62,6 +62,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
 
   bool _isMerchant = false;
   bool _isDriver = false;
+  String? _merchantService;
   bool _isLoggedIn = false;
   /// Tracks Firebase uid so Market/Cart remount when the account changes.
   String _shellUid = '';
@@ -228,7 +229,12 @@ class _BottomnavbarState extends State<Bottomnavbar>
       final isMerchant = result.isMerchant;
       final isDriver = result.isDriver;
       if (mounted &&
-          (_isMerchant != isMerchant || _isDriver != isDriver)) {
+          (_isMerchant != isMerchant ||
+              _isDriver != isDriver ||
+              _merchantService !=
+                  normalizeMerchantServiceKey(
+                    prefs.getString('merchant_service'),
+                  ))) {
         await _checkUserRoleAndSetup();
         if (mounted) setState(() {});
       }
@@ -243,14 +249,19 @@ class _BottomnavbarState extends State<Bottomnavbar>
         RoleHelper.customer;
     final nextMerchant = raw == RoleHelper.merchant;
     final nextDriver = raw == RoleHelper.driver;
+    final nextService =
+        normalizeMerchantServiceKey(prefs.getString('merchant_service'));
 
     // Keep the current tab. Only rebuild page widgets when role flags change,
     // account (uid) changes, or on first setup — rebuilding every auth/role
     // refresh remounts Market and feels like a jump back to Home.
-    final roleChanged =
-        !_pagesReady || _isMerchant != nextMerchant || _isDriver != nextDriver;
+    final roleChanged = !_pagesReady ||
+        _isMerchant != nextMerchant ||
+        _isDriver != nextDriver ||
+        _merchantService != nextService;
     _isMerchant = nextMerchant;
     _isDriver = nextDriver;
+    _merchantService = nextService;
     if (!roleChanged && !forcePagesRebuild) return;
 
     final uid = FirebaseAuth.instance.currentUser?.uid ?? 'guest';

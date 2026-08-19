@@ -53,12 +53,14 @@ class RoleSessionService {
       '';
 
   /// Driver/merchant role the backend should use when inserting a new user row.
+  /// Only the role locked for *this* Firebase uid — never leftover prefs.
   static String? intendedRoleForRequest(SharedPreferences prefs) {
-    final role = RoleHelper.normalizeAccountRole(
-      prefs.getString(intendedRoleKey) ??
-          prefs.getString('user_role') ??
-          prefs.getString('role'),
-    );
+    final intendedUid = (prefs.getString(intendedUidKey) ?? '').trim();
+    final fbUid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    if (intendedUid.isEmpty || fbUid.isEmpty || intendedUid != fbUid) {
+      return null;
+    }
+    final role = RoleHelper.normalizeAccountRole(prefs.getString(intendedRoleKey));
     if (role == RoleHelper.driver || role == RoleHelper.merchant) {
       return role;
     }
@@ -250,7 +252,12 @@ class RoleSessionService {
     final existingRole = RoleHelper.normalizeAccountRole(
       prefs.getString('user_role') ?? prefs.getString('role'),
     );
-    final role = incomingRole ?? existingRole ?? RoleHelper.customer;
+    final prefsUid = (prefs.getString('uid') ?? '').trim();
+    final sameAccount =
+        lookupUid.isEmpty || prefsUid.isEmpty || prefsUid == lookupUid;
+    final role = incomingRole ??
+        (sameAccount ? existingRole : null) ??
+        RoleHelper.customer;
     await prefs.setString('user_role', role);
     await prefs.setString('role', role);
     await prefs.setBool('is_merchant', role == RoleHelper.merchant);
@@ -264,20 +271,14 @@ class RoleSessionService {
       var service = intendedService ??
           normalizeMerchantServiceKey(
             user['merchantService']?.toString() ??
-                user['serviceType']?.toString() ??
                 user['merchant_service']?.toString(),
           );
+      if (!isKnownMerchantServiceKey(service)) service = null;
       if (resolveMerchantVertical &&
           lookupUid.isNotEmpty &&
-          (service == null ||
-              service.isEmpty ||
-              service == 'marketplace')) {
+          !isKnownMerchantServiceKey(service)) {
         final discovered = await resolveMerchantServiceForUid(lookupUid);
-        if (discovered != null &&
-            discovered.isNotEmpty &&
-            (service == null ||
-                service.isEmpty ||
-                (service == 'marketplace' && discovered != 'marketplace'))) {
+        if (isKnownMerchantServiceKey(discovered)) {
           service = discovered;
         }
       }

@@ -21,7 +21,9 @@ import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
+import 'package:vero360_app/features/VeroCourier/VeroCourierService/courier_city.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/modern_confirm_dialog.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 enum DeliveryType { speed, cts, ankolo, smart, veroCourier, pickup }
@@ -62,6 +64,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   bool _loadingAddr = true;
   bool _loggedIn = false;
   String? _pickupLocation; // merchant/shop address for pickup
+  bool _merchantInLilongwe = false;
 
   /// Resolved http(s) URL for the product thumb (avoids Firebase lookup on rebuild).
   String? _itemImageHttpUrl;
@@ -83,6 +86,65 @@ class _CheckoutPageState extends State<CheckoutPage> {
   double get _subtotal => widget.item.price * _qty;
 
   double get _total => _subtotal;
+
+  bool get _buyerInLilongwe {
+    final a = _defaultAddr;
+    if (a == null) return false;
+    return CourierCityHelper.isLilongwe(
+      text: [a.city, a.formattedAddress, a.description].join(' '),
+      lat: a.lat,
+      lng: a.lng,
+    );
+  }
+
+  bool get _listingInLilongwe {
+    final item = widget.item;
+    return CourierCityHelper.isLilongwe(
+      text: [
+        item.location,
+        item.sellerBusinessName ?? '',
+        item.sellerBusinessDescription ?? '',
+      ].join(' '),
+      lat: item.latitude,
+      lng: item.longitude,
+    );
+  }
+
+  bool get _veroCourierAvailable =>
+      _buyerInLilongwe && (_listingInLilongwe || _merchantInLilongwe);
+
+  void _clampDeliveryType() {
+    if (_deliveryType == DeliveryType.veroCourier && !_veroCourierAvailable) {
+      _deliveryType = DeliveryType.speed;
+    }
+  }
+
+  Future<void> _resolveMerchantCourierCity() async {
+    if (_listingInLilongwe) {
+      if (!mounted) return;
+      setState(() {
+        _merchantInLilongwe = true;
+        _clampDeliveryType();
+      });
+      return;
+    }
+    final ids = <String>{
+      (widget.item.merchantId ?? '').trim(),
+      (widget.item.sellerUserId ?? '').trim(),
+    }..removeWhere((id) => id.isEmpty);
+    var inLl = false;
+    for (final id in ids) {
+      if (await CourierCityHelper.merchantIsInLilongwe(id)) {
+        inLl = true;
+        break;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _merchantInLilongwe = inLl;
+      _clampDeliveryType();
+    });
+  }
 
   bool get _isPromotion =>
       widget.item.serviceType == 'promotion' || widget.promoSubscribeId != null;
@@ -106,6 +168,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
       if (!mounted) return;
       _loadAuthAndAddressWithRetry();
       _precacheItemImage();
+      unawaited(_resolveMerchantCourierCity());
     });
   }
 
@@ -200,6 +263,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         _loggedIn = true;
         _defaultAddr = def;
         _loadingAddr = false;
+        _clampDeliveryType();
       });
     } catch (_) {
       if (!mounted) return;
@@ -361,7 +425,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
       case DeliveryType.smart:
         return 'Online tracking';
       case DeliveryType.veroCourier:
-        return 'Same-city food delivery';
+        return 'Lilongwe only';
       case DeliveryType.pickup:
         return 'Collect at shop';
     }
@@ -528,10 +592,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 
   Widget _courierGrid() {
-    // Marketplace parcels only — food checkout is locked to Vero Courier.
-    final options = DeliveryType.values
-        .where((d) => d != DeliveryType.veroCourier)
-        .toList();
+    final options = DeliveryType.values.where((d) {
+      if (d == DeliveryType.veroCourier) return _veroCourierAvailable;
+      return true;
+    }).toList();
     return LayoutBuilder(
       builder: (context, constraints) {
         final maxW = constraints.maxWidth.isFinite
@@ -632,6 +696,17 @@ class _CheckoutPageState extends State<CheckoutPage> {
     }
     if (!await _requireLogin()) return;
     if (!await _ensureDefaultAddressIfNeeded()) return;
+    if (_deliveryType == DeliveryType.veroCourier && !_veroCourierAvailable) {
+      ToastHelper.showCustomToast(
+        context,
+        'Vero Courier is only in Lilongwe, and both you and the shop must be in Lilongwe.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    if (!await showEscrowPayNoticeDialog(context)) return;
+    if (!mounted) return;
     await _startPayChanguPayment();
   }
 
@@ -720,6 +795,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     merchantName: mname,
                     serviceType: _isPromotion ? 'promotion' : 'marketplace',
                     availableStock: widget.item.stockQuantity,
+                    location: widget.item.location,
                   ),
                 ]
               : null;
@@ -1052,7 +1128,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     title: 'Courier',
                     subtitle: _deliveryType == DeliveryType.pickup
                         ? 'Pickup selected — no delivery address needed'
-                        : 'Choose how you want your order delivered',
+                        : (_veroCourierAvailable
+                            ? 'Vero Courier is available you and the shop are both in Lilongwe'
+                            : 'Choose how you want your order delivered'),
                     child: _courierGrid(),
                   ),
                   const SizedBox(height: 12),

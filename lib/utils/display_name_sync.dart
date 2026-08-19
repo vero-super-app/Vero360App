@@ -45,19 +45,29 @@ class DisplayNameSync {
       if (kDebugMode) debugPrint('[DisplayNameSync] auth displayName: $e');
     }
 
-    // Core profile + merchant shop docs
-    await Future.wait([
-      _merge(_db.collection('users').doc(uid), payload),
-      _merge(_db.collection('marketplace_merchants').doc(uid), payload),
-      _merge(_db.collection('food_merchants').doc(uid), payload),
-      _merge(_db.collection('accommodation_merchants').doc(uid), payload),
-      _merge(_db.collection('courier_merchants').doc(uid), payload),
-      _merge(_db.collection('profiles').doc(uid), {
-        'name': display,
-        'displayName': display,
-        'updatedAt': FieldValue.serverTimestamp(),
-      }),
-    ]);
+    // Core profile. Only update shop docs that already exist for this uid —
+    // never create marketplace/food/stay/courier shops (that mixes dashboards).
+    final userPayload = <String, dynamic>{
+      'name': display,
+      'fullName': display,
+      'displayName': display,
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+    await _merge(_db.collection('users').doc(uid), userPayload);
+    await _merge(_db.collection('profiles').doc(uid), {
+      'name': display,
+      'displayName': display,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    for (final collection in const [
+      'marketplace_merchants',
+      'food_merchants',
+      'accommodation_merchants',
+      'courier_merchants',
+    ]) {
+      await _mergeIfExists(_db.collection(collection).doc(uid), payload);
+    }
 
     // Denormalized fields used by home stories + marketplace cards
     await _updateQueryField(
@@ -72,6 +82,19 @@ class DisplayNameSync {
       _db.collection('latestarrivals').where('merchantId', isEqualTo: uid),
       {'merchantName': display, 'businessName': display},
     );
+  }
+
+  static Future<void> _mergeIfExists(
+    DocumentReference<Map<String, dynamic>> ref,
+    Map<String, dynamic> data,
+  ) async {
+    try {
+      final snap = await ref.get();
+      if (!snap.exists) return;
+      await ref.set(data, SetOptions(merge: true));
+    } catch (e) {
+      if (kDebugMode) debugPrint('[DisplayNameSync] merge existing ${ref.path}: $e');
+    }
   }
 
   static Future<void> _merge(

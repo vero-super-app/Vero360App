@@ -23,6 +23,8 @@ class CartModel {
   final String? notes;
   /// Selected add-on names for this food line. Empty for marketplace / legacy.
   final List<String> addOns;
+  /// Listing / shop city used to offer Vero Courier (Lilongwe only).
+  final String? location;
 
   CartModel({
     required this.userId,
@@ -41,6 +43,7 @@ class CartModel {
     this.variant,
     this.notes,
     this.addOns = const [],
+    this.location,
   });
 
   factory CartModel.fromJson(Map<String, dynamic> json) {
@@ -80,6 +83,7 @@ class CartModel {
       variant: optStr(json['variant']),
       notes: optStr(json['notes']),
       addOns: parseAddOnNames(json['addOns'] ?? json['addons']),
+      location: optStr(json['location']),
     );
   }
 
@@ -110,6 +114,7 @@ class CartModel {
     if (variant != null && variant!.isNotEmpty) 'variant': variant,
     if (notes != null && notes!.isNotEmpty) 'notes': notes,
     if (addOns.isNotEmpty) 'addOns': addOns,
+    if (location != null && location!.trim().isNotEmpty) 'location': location,
   };
 
   CartModel copyWith({
@@ -129,6 +134,7 @@ class CartModel {
     String? variant,
     String? notes,
     List<String>? addOns,
+    String? location,
   }) {
     return CartModel(
       userId: userId ?? this.userId,
@@ -147,6 +153,7 @@ class CartModel {
       variant: variant ?? this.variant,
       notes: notes ?? this.notes,
       addOns: addOns ?? this.addOns,
+      location: location ?? this.location,
     );
   }
 

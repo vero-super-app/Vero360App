@@ -847,14 +847,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             '')
         .trim();
     var service = normalizeMerchantServiceKey(prefs.getString('merchant_service'));
-    if (uid.isNotEmpty &&
-        (service == null || service.isEmpty || service == 'marketplace')) {
+    if (uid.isNotEmpty && !isKnownMerchantServiceKey(service)) {
       final discovered = await resolveMerchantServiceForUid(uid);
-      if (discovered != null &&
-          discovered.isNotEmpty &&
-          (service == null ||
-              service.isEmpty ||
-              (service == 'marketplace' && discovered != 'marketplace'))) {
+      if (isKnownMerchantServiceKey(discovered)) {
         service = discovered;
         await persistMerchantServiceFromApi(prefs, discovered);
       }
@@ -1144,10 +1139,9 @@ class AuthFlow {
           .trim();
       var service =
           normalizeMerchantServiceKey(prefs.getString('merchant_service'));
-      if (uid.isNotEmpty &&
-          (service == null || service.isEmpty || service == 'marketplace')) {
+      if (uid.isNotEmpty && !isKnownMerchantServiceKey(service)) {
         final discovered = await resolveMerchantServiceForUid(uid);
-        if (discovered != null && discovered.isNotEmpty) {
+        if (isKnownMerchantServiceKey(discovered)) {
           await persistMerchantServiceFromApi(prefs, discovered);
         }
       }

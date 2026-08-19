@@ -1243,6 +1243,8 @@ class AuthService {
         'messaging_firebase_uid',
         'role',
         'user_role',
+        'is_merchant',
+        'merchant',
         RoleSessionService.intendedRoleKey,
         RoleSessionService.intendedServiceKey,
         RoleSessionService.intendedUidKey,

@@ -8,7 +8,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -20,9 +19,9 @@ import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/GeneralPages/address.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
-import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_share_link.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_checkout_page.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_review_service.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
@@ -194,6 +193,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
   int _pageIdx = 0;
   int _qty = 1;
   bool _cartBusy = false;
+  bool _buyNowBusy = false;
   bool _descExpanded = false;
   int? _selectedVariantIndex;
   final Set<int> _selectedAddOnIndexes = {};
@@ -356,11 +356,6 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     buf.write('\nMWK ${NumberFormat('#,##0').format(_unitPrice.round())}');
     buf.write('\n$url');
     await Share.share(buf.toString());
-  }
-
-  Future<void> _copyFoodLink() async {
-    await Clipboard.setData(ClipboardData(text: _foodShareUrl()));
-    _toast('Link copied', true);
   }
 
   void _applyAddress(Address? addr) {
@@ -592,7 +587,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
   }
 
   Future<void> _addFoodToCart({required bool goToCheckout}) async {
-    if (_cartBusy) return;
+    if (_cartBusy || _buyNowBusy) return;
     if (_deliveryLat == null || _deliveryLng == null) {
       final pinned = await _autoPinDelivery();
       if (!pinned || _deliveryLat == null || _deliveryLng == null) {
@@ -614,7 +609,13 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
       return;
     }
 
-    setState(() => _cartBusy = true);
+    setState(() {
+      if (goToCheckout) {
+        _buyNowBusy = true;
+      } else {
+        _cartBusy = true;
+      }
+    });
     try {
       final cart = CartServiceProvider.getInstance();
       var existing = cart.cachedItems;
@@ -682,18 +683,22 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
         variant: _selectedVariantName,
         notes: note.isEmpty ? null : note,
         addOns: addOns,
+        location: item.listingLocation,
       );
 
       await cart.addToCart(cartItem);
       if (!mounted) return;
 
       if (goToCheckout) {
-        final items = cart.cachedItems.isNotEmpty
-            ? cart.cachedItems
-            : <CartModel>[cartItem];
+        final foodItems = (cart.cachedItems.isNotEmpty
+                ? cart.cachedItems
+                : <CartModel>[cartItem])
+            .where((e) => e.isFood)
+            .toList();
+        if (foodItems.isEmpty) foodItems.add(cartItem);
         await Navigator.of(context).push<void>(
           MaterialPageRoute(
-            builder: (_) => CheckoutFromCartPage(items: items),
+            builder: (_) => FoodCheckoutPage(items: foodItems),
           ),
         );
       } else {
@@ -704,7 +709,12 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
         _toast('Could not add to cart. Please sign in and try again.', false);
       }
     } finally {
-      if (mounted) setState(() => _cartBusy = false);
+      if (mounted) {
+        setState(() {
+          _cartBusy = false;
+          _buyNowBusy = false;
+        });
+      }
     }
   }
 
@@ -722,7 +732,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
 
   void _openKitchenExplore() {
     final kitchen = widget.foodItem.RestrauntName.trim().isEmpty
-        ? 'this kitchen'
+        ? 'this restaurant'
         : widget.foodItem.RestrauntName.trim();
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -735,39 +745,50 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
   }
 
   Widget _buildMoreFromKitchen() {
-    if (_moreKitchenLoading) {
-      return const SizedBox(
-        height: 80,
-        child: Center(
-          child: SizedBox(
-            width: 22,
-            height: 22,
-            child: CircularProgressIndicator(strokeWidth: 2, color: _veroOrange),
-          ),
-        ),
-      );
-    }
-    if (_moreFromKitchen.isEmpty) return const SizedBox.shrink();
-    final preview = _moreFromKitchen.take(6).toList();
     final kitchen = widget.foodItem.RestrauntName.trim().isEmpty
-        ? 'this kitchen'
+        ? 'this restaurant'
         : widget.foodItem.RestrauntName.trim();
+    final preview = _moreFromKitchen.take(6).toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'More from $kitchen',
+          'Explore more from $kitchen',
           style: const TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w800,
             color: _ink,
           ),
         ),
+        const SizedBox(height: 4),
+        Text(
+          'More dishes from this restaurant',
+          style: TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w500,
+            color: Colors.grey.shade600,
+          ),
+        ),
         const SizedBox(height: 12),
-        SizedBox(
-          height: 168,
-          child: ListView.separated(
+        if (_moreKitchenLoading)
+          const SizedBox(
+            height: 80,
+            child: Center(
+              child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: _veroOrange,
+                ),
+              ),
+            ),
+          )
+        else if (preview.isNotEmpty)
+          SizedBox(
+            height: 168,
+            child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: preview.length,
             separatorBuilder: (_, __) => const SizedBox(width: 10),
@@ -850,9 +871,10 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                 borderRadius: BorderRadius.circular(14),
               ),
             ),
-            child: const Text(
-              'Explore more food',
-              style: TextStyle(fontWeight: FontWeight.w800),
+            child: Text(
+              'Explore more from $kitchen',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontWeight: FontWeight.w800),
             ),
           ),
         ),
@@ -1306,12 +1328,10 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                           ),
                         ),
 
-                        if (_moreKitchenLoading || _moreFromKitchen.isNotEmpty) ...[
-                          const SizedBox(height: 24),
-                          const Divider(height: 1, color: _divider),
-                          const SizedBox(height: 20),
-                          _buildMoreFromKitchen(),
-                        ],
+                        const SizedBox(height: 24),
+                        const Divider(height: 1, color: _divider),
+                        const SizedBox(height: 20),
+                        _buildMoreFromKitchen(),
 
                         const SizedBox(height: 24),
                         const Divider(height: 1, color: _divider),
@@ -1365,50 +1385,19 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
             ),
           ),
 
-          // ── THREE-DOT MENU ──────────────────────────────────────────────
           Positioned(
             top: mq.padding.top + 10,
-            right: 48,
+            right: 12,
             child: Material(
-              color: Colors.white.withValues(alpha: 0.22),
+              color: Colors.white,
               shape: const CircleBorder(),
+              elevation: 3,
+              shadowColor: Colors.black26,
               child: IconButton(
-                tooltip: 'Share',
-                icon: const Icon(Icons.share_rounded, color: Colors.white),
+                tooltip: 'Share food',
+                icon: const Icon(Icons.share_rounded, color: _ink),
                 onPressed: () => unawaited(_shareFood()),
               ),
-            ),
-          ),
-
-          Positioned(
-            top: mq.padding.top + 10,
-            right: 8,
-            child: PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
-              onSelected: (v) {
-                if (v == 'buy') {
-                  FocusScope.of(context).unfocus();
-                  unawaited(_addFoodToCart(goToCheckout: true));
-                } else if (v == 'share') {
-                  unawaited(_shareFood());
-                } else if (v == 'copy') {
-                  unawaited(_copyFoodLink());
-                }
-              },
-              itemBuilder: (_) => const [
-                PopupMenuItem(
-                  value: 'share',
-                  child: Text('Share link'),
-                ),
-                PopupMenuItem(
-                  value: 'copy',
-                  child: Text('Copy link'),
-                ),
-                PopupMenuItem(
-                  value: 'buy',
-                  child: Text('Buy now'),
-                ),
-              ],
             ),
           ),
 
@@ -1423,7 +1412,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                 children: [
                   Container(
                     height: 52,
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(28),
@@ -1462,44 +1451,32 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                       ],
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 8),
                   Expanded(
-                    child: SizedBox(
-                      height: 52,
-                      child: FilledButton(
-                        onPressed: _cartBusy
-                            ? null
-                            : () {
-                                FocusScope.of(context).unfocus();
-                                unawaited(
-                                    _addFoodToCart(goToCheckout: false));
-                              },
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _veroOrange,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          elevation: 0,
-                        ),
-                        child: _cartBusy
-                            ? const SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2.5,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Text(
-                                'Add to cart',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0.2,
-                                ),
-                              ),
-                      ),
+                    child: _barActionButton(
+                      label: 'Add to cart',
+                      color: _veroOrange,
+                      busy: _cartBusy,
+                      onPressed: (_cartBusy || _buyNowBusy)
+                          ? null
+                          : () {
+                              FocusScope.of(context).unfocus();
+                              unawaited(_addFoodToCart(goToCheckout: false));
+                            },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _barActionButton(
+                      label: 'Buy',
+                      color: const Color(0xFFE53935),
+                      busy: _buyNowBusy,
+                      onPressed: (_cartBusy || _buyNowBusy)
+                          ? null
+                          : () {
+                              FocusScope.of(context).unfocus();
+                              unawaited(_addFoodToCart(goToCheckout: true));
+                            },
                     ),
                   ),
                 ],
@@ -1512,6 +1489,51 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
   }
 
   // ── Tiny helpers ───────────────────────────────────────────────────────────
+  Widget _barActionButton({
+    required String label,
+    required Color color,
+    required bool busy,
+    required VoidCallback? onPressed,
+  }) {
+    return SizedBox(
+      height: 52,
+      child: FilledButton(
+        onPressed: onPressed,
+        style: FilledButton.styleFrom(
+          backgroundColor: color,
+          disabledBackgroundColor: color.withValues(alpha: 0.55),
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+        ),
+        child: busy
+            ? const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.5,
+                  color: Colors.white,
+                ),
+              )
+            : FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+              ),
+      ),
+    );
+  }
+
   Widget _stepBtn({required IconData icon, required VoidCallback onTap}) =>
       Material(
         color: Colors.white,
@@ -1737,7 +1759,7 @@ class _KitchenExplorePage extends StatelessWidget {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: Text('More from $kitchenName'),
+        title: Text('Explore more from $kitchenName'),
         backgroundColor: _veroOrange,
         foregroundColor: Colors.white,
         elevation: 0,
@@ -1745,7 +1767,7 @@ class _KitchenExplorePage extends StatelessWidget {
       body: items.isEmpty
           ? Center(
               child: Text(
-                'No other dishes from this kitchen yet.',
+                'No other dishes from this restaurant yet.',
                 style: TextStyle(color: Colors.grey.shade600),
               ),
             )

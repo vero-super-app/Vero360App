@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 /// Supported Vero Courier cities — intra-city deliveries only.
 /// Launch city is Lilongwe; other cities stay listed for “expanding soon”.
 enum CourierServiceCity {
@@ -115,5 +117,66 @@ class CourierCityHelper {
   static bool isSupported(String? raw) {
     final city = resolve(raw);
     return city != null && isLive(city);
+  }
+
+  /// True when free-text and/or GPS place the point in live Lilongwe.
+  static bool isLilongwe({
+    String? text,
+    double? lat,
+    double? lng,
+  }) {
+    if (resolve(text) == CourierServiceCity.lilongwe) return true;
+    if (lat != null && lng != null && isInLilongweBounds(lat, lng)) {
+      return true;
+    }
+    return false;
+  }
+
+  static String _mapLocationText(Map<String, dynamic> d) {
+    return [
+      d['city'],
+      d['location'],
+      d['businessAddress'],
+      d['address'],
+      d['formattedAddress'],
+      d['pickupAddress'],
+    ].where((e) => e != null && e.toString().trim().isNotEmpty).join(' ');
+  }
+
+  static double? _mapDouble(Map<String, dynamic> d, List<String> keys) {
+    for (final k in keys) {
+      final v = d[k];
+      if (v is num) return v.toDouble();
+      final n = double.tryParse('${v ?? ''}');
+      if (n != null) return n;
+    }
+    return null;
+  }
+
+  /// Shop / restaurant docs for [merchantId] that look like Lilongwe.
+  static Future<bool> merchantIsInLilongwe(String? merchantId) async {
+    final id = (merchantId ?? '').trim();
+    if (id.isEmpty || id == 'unknown' || id == 'marketplace') return false;
+    try {
+      final db = FirebaseFirestore.instance;
+      for (final col in const [
+        'marketplace_merchants',
+        'food_merchants',
+        'restaurants',
+        'users',
+      ]) {
+        final doc = await db.collection(col).doc(id).get();
+        if (!doc.exists || doc.data() == null) continue;
+        final d = doc.data()!;
+        if (isLilongwe(
+          text: _mapLocationText(d),
+          lat: _mapDouble(d, const ['latitude', 'lat']),
+          lng: _mapDouble(d, const ['longitude', 'lng', 'lon']),
+        )) {
+          return true;
+        }
+      }
+    } catch (_) {}
+    return false;
   }
 }

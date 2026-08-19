@@ -4,11 +4,54 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 /// Maps backend/Firestore spellings to the routing key (lowercase) used in the app.
+const kKnownMerchantServices = {
+  'marketplace',
+  'food',
+  'accommodation',
+  'courier',
+};
+
 String? normalizeMerchantServiceKey(String? raw) {
   final s = (raw ?? '').trim().toLowerCase();
   if (s.isEmpty) return null;
   if (s == 'accomodation') return 'accommodation';
   return s;
+}
+
+bool isKnownMerchantServiceKey(String? raw) {
+  final k = normalizeMerchantServiceKey(raw);
+  return k != null && kKnownMerchantServices.contains(k);
+}
+
+String? merchantCollectionForService(String? raw) {
+  final k = normalizeMerchantServiceKey(raw);
+  if (k == null || !kKnownMerchantServices.contains(k)) return null;
+  return k == 'marketplace' ? 'marketplace_merchants' : '${k}_merchants';
+}
+
+/// Name-only stubs (e.g. from display-name sync) must not count as a vertical.
+bool looksLikeRealMerchantShopDoc(Map<String, dynamic>? data) {
+  if (data == null || data.isEmpty) return false;
+  if (isKnownMerchantServiceKey(data['serviceType']?.toString()) ||
+      isKnownMerchantServiceKey(data['merchantService']?.toString()) ||
+      isKnownMerchantServiceKey(data['merchant_service']?.toString())) {
+    return true;
+  }
+  if (data['status'] != null &&
+      (data['uid'] != null ||
+          data['businessAddress'] != null ||
+          data['isActive'] != null)) {
+    return true;
+  }
+  return data.containsKey('completedOrders') || data.containsKey('totalRatings');
+}
+
+String? _merchantServiceFromUserMap(Map<String, dynamic> data) {
+  final fromRoleFields = normalizeMerchantServiceKey(
+    data['merchantService']?.toString() ?? data['merchant_service']?.toString(),
+  );
+  if (isKnownMerchantServiceKey(fromRoleFields)) return fromRoleFields;
+  return null;
 }
 
 /// Persists API `merchantService` without replacing a non-marketplace local value
@@ -18,47 +61,71 @@ Future<void> persistMerchantServiceFromApi(
   String? rawFromApi,
 ) async {
   final fromApi = normalizeMerchantServiceKey(rawFromApi);
-  if (fromApi == null || fromApi.isEmpty) return;
+  if (fromApi == null || fromApi.isEmpty || !isKnownMerchantServiceKey(fromApi)) {
+    return;
+  }
   final existing = normalizeMerchantServiceKey(prefs.getString('merchant_service'));
+  final intendedUid = (prefs.getString('session_intended_uid') ?? '').trim();
+  final intendedService =
+      normalizeMerchantServiceKey(prefs.getString('session_intended_merchant_service'));
+  final fbUid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+  if (fbUid.isNotEmpty &&
+      intendedUid == fbUid &&
+      isKnownMerchantServiceKey(intendedService)) {
+    await prefs.setString('merchant_service', intendedService!);
+    return;
+  }
   if (existing == null || existing.isEmpty) {
     await prefs.setString('merchant_service', fromApi);
     return;
   }
+  // Do not let a generic API default clobber food/stay/courier.
   if (fromApi == 'marketplace' && existing != 'marketplace') {
     return;
   }
   await prefs.setString('merchant_service', fromApi);
 }
 
-/// Prefer `users/{uid}` merchant type when prefs are empty or wrongly `marketplace`.
+/// Prefer `users/{uid}` merchant type when prefs are empty. Never infer from
+/// `serviceType` (cart/listing field) or from leftover shop-name stubs.
 Future<void> hydrateMerchantServiceFromFirestore(SharedPreferences prefs) async {
   try {
     final fb = FirebaseAuth.instance.currentUser;
     if (fb == null) return;
+    final intendedUid = (prefs.getString('session_intended_uid') ?? '').trim();
+    final intendedService =
+        normalizeMerchantServiceKey(prefs.getString('session_intended_merchant_service'));
+    if (intendedUid == fb.uid && isKnownMerchantServiceKey(intendedService)) {
+      await prefs.setString('merchant_service', intendedService!);
+      return;
+    }
+    final existing = normalizeMerchantServiceKey(prefs.getString('merchant_service'));
+    if (isKnownMerchantServiceKey(existing)) return;
+
     final doc =
         await FirebaseFirestore.instance.collection('users').doc(fb.uid).get();
     if (!doc.exists || doc.data() == null) return;
-    final data = doc.data()!;
-    final fromDoc = normalizeMerchantServiceKey(
-      data['merchantService']?.toString() ??
-          data['merchant_service']?.toString() ??
-          data['serviceType']?.toString(),
-    );
-    if (fromDoc == null || fromDoc.isEmpty) return;
-    final existing = normalizeMerchantServiceKey(prefs.getString('merchant_service'));
-    if (existing == null ||
-        existing.isEmpty ||
-        (existing == 'marketplace' && fromDoc != 'marketplace')) {
-      await prefs.setString('merchant_service', fromDoc);
-    }
+    final fromDoc = _merchantServiceFromUserMap(doc.data()!);
+    if (!isKnownMerchantServiceKey(fromDoc)) return;
+    await prefs.setString('merchant_service', fromDoc!);
   } catch (_) {}
 }
 
-/// Discover the merchant vertical for [uid] without trusting a leftover prefs value.
-/// Prefers accommodation/food/courier over a generic marketplace default.
+/// Discover the merchant vertical for [uid] from the user profile first.
+/// Shop collections are only used when the doc looks like a real shop.
 Future<String?> resolveMerchantServiceForUid(String uid) async {
   final id = uid.trim();
   if (id.isEmpty) return null;
+
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final intendedUid = (prefs.getString('session_intended_uid') ?? '').trim();
+    final intendedService =
+        normalizeMerchantServiceKey(prefs.getString('session_intended_merchant_service'));
+    if (intendedUid == id && isKnownMerchantServiceKey(intendedService)) {
+      return intendedService;
+    }
+  } catch (_) {}
 
   String? fromUsers;
   try {
@@ -68,42 +135,27 @@ Future<String?> resolveMerchantServiceForUid(String uid) async {
         .get()
         .timeout(const Duration(seconds: 8));
     if (doc.exists && doc.data() != null) {
-      fromUsers = normalizeMerchantServiceKey(
-        doc.data()!['merchantService']?.toString() ??
-            doc.data()!['merchant_service']?.toString() ??
-            doc.data()!['serviceType']?.toString(),
-      );
+      fromUsers = _merchantServiceFromUserMap(doc.data()!);
     }
   } catch (_) {}
+  if (isKnownMerchantServiceKey(fromUsers)) return fromUsers;
 
-  String? fromCollection;
-  const services = ['accommodation', 'food', 'courier', 'marketplace'];
+  const services = ['marketplace', 'food', 'accommodation', 'courier'];
   for (final service in services) {
     try {
-      final collectionName = service == 'marketplace'
-          ? 'marketplace_merchants'
-          : '${service}_merchants';
+      final collectionName = merchantCollectionForService(service)!;
       final merchantDoc = await FirebaseFirestore.instance
           .collection(collectionName)
           .doc(id)
           .get()
           .timeout(const Duration(seconds: 5));
-      if (merchantDoc.exists) {
-        fromCollection = service;
-        break;
+      if (merchantDoc.exists &&
+          looksLikeRealMerchantShopDoc(merchantDoc.data())) {
+        return service;
       }
     } catch (_) {}
   }
-
-  if (fromCollection != null && fromCollection != 'marketplace') {
-    return fromCollection;
-  }
-  if (fromUsers != null &&
-      fromUsers.isNotEmpty &&
-      fromUsers != 'marketplace') {
-    return fromUsers;
-  }
-  return fromCollection ?? fromUsers;
+  return null;
 }
 
 class MerchantServiceHelper {

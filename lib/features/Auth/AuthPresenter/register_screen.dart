@@ -310,6 +310,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final uid = fbUid.isNotEmpty
         ? fbUid
         : (user['uid']?.toString() ?? user['firebaseUid']?.toString());
+    final prevUid = (prefs.getString('uid') ?? '').trim();
+    if (uid != null &&
+        uid.isNotEmpty &&
+        prevUid.isNotEmpty &&
+        prevUid != uid) {
+      await RoleSessionService.clearRoleKeys(prefs);
+    }
     if (uid != null && uid.isNotEmpty) {
       await prefs.setString('uid', uid);
     }
@@ -360,7 +367,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (!mounted) return;
 
     if (role == 'merchant') {
-      await hydrateMerchantServiceFromFirestore(prefs);
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
           builder: (_) => Bottomnavbar(email: displayId, initialIndex: 4),
@@ -388,12 +394,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
       AppLogger.d('[Register] Firebase profile load failed', e);
     }
 
+    final rawEmail = user.email ?? _identifierEmail;
+    final emailForProfile = !rawEmail.endsWith('@phone.vero360.app')
+        ? rawEmail
+        : _identifierEmail;
+
     if (profile.isEmpty) {
       final newRole = _roleString;
-      final rawEmail = user.email ?? _identifierEmail;
-      final emailForProfile = !rawEmail.endsWith('@phone.vero360.app')
-          ? rawEmail
-          : _identifierEmail;
 
       profile = {
         'email': emailForProfile,
@@ -416,32 +423,39 @@ class _RegisterScreenState extends State<RegisterScreen> {
               profile,
               SetOptions(merge: true),
             );
-        if (_role == UserRole.merchant &&
-            _selectedMerchantService != null &&
-            _businessName.text.trim().isNotEmpty) {
-          final merchantProfile = {
-            'uid': user.uid,
-            'email': emailForProfile,
-            'name': user.displayName ?? _name.text.trim(),
-            'phone': _identifierPhone,
-            'businessName': _businessName.text.trim(),
-            'businessAddress': _businessAddress.text.trim(),
-            'serviceType': _selectedMerchantService!.key,
-            'status': 'pending',
-            'isActive': false,
-            'createdAt': FieldValue.serverTimestamp(),
-            'updatedAt': FieldValue.serverTimestamp(),
-            'rating': 0.0,
-            'totalRatings': 0,
-            'completedOrders': 0,
-          };
-          final collectionName = _selectedMerchantService!.key == 'marketplace'
-              ? 'marketplace_merchants'
-              : '${_selectedMerchantService!.key}_merchants';
-          await _firestore
-              .collection(collectionName)
-              .doc(user.uid)
-              .set(merchantProfile);
+        if (_role == UserRole.merchant && _selectedMerchantService != null) {
+          await _writeChosenMerchantShop(
+            uid: user.uid,
+            email: emailForProfile,
+            displayName: user.displayName ?? _name.text.trim(),
+          );
+        }
+      } catch (_) {}
+    } else if (_role == UserRole.merchant || _role == UserRole.driver) {
+      try {
+        final stamp = <String, dynamic>{
+          'role': _roleString,
+          'updatedAt': FieldValue.serverTimestamp(),
+        };
+        if (_role == UserRole.merchant && _selectedMerchantService != null) {
+          stamp['merchantService'] = _selectedMerchantService!.key;
+          stamp['businessName'] = _businessName.text.trim();
+          stamp['businessAddress'] = _businessAddress.text.trim();
+        }
+        if (_role == UserRole.driver) {
+          stamp['merchantService'] = FieldValue.delete();
+          stamp['merchant_service'] = FieldValue.delete();
+        }
+        await _firestore.collection('users').doc(user.uid).set(
+              stamp,
+              SetOptions(merge: true),
+            );
+        if (_role == UserRole.merchant && _selectedMerchantService != null) {
+          await _writeChosenMerchantShop(
+            uid: user.uid,
+            email: emailForProfile,
+            displayName: user.displayName ?? _name.text.trim(),
+          );
         }
       } catch (_) {}
     }
@@ -475,6 +489,38 @@ class _RegisterScreenState extends State<RegisterScreen> {
             _role == UserRole.merchant ? _businessAddress.text.trim() : null,
       },
     };
+  }
+
+  Future<void> _writeChosenMerchantShop({
+    required String uid,
+    required String email,
+    required String displayName,
+  }) async {
+    final service = _selectedMerchantService?.key;
+    if (service == null || service.isEmpty) return;
+    final collectionName = service == 'marketplace'
+        ? 'marketplace_merchants'
+        : '${service}_merchants';
+    await _firestore.collection(collectionName).doc(uid).set(
+      {
+        'uid': uid,
+        'email': email,
+        'name': displayName,
+        'phone': _identifierPhone,
+        'businessName': _businessName.text.trim(),
+        'businessAddress': _businessAddress.text.trim(),
+        'merchantService': service,
+        'serviceType': service,
+        'status': 'pending',
+        'isActive': false,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'rating': 0.0,
+        'totalRatings': 0,
+        'completedOrders': 0,
+      },
+      SetOptions(merge: true),
+    );
   }
 
   /// Fast auth result for social signup so we can navigate quickly without

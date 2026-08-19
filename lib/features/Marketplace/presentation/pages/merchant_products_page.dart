@@ -11,6 +11,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
+import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_detail_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart'
@@ -915,7 +916,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       final doc = await _docFast(
         _firestore.collection('accommodation_merchants').doc(id),
       );
-      if (doc.exists) return true;
+      if (doc.exists && looksLikeRealMerchantShopDoc(doc.data())) return true;
       final rooms = await _queryFast(
         _firestore
             .collection('accommodation_rooms')
@@ -931,7 +932,9 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         final extraDoc = await _docFast(
           _firestore.collection('accommodation_merchants').doc(key),
         );
-        if (extraDoc.exists) return true;
+        if (extraDoc.exists && looksLikeRealMerchantShopDoc(extraDoc.data())) {
+          return true;
+        }
         final extraRooms = await _queryFast(
           _firestore
               .collection('accommodation_rooms')
@@ -1327,6 +1330,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       merchantName: _shopDisplayName,
       serviceType: 'marketplace',
       availableStock: item.stockQuantity,
+      location: item.location,
     );
   }
 

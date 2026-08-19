@@ -234,6 +234,8 @@ class CartService {
       if (item.notes != null && item.notes!.trim().isNotEmpty)
         'notes': item.notes!.trim(),
       if (item.addOns.isNotEmpty) 'addOns': item.addOns,
+      if (item.location != null && item.location!.trim().isNotEmpty)
+        'location': item.location!.trim(),
     };
   }
 
@@ -470,6 +472,9 @@ class CartService {
               ? null
               : (data['notes'] ?? '').toString().trim(),
           addOns: CartModel.parseAddOnNames(data['addOns'] ?? data['addons']),
+          location: (data['location'] ?? '').toString().trim().isEmpty
+              ? null
+              : (data['location'] ?? '').toString().trim(),
         );
       }).toList();
 
@@ -502,6 +507,8 @@ class CartService {
       if (cartItem.notes != null && cartItem.notes!.trim().isNotEmpty)
         'notes': cartItem.notes!.trim(),
       if (cartItem.addOns.isNotEmpty) 'addOns': cartItem.addOns,
+      if (cartItem.location != null && cartItem.location!.trim().isNotEmpty)
+        'location': cartItem.location!.trim(),
     };
   }
 

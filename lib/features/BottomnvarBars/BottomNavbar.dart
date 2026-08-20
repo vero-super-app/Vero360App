@@ -17,6 +17,7 @@ import '../Marketplace/presentation/pages/main_marketPlace.dart';
 import '../Cart/CartPresentaztion/pages/cartpage.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
+import 'package:vero360_app/GernalServices/merchant_identity.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
@@ -260,13 +261,22 @@ class _BottomnavbarState extends State<Bottomnavbar>
 
   Future<void> _checkUserRoleAndSetup({bool forcePagesRebuild = false}) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = RoleHelper.normalizeAccountRole(
-          prefs.getString('user_role') ?? prefs.getString('role'),
-        ) ??
-        RoleHelper.customer;
+    final uid = FirebaseAuth.instance.currentUser?.uid ??
+        (prefs.getString('uid') ?? '').trim();
+    final identity = MerchantIdentityStore.readCached(prefs: prefs, uid: uid) ??
+        MerchantIdentity(
+          uid: uid,
+          role: RoleHelper.normalizeAccountRole(
+                prefs.getString('user_role') ?? prefs.getString('role'),
+              ) ??
+              RoleHelper.customer,
+          service: normalizeMerchantServiceKey(prefs.getString('merchant_service')),
+        );
+
+    final raw = identity.role;
     final nextMerchant = raw == RoleHelper.merchant;
     final nextDriver = raw == RoleHelper.driver;
-    final nextService =
+    final nextService = identity.service ??
         normalizeMerchantServiceKey(prefs.getString('merchant_service'));
 
     // Keep the current tab. Only rebuild page widgets when role flags change,
@@ -279,10 +289,17 @@ class _BottomnavbarState extends State<Bottomnavbar>
     _isMerchant = nextMerchant;
     _isDriver = nextDriver;
     _merchantService = nextService;
-    if (!roleChanged && !forcePagesRebuild) return;
+    if (!roleChanged && !forcePagesRebuild) {
+      // Still resolve missing vertical in background.
+      if (_isMerchant &&
+          !isKnownMerchantServiceKey(_merchantService) &&
+          uid.isNotEmpty) {
+        unawaited(_resolveMerchantVerticalFast(uid));
+      }
+      return;
+    }
 
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? 'guest';
-    _shellUid = uid;
+    _shellUid = uid.isEmpty ? 'guest' : uid;
 
     final homePage = Vero360Homepage(
       key: ValueKey(
@@ -295,20 +312,20 @@ class _BottomnavbarState extends State<Bottomnavbar>
     _pages = [
       homePage,
       MarketPage(
-        key: ValueKey('main_market_tab_$uid'),
+        key: ValueKey('main_market_tab_$_shellUid'),
         cartService: cartService,
         onBackToHome: () => setState(() => _selectedIndex = 0),
       ),
       AuthGuard(
         featureName: 'Messages',
         showChildBehindDialog: true,
-        child: ChatListPage(key: ValueKey('chat_list_$uid')),
+        child: ChatListPage(key: ValueKey('chat_list_$_shellUid')),
       ),
       AuthGuard(
         featureName: 'Cart',
         showChildBehindDialog: true,
         child: CartPage(
-          key: ValueKey('cart_tab_$uid'),
+          key: ValueKey('cart_tab_$_shellUid'),
           cartService: cartService,
         ),
       ),
@@ -319,26 +336,66 @@ class _BottomnavbarState extends State<Bottomnavbar>
       ),
     ];
     _pagesReady = true;
+
+    if (_isMerchant &&
+        !isKnownMerchantServiceKey(_merchantService) &&
+        uid.isNotEmpty) {
+      unawaited(_resolveMerchantVerticalFast(uid));
+    }
     // Merchants stay in this shell (Dashboard = tab 4). Do not pushAndRemoveUntil
     // to a fresh merchant dashboard — that resets nav to Home and disposes the
     // current tab mid-load (see setState-after-dispose dashboard logs).
   }
 
+  Future<void> _resolveMerchantVerticalFast(String uid) async {
+    try {
+      final identity = await MerchantIdentityStore.resolve(
+        uid: uid,
+        allowShopProbe: true,
+      );
+      if (!mounted) return;
+      if (identity.isMerchant &&
+          identity.hasVertical &&
+          identity.service != _merchantService) {
+        await _checkUserRoleAndSetup(forcePagesRebuild: true);
+        if (mounted) setState(() {});
+      }
+    } catch (_) {}
+  }
+
   Widget _merchantProfileTab(SharedPreferences prefs) {
     final email = prefs.getString('email') ?? widget.email;
+    final uid = (FirebaseAuth.instance.currentUser?.uid ??
+            prefs.getString('uid') ??
+            '')
+        .trim();
     final key = normalizeMerchantServiceKey(prefs.getString('merchant_service')) ??
         normalizeMerchantServiceKey(
           prefs.getString('session_intended_merchant_service'),
-        );
+        ) ??
+        MerchantIdentityStore.peek()?.service;
     return switch (key) {
-      'food' => FoodMerchantDashboard(email: email, embeddedInMainNav: true),
-      'accommodation' => AccommodationMerchantDashboard(
+      'food' => FoodMerchantDashboard(
+          key: ValueKey('food_dash_$uid'),
           email: email,
+          merchantUid: uid,
           embeddedInMainNav: true,
         ),
-      'courier' => CourierMerchantDashboard(email: email),
-      'marketplace' => MarketplaceMerchantDashboard(
+      'accommodation' => AccommodationMerchantDashboard(
+          key: ValueKey('stay_dash_$uid'),
           email: email,
+          merchantUid: uid,
+          embeddedInMainNav: true,
+        ),
+      'courier' => CourierMerchantDashboard(
+          key: ValueKey('courier_dash_$uid'),
+          email: email,
+          merchantUid: uid,
+        ),
+      'marketplace' => MarketplaceMerchantDashboard(
+          key: ValueKey('market_dash_$uid'),
+          email: email,
+          merchantUid: uid,
           onBackToHomeTab: () => setState(() => _selectedIndex = 0),
           embeddedInMainNav: true,
         ),
@@ -346,6 +403,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
       // Never fall back to the customer Profile tab.
       _ => _MerchantVerticalRecoveringTab(
           email: email,
+          merchantUid: uid,
           onServiceCached: () async {
             await _checkUserRoleAndSetup(forcePagesRebuild: true);
             if (mounted) setState(() {});
@@ -896,9 +954,11 @@ class _MerchantVerticalRecoveringTab extends StatefulWidget {
   const _MerchantVerticalRecoveringTab({
     required this.email,
     required this.onServiceCached,
+    this.merchantUid = '',
   });
 
   final String email;
+  final String merchantUid;
   final Future<void> Function() onServiceCached;
 
   @override
@@ -910,6 +970,7 @@ class _MerchantVerticalRecoveringTabState
     extends State<_MerchantVerticalRecoveringTab> {
   String? _service;
   bool _resolving = true;
+  String? _error;
 
   @override
   void initState() {
@@ -918,37 +979,75 @@ class _MerchantVerticalRecoveringTabState
   }
 
   Future<void> _resolve() async {
+    setState(() {
+      _resolving = true;
+      _error = null;
+    });
     try {
       final prefs = await SharedPreferences.getInstance();
-      var key = normalizeMerchantServiceKey(prefs.getString('merchant_service')) ??
+      final uid = (widget.merchantUid.trim().isNotEmpty
+              ? widget.merchantUid.trim()
+              : (FirebaseAuth.instance.currentUser?.uid ??
+                  prefs.getString('uid') ??
+                  ''))
+          .trim();
+
+      // Instant prefs / memory — never block the shell on a slow users/{uid} read.
+      final cached = MerchantIdentityStore.readCached(prefs: prefs, uid: uid);
+      final prefService = normalizeMerchantServiceKey(
+            prefs.getString('merchant_service'),
+          ) ??
           normalizeMerchantServiceKey(
             prefs.getString('session_intended_merchant_service'),
+          ) ??
+          cached?.service;
+      if (isKnownMerchantServiceKey(prefService)) {
+        final stampUid = uid.isNotEmpty ? uid : (cached?.uid ?? '').trim();
+        if (stampUid.isNotEmpty) {
+          await MerchantIdentityStore.stamp(
+            uid: stampUid,
+            role: RoleHelper.merchant,
+            service: prefService,
+            prefs: prefs,
+            writeFirestore: false,
           );
-      if (!isKnownMerchantServiceKey(key)) {
-        final uid = FirebaseAuth.instance.currentUser?.uid.trim() ??
-            (prefs.getString('uid') ?? '').trim();
-        if (uid.isNotEmpty) {
-          key = await resolveMerchantServiceForUid(uid)
-              .timeout(const Duration(seconds: 5), onTimeout: () => null);
         }
-      }
-      if (isKnownMerchantServiceKey(key)) {
-        await prefs.setString('merchant_service', key!);
         if (!mounted) return;
         setState(() {
-          _service = key;
+          _service = prefService;
           _resolving = false;
         });
         await widget.onServiceCached();
         return;
       }
-    } catch (_) {}
-    if (!mounted) return;
-    // Last resort offline: keep a merchant shell (food) instead of customer Profile.
-    setState(() {
-      _service = 'food';
-      _resolving = false;
-    });
+
+      final identity = await MerchantIdentityStore.resolve(
+        uid: uid.isEmpty ? null : uid,
+        prefs: prefs,
+        allowShopProbe: true,
+      );
+      if (identity.isMerchant && identity.hasVertical) {
+        if (!mounted) return;
+        setState(() {
+          _service = identity.service;
+          _resolving = false;
+        });
+        await widget.onServiceCached();
+        return;
+      }
+      if (!mounted) return;
+      setState(() {
+        _resolving = false;
+        _error =
+            'Could not detect your merchant type yet. Check your connection and retry.';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _resolving = false;
+        _error = 'Could not load merchant dashboard. Tap retry.';
+      });
+    }
   }
 
   @override
@@ -982,19 +1081,69 @@ class _MerchantVerticalRecoveringTabState
       );
     }
 
+    if (_error != null || !isKnownMerchantServiceKey(_service)) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFF3F4F7),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.storefront_outlined,
+                    size: 40, color: Color(0xFFFF8A00)),
+                const SizedBox(height: 12),
+                Text(
+                  _error ?? 'Merchant type unknown',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF16284C),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFFFF8A00),
+                  ),
+                  onPressed: () => unawaited(_resolve()),
+                  child: const Text('Retry'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     final email = widget.email;
+    final uid = widget.merchantUid;
     return switch (_service) {
       'accommodation' => AccommodationMerchantDashboard(
+          key: ValueKey('stay_dash_$uid'),
           email: email,
+          merchantUid: uid,
           embeddedInMainNav: true,
         ),
-      'courier' => CourierMerchantDashboard(email: email),
-      'marketplace' => MarketplaceMerchantDashboard(
+      'courier' => CourierMerchantDashboard(
+          key: ValueKey('courier_dash_$uid'),
           email: email,
+          merchantUid: uid,
+        ),
+      'marketplace' => MarketplaceMerchantDashboard(
+          key: ValueKey('market_dash_$uid'),
+          email: email,
+          merchantUid: uid,
           onBackToHomeTab: () {},
           embeddedInMainNav: true,
         ),
-      _ => FoodMerchantDashboard(email: email, embeddedInMainNav: true),
+      'food' => FoodMerchantDashboard(
+          key: ValueKey('food_dash_$uid'),
+          email: email,
+          merchantUid: uid,
+          embeddedInMainNav: true,
+        ),
+      _ => const SizedBox.shrink(),
     };
   }
 }

@@ -153,6 +153,8 @@ class LocalMedia {
 
 class MarketplaceMerchantDashboard extends StatefulWidget {
   final String email;
+  /// Firebase uid this shop dashboard is bound to (single source of truth).
+  final String? merchantUid;
   /// When true, this dashboard is shown as a tab inside the main app bottom nav;
   /// hide our own bottom nav to avoid two overlapping bars.
   final bool embeddedInMainNav;
@@ -161,6 +163,7 @@ class MarketplaceMerchantDashboard extends StatefulWidget {
     super.key,
     required this.email,
     required void Function() onBackToHomeTab,
+    this.merchantUid,
     this.embeddedInMainNav = false,
   });
 
@@ -808,7 +811,10 @@ class _MarketplaceMerchantDashboardState
       }
     });
 
-    _uid = _auth.currentUser?.uid ?? '';
+    final pinned = (widget.merchantUid ?? '').trim();
+    _uid = pinned.isNotEmpty
+        ? pinned
+        : (_auth.currentUser?.uid ?? '');
 
     // Instant My Items from memory/prefs before any network.
     _hydrateItemsFromLocalCache();

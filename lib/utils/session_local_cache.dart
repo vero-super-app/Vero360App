@@ -14,6 +14,7 @@ import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
 import 'package:vero360_app/GernalServices/chat_outbox.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
+import 'package:vero360_app/GernalServices/merchant_identity.dart';
 import 'package:vero360_app/GernalServices/local_message_database.dart';
 import 'package:vero360_app/GernalServices/profile_photo_cache.dart';
 import 'package:vero360_app/features/ride_share/services/active_ride_storage.dart';
@@ -79,6 +80,7 @@ class SessionLocalCache {
     MarketplaceMerchantDashboard.clearSessionCaches();
     BackendChatService.clearAuthCache();
     BlockedMerchantService.clearSessionCache();
+    MerchantIdentityStore.clear();
 
     // Fire-and-forget socket close — do not block Settings logout.
     unawaited(

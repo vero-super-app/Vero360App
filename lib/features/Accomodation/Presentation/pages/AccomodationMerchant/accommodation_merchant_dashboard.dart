@@ -884,11 +884,13 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
 
 class AccommodationMerchantDashboard extends StatefulWidget {
   final String email;
+  final String? merchantUid;
   final bool embeddedInMainNav;
 
   const AccommodationMerchantDashboard({
     super.key,
     required this.email,
+    this.merchantUid,
     this.embeddedInMainNav = false,
   });
 
@@ -1149,7 +1151,9 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     if (showLoading) setState(() => _isLoading = true);
     
     final prefs = await SharedPreferences.getInstance();
-    _uid = _auth.currentUser?.uid ?? prefs.getString('uid') ?? '';
+    _uid = ((widget.merchantUid ?? '').trim().isNotEmpty)
+        ? widget.merchantUid!.trim()
+        : (_auth.currentUser?.uid ?? prefs.getString('uid') ?? '');
     _businessName = (prefs.getString('business_name') ?? '').trim();
     if (_businessName.isEmpty) {
       _businessName = _fallbackBusinessLabel;

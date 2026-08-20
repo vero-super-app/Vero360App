@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
+import 'package:vero360_app/GernalServices/merchant_identity.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
@@ -87,9 +88,11 @@ class RoleSessionService {
     await prefs.remove('merchant_service');
     await prefs.remove('business_name');
     await prefs.remove('business_address');
+    await prefs.remove(MerchantIdentityStore.prefsIdentityUidKey);
     await prefs.remove(intendedRoleKey);
     await prefs.remove(intendedServiceKey);
     await prefs.remove(intendedUidKey);
+    MerchantIdentityStore.clear();
   }
 
   /// Remember the role the user just chose this session (signup), scoped to uid.
@@ -110,6 +113,13 @@ class RoleSessionService {
     final id = (uid ?? '').trim();
     if (id.isNotEmpty) {
       await prefs.setString(intendedUidKey, id);
+      await MerchantIdentityStore.stamp(
+        uid: id,
+        role: r,
+        service: r == RoleHelper.merchant ? service : null,
+        prefs: prefs,
+        writeFirestore: true,
+      );
     }
   }
 
@@ -334,11 +344,26 @@ class RoleSessionService {
       service ??= existingService;
       if (service != null && service.isNotEmpty) {
         await persistMerchantServiceFromApi(prefs, service);
+      } else if (lookupUid.isNotEmpty) {
+        await MerchantIdentityStore.stamp(
+          uid: lookupUid,
+          role: role,
+          prefs: prefs,
+          writeFirestore: false,
+        );
       }
     } else if (role != RoleHelper.merchant) {
       await prefs.remove('merchant_service');
       await prefs.remove('business_name');
       await prefs.remove('business_address');
+      if (lookupUid.isNotEmpty) {
+        await MerchantIdentityStore.stamp(
+          uid: lookupUid,
+          role: role,
+          prefs: prefs,
+          writeFirestore: false,
+        );
+      }
     }
   }
 

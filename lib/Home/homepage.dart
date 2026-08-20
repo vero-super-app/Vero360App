@@ -38,6 +38,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/MarkeplaceMer
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/Home/notifications_page.dart';
@@ -147,6 +148,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
   late final Animation<Offset>   _heroSlide;
 
   String? _resolvedGreetingName;
+  bool _greetingIsBusiness = false;
   bool    _greetingResolved = false;
   StreamSubscription<User?>? _authSub;
   String? _greetingUid;
@@ -179,8 +181,11 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
   }
 
   String _displayName() {
-    if (_resolvedGreetingName != null && _resolvedGreetingName!.isNotEmpty) {
-      return _firstNameFromRaw(_resolvedGreetingName!);
+    final raw = (_resolvedGreetingName ?? '').trim();
+    if (raw.isNotEmpty) {
+      // Merchants: full business name. Customers: first name only.
+      if (_greetingIsBusiness) return raw;
+      return _firstNameFromRaw(raw);
     }
     // Never trust a stale constructor email alone after account switch —
     // wait until auth/prefs resolve for the current user.
@@ -254,6 +259,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       setState(() {
         _greetingUid = null;
         _resolvedGreetingName = null;
+        _greetingIsBusiness = false;
         _greetingResolved = true;
       });
       return;
@@ -267,22 +273,45 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       return;
     }
 
-    String? name;
+    final prefs = await SharedPreferences.getInstance();
+    final role = RoleHelper.normalizeAccountRole(
+          prefs.getString('user_role') ?? prefs.getString('role'),
+        ) ??
+        RoleHelper.customer;
+    final isMerchant = role == RoleHelper.merchant;
 
-    // 1) Live Firebase session wins (correct after account switch).
-    if (authUser != null) {
-      final display = (authUser.displayName ?? '').trim();
-      if (display.isNotEmpty && !display.contains('@')) {
-        name = display;
+    String? name;
+    var isBusiness = false;
+
+    // Merchants: greet with business name (not personal first name).
+    if (isMerchant) {
+      final business = (prefs.getString('business_name') ?? '').trim();
+      if (business.isNotEmpty && !business.contains('@')) {
+        name = business;
+        isBusiness = true;
       } else {
-        final email = (authUser.email ?? '').trim();
-        if (email.isNotEmpty) name = _firstNameFromEmail(email);
+        final display = (authUser?.displayName ?? '').trim();
+        if (display.isNotEmpty && !display.contains('@')) {
+          name = display;
+          isBusiness = true;
+        }
       }
     }
 
-    // 2) Prefs for this session (written on login).
+    // Customers (or merchant fallback): personal name.
     if (name == null || name.isEmpty) {
-      final prefs = await SharedPreferences.getInstance();
+      if (authUser != null) {
+        final display = (authUser.displayName ?? '').trim();
+        if (display.isNotEmpty && !display.contains('@')) {
+          name = display;
+        } else {
+          final email = (authUser.email ?? '').trim();
+          if (email.isNotEmpty) name = _firstNameFromEmail(email);
+        }
+      }
+    }
+
+    if (name == null || name.isEmpty) {
       final prefsName = prefs.getString('fullName') ?? prefs.getString('name');
       if (prefsName != null &&
           prefsName.trim().isNotEmpty &&
@@ -294,7 +323,6 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       }
     }
 
-    // 3) Token / constructor email as last resort.
     if (name == null || name.isEmpty) {
       name = await AuthStorage.userNameFromToken();
       if (name != null && name.contains('@')) {
@@ -309,6 +337,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
     setState(() {
       _greetingUid = uid;
       _resolvedGreetingName = name;
+      _greetingIsBusiness = isBusiness;
       _greetingResolved = true;
     });
   }

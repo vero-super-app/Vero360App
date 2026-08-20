@@ -7,7 +7,12 @@ import 'package:vero360_app/features/VeroCourier/VeroCourierService/vero_courier
 
 class CourierMerchantDashboard extends StatefulWidget {
   final String email;
-  const CourierMerchantDashboard({super.key, required this.email});
+  final String? merchantUid;
+  const CourierMerchantDashboard({
+    super.key,
+    required this.email,
+    this.merchantUid,
+  });
 
   @override
   State<CourierMerchantDashboard> createState() => _CourierMerchantDashboardState();

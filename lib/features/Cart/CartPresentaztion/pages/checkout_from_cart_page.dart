@@ -782,7 +782,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       if (!_buyerInLilongwe) {
         ToastHelper.showCustomToast(
           context,
-          'Vero Courier is only in Lilongwe. Set your delivery pin in Lilongwe.',
+          'Vero Courier for food delivery is expanding soon.',
           isSuccess: false,
           errorMessage: 'City not supported',
         );
@@ -791,7 +791,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       if (!_merchantsInLilongwe) {
         ToastHelper.showCustomToast(
           context,
-          'This restaurant is outside Lilongwe. Food delivery is Lilongwe-only for now.',
+          'Vero Courier for food delivery is expanding soon.',
           isSuccess: false,
           errorMessage: 'City not supported',
         );
@@ -808,7 +808,10 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       return;
     }
     if (!await _ensureDefaultAddressIfNeeded()) return;
-    if (!await showEscrowPayNoticeDialog(context)) return;
+    final agreed = _isFoodCheckout
+        ? await showFoodEscrowPayNoticeDialog(context)
+        : await showEscrowPayNoticeDialog(context);
+    if (!agreed) return;
     if (!mounted) return;
 
     setState(() => _paying = true);
@@ -1033,8 +1036,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                             _foodCourierCity != null
                                 ? 'Vero Courier will deliver this food order in Lilongwe only (same-city).'
                                 : (!_buyerInLilongwe
-                                    ? 'Vero Courier delivers food only in Lilongwe. Pin your drop-off in Lilongwe to continue.'
-                                    : 'This restaurant must also be in Lilongwe. Vero Courier is Lilongwe-only for now.'),
+                                    ? 'Vero Courier for food delivery is expanding soon.'
+                                    : 'This restaurant is outside Lilongwe. Vero Courier for food delivery is expanding soon.'),
                             style: const TextStyle(
                               fontWeight: FontWeight.w700,
                               height: 1.35,
@@ -1217,12 +1220,12 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                   title: 'Courier',
                   subtitle: _isFoodCheckout
                       ? (_foodCourierCity == null
-                          ? 'Vero Courier is only in Lilongwe for now'
+                          ? 'Vero Courier for food delivery is expanding soon'
                           : 'Food is delivered by Vero Courier in Lilongwe only')
                       : (_deliveryType == DeliveryType.pickup
-                          ? 'Pickup selected — no delivery address needed'
+                          ? 'Pickup selected no delivery address needed'
                           : (_veroCourierAvailable
-                              ? 'Vero Courier is available — you and the shop are both in Lilongwe'
+                              ? 'Vero Courier is available for food delivery you and the shop are both in Lilongwe'
                               : 'Choose how you want your order delivered')),
                   child: _courierGrid(),
                 ),

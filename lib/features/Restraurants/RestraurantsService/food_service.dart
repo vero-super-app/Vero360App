@@ -428,24 +428,151 @@ class FoodService {
     FoodModel? exclude,
     int limit = 24,
   }) async {
-    final menu = await _fetchFirestoreFoodMenuItems();
-    final listings = await _fetchFirestoreFoodListings();
-    final merged = _mergeFoodLists(menu, listings);
+    final full = await fetchKitchenListings(
+      restaurantId: restaurantId,
+      merchantId: merchantId,
+      kitchenName: kitchenName,
+    );
     final out = <FoodModel>[];
-    for (final f in merged) {
+    for (final f in full) {
       if (exclude != null && isSameDish(f, exclude)) continue;
-      if (!isSameKitchen(
-        f,
-        restaurantId: restaurantId,
-        merchantId: merchantId,
-        kitchenName: kitchenName,
-      )) {
-        continue;
-      }
       out.add(f);
       if (out.length >= limit) break;
     }
     return out;
+  }
+
+  /// Full available menu/listings for a restaurant shop (no arbitrary global cap).
+  Future<List<FoodModel>> fetchKitchenListings({
+    String? restaurantId,
+    String? merchantId,
+    String? kitchenName,
+  }) async {
+    final rid = restaurantId?.trim() ?? '';
+    final mid = merchantId?.trim() ?? '';
+    final name = kitchenName?.trim() ?? '';
+    final merged = <FoodModel>[];
+    final seen = <String>{};
+
+    void addAll(Iterable<FoodModel> rows) {
+      for (final f in rows) {
+        final key = (f.firestoreListingId ?? '').trim().isNotEmpty
+            ? 'id:${f.firestoreListingId!.trim()}'
+            : 'n:${f.FoodName.trim().toLowerCase()}|${f.merchantId ?? ''}';
+        if (!seen.add(key)) continue;
+        merged.add(f);
+      }
+    }
+
+    Future<List<FoodModel>> menuByField(String field, String value) async {
+      if (value.isEmpty) return const [];
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection('food_menu_items')
+            .where(field, isEqualTo: value)
+            .limit(200)
+            .get();
+        final out = <FoodModel>[];
+        for (final doc in snap.docs) {
+          final data = doc.data();
+          if (data['isAvailable'] == false) continue;
+          final dish = '${data['name'] ?? ''}'.trim();
+          if (dish.isEmpty) continue;
+          final price = (data['price'] is num)
+              ? (data['price'] as num).toDouble()
+              : double.tryParse('${data['price']}') ?? 0.0;
+          final img = _pickImageUrl(data);
+          final seller =
+              '${data['businessName'] ?? data['merchantName'] ?? name}'.trim();
+          final m = data['merchantId']?.toString().trim();
+          final r = data['restaurantId']?.toString().trim();
+          final cat = '${data['category'] ?? ''}'.trim();
+          final gallery = _pickGallery(data);
+          out.add(FoodModel.fromJson({
+            ...Map<String, dynamic>.from(data),
+            'id': doc.id.hashCode.abs() % 2000000000,
+            'FoodName': dish,
+            'FoodImage': img,
+            'RestrauntName':
+                seller.isNotEmpty ? seller : (name.isNotEmpty ? name : 'Restaurant'),
+            'price': price,
+            'category': cat.isEmpty ? 'Meals' : cat,
+            'gallery': gallery.isNotEmpty
+                ? gallery
+                : (img.isEmpty ? const [] : [img]),
+            'merchantId': (m != null && m.isNotEmpty) ? m : (mid.isEmpty ? null : mid),
+            'restaurantId':
+                (r != null && r.isNotEmpty) ? r : (rid.isEmpty ? null : rid),
+            'firestoreListingId': doc.id,
+          }));
+        }
+        return out;
+      } catch (_) {
+        return const [];
+      }
+    }
+
+    Future<List<FoodModel>> listingsByMerchant(String merchant) async {
+      if (merchant.isEmpty) return const [];
+      try {
+        QuerySnapshot<Map<String, dynamic>> snap;
+        try {
+          snap = await FirebaseFirestore.instance
+              .collection('marketplace_items')
+              .where('category', isEqualTo: 'food')
+              .where('merchantId', isEqualTo: merchant)
+              .limit(100)
+              .get();
+        } catch (_) {
+          snap = await FirebaseFirestore.instance
+              .collection('marketplace_items')
+              .where('merchantId', isEqualTo: merchant)
+              .limit(100)
+              .get();
+        }
+        return snap.docs.map((doc) {
+          final data = Map<String, dynamic>.from(doc.data());
+          final cat = '${data['category'] ?? ''}'.trim().toLowerCase();
+          if (cat.isNotEmpty && cat != 'food') return null;
+          if (data['isAvailable'] == false || data['active'] == false) {
+            return null;
+          }
+          return FoodModel.fromJson(_adaptMarketplaceToFoodJson({
+            ...data,
+            'id': doc.id,
+            'firestoreListingId': doc.id,
+          }));
+        }).whereType<FoodModel>().toList();
+      } catch (_) {
+        return const [];
+      }
+    }
+
+    if (rid.isNotEmpty) addAll(await menuByField('restaurantId', rid));
+    if (mid.isNotEmpty) {
+      addAll(await menuByField('merchantId', mid));
+      addAll(await listingsByMerchant(mid));
+    }
+
+    // Fallback: scan merged feed if targeted queries returned nothing.
+    if (merged.isEmpty && (rid.isNotEmpty || mid.isNotEmpty || name.isNotEmpty)) {
+      final menu = await _fetchFirestoreFoodMenuItems();
+      final listings = await _fetchFirestoreFoodListings();
+      for (final f in _mergeFoodLists(menu, listings)) {
+        if (!isSameKitchen(
+          f,
+          restaurantId: rid.isEmpty ? null : rid,
+          merchantId: mid.isEmpty ? null : mid,
+          kitchenName: name.isEmpty ? null : name,
+        )) {
+          continue;
+        }
+        addAll([f]);
+      }
+    }
+
+    merged.sort((a, b) => a.FoodName.toLowerCase().compareTo(b.FoodName.toLowerCase()));
+    return merged;
   }
 
   /// Photo search
@@ -605,6 +732,10 @@ class FoodService {
       if (raw['addons'] != null) 'addons': raw['addons'],
       if (raw['prepTimeMinutes'] != null)
         'prepTimeMinutes': raw['prepTimeMinutes'],
+      if (raw['quantity'] != null) 'quantity': raw['quantity'],
+      if (raw['stock'] != null) 'stock': raw['stock'],
+      if (raw['availableQuantity'] != null)
+        'availableQuantity': raw['availableQuantity'],
     };
   }
 

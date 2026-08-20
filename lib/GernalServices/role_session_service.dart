@@ -182,6 +182,33 @@ class RoleSessionService {
     // Firestore is a backup if API role is missing/customer but this uid is
     // already a driver/merchant there — still never use leftover prefs.
     if (backendRole == RoleHelper.customer) {
+      final existingRole = RoleHelper.normalizeAccountRole(
+        prefs.getString('user_role') ?? prefs.getString('role'),
+      );
+      final prefsUid = (prefs.getString('uid') ?? '').trim();
+      final sameAccount =
+          fbUid.isEmpty || prefsUid.isEmpty || prefsUid == fbUid;
+
+      // Keep local merchant/driver sticky when network is weak and API briefly
+      // returns the default customer role for this same account.
+      if (sameAccount &&
+          (existingRole == RoleHelper.merchant ||
+              existingRole == RoleHelper.driver)) {
+        final sticky = Map<String, dynamic>.from(user)
+          ..['role'] = existingRole;
+        if (existingRole == RoleHelper.merchant) {
+          final service = normalizeMerchantServiceKey(
+                prefs.getString('merchant_service'),
+              ) ??
+              normalizeMerchantServiceKey(prefs.getString(intendedServiceKey));
+          if (service != null && service.isNotEmpty) {
+            sticky['merchantService'] = service;
+          }
+        }
+        await persistUserToPrefs(prefs, sticky, resolveMerchantVertical: false);
+        return RoleSyncResult.user(sticky);
+      }
+
       final firestoreRole = RoleHelper.normalizeAccountRole(
         await _getRoleFromFirestore(),
       );
@@ -255,9 +282,21 @@ class RoleSessionService {
     final prefsUid = (prefs.getString('uid') ?? '').trim();
     final sameAccount =
         lookupUid.isEmpty || prefsUid.isEmpty || prefsUid == lookupUid;
-    final role = incomingRole ??
-        (sameAccount ? existingRole : null) ??
-        RoleHelper.customer;
+
+    // Sticky merchant/driver on flaky networks: never demote a known local
+    // merchant/driver to customer just because /users/me omitted role or
+    // briefly returned the default customer payload.
+    String role;
+    if (incomingRole == RoleHelper.customer &&
+        sameAccount &&
+        (existingRole == RoleHelper.merchant ||
+            existingRole == RoleHelper.driver)) {
+      role = existingRole!;
+    } else {
+      role = incomingRole ??
+          (sameAccount ? existingRole : null) ??
+          RoleHelper.customer;
+    }
     await prefs.setString('user_role', role);
     await prefs.setString('role', role);
     await prefs.setBool('is_merchant', role == RoleHelper.merchant);
@@ -268,24 +307,35 @@ class RoleSessionService {
           (lookupUid.isNotEmpty && intendedUid == lookupUid)
               ? normalizeMerchantServiceKey(prefs.getString(intendedServiceKey))
               : null;
+      final existingService =
+          normalizeMerchantServiceKey(prefs.getString('merchant_service'));
       var service = intendedService ??
           normalizeMerchantServiceKey(
             user['merchantService']?.toString() ??
                 user['merchant_service']?.toString(),
-          );
+          ) ??
+          existingService;
       if (!isKnownMerchantServiceKey(service)) service = null;
       if (resolveMerchantVertical &&
           lookupUid.isNotEmpty &&
           !isKnownMerchantServiceKey(service)) {
-        final discovered = await resolveMerchantServiceForUid(lookupUid);
-        if (isKnownMerchantServiceKey(discovered)) {
-          service = discovered;
+        try {
+          final discovered = await resolveMerchantServiceForUid(lookupUid)
+              .timeout(const Duration(seconds: 6));
+          if (isKnownMerchantServiceKey(discovered)) {
+            service = discovered;
+          }
+        } catch (_) {
+          // Keep cached vertical when discovery times out offline.
+          service = existingService;
         }
       }
+      // Prefer any known cached vertical over wiping it.
+      service ??= existingService;
       if (service != null && service.isNotEmpty) {
         await persistMerchantServiceFromApi(prefs, service);
       }
-    } else {
+    } else if (role != RoleHelper.merchant) {
       await prefs.remove('merchant_service');
       await prefs.remove('business_name');
       await prefs.remove('business_address');
@@ -441,7 +491,8 @@ class RoleSessionService {
       final doc = await FirebaseFirestore.instance
           .collection('users')
           .doc(fbUser.uid)
-          .get();
+          .get()
+          .timeout(const Duration(seconds: 4));
       if (doc.exists && doc.data() != null) {
         return RoleHelper.roleFromUserMap(doc.data()!);
       }
@@ -483,6 +534,7 @@ class RoleSessionService {
 
       return _FetchedUser(user: user);
     } catch (_) {
+      // Timeout / offline — caller must keep cached merchant role.
       return const _FetchedUser();
     }
   }

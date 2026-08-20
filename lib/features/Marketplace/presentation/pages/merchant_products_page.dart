@@ -14,6 +14,7 @@ import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_detail_model.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart'
     as marketplaceModel;
 import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
@@ -824,8 +825,9 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   Future<void> _prefetchOpeningHoursFast(String merchantId) async {
     final hours = await MerchantSellerLoader.prefetchOpeningHours(merchantId);
     if (!mounted || hours == null || hours.isEmpty) return;
-    if (_merchantOpeningHours == hours) return;
-    setState(() => _merchantOpeningHours = hours);
+    final normalized = MarketplaceShopHours.normalize(hours) ?? hours;
+    if (_merchantOpeningHours == normalized) return;
+    setState(() => _merchantOpeningHours = normalized);
   }
 
   void _persistHeaderCache() {
@@ -848,16 +850,8 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     );
   }
 
-  List<int> _parseOpeningDays(dynamic raw) {
-    final out = <int>{};
-    if (raw is List) {
-      for (final e in raw) {
-        final n = e is int ? e : int.tryParse('$e');
-        if (n != null && n >= 1 && n <= 7) out.add(n);
-      }
-    }
-    return out.toList()..sort();
-  }
+  List<int> _parseOpeningDays(dynamic raw) =>
+      MarketplaceShopHours.parseDays(raw);
 
   int? _parseBackendIdFromMap(Map<String, dynamic> data) {
     for (final key in [
@@ -2403,8 +2397,10 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             if (liveName != null) _resolvedMerchantName = liveName;
             if (status != null) _merchantStatus = status;
             if (openingHours != null) {
-              _merchantOpeningHours = openingHours;
-              MerchantSellerLoader.cacheOpeningHours(mid, openingHours);
+              final normalized =
+                  MarketplaceShopHours.normalize(openingHours) ?? openingHours;
+              _merchantOpeningHours = normalized;
+              MerchantSellerLoader.cacheOpeningHours(mid, normalized);
             }
             if (openingDays.isNotEmpty) {
               _merchantOpeningDays = openingDays;
@@ -2463,8 +2459,10 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             }
             if ((_merchantOpeningHours?.trim().isEmpty ?? true) &&
                 uHours.isNotEmpty) {
-              _merchantOpeningHours = uHours;
-              MerchantSellerLoader.cacheOpeningHours(mid, uHours);
+              final normalized =
+                  MarketplaceShopHours.normalize(uHours) ?? uHours;
+              _merchantOpeningHours = normalized;
+              MerchantSellerLoader.cacheOpeningHours(mid, normalized);
             }
             if (_merchantOpeningDays.isEmpty && uDays.isNotEmpty) {
               _merchantOpeningDays = uDays;
@@ -3744,38 +3742,8 @@ class _MerchantProfileCard extends StatelessWidget {
     }
   }
 
-  TimeOfDay? _parseTime(String raw) {
-    final t = raw.trim().split(':');
-    if (t.length != 2) return null;
-    final h = int.tryParse(t[0]);
-    final m = int.tryParse(t[1]);
-    if (h == null || m == null) return null;
-    if (h < 0 || h > 23 || m < 0 || m > 59) return null;
-    return TimeOfDay(hour: h, minute: m);
-  }
-
-  bool _isShopOpenNow() {
-    final s = (openingHours ?? '').trim();
-    if (s.isEmpty) return false;
-    if (openingDays.isNotEmpty &&
-        !openingDays.contains(DateTime.now().weekday)) {
-      return false;
-    }
-    final parts = s.replaceAll('–', '-').replaceAll('—', '-').split('-');
-    if (parts.length != 2) return false;
-    final open = _parseTime(parts[0]);
-    final close = _parseTime(parts[1]);
-    if (open == null || close == null) return false;
-    final now = TimeOfDay.now();
-    final nowM = now.hour * 60 + now.minute;
-    final openM = open.hour * 60 + open.minute;
-    final closeM = close.hour * 60 + close.minute;
-    if (openM == closeM) return false;
-    if (openM < closeM) {
-      return nowM >= openM && nowM < closeM;
-    }
-    return nowM >= openM || nowM < closeM;
-  }
+  bool _isShopOpenNow() =>
+      MarketplaceShopHours.isOpenNow(openingHours, openingDays);
 
   @override
   Widget build(BuildContext context) {
@@ -4039,42 +4007,42 @@ class _MerchantProfileCard extends StatelessWidget {
                   ),
                 ],
               ),
-              if (!loading)
-                Tooltip(
-                  message:
-                      following ? 'Unfollow seller' : 'Follow seller',
-                  child: Material(
-                    color: following
-                        ? Colors.red.shade50
-                        : const Color(0xFFF6F7FB),
-                    borderRadius: BorderRadius.circular(14),
-                    child: InkWell(
-                      onTap: onToggleFollow,
-                      borderRadius: BorderRadius.circular(14),
-                      child: Padding(
-                        padding: const EdgeInsets.all(10),
-                        child: Icon(
-                          following
-                              ? Icons.favorite_rounded
-                              : Icons.favorite_border_rounded,
-                          color: following ? Colors.red : _kBrandNavy,
-                          size: 24,
-                        ),
-                      ),
-                    ),
-                  ),
-                )
-              else
-                const Padding(
-                  padding: EdgeInsets.all(8),
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                ),
             ],
           ),
+          if (!loading) ...[
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: onToggleFollow,
+                style: FilledButton.styleFrom(
+                  backgroundColor:
+                      following ? const Color(0xFF16284C) : _kBrandOrange,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                icon: Icon(
+                  following ? Icons.check_rounded : Icons.add_rounded,
+                  size: 18,
+                ),
+                label: Text(
+                  following ? 'Following' : 'Follow',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+            ),
+          ] else ...[
+            const SizedBox(height: 14),
+            const Center(
+              child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          ],
         ],
       ),
     );

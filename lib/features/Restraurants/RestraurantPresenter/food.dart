@@ -5,25 +5,40 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vero360_app/GeneralModels/chat_product_context.dart';
+import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/GernalServices/location_service.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_details.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_categories.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantsService/food_engagement_service.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_service.dart';
+import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
 import 'package:vero360_app/Home/CustomersProfilepage.dart';
+import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 import 'package:vero360_app/Home/notifications_page.dart';
+import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
+
+final NumberFormat _foodMwkFmt =
+    NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
+String _foodMwk(num n) => _foodMwkFmt.format(n);
 
 class FoodPage extends StatefulWidget {
   const FoodPage({
@@ -46,13 +61,12 @@ class FoodPage extends StatefulWidget {
   _FoodPageState createState() => _FoodPageState();
 }
 
-class _FoodPageState extends State<FoodPage> {
-  // ── Brand palette ─────────────────────────────────────────────────────────
-  static const Color _veroOrange   = Color(0xFFFF8A00);
-  static const Color _ink          = Color(0xFF1A1109);
-  static const Color _pageBg       = Color(0xFFFFFFFF);
-  static const Color _divider      = Color(0xFFEEEEEE);
+const Color _veroOrange = Color(0xFFFF8A00);
+const Color _ink = Color(0xFF1A1109);
+const Color _pageBg = Color(0xFFFFFFFF);
+const Color _divider = Color(0xFFEEEEEE);
 
+class _FoodPageState extends State<FoodPage> {
   // ── Services / controllers ─────────────────────────────────────────────────
   final FoodService            foodService      = FoodService();
   final LocationService        _locationService = LocationService();
@@ -75,6 +89,9 @@ class _FoodPageState extends State<FoodPage> {
   String _profileUrl = '';
 
   late Future<List<FoodModel>> _future;
+  Map<String, int> _engagementScores = const {};
+  /// merchantId → public profile bits for Food cards (hours, reviews, name).
+  final Map<String, _RestaurantPublicMeta> _restaurantMeta = {};
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
   @override
@@ -84,6 +101,135 @@ class _FoodPageState extends State<FoodPage> {
     // Must init before first build — never leave `late _future` unset.
     _future = _loadAll();
     unawaited(_bootstrap());
+    unawaited(_loadEngagementScores());
+  }
+
+  Future<void> _hydrateRestaurantMeta(List<FoodModel> items) async {
+    final ids = <String>{};
+    for (final f in items) {
+      final mid = (f.merchantId ?? '').trim();
+      if (mid.isNotEmpty && !_restaurantMeta.containsKey(mid)) ids.add(mid);
+    }
+    if (ids.isEmpty) return;
+
+    await Future.wait(ids.map((mid) async {
+      try {
+        String name = '';
+        String hours = '';
+        List<int> days = const [];
+        String pic = '';
+        String desc = '';
+
+        final merchant = await FirebaseFirestore.instance
+            .collection('food_merchants')
+            .doc(mid)
+            .get();
+        if (merchant.exists) {
+          final m = merchant.data() ?? {};
+          name = (m['businessName'] ?? m['name'] ?? '').toString().trim();
+          hours = MarketplaceShopHours.normalize(
+                (m['openingHours'] ?? m['shopHours'] ?? '').toString(),
+              ) ??
+              '';
+          days = MarketplaceShopHours.parseDays(m['openingDays']);
+          pic = (m['profileImage'] ??
+                  m['logo'] ??
+                  m['logoUrl'] ??
+                  m['image'] ??
+                  '')
+              .toString()
+              .trim();
+          desc = (m['description'] ?? m['businessDescription'] ?? '')
+              .toString()
+              .trim();
+        }
+
+        if (hours.isEmpty || pic.isEmpty || name.isEmpty) {
+          final user = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(mid)
+              .get();
+          final u = user.data() ?? {};
+          if (name.isEmpty) {
+            name = (u['businessName'] ?? u['fullname'] ?? '').toString().trim();
+          }
+          if (hours.isEmpty) {
+            hours = MarketplaceShopHours.normalize(
+                  (u['openingHours'] ?? u['shopHours'] ?? '').toString(),
+                ) ??
+                '';
+          }
+          if (days.isEmpty) {
+            days = MarketplaceShopHours.parseDays(u['openingDays']);
+          }
+          if (pic.isEmpty) {
+            pic = (u['profilepicture'] ??
+                    u['profilePicture'] ??
+                    u['photoURL'] ??
+                    '')
+                .toString()
+                .trim();
+          }
+          if (desc.isEmpty) {
+            desc = (u['businessDescription'] ?? u['description'] ?? '')
+                .toString()
+                .trim();
+          }
+        }
+
+        int reviewCount = 0;
+        double rating = 0;
+        try {
+          final reviews = await FirebaseFirestore.instance
+              .collection('food_reviews')
+              .where('merchantId', isEqualTo: mid)
+              .limit(50)
+              .get();
+          double sum = 0;
+          int n = 0;
+          for (final d in reviews.docs) {
+            final raw = d.data()['rating'] ?? d.data()['stars'];
+            final v = raw is num
+                ? raw.toDouble()
+                : double.tryParse(raw?.toString() ?? '');
+            if (v == null || v <= 0) continue;
+            sum += v;
+            n += 1;
+          }
+          try {
+            final agg = await FirebaseFirestore.instance
+                .collection('food_reviews')
+                .where('merchantId', isEqualTo: mid)
+                .count()
+                .get();
+            reviewCount = agg.count ?? n;
+          } catch (_) {
+            reviewCount = n;
+          }
+          rating = n > 0 ? sum / n : 0;
+        } catch (_) {}
+
+        _restaurantMeta[mid] = _RestaurantPublicMeta(
+          businessName: name,
+          openingHours: hours,
+          openingDays: days,
+          profileUrl: pic,
+          description: desc,
+          reviewCount: reviewCount,
+          rating: rating,
+        );
+      } catch (e) {
+        if (kDebugMode) debugPrint('Restaurant meta $mid: $e');
+      }
+    }));
+
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _loadEngagementScores() async {
+    final scores = await FoodEngagementService.fetchScores();
+    if (!mounted) return;
+    setState(() => _engagementScores = scores);
   }
 
   /// Warm last-known location, then reload so nearby dishes rank first.
@@ -216,6 +362,21 @@ class _FoodPageState extends State<FoodPage> {
         .toList();
   }
 
+  Future<List<FoodModel>> _excludeBlockedMerchants(List<FoodModel> items) async {
+    await BlockedMerchantService.ensureLoaded();
+    final blocked = await BlockedMerchantService.blockedIds();
+    if (blocked.isEmpty) return items;
+    return items
+        .where(
+          (f) => !BlockedMerchantService.matchesBlocked(
+            blocked,
+            merchantId: f.merchantId,
+            sellerUserId: f.merchantId,
+          ),
+        )
+        .toList();
+  }
+
   // ── Data helpers ───────────────────────────────────────────────────────────
   List<FoodModel> _sortByDistanceIfPossible(List<FoodModel> items) {
     final p = _userPosition;
@@ -231,8 +392,10 @@ class _FoodPageState extends State<FoodPage> {
         longitude: _userPosition?.longitude,
         radiusKm:  _radiusKm,
       );
-      final sorted = _sortByDistanceIfPossible(_filterKitchen(items));
+      final visible = await _excludeBlockedMerchants(_filterKitchen(items));
+      final sorted = _sortByDistanceIfPossible(visible);
       _precacheFoodImages(sorted);
+      unawaited(_hydrateRestaurantMeta(sorted));
       return sorted;
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -250,8 +413,10 @@ class _FoodPageState extends State<FoodPage> {
         longitude: _userPosition?.longitude,
         radiusKm:  _radiusKm,
       );
-      final sorted = _sortByDistanceIfPossible(_filterKitchen(items));
+      final visible = await _excludeBlockedMerchants(_filterKitchen(items));
+      final sorted = _sortByDistanceIfPossible(visible);
       _precacheFoodImages(sorted);
+      unawaited(_hydrateRestaurantMeta(sorted));
       return sorted;
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -262,8 +427,10 @@ class _FoodPageState extends State<FoodPage> {
     setState(() { _loading = true; _photoMode = true; });
     try {
       final items = await foodService.searchFoodByPhoto(file);
-      final sorted = _sortByDistanceIfPossible(_filterKitchen(items));
+      final visible = await _excludeBlockedMerchants(_filterKitchen(items));
+      final sorted = _sortByDistanceIfPossible(visible);
       _precacheFoodImages(sorted);
+      unawaited(_hydrateRestaurantMeta(sorted));
       return sorted;
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -449,6 +616,7 @@ class _FoodPageState extends State<FoodPage> {
     setState(() {
       _future = next;
     });
+    unawaited(_loadEngagementScores());
     await _future;
   }
 
@@ -459,6 +627,235 @@ class _FoodPageState extends State<FoodPage> {
         : f.category!.trim().toLowerCase());
     final want = _categoryFilter.toLowerCase();
     return c == want || c.contains(want);
+  }
+
+  String _kitchenKey(FoodModel item) {
+    final rid = item.restaurantId?.trim();
+    if (rid != null && rid.isNotEmpty) return 'r:$rid';
+    final mid = item.merchantId?.trim();
+    if (mid != null && mid.isNotEmpty) return 'm:$mid';
+    return 'n:${item.RestrauntName.trim().toLowerCase()}';
+  }
+
+  /// Nearest restaurants (by location) with a featured dish each.
+  List<_NearestKitchen> _nearestKitchens(
+    List<FoodModel> items, {
+    double? userLat,
+    double? userLng,
+    int take = 12,
+  }) {
+    final byKitchen = <String, List<FoodModel>>{};
+    for (final f in items) {
+      byKitchen.putIfAbsent(_kitchenKey(f), () => []).add(f);
+    }
+
+    double? distOf(FoodModel f) {
+      if (userLat == null ||
+          userLng == null ||
+          f.latitude == null ||
+          f.longitude == null) {
+        return null;
+      }
+      return FoodService.distanceKm(
+        userLat,
+        userLng,
+        f.latitude!,
+        f.longitude!,
+      );
+    }
+
+    final kitchens = <_NearestKitchen>[];
+    for (final entry in byKitchen.entries) {
+      final foods = List<FoodModel>.from(entry.value);
+      foods.sort((a, b) {
+        final da = distOf(a) ?? double.infinity;
+        final db = distOf(b) ?? double.infinity;
+        return da.compareTo(db);
+      });
+      final featured = foods.first;
+      final name = featured.RestrauntName.trim().isEmpty
+          ? 'Restaurant'
+          : featured.RestrauntName.trim();
+      kitchens.add(_NearestKitchen(
+        key: entry.key,
+        name: name,
+        featured: featured,
+        dishCount: foods.length,
+        distanceKm: distOf(featured),
+      ));
+    }
+
+    kitchens.sort((a, b) {
+      final da = a.distanceKm ?? double.infinity;
+      final db = b.distanceKm ?? double.infinity;
+      if (da != db) return da.compareTo(db);
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+    if (kitchens.length <= take) return kitchens;
+    return kitchens.take(take).toList();
+  }
+
+  Future<void> _openFoodSellerChat(FoodModel item) async {
+    final mid = (item.merchantId ?? '').trim();
+    if (mid.isEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'Seller chat is not available for this dish yet.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'Please sign in to message the seller.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    if (uid == mid) {
+      ToastHelper.showCustomToast(
+        context,
+        'This is your own dish  you cannot chat with yourself.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
+    unawaited(FoodEngagementService.recordAsk(item));
+
+    showDialog<void>(
+      context: context,
+      useRootNavigator: true,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(color: Color(0xFFFF8A00)),
+      ),
+    );
+
+    try {
+      unawaited(BackendChatService.warmForMarketplaceChat().catchError((_) {}));
+      unawaited(BackendMessagingSocket.connect().catchError((_) {}));
+
+      final img = item.FoodImage.trim().isNotEmpty
+          ? item.FoodImage.trim()
+          : (item.gallery.isNotEmpty ? item.gallery.first.trim() : '');
+      final productContext = ChatProductContext(
+        productId: item.id > 0
+            ? '${item.id}'
+            : (item.firestoreListingId ?? item.FoodName),
+        name: item.FoodName,
+        image: img.isEmpty ? null : img,
+        price: item.price,
+        description: item.description,
+        merchantId: mid,
+      );
+
+      Future<MerchantChatResult>? pendingChat =
+          BackendChatService.startMerchantChat(
+        sqlItemId: item.id > 0 ? item.id : null,
+        merchantId: mid,
+        firestoreItemDocId: item.firestoreListingId,
+      );
+
+      String peerId = '';
+      int? peerUserId;
+      try {
+        final quick = await pendingChat.timeout(
+          const Duration(milliseconds: 550),
+        );
+        peerId = quick.chat.id;
+        peerUserId = quick.sellerId;
+        pendingChat = null;
+      } on TimeoutException {
+        // Chat page awaits the same in-flight future.
+      }
+
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+
+      final sellerName = item.RestrauntName.trim().isEmpty
+          ? 'Kitchen'
+          : item.RestrauntName.trim();
+
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => MessagePageBackendApi(
+            peerId: peerId,
+            peerName: sellerName,
+            productContext: productContext,
+            peerMerchantId: mid,
+            peerUserId: peerUserId,
+            sendProductEnquiry: true,
+            resolveSqlItemId: item.id > 0 ? item.id : null,
+            resolveMerchantId: mid,
+            resolveFirestoreItemDocId: item.firestoreListingId,
+            pendingMerchantChat: pendingChat,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        final raw = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+        ToastHelper.showCustomToast(
+          context,
+          raw.isEmpty ? 'Could not open chat with seller.' : raw,
+          isSuccess: false,
+          errorMessage: '',
+        );
+        if (kDebugMode) debugPrint('[_openFoodSellerChat] $e');
+      }
+    }
+  }
+
+  Future<void> _openFoodDetails(FoodModel item) async {
+    unawaited(FoodEngagementService.recordClick(item));
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => FoodDetailsPage(foodItem: item)),
+    );
+    unawaited(_loadEngagementScores());
+  }
+
+  void _openSeeAllPopular(List<FoodModel> items) {
+    final p = _userPosition;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _FoodSeeAllPage(
+          title: 'Popular Food',
+          subtitle: 'Dishes people are watching and asking for',
+          items: items,
+          userLat: p?.latitude,
+          userLng: p?.longitude,
+          onOpenDetails: (item) => unawaited(_openFoodDetails(item)),
+          onMessage: (item) => unawaited(_openFoodSellerChat(item)),
+        ),
+      ),
+    );
+  }
+
+  void _openSeeAllNearest(List<_NearestKitchen> kitchens) {
+    final p = _userPosition;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _NearestSeeAllPage(
+          title: 'Nearest',
+          subtitle: _locationLabel != null
+              ? 'Closest restaurants near $_locationLabel'
+              : (p != null
+                  ? 'Closest restaurants near you'
+                  : 'Restaurants near you'),
+          kitchens: kitchens,
+          onOpenDetails: (item) => unawaited(_openFoodDetails(item)),
+          onMessage: (item) => unawaited(_openFoodSellerChat(item)),
+        ),
+      ),
+    );
   }
 
   Future<void> _showDiscoverySheet() async {
@@ -596,7 +993,7 @@ class _FoodPageState extends State<FoodPage> {
                   color: Colors.grey.shade500, size: 18),
               const SizedBox(width: 8),
               Expanded(
-                child: Text('Location off — tap to find food near you',
+                child: Text('Location off you can tap to find food near you',
                     style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
                         color: Colors.grey.shade700)),
               ),
@@ -824,81 +1221,50 @@ class _FoodPageState extends State<FoodPage> {
                   if (filtered.isEmpty) return _buildEmptyCategory();
 
                   final p = _userPosition;
-                  final nearYou = p != null
-                      ? FoodService.filterWithinRadius(
-                          filtered,
-                          latitude: p.latitude,
-                          longitude: p.longitude,
-                          radiusKm: _radiusKm,
-                        )
-                      : const <FoodModel>[];
-                  // Prefer local kitchens; fall back to full list if none geo-tagged nearby.
-                  final localFirst = nearYou.isNotEmpty
-                      ? nearYou
-                      : (p != null
-                          ? FoodService.sortByDistanceToUser(
-                              List<FoodModel>.from(filtered),
-                              p.latitude,
-                              p.longitude,
-                            )
-                          : filtered);
-                  final nearRow = localFirst.take(12).toList();
-                  final popular = localFirst.take(12).toList();
+                  final popularAll = FoodEngagementService.sortPopular(
+                    filtered,
+                    _engagementScores,
+                    take: 0,
+                  );
+                  final popular = popularAll.length > 12
+                      ? popularAll.take(12).toList()
+                      : popularAll;
+                  final nearestAll = _nearestKitchens(
+                    filtered,
+                    userLat: p?.latitude,
+                    userLng: p?.longitude,
+                    take: 80,
+                  );
+                  final nearest = nearestAll.length > 12
+                      ? nearestAll.take(12).toList()
+                      : nearestAll;
 
                   return ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.fromLTRB(0, 16, 0, 28),
                     children: [
                       _SectionHeader(
-                        title: nearYou.isNotEmpty
-                            ? 'Near you'
-                            : 'Popular Food',
+                        title: 'Popular Food',
                         accent: _veroOrange,
                         ink: _ink,
-                        onSeeAll: () {},
+                        onSeeAll: popularAll.isEmpty
+                            ? null
+                            : () => _openSeeAllPopular(popularAll),
                       ),
-                      if (nearYou.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                          child: Text(
-                            _locationLabel != null
-                                ? 'Kitchens around $_locationLabel'
-                                : 'Prioritized by your current location',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.grey.shade600,
-                            ),
-                          ),
-                        ),
-                      const SizedBox(height: 4),
-                      SizedBox(
-                        height: 248,
-                        child: ListView.separated(
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
-                          scrollDirection: Axis.horizontal,
-                          itemCount: nearRow.length,
-                          separatorBuilder: (_, __) => const SizedBox(width: 14),
-                          itemBuilder: (_, i) => _FoodCard(
-                            item: nearRow[i],
-                            userLat: p?.latitude, userLng: p?.longitude,
-                            accent: _veroOrange, ink: _ink,
-                            onTap: () => Navigator.push(context,
-                                MaterialPageRoute(builder: (_) =>
-                                    FoodDetailsPage(foodItem: nearRow[i]))),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                        child: Text(
+                          'Dishes people are watching and asking for',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey.shade600,
                           ),
                         ),
                       ),
-                      const SizedBox(height: 24),
-                      _SectionHeader(
-                        title: nearYou.isNotEmpty ? 'More nearby' : 'Nearest',
-                        accent: _veroOrange,
-                        ink: _ink,
-                        onSeeAll: () {},
-                      ),
                       const SizedBox(height: 4),
                       SizedBox(
-                        height: 248,
+                        height: 268,
                         child: ListView.separated(
                           padding: const EdgeInsets.symmetric(horizontal: 20),
                           scrollDirection: Axis.horizontal,
@@ -906,13 +1272,77 @@ class _FoodPageState extends State<FoodPage> {
                           separatorBuilder: (_, __) => const SizedBox(width: 14),
                           itemBuilder: (_, i) => _FoodCard(
                             item: popular[i],
-                            userLat: p?.latitude, userLng: p?.longitude,
-                            accent: _veroOrange, ink: _ink,
-                            onTap: () => Navigator.push(context,
-                                MaterialPageRoute(builder: (_) =>
-                                    FoodDetailsPage(foodItem: popular[i]))),
+                            userLat: p?.latitude,
+                            userLng: p?.longitude,
+                            accent: _veroOrange,
+                            ink: _ink,
+                            meta: _restaurantMeta[
+                                (popular[i].merchantId ?? '').trim()],
+                            onTap: () => unawaited(_openFoodDetails(popular[i])),
+                            onMessage: () =>
+                                unawaited(_openFoodSellerChat(popular[i])),
                           ),
                         ),
+                      ),
+                      const SizedBox(height: 24),
+                      _SectionHeader(
+                        title: 'Nearest',
+                        accent: _veroOrange,
+                        ink: _ink,
+                        onSeeAll: nearestAll.isEmpty
+                            ? null
+                            : () => _openSeeAllNearest(nearestAll),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                        child: Text(
+                          _locationLabel != null
+                              ? 'Closest restaurants near $_locationLabel'
+                              : (p != null
+                                  ? 'Closest restaurants near you'
+                                  : 'Restaurants near you (enable location)'),
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      SizedBox(
+                        height: 268,
+                        child: nearest.isEmpty
+                            ? Center(
+                                child: Text(
+                                  'No nearby restaurants yet',
+                                  style: TextStyle(
+                                    color: Colors.grey.shade500,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              )
+                            : ListView.separated(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 20),
+                                scrollDirection: Axis.horizontal,
+                                itemCount: nearest.length,
+                                separatorBuilder: (_, __) =>
+                                    const SizedBox(width: 14),
+                                itemBuilder: (_, i) {
+                                  final k = nearest[i];
+                                  return _NearestRestaurantCard(
+                                    kitchen: k,
+                                    accent: _veroOrange,
+                                    ink: _ink,
+                                    meta: _restaurantMeta[
+                                        (k.featured.merchantId ?? '').trim()],
+                                    onTap: () =>
+                                        unawaited(_openFoodDetails(k.featured)),
+                                    onMessage: () => unawaited(
+                                        _openFoodSellerChat(k.featured)),
+                                  );
+                                },
+                              ),
                       ),
                     ],
                   );
@@ -1089,32 +1519,41 @@ String _foodListingLocationLine(FoodModel item) {
   return 'Location on request';
 }
 
-String _foodEtaLabel(FoodModel item, double? userLat, double? userLng) {
-  double? d;
-  int? deliveryMins;
-  if (userLat != null &&
-      userLng != null &&
-      item.latitude != null &&
-      item.longitude != null) {
-    d = FoodService.distanceKm(
-        userLat, userLng, item.latitude!, item.longitude!);
-    if (d != null) {
-      deliveryMins = (d * 2.8).round().clamp(1, 45);
-    }
+String _foodDistanceLabel(FoodModel item, double? userLat, double? userLng) {
+  if (userLat == null ||
+      userLng == null ||
+      item.latitude == null ||
+      item.longitude == null) {
+    return '';
   }
+  final d = FoodService.distanceKm(
+      userLat, userLng, item.latitude!, item.longitude!);
+  if (d == null) return '';
+  return d < 1 ? '${(d * 1000).round()} m' : '${d.toStringAsFixed(1)} km';
+}
 
-  final prep = item.effectivePrepTimeMinutes;
-  if (prep != null) {
-    final total = prep + (deliveryMins ?? 0);
-    return '~$total min';
+String _foodRestaurantMetaLine(
+  FoodModel item,
+  _RestaurantPublicMeta? meta, {
+  double? userLat,
+  double? userLng,
+}) {
+  final parts = <String>[];
+  if (meta != null && meta.openingHours.trim().isNotEmpty) {
+    final open = MarketplaceShopHours.isOpenNow(
+      meta.openingHours,
+      meta.openingDays,
+    );
+    parts.add(open ? 'OPEN' : 'CLOSED');
   }
-
-  // No item/restaurant prep — keep the old distance-based estimate.
-  if (d != null) {
-    final mins = (18 + d * 2.8).round().clamp(18, 55);
-    return '~$mins min';
+  if (meta != null && meta.reviewCount > 0) {
+    parts.add(
+      '${meta.reviewCount} review${meta.reviewCount == 1 ? '' : 's'}',
+    );
   }
-  return '25–40 min';
+  final dist = _foodDistanceLabel(item, userLat, userLng);
+  if (dist.isNotEmpty) parts.add(dist);
+  return parts.join(' · ');
 }
 
 Widget _foodMetaRow(IconData icon, String text) => Row(
@@ -1277,35 +1716,75 @@ class _FoodImageTileState extends State<_FoodImageTile> {
 }
 
 // ── Food card ────────────────────────────────────────────────────────────────
+class _RestaurantPublicMeta {
+  const _RestaurantPublicMeta({
+    this.businessName = '',
+    this.openingHours = '',
+    this.openingDays = const [],
+    this.profileUrl = '',
+    this.description = '',
+    this.reviewCount = 0,
+    this.rating = 0,
+  });
+
+  final String businessName;
+  final String openingHours;
+  final List<int> openingDays;
+  final String profileUrl;
+  final String description;
+  final int reviewCount;
+  final double rating;
+}
+
+class _NearestKitchen {
+  const _NearestKitchen({
+    required this.key,
+    required this.name,
+    required this.featured,
+    required this.dishCount,
+    this.distanceKm,
+  });
+
+  final String key;
+  final String name;
+  final FoodModel featured;
+  final int dishCount;
+  final double? distanceKm;
+}
+
 class _FoodCard extends StatelessWidget {
   const _FoodCard({
-    required this.item, required this.accent, required this.ink,
-    required this.onTap, this.userLat, this.userLng,
+    required this.item,
+    required this.accent,
+    required this.ink,
+    required this.onTap,
+    required this.onMessage,
+    this.userLat,
+    this.userLng,
+    this.meta,
   });
 
   final FoodModel item;
   final Color accent, ink;
   final VoidCallback onTap;
+  final VoidCallback onMessage;
   final double? userLat, userLng;
+  final _RestaurantPublicMeta? meta;
 
   @override
   Widget build(BuildContext context) {
-    String? distLabel;
-    if (userLat != null && userLng != null &&
-        item.latitude != null && item.longitude != null) {
-      final d = FoodService.distanceKm(
-          userLat!, userLng!, item.latitude!, item.longitude!);
-      if (d != null) {
-        distLabel = d < 1
-            ? '${(d * 1000).round()} m'
-            : '${d.toStringAsFixed(1)} km';
-      }
-    }
-    final cat = ((item.category ?? 'Meals').trim().isEmpty)
-        ? 'Meals' : item.category!.trim();
-
-    var etaLine = _foodEtaLabel(item, userLat, userLng);
-    if (distLabel != null) etaLine = '$etaLine · $distLabel';
+    final kitchenFromMeta = (meta?.businessName ?? '').trim();
+    final kitchen = kitchenFromMeta.isNotEmpty
+        ? kitchenFromMeta
+        : (item.RestrauntName.trim().isEmpty
+            ? 'Restaurant'
+            : item.RestrauntName.trim());
+    final metaLine = _foodRestaurantMetaLine(
+      item,
+      meta,
+      userLat: userLat,
+      userLng: userLng,
+    );
 
     return GestureDetector(
       onTap: onTap,
@@ -1344,42 +1823,56 @@ class _FoodCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  Text(item.FoodName, maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 15,
-                          fontWeight: FontWeight.w800, color: ink)),
-                  const SizedBox(height: 2),
-                  Text(cat, maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.grey.shade500)),
-                  const SizedBox(height: 4),
                   Text(
-                    etaLine,
+                    item.FoodName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey.shade400,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      color: ink,
                     ),
                   ),
+                  const SizedBox(height: 2),
+                  Text(
+                    kitchen,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: accent,
+                    ),
+                  ),
+                  if (metaLine.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      metaLine,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
+                  ],
                   const Spacer(),
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Expanded(
                         child: Text(
-                          'MWK ${item.price.toStringAsFixed(0)}',
+                          _foodMwk(item.price),
                           style: TextStyle(
-                            fontSize: 15,
+                            fontSize: 14,
                             fontWeight: FontWeight.w900,
                             color: ink,
                           ),
                         ),
                       ),
                       GestureDetector(
-                        onTap: onTap,
+                        onTap: onMessage,
                         child: Container(
                           width: 34,
                           height: 34,
@@ -1395,24 +1888,15 @@ class _FoodCard extends StatelessWidget {
                             ],
                           ),
                           child: const Icon(
-                            Icons.shopping_cart_outlined,
+                            Icons.chat_bubble_outline_rounded,
                             color: Colors.white,
-                            size: 16,
+                            size: 18,
                           ),
                         ),
                       ),
                     ],
                   ),
                 ],
-              ),
-            ),
-            Positioned(
-              top: 10,
-              right: 10,
-              child: Icon(
-                Icons.favorite_border_rounded,
-                size: 20,
-                color: Colors.grey.shade400,
               ),
             ),
           ],
@@ -1422,28 +1906,461 @@ class _FoodCard extends StatelessWidget {
   }
 }
 
+class _NearestRestaurantCard extends StatelessWidget {
+  const _NearestRestaurantCard({
+    required this.kitchen,
+    required this.accent,
+    required this.ink,
+    required this.onTap,
+    required this.onMessage,
+    this.meta,
+  });
+
+  final _NearestKitchen kitchen;
+  final Color accent, ink;
+  final VoidCallback onTap;
+  final VoidCallback onMessage;
+  final _RestaurantPublicMeta? meta;
+
+  @override
+  Widget build(BuildContext context) {
+    final item = kitchen.featured;
+    final dist = kitchen.distanceKm;
+    final distLabel = dist == null
+        ? null
+        : (dist < 1
+            ? '${(dist * 1000).round()} m away'
+            : '${dist.toStringAsFixed(1)} km away');
+    final displayName = (meta?.businessName.trim().isNotEmpty ?? false)
+        ? meta!.businessName.trim()
+        : kitchen.name;
+    final parts = <String>[];
+    if (meta != null && meta!.openingHours.trim().isNotEmpty) {
+      final open = MarketplaceShopHours.isOpenNow(
+        meta!.openingHours,
+        meta!.openingDays,
+      );
+      parts.add(open ? 'OPEN' : 'CLOSED');
+    }
+    if (meta != null && meta!.reviewCount > 0) {
+      parts.add(
+        '${meta!.reviewCount} review${meta!.reviewCount == 1 ? '' : 's'}',
+      );
+    }
+    if (distLabel != null) parts.add(distLabel);
+    if (kitchen.dishCount > 1) parts.add('${kitchen.dishCount} dishes');
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 188,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.07),
+              blurRadius: 18,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 14, 12, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: _FoodImageTile(
+                  raw: item.FoodImage.trim().isNotEmpty
+                      ? item.FoodImage
+                      : (item.gallery.isNotEmpty ? item.gallery.first : ''),
+                  height: 100,
+                  fit: BoxFit.cover,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                displayName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                  color: accent,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                item.FoodName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+              if (parts.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  parts.join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade500,
+                  ),
+                ),
+              ],
+              const Spacer(),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _foodMwk(item.price),
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                        color: ink,
+                      ),
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap: onMessage,
+                    child: Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        color: accent,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.chat_bubble_outline_rounded,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // ── Section header ────────────────────────────────────────────────────────────
 class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.title, required this.accent,
-      required this.ink, required this.onSeeAll});
+  const _SectionHeader({
+    required this.title,
+    required this.accent,
+    required this.ink,
+    this.onSeeAll,
+  });
 
   final String title;
   final Color accent, ink;
-  final VoidCallback onSeeAll;
+  final VoidCallback? onSeeAll;
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(20, 4, 12, 8),
-    child: Row(children: [
-      Expanded(child: Text(title, style: TextStyle(fontSize: 18,
-          fontWeight: FontWeight.w900, color: ink, letterSpacing: -0.3))),
-      TextButton(
-        onPressed: onSeeAll,
-        child: Text('See All', style: TextStyle(fontWeight: FontWeight.w700,
-            color: accent, fontSize: 13)),
+        padding: const EdgeInsets.fromLTRB(20, 4, 12, 8),
+        child: Row(children: [
+          Expanded(
+            child: Text(
+              title,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+                color: ink,
+                letterSpacing: -0.3,
+              ),
+            ),
+          ),
+          if (onSeeAll != null)
+            TextButton(
+              onPressed: onSeeAll,
+              child: Text(
+                'See All',
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: accent,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+        ]),
+      );
+}
+
+class _FoodSeeAllPage extends StatelessWidget {
+  const _FoodSeeAllPage({
+    required this.title,
+    required this.subtitle,
+    required this.items,
+    required this.onOpenDetails,
+    required this.onMessage,
+    this.userLat,
+    this.userLng,
+  });
+
+  final String title;
+  final String subtitle;
+  final List<FoodModel> items;
+  final double? userLat, userLng;
+  final ValueChanged<FoodModel> onOpenDetails;
+  final ValueChanged<FoodModel> onMessage;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: _veroOrange,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        title: Text(
+          title,
+          style: const TextStyle(fontWeight: FontWeight.w900),
+        ),
       ),
-    ]),
-  );
+      body: items.isEmpty
+          ? Center(
+              child: Text(
+                'No dishes yet',
+                style: TextStyle(
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+                  child: Text(
+                    subtitle,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: GridView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      crossAxisSpacing: 12,
+                      mainAxisSpacing: 12,
+                      childAspectRatio: 0.68,
+                    ),
+                    itemCount: items.length,
+                    itemBuilder: (_, i) {
+                      final item = items[i];
+                      return _FoodCard(
+                        item: item,
+                        userLat: userLat,
+                        userLng: userLng,
+                        accent: _veroOrange,
+                        ink: _ink,
+                        onTap: () => onOpenDetails(item),
+                        onMessage: () => onMessage(item),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+class _NearestSeeAllPage extends StatelessWidget {
+  const _NearestSeeAllPage({
+    required this.title,
+    required this.subtitle,
+    required this.kitchens,
+    required this.onOpenDetails,
+    required this.onMessage,
+  });
+
+  final String title;
+  final String subtitle;
+  final List<_NearestKitchen> kitchens;
+  final ValueChanged<FoodModel> onOpenDetails;
+  final ValueChanged<FoodModel> onMessage;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: _veroOrange,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        title: Text(
+          title,
+          style: const TextStyle(fontWeight: FontWeight.w900),
+        ),
+      ),
+      body: kitchens.isEmpty
+          ? Center(
+              child: Text(
+                'No nearby restaurants yet',
+                style: TextStyle(
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+                  child: Text(
+                    subtitle,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+                    itemCount: kitchens.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemBuilder: (_, i) {
+                      final k = kitchens[i];
+                      final item = k.featured;
+                      final dist = k.distanceKm;
+                      final distLabel = dist == null
+                          ? null
+                          : (dist < 1
+                              ? '${(dist * 1000).round()} m away'
+                              : '${dist.toStringAsFixed(1)} km away');
+                      final loc = (item.listingLocation ?? '').trim();
+                      final meta = [
+                        if (distLabel != null) distLabel,
+                        if (loc.isNotEmpty) loc,
+                        if (k.dishCount > 1) '${k.dishCount} dishes',
+                      ].join(' · ');
+
+                      return Material(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(18),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(18),
+                          onTap: () => onOpenDetails(item),
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(color: _divider),
+                            ),
+                            child: Row(
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(14),
+                                  child: SizedBox(
+                                    width: 84,
+                                    height: 84,
+                                    child: _FoodImageTile(
+                                      raw: item.FoodImage.trim().isNotEmpty
+                                          ? item.FoodImage
+                                          : (item.gallery.isNotEmpty
+                                              ? item.gallery.first
+                                              : ''),
+                                      height: 84,
+                                      fit: BoxFit.cover,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        k.name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w900,
+                                          fontSize: 15,
+                                          color: _ink,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 3),
+                                      Text(
+                                        item.FoodName,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 13,
+                                          color: Colors.grey.shade600,
+                                        ),
+                                      ),
+                                      if (meta.isNotEmpty) ...[
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          meta,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                            color: Colors.grey.shade400,
+                                          ),
+                                        ),
+                                      ],
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        _foodMwk(item.price),
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w900,
+                                          fontSize: 14,
+                                          color: _ink,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: 'Message seller',
+                                  onPressed: () => onMessage(item),
+                                  style: IconButton.styleFrom(
+                                    foregroundColor: _veroOrange,
+                                  ),
+                                  icon: const Icon(
+                                    Icons.chat_bubble_outline_rounded,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
 }
 
 // ── Camera button ─────────────────────────────────────────────────────────────

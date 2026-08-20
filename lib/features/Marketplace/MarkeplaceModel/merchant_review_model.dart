@@ -1,3 +1,5 @@
+import 'package:flutter/material.dart';
+
 /// Merchant review + summary models for `/vero/reviews` APIs.
 class MerchantReviewSummary {
   final double average;
@@ -37,6 +39,81 @@ class MerchantReviewSummary {
     if (v == null) return null;
     if (v is num) return v.toDouble();
     return double.tryParse(v.toString());
+  }
+}
+
+/// Seller credit from review average — used on details + marketplace ranking.
+enum MerchantCreditLevel { good, medium, poor, unknown }
+
+class MerchantCredit {
+  MerchantCredit._();
+
+  /// Good ≥ 4.0 · Medium ≥ 3.0 · Poor below that (only when reviewed).
+  static MerchantCreditLevel level(
+    double? rating, {
+    int reviewCount = 0,
+  }) {
+    final r = (rating ?? 0).clamp(0.0, 5.0);
+    if (r <= 0) return MerchantCreditLevel.unknown;
+    // Denormalized listing rating without count still counts as credit signal.
+    if (reviewCount <= 0 && r > 0) {
+      if (r >= 4.0) return MerchantCreditLevel.good;
+      if (r >= 3.0) return MerchantCreditLevel.medium;
+      return MerchantCreditLevel.poor;
+    }
+    if (r >= 4.0) return MerchantCreditLevel.good;
+    if (r >= 3.0) return MerchantCreditLevel.medium;
+    return MerchantCreditLevel.poor;
+  }
+
+  static String label(MerchantCreditLevel level) {
+    switch (level) {
+      case MerchantCreditLevel.good:
+        return 'Good credit';
+      case MerchantCreditLevel.medium:
+        return 'Medium credit';
+      case MerchantCreditLevel.poor:
+        return 'Poor credit';
+      case MerchantCreditLevel.unknown:
+        return 'No credit yet';
+    }
+  }
+
+  /// Sky blue / yellow / red.
+  static Color color(MerchantCreditLevel level) {
+    switch (level) {
+      case MerchantCreditLevel.good:
+        return const Color(0xFF0284C7); // sky blue
+      case MerchantCreditLevel.medium:
+        return const Color(0xFFCA8A04); // yellow / amber
+      case MerchantCreditLevel.poor:
+        return const Color(0xFFDC2626); // red
+      case MerchantCreditLevel.unknown:
+        return const Color(0xFF6B7280);
+    }
+  }
+
+  static Color background(MerchantCreditLevel level) {
+    switch (level) {
+      case MerchantCreditLevel.good:
+        return const Color(0xFFE0F2FE);
+      case MerchantCreditLevel.medium:
+        return const Color(0xFFFEF9C3);
+      case MerchantCreditLevel.poor:
+        return const Color(0xFFFEE2E2);
+      case MerchantCreditLevel.unknown:
+        return const Color(0xFFF3F4F6);
+    }
+  }
+
+  /// Feed boost so highly reviewed sellers rise in marketplace lists.
+  static double feedScore(double? rating) {
+    final r = (rating ?? 0).clamp(0.0, 5.0);
+    if (r <= 0) return 0;
+    if (r >= 4.5) return 20 + r;
+    if (r >= 4.0) return 14 + r;
+    if (r >= 3.0) return 4 + r;
+    return r - 2; // soft demote poor credit
   }
 }
 

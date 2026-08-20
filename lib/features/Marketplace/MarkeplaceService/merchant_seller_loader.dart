@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_id_resolver.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_service.dart';
@@ -83,7 +84,7 @@ class MerchantSellerLoader {
 
   static void cacheOpeningHours(String? merchantId, String? hours) {
     final id = (merchantId ?? '').trim();
-    final h = (hours ?? '').trim();
+    final h = MarketplaceShopHours.normalize(hours) ?? (hours ?? '').trim();
     if (id.isEmpty || h.isEmpty) return;
     _openingHoursByMerchantId[id] = h;
     // Disk cache so next cold open is instant.
@@ -208,8 +209,9 @@ class MerchantSellerLoader {
       final p = await SharedPreferences.getInstance();
       final h = (p.getString('$_kHoursPrefsPrefix$id') ?? '').trim();
       if (h.isEmpty) return null;
-      _openingHoursByMerchantId[id] = h;
-      return h;
+      final normalized = MarketplaceShopHours.normalize(h) ?? h;
+      _openingHoursByMerchantId[id] = normalized;
+      return normalized;
     } catch (_) {
       return null;
     }
@@ -254,7 +256,10 @@ class MerchantSellerLoader {
       final data = doc.data();
       final h = _trimmed(data?['openingHours']);
       if (h != null) {
+      final h = _trimmed(data?['openingHours']);
+      if (h != null && h.isNotEmpty) {
         cacheOpeningHours(id, h);
+      }
       }
       final daysRaw = data?['openingDays'];
       if (daysRaw is List) {

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
+import 'package:vero360_app/GernalServices/google_places_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 import 'package:vero360_app/GernalServices/location_permission_helper.dart';
@@ -76,21 +77,108 @@ class _MapLocationPickerScreenState
       _selected = latLng;
       _resolving = true;
     });
-    final address = await ref.read(placeServiceProvider).getAddressFromCoordinates(
-          latLng.latitude,
-          latLng.longitude,
+
+    String? address;
+
+    // Prefer Google reverse geocode so we get street / area names, not Plus Codes.
+    final google = ref.read(googlePlacesServiceProvider);
+    if (google != null) {
+      try {
+        final place = await google.reverseGeocode(
+          latitude: latLng.latitude,
+          longitude: latLng.longitude,
         );
+        if (place != null) {
+          address = _humanStreetLabel(place);
+        }
+        if (address != null &&
+            GooglePlacesService.isPlusCodeLabel(address)) {
+          final decoded = await google.lookupStreetName(
+            address,
+            biasLat: latLng.latitude,
+            biasLng: latLng.longitude,
+          );
+          if (decoded != null) {
+            final next = _humanStreetLabel(decoded);
+            if (next.isNotEmpty &&
+                !GooglePlacesService.isPlusCodeLabel(next)) {
+              address = next;
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (address == null ||
+        address.trim().isEmpty ||
+        GooglePlacesService.isPlusCodeLabel(address)) {
+      final fallback = await ref
+          .read(placeServiceProvider)
+          .getAddressFromCoordinates(latLng.latitude, latLng.longitude);
+      if (fallback != null &&
+          fallback.trim().isNotEmpty &&
+          !GooglePlacesService.isPlusCodeLabel(fallback)) {
+        address = fallback;
+      }
+    }
+
     if (!mounted) return;
     setState(() {
-      _address = address ??
-          '${latLng.latitude.toStringAsFixed(5)}, ${latLng.longitude.toStringAsFixed(5)}';
+      _address = (address != null &&
+              address.trim().isNotEmpty &&
+              !GooglePlacesService.isPlusCodeLabel(address))
+          ? address.trim()
+          : '${latLng.latitude.toStringAsFixed(5)}, ${latLng.longitude.toStringAsFixed(5)}';
       _resolving = false;
     });
+  }
+
+  String _humanStreetLabel(Place place) {
+    final name = place.name.trim();
+    final address = place.address.trim();
+    if (name.isNotEmpty && !GooglePlacesService.isPlusCodeLabel(name)) {
+      if (address.isNotEmpty &&
+          !GooglePlacesService.isPlusCodeLabel(address) &&
+          address.toLowerCase() != name.toLowerCase() &&
+          !address.toLowerCase().startsWith(name.toLowerCase())) {
+        final short = address.split(',').take(2).join(', ').trim();
+        return short.isNotEmpty ? '$name, $short' : name;
+      }
+      return name;
+    }
+    if (address.isNotEmpty && !GooglePlacesService.isPlusCodeLabel(address)) {
+      return address;
+    }
+    return name.isNotEmpty ? name : address;
   }
 
   Future<void> _confirm() async {
     final latLng = _selected;
     if (latLng == null) return;
+
+    var label = _address.trim();
+    if (label.isEmpty || GooglePlacesService.isPlusCodeLabel(label)) {
+      final google = ref.read(googlePlacesServiceProvider);
+      if (google != null) {
+        try {
+          final place = await google.reverseGeocode(
+            latitude: latLng.latitude,
+            longitude: latLng.longitude,
+          );
+          if (place != null) {
+            final next = _humanStreetLabel(place);
+            if (next.isNotEmpty &&
+                !GooglePlacesService.isPlusCodeLabel(next)) {
+              label = next;
+            }
+          }
+        } catch (_) {}
+      }
+    }
+    if (label.isEmpty || GooglePlacesService.isPlusCodeLabel(label)) {
+      label =
+          '${latLng.latitude.toStringAsFixed(5)}, ${latLng.longitude.toStringAsFixed(5)}';
+    }
 
     final place = Place(
       id: 'map_${latLng.latitude}_${latLng.longitude}',
@@ -98,10 +186,10 @@ class _MapLocationPickerScreenState
           ? 'Home'
           : widget.saveAsType == PlaceType.WORK
               ? 'Work'
-              : (_address.split(',').first.trim().isEmpty
+              : (label.split(',').first.trim().isEmpty
                   ? 'Pinned location'
-                  : _address.split(',').first.trim()),
-      address: _address,
+                  : label.split(',').first.trim()),
+      address: label,
       latitude: latLng.latitude,
       longitude: latLng.longitude,
       type: widget.saveAsType ?? PlaceType.RECENT,
@@ -321,7 +409,9 @@ class _MapLocationPickerScreenState
                         child: Text(
                           widget.saveAsType != null
                               ? 'Save location'
-                              : 'Confirm destination',
+                              : widget.selectAsDropoff
+                                  ? 'Confirm destination'
+                                  : 'Confirm location',
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.w700,

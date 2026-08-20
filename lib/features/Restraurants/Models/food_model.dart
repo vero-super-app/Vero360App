@@ -101,6 +101,8 @@ class FoodModel {
   final int? prepTimeMinutes;
   /// Denormalized from [RestaurantModel.avgPrepTimeMinutes] at fetch time.
   final int? restaurantAvgPrepTimeMinutes;
+  /// Available stock set by the merchant. Null = legacy (no cap).
+  final int? quantity;
 
   FoodModel({
     required this.id,
@@ -122,7 +124,16 @@ class FoodModel {
     this.addOns = const [],
     this.prepTimeMinutes,
     this.restaurantAvgPrepTimeMinutes,
+    this.quantity,
   });
+
+  /// Max units a buyer may select. Legacy (null) → uncapped high default.
+  int get maxOrderQuantity {
+    final q = quantity;
+    if (q == null) return 999;
+    if (q < 1) return 0;
+    return q;
+  }
 
   /// Item prep if set, else the restaurant average. Null when neither exists.
   int? get effectivePrepTimeMinutes {
@@ -234,6 +245,9 @@ class FoodModel {
 
     final prep = optInt(json['prepTimeMinutes']);
     final restPrep = optInt(json['restaurantAvgPrepTimeMinutes']);
+    final qty = optInt(
+      json['quantity'] ?? json['stock'] ?? json['availableQuantity'],
+    );
 
     return FoodModel(
       id: id(json['id']),
@@ -262,6 +276,7 @@ class FoodModel {
       prepTimeMinutes: (prep != null && prep > 0) ? prep : null,
       restaurantAvgPrepTimeMinutes:
           (restPrep != null && restPrep > 0) ? restPrep : null,
+      quantity: qty,
     );
   }
 
@@ -285,6 +300,7 @@ class FoodModel {
     List<FoodAddOn>? addOns,
     int? prepTimeMinutes,
     int? restaurantAvgPrepTimeMinutes,
+    int? quantity,
   }) {
     return FoodModel(
       id: id ?? this.id,
@@ -307,6 +323,7 @@ class FoodModel {
       prepTimeMinutes: prepTimeMinutes ?? this.prepTimeMinutes,
       restaurantAvgPrepTimeMinutes:
           restaurantAvgPrepTimeMinutes ?? this.restaurantAvgPrepTimeMinutes,
+      quantity: quantity ?? this.quantity,
     );
   }
 
@@ -332,5 +349,6 @@ class FoodModel {
         if (prepTimeMinutes != null) 'prepTimeMinutes': prepTimeMinutes,
         if (restaurantAvgPrepTimeMinutes != null)
           'restaurantAvgPrepTimeMinutes': restaurantAvgPrepTimeMinutes,
+        if (quantity != null) 'quantity': quantity,
       };
 }

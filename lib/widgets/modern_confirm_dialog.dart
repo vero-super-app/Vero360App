@@ -103,7 +103,58 @@ Future<bool> showModernConfirmDialog(
 }
 
 /// Short buyer notice before Pay now: escrow hold, confirm receipt, liability.
-Future<bool> showEscrowPayNoticeDialog(BuildContext context) async {
+Future<bool> showEscrowPayNoticeDialog(BuildContext context) {
+  return _showEscrowPayNoticeDialog(
+    context,
+    rows: const [
+      _EscrowNoticeRow(
+        icon: Icons.lock_clock_outlined,
+        text: 'Money is held in escrow for 7 days, then auto-released.',
+      ),
+      SizedBox(height: 10),
+      _EscrowNoticeRow(
+        icon: Icons.local_shipping_outlined,
+        text: 'After courier delivery, confirm you received the parcel.',
+      ),
+      SizedBox(height: 10),
+      _EscrowNoticeRow(
+        icon: Icons.warning_amber_rounded,
+        text:
+            'Vero360 is not responsible if you confirm without receiving it.',
+      ),
+    ],
+  );
+}
+
+/// Food checkout notice before Pay now (held until delivery / My Orders).
+Future<bool> showFoodEscrowPayNoticeDialog(BuildContext context) {
+  return _showEscrowPayNoticeDialog(
+    context,
+    rows: const [
+      _EscrowNoticeRow(
+        icon: Icons.lock_clock_outlined,
+        text: 'Money is held until your food is delivered.',
+      ),
+      SizedBox(height: 10),
+      _EscrowNoticeRow(
+        icon: Icons.delivery_dining_rounded,
+        text:
+            'After Vero Courier delivery, confirm you received your order in My Orders.',
+      ),
+      SizedBox(height: 10),
+      _EscrowNoticeRow(
+        icon: Icons.warning_amber_rounded,
+        text:
+            'Vero360 is not responsible if you confirm delivered without receiving your food.',
+      ),
+    ],
+  );
+}
+
+Future<bool> _showEscrowPayNoticeDialog(
+  BuildContext context, {
+  required List<Widget> rows,
+}) async {
   const brand = Color(0xFFFF8A00);
   final maxH = MediaQuery.sizeOf(context).height * 0.78;
   final result = await showDialog<bool>(
@@ -148,29 +199,10 @@ Future<bool> showEscrowPayNoticeDialog(BuildContext context) async {
               ),
               const SizedBox(height: 12),
               ConstrainedBox(
-                constraints: BoxConstraints(maxHeight: (maxH - 220).clamp(80, 280)),
-                child: const SingleChildScrollView(
-                  child: Column(
-                    children: [
-                      _EscrowNoticeRow(
-                        icon: Icons.lock_clock_outlined,
-                        text:
-                            'Money is held in escrow for 7 days, then auto-released.',
-                      ),
-                      SizedBox(height: 10),
-                      _EscrowNoticeRow(
-                        icon: Icons.local_shipping_outlined,
-                        text:
-                            'After courier delivery, confirm you received the parcel.',
-                      ),
-                      SizedBox(height: 10),
-                      _EscrowNoticeRow(
-                        icon: Icons.warning_amber_rounded,
-                        text:
-                            'Vero360 is not responsible if you confirm without receiving it.',
-                      ),
-                    ],
-                  ),
+                constraints:
+                    BoxConstraints(maxHeight: (maxH - 220).clamp(80, 280)),
+                child: SingleChildScrollView(
+                  child: Column(children: rows),
                 ),
               ),
               const SizedBox(height: 16),

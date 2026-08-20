@@ -31,6 +31,7 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart'
     as core;
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
 
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
@@ -702,10 +703,19 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       final t = last[i.id];
       if (t != null) { final days = DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(t)).inHours / 24.0; s += (days <= 7 ? 2.2 : 1.2 / (1 + days / 7)); }
       if (_itemIsFromFollowedSeller(i)) s += 22.0;
+      s += MerchantCredit.feedScore(i.sellerRating);
       return s;
     }
     final ranked = List<MarketplaceDetailModel>.from(items);
-    ranked.sort((a, b) { final sb = score(b); final sa = score(a); final byScore = sb.compareTo(sa); if (byScore != 0) return byScore; final db = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0); final da = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0); return db.compareTo(da); });
+    ranked.sort((a, b) {
+      final sb = score(b);
+      final sa = score(a);
+      final byScore = sb.compareTo(sa);
+      if (byScore != 0) return byScore;
+      final db = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final da = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return db.compareTo(da);
+    });
     return ranked;
   }
 
@@ -719,7 +729,15 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
 
   Future<List<MarketplaceDetailModel>> _sortByNewest(List<MarketplaceDetailModel> items) async {
     final copy = List<MarketplaceDetailModel>.from(items);
-    copy.sort((a, b) { final db = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0); final da = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0); return db.compareTo(da); });
+    copy.sort((a, b) {
+      final rb = MerchantCredit.feedScore(b.sellerRating);
+      final ra = MerchantCredit.feedScore(a.sellerRating);
+      final byCredit = rb.compareTo(ra);
+      if (byCredit != 0) return byCredit;
+      final db = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final da = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return db.compareTo(da);
+    });
     return copy;
   }
 
@@ -791,6 +809,10 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       } else if (db != null) {
         return 1;
       }
+      final ra = MerchantCredit.feedScore(a.sellerRating);
+      final rb = MerchantCredit.feedScore(b.sellerRating);
+      final byCredit = rb.compareTo(ra);
+      if (byCredit != 0) return byCredit;
       final tb = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
       final ta = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
       return tb.compareTo(ta);

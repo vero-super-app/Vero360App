@@ -419,13 +419,18 @@ class _DetailsPageState extends State<DetailsPage> {
 
   String? get _resolvedOpeningHours {
     final live = (_openingHours ?? '').trim();
-    if (live.isNotEmpty) return live;
     final fromSeller = (_seller?.openingHours ?? '').trim();
-    if (fromSeller.isNotEmpty) return fromSeller;
     final fromItem = (widget.item.sellerOpeningHours ?? '').trim();
-    if (fromItem.isNotEmpty) return fromItem;
-    return MerchantSellerLoader.peekOpeningHours(widget.item.merchantId) ??
-        MerchantSellerLoader.peekOpeningHours(widget.item.sellerUserId);
+    final fromCache =
+        MerchantSellerLoader.peekOpeningHours(widget.item.merchantId) ??
+            MerchantSellerLoader.peekOpeningHours(widget.item.sellerUserId);
+    final raw = live.isNotEmpty
+        ? live
+        : (fromSeller.isNotEmpty
+            ? fromSeller
+            : (fromItem.isNotEmpty ? fromItem : (fromCache ?? '')));
+    if (raw.isEmpty) return null;
+    return MarketplaceShopHours.normalize(raw) ?? raw;
   }
 
   List<int> get _resolvedOpeningDays {
@@ -551,40 +556,11 @@ class _DetailsPageState extends State<DetailsPage> {
     );
   }
 
-  TimeOfDay? _parseShopTime(String raw) {
-    final t = raw.trim().split(':');
-    if (t.length != 2) return null;
-    final h = int.tryParse(t[0]);
-    final m = int.tryParse(t[1]);
-    if (h == null || m == null) return null;
-    if (h < 0 || h > 23 || m < 0 || m > 59) return null;
-    return TimeOfDay(hour: h, minute: m);
-  }
-
   bool _isShopOpenFromHours(
     String? openingHours, [
     List<int> openingDays = const [],
   ]) {
-    final s = (openingHours ?? '').trim();
-    if (s.isEmpty) return false;
-    if (openingDays.isNotEmpty &&
-        !openingDays.contains(DateTime.now().weekday)) {
-      return false;
-    }
-    final parts = s.replaceAll('–', '-').replaceAll('—', '-').split('-');
-    if (parts.length != 2) return false;
-    final open = _parseShopTime(parts[0]);
-    final close = _parseShopTime(parts[1]);
-    if (open == null || close == null) return false;
-    final now = TimeOfDay.now();
-    final nowM = now.hour * 60 + now.minute;
-    final openM = open.hour * 60 + open.minute;
-    final closeM = close.hour * 60 + close.minute;
-    if (openM == closeM) return false;
-    if (openM < closeM) {
-      return nowM >= openM && nowM < closeM;
-    }
-    return nowM >= openM || nowM < closeM;
+    return MarketplaceShopHours.isOpenNow(openingHours, openingDays);
   }
 
   Widget _shopStatusChip(String? openingHours, [List<int>? openingDays]) {
@@ -608,6 +584,32 @@ class _DetailsPageState extends State<DetailsPage> {
       visualDensity: VisualDensity.compact,
       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
       padding: const EdgeInsets.symmetric(horizontal: 4),
+    );
+  }
+
+  Widget _sellerCreditChip(double? rating, int reviewCount) {
+    final level = MerchantCredit.level(rating, reviewCount: reviewCount);
+    if (level == MerchantCreditLevel.unknown) {
+      return const SizedBox.shrink();
+    }
+    final fg = MerchantCredit.color(level);
+    final bg = MerchantCredit.background(level);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: fg.withValues(alpha: 0.28)),
+      ),
+      child: Text(
+        MerchantCredit.label(level),
+        style: TextStyle(
+          color: fg,
+          fontWeight: FontWeight.w900,
+          fontSize: 11,
+          letterSpacing: 0.1,
+        ),
+      ),
     );
   }
 
@@ -750,7 +752,14 @@ class _DetailsPageState extends State<DetailsPage> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                _shopStatusChip(openingHours, days),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    _shopStatusChip(openingHours, days),
+                    const SizedBox(height: 6),
+                    _sellerCreditChip(rating, reviewCount),
+                  ],
+                ),
               ],
             ),
             const SizedBox(height: 14),
@@ -771,6 +780,18 @@ class _DetailsPageState extends State<DetailsPage> {
                         : (!_isWeakSellerName(item.sellerBusinessName)
                             ? item.sellerBusinessName
                             : null),
+                  ),
+                  const SizedBox(height: 8),
+                  _merchantDetailRow(
+                    icon: Icons.verified_user_outlined,
+                    label: 'Seller credit',
+                    value: MerchantCredit.label(
+                      MerchantCredit.level(rating, reviewCount: reviewCount),
+                    ),
+                    valueColor: MerchantCredit.color(
+                      MerchantCredit.level(rating, reviewCount: reviewCount),
+                    ),
+                    valueBold: true,
                   ),
                   const SizedBox(height: 8),
                   _merchantDetailRow(
@@ -1420,6 +1441,11 @@ class _DetailsPageState extends State<DetailsPage> {
                     letterSpacing: 0.4,
                   ),
                 ),
+              ),
+              const Spacer(),
+              _sellerCreditChip(
+                _seller?.rating ?? item.sellerRating,
+                _seller?.reviewCount ?? 0,
               ),
             ],
           ),

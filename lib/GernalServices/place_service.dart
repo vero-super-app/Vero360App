@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'package:geocoding/geocoding.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
+import 'package:vero360_app/GernalServices/google_places_service.dart';
 
 class PlaceService {
   static const String mallawiCountryCode = 'MW';
@@ -9,20 +10,20 @@ class PlaceService {
   Future<List<Place>> searchPlaces(String query) async {
     try {
       final locations = await locationFromAddress(query);
-      
+
       return locations
           .where((loc) {
             // Filter to Malawi only - check placemarks
             return true; // Simplified for now, will refine with actual API
           })
           .map((loc) => Place(
-            id: '${loc.latitude}-${loc.longitude}',
-            name: query,
-            address: '$query, Malawi',
-            latitude: loc.latitude,
-            longitude: loc.longitude,
-            type: PlaceType.RECENT,
-          ))
+                id: '${loc.latitude}-${loc.longitude}',
+                name: query,
+                address: '$query, Malawi',
+                latitude: loc.latitude,
+                longitude: loc.longitude,
+                type: PlaceType.RECENT,
+              ))
           .toList();
     } catch (e) {
       print('Error searching places: $e');
@@ -30,7 +31,15 @@ class PlaceService {
     }
   }
 
-  /// Get address from coordinates (reverse geocoding)
+  bool _usablePart(String? value) {
+    final s = (value ?? '').trim();
+    if (s.isEmpty) return false;
+    if (GooglePlacesService.isPlusCodeLabel(s)) return false;
+    return true;
+  }
+
+  /// Get address from coordinates (reverse geocoding).
+  /// Skips Plus Codes like `2QMV+XV` and prefers street / area names.
   Future<String?> getAddressFromCoordinates(
     double latitude,
     double longitude,
@@ -43,15 +52,27 @@ class PlaceService {
 
       if (placemarks.isEmpty) return null;
 
-      final p = placemarks.first;
-      final parts = [
-        p.street,
-        p.locality,
-        p.subAdministrativeArea,
-        p.administrativeArea,
-        p.country,
-      ].where((s) => s != null && s.isNotEmpty).map((s) => s!).toList();
-      return parts.isEmpty ? null : parts.join(', ');
+      for (final p in placemarks) {
+        final parts = <String>[
+          if (_usablePart(p.street)) p.street!.trim(),
+          if (_usablePart(p.thoroughfare) &&
+              (p.street ?? '').trim() != (p.thoroughfare ?? '').trim())
+            p.thoroughfare!.trim(),
+          if (_usablePart(p.subLocality)) p.subLocality!.trim(),
+          if (_usablePart(p.locality)) p.locality!.trim(),
+          if (_usablePart(p.subAdministrativeArea))
+            p.subAdministrativeArea!.trim(),
+          if (_usablePart(p.administrativeArea)) p.administrativeArea!.trim(),
+          if (_usablePart(p.country)) p.country!.trim(),
+        ];
+        // Deduplicate while keeping order
+        final seen = <String>{};
+        final unique = parts
+            .where((e) => seen.add(e.toLowerCase()))
+            .toList(growable: false);
+        if (unique.isNotEmpty) return unique.join(', ');
+      }
+      return null;
     } catch (e) {
       print('Error getting address: $e');
       return null;

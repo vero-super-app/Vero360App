@@ -47,7 +47,7 @@ class KycStatusCard extends StatelessWidget {
     } else {
       title = 'Verify your identity';
       subtitle =
-          'Food merchants must complete KYC before posting dishes and receiving payouts.';
+          'Complete KYC to post dishes, receive orders, and unlock payouts.';
       badge = 'Required';
       icon = Icons.badge_outlined;
       accent = const Color(0xFFFF8A00);
@@ -58,27 +58,38 @@ class KycStatusCard extends StatelessWidget {
 
     return Material(
       color: Colors.transparent,
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(20),
       child: InkWell(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(20),
         onTap: canStart ? onTap : null,
         child: Ink(
           padding: const EdgeInsets.fromLTRB(14, 14, 12, 14),
           decoration: BoxDecoration(
             color: wash,
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(20),
             border: Border.all(color: accent.withValues(alpha: 0.18)),
+            boxShadow: [
+              BoxShadow(
+                color: accent.withValues(alpha: 0.06),
+                blurRadius: 14,
+                offset: const Offset(0, 6),
+              ),
+            ],
           ),
           child: Row(
             children: [
               Container(
-                width: 44,
-                height: 44,
+                width: 48,
+                height: 48,
                 decoration: BoxDecoration(
-                  color: accent,
-                  borderRadius: BorderRadius.circular(14),
+                  gradient: LinearGradient(
+                    colors: [accent.withValues(alpha: 0.85), accent],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
                 ),
-                child: Icon(icon, color: Colors.white, size: 22),
+                child: Icon(icon, color: Colors.white, size: 24),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -91,15 +102,16 @@ class KycStatusCard extends StatelessWidget {
                           child: Text(
                             'KYC verification',
                             style: TextStyle(
-                              fontWeight: FontWeight.w800,
+                              fontWeight: FontWeight.w900,
                               fontSize: 14,
                               color: Color(0xFF141414),
+                              letterSpacing: -0.2,
                             ),
                           ),
                         ),
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
+                              horizontal: 9, vertical: 4),
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(999),
@@ -110,7 +122,7 @@ class KycStatusCard extends StatelessWidget {
                             badge,
                             style: TextStyle(
                               color: accent,
-                              fontWeight: FontWeight.w800,
+                              fontWeight: FontWeight.w900,
                               fontSize: 11,
                             ),
                           ),
@@ -120,29 +132,29 @@ class KycStatusCard extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       title,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                        color: accent,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13.5,
+                        color: Color(0xFF1F2937),
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       subtitle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF6B6B6B),
+                      style: TextStyle(
                         fontSize: 12.5,
                         height: 1.35,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey.shade600,
                       ),
                     ),
                   ],
                 ),
               ),
               if (canStart) ...[
-                const SizedBox(width: 4),
-                Icon(Icons.arrow_forward_rounded, size: 18, color: accent),
+                const SizedBox(width: 6),
+                Icon(Icons.chevron_right_rounded,
+                    color: accent.withValues(alpha: 0.8)),
               ],
             ],
           ),

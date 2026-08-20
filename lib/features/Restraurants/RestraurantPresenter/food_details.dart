@@ -1,6 +1,7 @@
 // lib/features/Restraurants/RestraurantPresenter/food_details.dart
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -11,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -22,12 +24,14 @@ import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_share_link.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_checkout_page.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantsService/food_engagement_service.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_review_service.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierService/courier_city.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/map_location_picker_screen.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
+import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
@@ -208,6 +212,9 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
   List<FoodModel> _moreFromKitchen = [];
   bool _moreKitchenLoading = true;
 
+  /// Merchant stock cap; legacy dishes without quantity stay effectively uncapped.
+  int get _maxQty => widget.foodItem.maxOrderQuantity;
+
   List<String> get _heroImages {
     final item = widget.foodItem;
     final images = <String>[
@@ -275,9 +282,17 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     for (var i = 0; i < item.addOns.length; i++) {
       if (item.addOns[i].isDefault) _selectedAddOnIndexes.add(i);
     }
+    final max = item.maxOrderQuantity;
+    if (max < 1) {
+      _qty = 1;
+    } else if (_qty > max) {
+      _qty = max;
+    }
     _hydrateDefaultsFast();
     _startHeroAutoSlide();
     unawaited(_loadMoreFromKitchen());
+    unawaited(FoodEngagementService.recordView(widget.foodItem));
+    unawaited(FoodEngagementService.recordClick(widget.foodItem));
   }
 
   Future<void> _loadMoreFromKitchen() async {
@@ -586,8 +601,12 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     return ok == true;
   }
 
-  Future<void> _addFoodToCart({required bool goToCheckout}) async {
+  Future<void> _addFoodToCart() async {
     if (_cartBusy || _buyNowBusy) return;
+    if (_maxQty < 1) {
+      _toast('This dish is out of stock.', false);
+      return;
+    }
     if (_deliveryLat == null || _deliveryLng == null) {
       final pinned = await _autoPinDelivery();
       if (!pinned || _deliveryLat == null || _deliveryLng == null) {
@@ -609,13 +628,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
       return;
     }
 
-    setState(() {
-      if (goToCheckout) {
-        _buyNowBusy = true;
-      } else {
-        _cartBusy = true;
-      }
-    });
+    setState(() => _cartBusy = true);
     try {
       final cart = CartServiceProvider.getInstance();
       var existing = cart.cachedItems;
@@ -655,7 +668,11 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
           already += c.quantity;
         }
       }
-      final qty = (already + _qty).clamp(1, 99999);
+      if (already >= _maxQty) {
+        _toast('Only $_maxQty available for this dish.', false);
+        return;
+      }
+      final qty = (already + _qty).clamp(1, _maxQty);
 
       final note = _descCtrl.text.trim();
       final img = item.FoodImage.trim().isNotEmpty
@@ -688,32 +705,94 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
 
       await cart.addToCart(cartItem);
       if (!mounted) return;
-
-      if (goToCheckout) {
-        final foodItems = (cart.cachedItems.isNotEmpty
-                ? cart.cachedItems
-                : <CartModel>[cartItem])
-            .where((e) => e.isFood)
-            .toList();
-        if (foodItems.isEmpty) foodItems.add(cartItem);
-        await Navigator.of(context).push<void>(
-          MaterialPageRoute(
-            builder: (_) => FoodCheckoutPage(items: foodItems),
-          ),
-        );
-      } else {
-        _toast('${item.FoodName} added to cart', true);
-      }
+      _toast('${item.FoodName} added to cart', true);
     } catch (e) {
       if (mounted) {
         _toast('Could not add to cart. Please sign in and try again.', false);
       }
     } finally {
       if (mounted) {
-        setState(() {
-          _cartBusy = false;
-          _buyNowBusy = false;
-        });
+        setState(() => _cartBusy = false);
+      }
+    }
+  }
+
+  /// Checkout this dish only — does not write to the cart.
+  Future<void> _buyFoodNow() async {
+    if (_cartBusy || _buyNowBusy) return;
+    if (_maxQty < 1) {
+      _toast('This dish is out of stock.', false);
+      return;
+    }
+    if (_deliveryLat == null || _deliveryLng == null) {
+      final pinned = await _autoPinDelivery();
+      if (!pinned || _deliveryLat == null || _deliveryLng == null) {
+        _toast('Pin your exact location so the courier can find you.', false);
+        return;
+      }
+    }
+    await _persistDropoffPin();
+    final item = widget.foodItem;
+    final mid = item.merchantId?.trim();
+    if (mid == null || mid.isEmpty) {
+      _toast('This dish cannot be ordered online (missing seller).', false);
+      return;
+    }
+
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) {
+      _toast('Please sign in to buy.', false);
+      return;
+    }
+
+    setState(() => _buyNowBusy = true);
+    try {
+      final numericId = item.id != 0
+          ? item.id
+          : (item.firestoreListingId ?? item.FoodName).hashCode.abs() %
+              2000000000;
+      final qty = _qty.clamp(1, _maxQty);
+      final note = _descCtrl.text.trim();
+      final img = item.FoodImage.trim().isNotEmpty
+          ? item.FoodImage.trim()
+          : (item.gallery.isNotEmpty ? item.gallery.first.trim() : '');
+
+      final cartItem = CartModel(
+        userId: uid,
+        item: numericId,
+        quantity: qty,
+        image: img,
+        name: item.FoodName,
+        price: _unitPrice,
+        description: item.description ?? '',
+        comment: note.isEmpty ? null : note,
+        merchantId: mid,
+        merchantName: item.RestrauntName.trim().isEmpty
+            ? 'Local kitchen'
+            : item.RestrauntName.trim(),
+        serviceType: 'food',
+        restaurantId: item.restaurantId?.trim().isEmpty == true
+            ? null
+            : item.restaurantId?.trim(),
+        variant: _selectedVariantName,
+        notes: note.isEmpty ? null : note,
+        addOns: _selectedAddOnNames,
+        location: item.listingLocation,
+      );
+
+      if (!mounted) return;
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => FoodCheckoutPage(items: [cartItem]),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        _toast('Could not start checkout. Please try again.', false);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _buyNowBusy = false);
       }
     }
   }
@@ -739,6 +818,8 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
         builder: (_) => _KitchenExplorePage(
           kitchenName: kitchen,
           items: _moreFromKitchen,
+          merchantId: (widget.foodItem.merchantId ?? '').trim(),
+          restaurantId: (widget.foodItem.restaurantId ?? '').trim(),
         ),
       ),
     );
@@ -1166,7 +1247,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                             ),
                             const SizedBox(width: 12),
                             Text(
-                              'MWK ${_unitPrice.toStringAsFixed(0)}',
+                              'MWK ${NumberFormat('#,##0').format(_unitPrice.round())}',
                               style: const TextStyle(
                                   fontSize: 20,
                                   fontWeight: FontWeight.w900,
@@ -1201,7 +1282,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                               final delta = v.priceDeltaMwk;
                               final deltaLabel = delta == 0
                                   ? v.name
-                                  : '${v.name} (${delta > 0 ? '+' : ''}${delta.toStringAsFixed(0)})';
+                                  : '${v.name} (${delta > 0 ? '+' : ''}${NumberFormat('#,##0').format(delta.round())})';
                               return ChoiceChip(
                                 label: Text(deltaLabel),
                                 selected: sel,
@@ -1245,7 +1326,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                               secondary: Text(
                                 a.priceMwk == 0
                                     ? 'Free'
-                                    : '+ MWK ${a.priceMwk.toStringAsFixed(0)}',
+                                    : '+ MWK ${NumberFormat('#,##0').format(a.priceMwk.round())}',
                                 style: TextStyle(
                                   fontWeight: FontWeight.w700,
                                   color: Colors.grey.shade700,
@@ -1446,7 +1527,18 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                         ),
                         _stepBtn(
                           icon: Icons.add_rounded,
-                          onTap: () => setState(() => _qty++),
+                          onTap: () {
+                            if (_qty >= _maxQty) {
+                              _toast(
+                                _maxQty < 1
+                                    ? 'This dish is out of stock.'
+                                    : 'Only $_maxQty available.',
+                                false,
+                              );
+                              return;
+                            }
+                            setState(() => _qty++);
+                          },
                         ),
                       ],
                     ),
@@ -1457,11 +1549,11 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                       label: 'Add to cart',
                       color: _veroOrange,
                       busy: _cartBusy,
-                      onPressed: (_cartBusy || _buyNowBusy)
+                      onPressed: (_cartBusy || _buyNowBusy || _maxQty < 1)
                           ? null
                           : () {
                               FocusScope.of(context).unfocus();
-                              unawaited(_addFoodToCart(goToCheckout: false));
+                              unawaited(_addFoodToCart());
                             },
                     ),
                   ),
@@ -1471,11 +1563,11 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                       label: 'Buy',
                       color: const Color(0xFFE53935),
                       busy: _buyNowBusy,
-                      onPressed: (_cartBusy || _buyNowBusy)
+                      onPressed: (_cartBusy || _buyNowBusy || _maxQty < 1)
                           ? null
                           : () {
                               FocusScope.of(context).unfocus();
-                              unawaited(_addFoodToCart(goToCheckout: true));
+                              unawaited(_buyFoodNow());
                             },
                     ),
                   ),
@@ -1736,14 +1828,276 @@ class _KitchenReviewsPane extends StatelessWidget {
   }
 }
 
-class _KitchenExplorePage extends StatelessWidget {
+class _KitchenExplorePage extends StatefulWidget {
   const _KitchenExplorePage({
     required this.kitchenName,
     required this.items,
+    this.merchantId = '',
+    this.restaurantId = '',
   });
 
   final String kitchenName;
   final List<FoodModel> items;
+  final String merchantId;
+  final String restaurantId;
+
+  @override
+  State<_KitchenExplorePage> createState() => _KitchenExplorePageState();
+}
+
+class _KitchenExplorePageState extends State<_KitchenExplorePage> {
+  static const int _kMaxReportPhotos = 4;
+  final ImagePicker _picker = ImagePicker();
+
+  String _name = '';
+  String _profileUrl = '';
+  String _description = '';
+  String _openingHours = '';
+  List<int> _openingDays = const [];
+  String _location = '';
+  int _reviewCount = 0;
+  double _rating = 0;
+  bool _loadingProfile = true;
+  bool _following = false;
+  int _followerCount = 0;
+  bool _followBusy = false;
+  List<FoodModel> _menuItems = [];
+  bool _loadingMenu = true;
+
+  String get _merchantId {
+    final mid = widget.merchantId.trim();
+    if (mid.isNotEmpty) return mid;
+    for (final f in widget.items) {
+      final m = (f.merchantId ?? '').trim();
+      if (m.isNotEmpty) return m;
+    }
+    return '';
+  }
+
+  String get _restaurantId {
+    final rid = widget.restaurantId.trim();
+    if (rid.isNotEmpty) return rid;
+    for (final f in widget.items) {
+      final r = (f.restaurantId ?? '').trim();
+      if (r.isNotEmpty) return r;
+    }
+    return '';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _name = widget.kitchenName;
+    _menuItems = List<FoodModel>.from(widget.items);
+    for (final f in widget.items) {
+      final loc = (f.listingLocation ?? '').trim();
+      if (loc.isNotEmpty) {
+        _location = loc;
+        break;
+      }
+    }
+    unawaited(_loadProfile());
+    unawaited(_loadFullMenu());
+  }
+
+  Future<void> _loadFullMenu() async {
+    try {
+      final list = await FoodService().fetchKitchenListings(
+        restaurantId: _restaurantId,
+        merchantId: _merchantId,
+        kitchenName: widget.kitchenName,
+      );
+      if (!mounted) return;
+      setState(() {
+        _menuItems = list.isNotEmpty ? list : List<FoodModel>.from(widget.items);
+        _loadingMenu = false;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _menuItems = List<FoodModel>.from(widget.items);
+          _loadingMenu = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadProfile() async {
+    final mid = _merchantId;
+    if (mid.isEmpty) {
+      if (mounted) setState(() => _loadingProfile = false);
+      return;
+    }
+    try {
+      final db = FirebaseFirestore.instance;
+      final docs = await Future.wait([
+        db.collection('food_merchants').doc(mid).get(),
+        db.collection('users').doc(mid).get(),
+      ]);
+      final merchant = docs[0];
+      final user = docs[1];
+
+      if (merchant.exists) {
+        final m = merchant.data() ?? {};
+        final n = (m['businessName'] ?? m['name'] ?? '').toString().trim();
+        if (n.isNotEmpty) _name = n;
+        final pic = (m['profileImage'] ??
+                m['logo'] ??
+                m['logoUrl'] ??
+                m['image'] ??
+                '')
+            .toString()
+            .trim();
+        if (pic.isNotEmpty) _profileUrl = pic;
+        final desc = (m['description'] ?? m['businessDescription'] ?? '')
+            .toString()
+            .trim();
+        if (desc.isNotEmpty) _description = desc;
+        final hours = MarketplaceShopHours.normalize(
+              (m['openingHours'] ?? m['shopHours'] ?? '').toString(),
+            ) ??
+            '';
+        if (hours.isNotEmpty) _openingHours = hours;
+        final days = MarketplaceShopHours.parseDays(m['openingDays']);
+        if (days.isNotEmpty) _openingDays = days;
+        final loc = (m['businessLocation'] ??
+                m['address'] ??
+                m['location'] ??
+                m['listingLocation'] ??
+                '')
+            .toString()
+            .trim();
+        if (loc.isNotEmpty) _location = loc;
+        final fc = m['followerCount'] ?? m['followersCount'];
+        if (fc is num) _followerCount = fc.toInt();
+        final rc = m['reviewCount'] ?? m['reviewsCount'];
+        if (rc is num) _reviewCount = rc.toInt();
+        final rt = m['rating'] ?? m['avgRating'];
+        if (rt is num) _rating = rt.toDouble();
+      }
+
+      final u = user.data() ?? {};
+      if (_name.isEmpty || _name == 'this restaurant') {
+        final n = (u['businessName'] ?? u['fullname'] ?? '').toString().trim();
+        if (n.isNotEmpty) _name = n;
+      }
+      if (_profileUrl.isEmpty) {
+        _profileUrl = (u['profilepicture'] ??
+                u['profilePicture'] ??
+                u['photoURL'] ??
+                '')
+            .toString()
+            .trim();
+      }
+      if (_description.isEmpty) {
+        _description =
+            (u['businessDescription'] ?? u['description'] ?? '')
+                .toString()
+                .trim();
+      }
+      if (_openingHours.isEmpty) {
+        _openingHours = MarketplaceShopHours.normalize(
+              (u['openingHours'] ?? u['shopHours'] ?? '').toString(),
+            ) ??
+            '';
+      }
+      if (_openingDays.isEmpty) {
+        _openingDays = MarketplaceShopHours.parseDays(u['openingDays']);
+      }
+      if (_location.isEmpty) {
+        _location = (u['businessLocation'] ??
+                u['address'] ??
+                u['location'] ??
+                u['listingLocation'] ??
+                '')
+            .toString()
+            .trim();
+      }
+    } catch (e) {
+      debugPrint('Kitchen profile load: $e');
+    } finally {
+      if (mounted) setState(() => _loadingProfile = false);
+    }
+
+    // Reviews + follow should not block first paint.
+    unawaited(_loadReviewsAndFollow(mid));
+  }
+
+  Future<void> _loadReviewsAndFollow(String mid) async {
+    final db = FirebaseFirestore.instance;
+    try {
+      final reviews = await db
+          .collection('food_reviews')
+          .where('merchantId', isEqualTo: mid)
+          .limit(40)
+          .get();
+      double sum = 0;
+      int n = 0;
+      for (final d in reviews.docs) {
+        final raw = d.data()['rating'] ?? d.data()['stars'];
+        final v = raw is num
+            ? raw.toDouble()
+            : double.tryParse(raw?.toString() ?? '');
+        if (v == null || v <= 0) continue;
+        sum += v;
+        n += 1;
+      }
+      int count = n;
+      try {
+        final agg = await db
+            .collection('food_reviews')
+            .where('merchantId', isEqualTo: mid)
+            .count()
+            .get();
+        count = agg.count ?? n;
+      } catch (_) {}
+      if (mounted) {
+        setState(() {
+          _reviewCount = count;
+          _rating = n > 0 ? sum / n : _rating;
+        });
+      }
+    } catch (_) {}
+
+    final me = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    try {
+      final followFuture = (me.isEmpty)
+          ? Future<bool>.value(false)
+          : db
+              .collection('merchant_followers')
+              .doc(mid)
+              .collection('followers')
+              .doc(me)
+              .get()
+              .then((s) => s.exists);
+
+      Future<int> countFuture() async {
+        try {
+          final agg = await db
+              .collection('merchant_followers')
+              .doc(mid)
+              .collection('followers')
+              .count()
+              .get()
+              .timeout(const Duration(seconds: 4));
+          return agg.count ?? _followerCount;
+        } catch (_) {
+          return _followerCount;
+        }
+      }
+
+      final pair = await Future.wait([
+        followFuture.timeout(const Duration(seconds: 4),
+            onTimeout: () => _following),
+        countFuture(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _following = pair[0] as bool;
+        _followerCount = pair[1] as int;
+      });
+    } catch (_) {}
+  }
 
   String _cover(FoodModel item) {
     final primary = item.FoodImage.trim();
@@ -1754,31 +2108,898 @@ class _KitchenExplorePage extends StatelessWidget {
     return '';
   }
 
+  void _viewProfilePhoto() {
+    final url = _profileUrl.trim();
+    if (url.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          backgroundColor: Colors.black,
+          appBar: AppBar(
+            backgroundColor: Colors.black,
+            foregroundColor: Colors.white,
+            title: Text(_name),
+          ),
+          body: Center(
+            child: InteractiveViewer(
+              child: ResilientCachedNetworkImage(
+                url: url,
+                fit: BoxFit.contain,
+                showSpinner: true,
+                placeholderColor: Colors.black,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _shareRestaurant() {
+    final mid = _merchantId;
+    final url = foodRestaurantShareUrl(
+      merchantId: mid.isNotEmpty ? mid : 'kitchen',
+      name: _name,
+      image: _profileUrl,
+    );
+    Share.share('Check out $_name on Vero360 Food\n$url');
+  }
+
+  Future<void> _toggleFollow() async {
+    final mid = _merchantId;
+    final me = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    if (mid.isEmpty) {
+      _toast('Restaurant profile is not ready yet.', false);
+      return;
+    }
+    if (me.isEmpty) {
+      _toast('Please log in to follow this restaurant.', false);
+      return;
+    }
+    if (_followBusy) return;
+    setState(() => _followBusy = true);
+    final db = FirebaseFirestore.instance;
+    final followerRef = db
+        .collection('merchant_followers')
+        .doc(mid)
+        .collection('followers')
+        .doc(me);
+    try {
+      if (_following) {
+        await followerRef.delete();
+        await db
+            .collection('users')
+            .doc(me)
+            .collection('followed_merchants')
+            .doc(mid)
+            .delete();
+        if (!mounted) return;
+        setState(() {
+          _following = false;
+          if (_followerCount > 0) _followerCount -= 1;
+        });
+      } else {
+        await followerRef.set({
+          'uid': me,
+          'followedAt': FieldValue.serverTimestamp(),
+        });
+        await db
+            .collection('users')
+            .doc(me)
+            .collection('followed_merchants')
+            .doc(mid)
+            .set({
+          'merchantId': mid,
+          'followedAt': FieldValue.serverTimestamp(),
+          'type': 'food',
+        });
+        if (!mounted) return;
+        setState(() {
+          _following = true;
+          _followerCount += 1;
+        });
+      }
+    } catch (e) {
+      debugPrint('Follow restaurant: $e');
+      if (mounted) _toast('Could not update follow status.', false);
+    } finally {
+      if (mounted) setState(() => _followBusy = false);
+    }
+  }
+
+  Future<void> _blockRestaurant() async {
+    final mid = _merchantId;
+    if (mid.isEmpty) {
+      _toast('Cannot block this restaurant yet.', false);
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.block_rounded,
+                    size: 30, color: Colors.red.shade700),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Block restaurant?',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF1A1A1A),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'You will stop seeing this restaurant in Food. You can unblock later in Settings.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  height: 1.45,
+                  color: Colors.grey.shade700,
+                ),
+              ),
+              const SizedBox(height: 22),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        side: BorderSide(color: Colors.grey.shade300),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: Text(
+                        'Cancel',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: Colors.grey.shade800,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.red.shade700,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: const Text(
+                        'Block',
+                        style: TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await BlockedMerchantService.blockMerchant(
+      merchantId: mid,
+      displayName: _name,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$_name blocked. Unblock anytime in Settings.'),
+        action: SnackBarAction(
+          label: 'Unblock',
+          onPressed: () async {
+            await BlockedMerchantService.unblockMerchant(mid);
+          },
+        ),
+      ),
+    );
+    Navigator.of(context).pop();
+  }
+
+  String _safeStorageSegment(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return 'unknown';
+    return t.replaceAll(RegExp(r'[^\w\-.]'), '_');
+  }
+
+  Future<String> _uploadReportProof({
+    required XFile file,
+    required String merchantId,
+    required String reporterUid,
+    required int index,
+  }) async {
+    final ext = file.name.toLowerCase().split('.').last;
+    final safeExt =
+        (ext.length <= 5 && RegExp(r'^[a-z0-9]+$').hasMatch(ext)) ? ext : 'jpg';
+    final contentType = switch (safeExt) {
+      'png' => 'image/png',
+      'webp' => 'image/webp',
+      'gif' => 'image/gif',
+      _ => 'image/jpeg',
+    };
+    final bytes = await file.readAsBytes();
+    if (bytes.isEmpty) throw StateError('Photo ${index + 1} is empty.');
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final safeMerchant = _safeStorageSegment(merchantId);
+    final safeUid = _safeStorageSegment(reporterUid);
+    final paths = <String>[
+      'reports/merchant/$safeMerchant/$safeUid/${ts}_$index.$safeExt',
+      'profile_photos/${reporterUid}_report_${safeMerchant}_${ts}_$index.$safeExt',
+    ];
+    Object? lastError;
+    for (final path in paths) {
+      for (var attempt = 0; attempt < 3; attempt++) {
+        try {
+          final ref = FirebaseStorage.instance.ref().child(path);
+          final meta = SettableMetadata(
+            contentType: contentType,
+            customMetadata: {
+              'purpose': 'merchant_report',
+              'merchantId': merchantId,
+              'index': '$index',
+            },
+          );
+          try {
+            await ref.putData(bytes, meta);
+          } catch (_) {
+            await ref.putFile(File(file.path), meta);
+          }
+          final url = await ref.getDownloadURL();
+          if (url.trim().isEmpty) {
+            throw StateError('Empty download URL for photo ${index + 1}');
+          }
+          return url;
+        } catch (e) {
+          lastError = e;
+          await Future<void>.delayed(
+            Duration(milliseconds: 250 * (attempt + 1)),
+          );
+        }
+      }
+    }
+    throw lastError ?? StateError('Could not upload photo ${index + 1}');
+  }
+
+  Future<void> _showReportScreenshotPicker(
+    BuildContext sheetCtx, {
+    required int remainingSlots,
+    required void Function(List<XFile> files) onPicked,
+  }) async {
+    if (remainingSlots <= 0) return;
+    await showModalBottomSheet<void>(
+      context: sheetCtx,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Add screenshots',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                leading: const Icon(Icons.photo_camera_outlined),
+                title: const Text('Take photo'),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  final file = await _picker.pickImage(
+                    source: ImageSource.camera,
+                    imageQuality: 85,
+                  );
+                  if (file != null) onPicked([file]);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Choose from gallery'),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  final files = await _picker.pickMultiImage(imageQuality: 85);
+                  if (files.isNotEmpty) {
+                    onPicked(files.take(remainingSlots).toList());
+                  }
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _reportRestaurant() async {
+    final mid = _merchantId;
+    final user = FirebaseAuth.instance.currentUser;
+    if (mid.isEmpty) {
+      _toast('Cannot report this restaurant yet.', false);
+      return;
+    }
+    if (user == null) {
+      _toast('Please log in to report a restaurant.', false);
+      return;
+    }
+
+    final controller = TextEditingController();
+    final picked = <XFile>[];
+
+    final result = await showDialog<({String message, List<XFile> picked})?>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (ctx, setLocal) => Dialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 20),
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: _veroOrange.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: const Icon(Icons.flag_rounded,
+                            color: _veroOrange, size: 24),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Report restaurant',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            Text(
+                              _name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.grey.shade700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(dialogCtx),
+                        icon: Icon(Icons.close_rounded,
+                            color: Colors.grey.shade600),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: controller,
+                    maxLines: 5,
+                    decoration: InputDecoration(
+                      hintText:
+                          'Tell us what is wrong (fraud, unsafe food, abuse, etc.)',
+                      filled: true,
+                      fillColor: const Color(0xFFF6F7FB),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Screenshots (optional, up to $_kMaxReportPhotos)',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.grey.shade800,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  if (picked.isNotEmpty)
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (var i = 0; i < picked.length; i++)
+                          Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: Image.file(
+                                  File(picked[i].path),
+                                  width: 64,
+                                  height: 64,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                              Positioned(
+                                top: -6,
+                                right: -6,
+                                child: GestureDetector(
+                                  onTap: () => setLocal(() => picked.removeAt(i)),
+                                  child: Container(
+                                    decoration: const BoxDecoration(
+                                      color: Colors.black87,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    padding: const EdgeInsets.all(2),
+                                    child: const Icon(Icons.close,
+                                        size: 14, color: Colors.white),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                      ],
+                    ),
+                  if (picked.length < _kMaxReportPhotos) ...[
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        unawaited(_showReportScreenshotPicker(
+                          dialogCtx,
+                          remainingSlots: _kMaxReportPhotos - picked.length,
+                          onPicked: (files) {
+                            setLocal(() {
+                              for (final f in files) {
+                                if (picked.length >= _kMaxReportPhotos) break;
+                                picked.add(f);
+                              }
+                            });
+                          },
+                        ));
+                      },
+                      icon: const Icon(Icons.add_photo_alternate_outlined),
+                      label: Text(
+                        picked.isEmpty
+                            ? 'Add screenshots'
+                            : 'Add more photos · ${picked.length}/$_kMaxReportPhotos',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(dialogCtx),
+                          child: const Text('Cancel',
+                              style: TextStyle(fontWeight: FontWeight.w800)),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: FilledButton(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _veroOrange,
+                          ),
+                          onPressed: () {
+                            final msg = controller.text.trim();
+                            if (msg.isEmpty && picked.isEmpty) {
+                              ScaffoldMessenger.of(dialogCtx).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Please write a message or add a screenshot.',
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+                            Navigator.pop(
+                              dialogCtx,
+                              (
+                                message: msg,
+                                picked: List<XFile>.from(picked),
+                              ),
+                            );
+                          },
+                          child: const Text(
+                            'Send report',
+                            style: TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      controller.dispose();
+    });
+
+    if (result == null || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('Sending report…'),
+        duration: Duration(seconds: 60),
+      ),
+    );
+
+    try {
+      final proofUrls = <String>[];
+      for (var i = 0; i < result.picked.length; i++) {
+        if (mounted) {
+          messenger.hideCurrentSnackBar();
+          messenger.showSnackBar(
+            SnackBar(
+              content: Text(
+                'Uploading photo ${i + 1} of ${result.picked.length}…',
+              ),
+              duration: const Duration(seconds: 60),
+            ),
+          );
+        }
+        proofUrls.add(await _uploadReportProof(
+          file: result.picked[i],
+          merchantId: mid,
+          reporterUid: user.uid,
+          index: i,
+        ));
+      }
+
+      await FirebaseFirestore.instance.collection('merchant_reports').add({
+        'merchantId': mid,
+        'merchantName': _name,
+        'reporterUid': user.uid,
+        'reporterEmail': user.email,
+        'message': result.message,
+        'proofUrl': proofUrls.isNotEmpty ? proofUrls.first : null,
+        'proofUrls': proofUrls,
+        'photoCount': proofUrls.length,
+        'type': 'food_restaurant',
+        'createdAt': FieldValue.serverTimestamp(),
+        'status': 'open',
+      });
+
+      if (!mounted) return;
+      messenger.hideCurrentSnackBar();
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text('Report sent',
+              style: TextStyle(fontWeight: FontWeight.w900)),
+          content: Text(
+            proofUrls.isEmpty
+                ? 'Your report was sent successfully. Our team will review it.'
+                : 'Your report was sent successfully.\n\n${proofUrls.length} photo${proofUrls.length == 1 ? '' : 's'} received.',
+          ),
+          actions: [
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: _veroOrange),
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      debugPrint('Report restaurant: $e');
+      if (!mounted) return;
+      messenger.hideCurrentSnackBar();
+      _toast('Could not submit report. Try again.', false);
+    }
+  }
+
+  void _toast(String msg, bool ok) =>
+      ToastHelper.showCustomToast(context, msg, isSuccess: ok, errorMessage: '');
+
   @override
   Widget build(BuildContext context) {
+    final openNow = MarketplaceShopHours.isOpenNow(_openingHours, _openingDays);
+    final hasHours = _openingHours.trim().isNotEmpty;
+
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF7F8FB),
       appBar: AppBar(
-        title: Text('Explore more from $kitchenName'),
+        title: Text(
+          _name.isEmpty ? 'Restaurant' : _name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         backgroundColor: _veroOrange,
         foregroundColor: Colors.white,
         elevation: 0,
+        actions: [
+          IconButton(
+            tooltip: 'Share restaurant',
+            icon: const Icon(Icons.share_rounded),
+            onPressed: _shareRestaurant,
+          ),
+              PopupMenuButton<String>(
+            tooltip: 'More',
+            icon: const Icon(Icons.more_vert_rounded),
+            onSelected: (v) {
+              if (v == 'block') unawaited(_blockRestaurant());
+              if (v == 'report') unawaited(_reportRestaurant());
+            },
+            itemBuilder: (_) => [
+              PopupMenuItem<String>(
+                value: 'block',
+                child: Row(
+                  children: [
+                    Icon(Icons.block_rounded, color: Colors.red.shade700),
+                    const SizedBox(width: 12),
+                    const Text('Block restaurant',
+                        style: TextStyle(fontWeight: FontWeight.w800)),
+                  ],
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'report',
+                child: Row(
+                  children: [
+                    Icon(Icons.flag_rounded, color: _veroOrange),
+                    SizedBox(width: 12),
+                    Text('Report restaurant',
+                        style: TextStyle(fontWeight: FontWeight.w800)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
-      body: items.isEmpty
-          ? Center(
-              child: Text(
-                'No other dishes from this restaurant yet.',
-                style: TextStyle(color: Colors.grey.shade600),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: const Color(0xFFE2E6EF)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  blurRadius: 16,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Column(
+                    children: [
+                      if (_loadingProfile)
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 10),
+                          child: LinearProgressIndicator(
+                            minHeight: 2,
+                            color: _veroOrange,
+                            backgroundColor: Color(0xFFFFE8CC),
+                          ),
+                        ),
+                      GestureDetector(
+                        onTap: _profileUrl.trim().isEmpty
+                            ? null
+                            : _viewProfilePhoto,
+                        child: CircleAvatar(
+                          radius: 44,
+                          backgroundColor: const Color(0xFFFFF3E5),
+                          backgroundImage: _profileUrl.trim().isNotEmpty
+                              ? NetworkImage(_profileUrl.trim())
+                              : null,
+                          child: _profileUrl.trim().isEmpty
+                              ? const Icon(
+                                  Icons.restaurant_rounded,
+                                  size: 40,
+                                  color: _veroOrange,
+                                )
+                              : null,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        _name,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                          color: _veroOrange,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        [
+                          if (_reviewCount > 0)
+                            '$_reviewCount review${_reviewCount == 1 ? '' : 's'} · ${_rating.toStringAsFixed(1)} ★'
+                          else
+                            'No reviews yet',
+                          _followerCount <= 0
+                              ? 'No followers yet'
+                              : '$_followerCount follower${_followerCount == 1 ? '' : 's'}',
+                        ].join(' · '),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.grey.shade700,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      if (_location.trim().isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.location_on_rounded,
+                                size: 16, color: Colors.grey.shade600),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                _location.trim(),
+                                textAlign: TextAlign.center,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.grey.shade700,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                      if (hasHours) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: openNow
+                                ? const Color(0xFFE7F6EC)
+                                : const Color(0xFFFFEDEE),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            openNow
+                                ? 'OPEN · $_openingHours'
+                                : 'CLOSED · $_openingHours',
+                            style: TextStyle(
+                              color: openNow
+                                  ? Colors.green.shade700
+                                  : Colors.red.shade700,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                      if (_description.trim().isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          _description.trim(),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.grey.shade700,
+                            fontWeight: FontWeight.w600,
+                            height: 1.35,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 14),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: _followBusy ? null : _toggleFollow,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _following
+                                ? const Color(0xFF16284C)
+                                : _veroOrange,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          icon: Icon(
+                            _following
+                                ? Icons.check_rounded
+                                : Icons.add_rounded,
+                            size: 18,
+                          ),
+                          label: Text(
+                            _following ? 'Following' : 'Follow',
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+          ),
+          const SizedBox(height: 18),
+          Text(
+            _loadingMenu
+                ? 'Loading menu…'
+                : 'Menu · ${_menuItems.length} dish${_menuItems.length == 1 ? '' : 'es'}',
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+              color: _ink,
+            ),
+          ),
+          const SizedBox(height: 10),
+          if (_loadingMenu)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 28),
+              child: Center(
+                child: SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    color: _veroOrange,
+                  ),
+                ),
               ),
             )
-          : ListView.separated(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-              itemCount: items.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 12),
-              itemBuilder: (context, i) {
-                final f = items[i];
-                final img = _cover(f);
-                return Material(
+          else if (_menuItems.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 28),
+              child: Center(
+                child: Text(
+                  'No dishes from this restaurant yet.',
+                  style: TextStyle(color: Colors.grey.shade600),
+                ),
+              ),
+            )
+          else
+            ...List.generate(_menuItems.length, (i) {
+              final f = _menuItems[i];
+              final img = _cover(f);
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Material(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(16),
                   child: InkWell(
@@ -1817,7 +3038,8 @@ class _KitchenExplorePage extends StatelessWidget {
                                       height: 72,
                                       memCacheWidth: 160,
                                       showSpinner: false,
-                                      placeholderColor: const Color(0xFFFFF4E8),
+                                      placeholderColor:
+                                          const Color(0xFFFFF4E8),
                                     ),
                             ),
                           ),
@@ -1853,9 +3075,11 @@ class _KitchenExplorePage extends StatelessWidget {
                       ),
                     ),
                   ),
-                );
-              },
-            ),
+                ),
+              );
+            }),
+        ],
+      ),
     );
   }
 }

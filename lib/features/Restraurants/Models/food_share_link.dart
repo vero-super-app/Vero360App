@@ -77,3 +77,25 @@ String? foodIdFromShareUri(Uri uri) {
 }
 
 bool isFoodShareUri(Uri uri) => foodIdFromShareUri(uri) != null;
+
+/// Public share URL for a restaurant / kitchen profile.
+String foodRestaurantShareUrl({
+  required String merchantId,
+  String? name,
+  String? image,
+}) {
+  final mid = merchantId.trim();
+  final params = <String, String>{};
+  final n = (name ?? '').trim();
+  final img = (image ?? '').trim();
+  if (n.isNotEmpty) params['name'] = n;
+  if (img.startsWith('http://') || img.startsWith('https://')) {
+    params['img'] = img;
+  }
+  return Uri(
+    scheme: 'https',
+    host: 'vero360.app',
+    path: mid.isNotEmpty ? '/food/restaurant/$mid' : '/food',
+    queryParameters: params.isEmpty ? null : params,
+  ).toString();
+}

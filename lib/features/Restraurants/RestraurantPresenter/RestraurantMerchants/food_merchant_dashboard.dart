@@ -3,6 +3,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:mime/mime.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -10,9 +12,10 @@ import 'package:intl/intl.dart';
 
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/utils/app_wallet_pin.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_menu_post_page.dart';
-import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/kyc_verification_screen.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/settings/Settings.dart';
@@ -21,6 +24,10 @@ import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/kyc_status_card.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_courier_dispatch.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/ride_history_screen.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_business_location_picker.dart';
+import 'package:vero360_app/GeneralModels/place_model.dart';
+import 'package:vero360_app/GernalServices/google_places_service.dart';
 
 final NumberFormat _mwk0Fmt =
     NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
@@ -63,10 +70,18 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
   List<dynamic> _menuItems = [];
   List<dynamic> _reviews = [];
   bool _isFetching = false;
+  bool _profileBusy = false;
   String _uid = '';
   String _businessName = '';
   String _merchantEmail = '';
   String _merchantPhone = '';
+  String _businessDescription = '';
+  String _profileUrl = '';
+  String _openingHours = '';
+  List<int> _openingDays = const [1, 2, 3, 4, 5, 6, 7];
+  String _businessLocation = '';
+  double? _businessLat;
+  double? _businessLng;
   double _walletBalance = 0;
 
   int _totalOrders = 0;
@@ -74,8 +89,10 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
   int _pendingOrders = 0;
   double _totalRevenue = 0;
   double _rating = 0.0;
+  int _reviewCount = 0;
   String _status = 'pending';
   KycStatusSnapshot _kyc = const KycStatusSnapshot();
+  final ImagePicker _picker = ImagePicker();
 
   static const Color _brandOrange = Color(0xFFFF8A00);
   static const Color _brandNavy = Color(0xFF16284C);
@@ -83,7 +100,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
   @override
   void initState() {
     super.initState();
-    _foodTabs = TabController(length: 3, vsync: this);
+    _foodTabs = TabController(length: 4, vsync: this);
     _loadMerchantData(showLoader: false);
     // Orders are live via snapshots(); wallet/reviews are less time-critical.
     _refreshTimer = Timer.periodic(const Duration(minutes: 5), (_) {
@@ -101,83 +118,40 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     super.dispose();
   }
 
-  Future<void> _logout() async {
-    final bool? confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Logout'),
-        content: const Text('Are you sure you want to logout?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text(
-              'Logout',
-              style: TextStyle(color: Colors.red),
-            ),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm != true) return;
-
-    try {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const Center(
-          child: CircularProgressIndicator(),
-        ),
-      );
-
-      await _auth.signOut();
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.clear();
-
-      if (mounted) Navigator.of(context, rootNavigator: true).pop();
-
-      ToastHelper.showCustomToast(
-        context,
-        'Logged out successfully',
-        isSuccess: true,
-        errorMessage: 'Logged out',
-      );
-
-      if (mounted) {
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (_) => LoginScreen()),
-          (route) => route.isFirst,
-        );
-      }
-    } catch (e) {
-      if (mounted) Navigator.of(context, rootNavigator: true).pop();
-      ToastHelper.showCustomToast(
-        context,
-        'Logout failed: $e',
-        isSuccess: false,
-        errorMessage: 'Logout failed',
-      );
-    }
-  }
-
   Future<void> _loadMerchantData({bool showLoader = true}) async {
     if (_isFetching) return;
     _isFetching = true;
     try {
       final prefs = await SharedPreferences.getInstance();
       _uid = _auth.currentUser?.uid ?? prefs.getString('uid') ?? '';
-      _businessName = prefs.getString('business_name') ?? 'Food Business';
+      _businessName = prefs.getString('business_name') ?? 'Restaurant Business';
       _merchantEmail = prefs.getString('email') ?? widget.email;
-      _merchantPhone = prefs.getString('phone') ?? '';
+      _merchantPhone = (prefs.getString('phone') ?? '').trim();
+      _profileUrl = (prefs.getString('profilepicture') ??
+              prefs.getString('profilePicture') ??
+              '')
+          .trim();
+      _businessDescription =
+          (prefs.getString('food_business_description') ?? '').trim();
+      _openingHours =
+          MarketplaceShopHours.normalize(prefs.getString('food_opening_hours')) ??
+              (prefs.getString('food_opening_hours') ?? '').trim();
+      _businessLocation =
+          (prefs.getString('food_business_location') ?? '').trim();
+      _businessLat = prefs.getDouble('food_business_lat');
+      _businessLng = prefs.getDouble('food_business_lng');
+      final dayPref = prefs.getStringList('food_opening_days');
+      if (dayPref != null && dayPref.isNotEmpty) {
+        _openingDays = MarketplaceShopHours.parseDays(dayPref);
+      }
 
       if (_uid.isNotEmpty) {
         _subscribeToOrders();
-        // Parallel + bounded timeouts: avoids serial 15s+ stalls and a stuck `_isFetching`.
+        // Hydrate profile in parallel with menu/wallet so a slow network cannot
+        // leave merchants staring at a blank shell (or fall back to customer UI).
+        unawaited(_hydrateProfileFromFirestore().then((_) {
+          if (mounted) setState(() {});
+        }));
         await Future.wait<void>([
           _loadMenuItems(),
           _loadWalletBalance(),
@@ -185,8 +159,178 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
           _loadKycStatus(),
         ]);
       }
+      if (mounted) setState(() {});
     } finally {
       _isFetching = false;
+    }
+  }
+
+  Future<void> _hydrateProfileFromFirestore() async {
+    if (_uid.isEmpty) return;
+    try {
+      final results = await Future.wait([
+        _firestore.collection('users').doc(_uid).get().timeout(
+              const Duration(seconds: 5),
+            ),
+        _firestore.collection('food_merchants').doc(_uid).get().timeout(
+              const Duration(seconds: 5),
+            ),
+        _firestore
+            .collection('restaurants')
+            .where('ownerUid', isEqualTo: _uid)
+            .limit(1)
+            .get()
+            .timeout(const Duration(seconds: 5)),
+      ]);
+
+      final userDoc = results[0] as DocumentSnapshot<Map<String, dynamic>>;
+      final merchantSnap = results[1] as DocumentSnapshot<Map<String, dynamic>>;
+      final restQ = results[2] as QuerySnapshot<Map<String, dynamic>>;
+
+      final u = userDoc.data() ?? {};
+      final fsPhone =
+          (u['phone'] ?? u['phoneNumber'] ?? '').toString().trim();
+      final fsPic = (u['profilepicture'] ??
+              u['profilePicture'] ??
+              u['photoURL'] ??
+              u['avatar'] ??
+              '')
+          .toString()
+          .trim();
+      final fsDesc =
+          (u['businessDescription'] ?? u['description'] ?? '')
+              .toString()
+              .trim();
+      final fsHours = MarketplaceShopHours.normalize(
+            (u['openingHours'] ?? u['shopHours'] ?? '').toString(),
+          ) ??
+          '';
+      final fsDays = MarketplaceShopHours.parseDays(u['openingDays']);
+      final fsLoc = (u['businessLocation'] ??
+              u['address'] ??
+              u['location'] ??
+              u['listingLocation'] ??
+              '')
+          .toString()
+          .trim();
+      final fsLat = u['latitude'] ?? u['lat'];
+      final fsLng = u['longitude'] ?? u['lng'];
+      if (fsPhone.isNotEmpty) _merchantPhone = fsPhone;
+      if (fsPic.isNotEmpty) _profileUrl = fsPic;
+      if (fsDesc.isNotEmpty) _businessDescription = fsDesc;
+      if (fsHours.isNotEmpty) _openingHours = fsHours;
+      if (fsDays.isNotEmpty) _openingDays = fsDays;
+      if (fsLoc.isNotEmpty) _businessLocation = fsLoc;
+      if (fsLat is num) _businessLat = fsLat.toDouble();
+      if (fsLng is num) _businessLng = fsLng.toDouble();
+
+      if (merchantSnap.exists) {
+        final m = merchantSnap.data() ?? {};
+        final mName =
+            (m['businessName'] ?? m['name'] ?? '').toString().trim();
+        final mPhone = (m['phone'] ?? '').toString().trim();
+        final mDesc =
+            (m['description'] ?? m['businessDescription'] ?? '')
+                .toString()
+                .trim();
+        final mPic = (m['profileImage'] ??
+                m['logo'] ??
+                m['logoUrl'] ??
+                m['image'] ??
+                '')
+            .toString()
+            .trim();
+        final mHours = MarketplaceShopHours.normalize(
+              (m['openingHours'] ?? m['shopHours'] ?? '').toString(),
+            ) ??
+            '';
+        final mDays = MarketplaceShopHours.parseDays(m['openingDays']);
+        final mStatus = (m['status'] ?? '').toString().trim();
+        final mLoc = (m['businessLocation'] ??
+                m['address'] ??
+                m['location'] ??
+                m['listingLocation'] ??
+                '')
+            .toString()
+            .trim();
+        final mLat = m['latitude'] ?? m['lat'];
+        final mLng = m['longitude'] ?? m['lng'];
+        if (mName.isNotEmpty) _businessName = mName;
+        if (mPhone.isNotEmpty) _merchantPhone = mPhone;
+        if (mDesc.isNotEmpty) _businessDescription = mDesc;
+        if (mPic.isNotEmpty) _profileUrl = mPic;
+        if (mHours.isNotEmpty) _openingHours = mHours;
+        if (mDays.isNotEmpty) _openingDays = mDays;
+        if (mStatus.isNotEmpty) _status = mStatus;
+        if (mLoc.isNotEmpty) _businessLocation = mLoc;
+        if (mLat is num) _businessLat = mLat.toDouble();
+        if (mLng is num) _businessLng = mLng.toDouble();
+      }
+
+      if (restQ.docs.isNotEmpty) {
+        final r = restQ.docs.first.data();
+        final rName =
+            (r['name'] ?? r['businessName'] ?? '').toString().trim();
+        final rPhone =
+            (r['phone'] ?? r['contact'] ?? '').toString().trim();
+        final rDesc =
+            (r['description'] ?? r['about'] ?? '').toString().trim();
+        final rPic = (r['logoUrl'] ??
+                r['logo'] ??
+                r['image'] ??
+                r['coverImageUrl'] ??
+                '')
+            .toString()
+            .trim();
+        final rHoursRaw = r['openingHours'];
+        String rHours = '';
+        if (rHoursRaw is String) {
+          rHours = MarketplaceShopHours.normalize(rHoursRaw) ?? '';
+        } else if (r['shopHours'] != null) {
+          rHours =
+              MarketplaceShopHours.normalize(r['shopHours']?.toString()) ??
+                  '';
+        }
+        final rDays = MarketplaceShopHours.parseDays(r['openingDays']);
+        if (rName.isNotEmpty &&
+            (_businessName.isEmpty ||
+                _businessName == 'Restaurant Business')) {
+          _businessName = rName;
+        }
+        if (rPhone.isNotEmpty && _merchantPhone.isEmpty) {
+          _merchantPhone = rPhone;
+        }
+        if (rDesc.isNotEmpty && _businessDescription.isEmpty) {
+          _businessDescription = rDesc;
+        }
+        if (rPic.isNotEmpty && _profileUrl.isEmpty) _profileUrl = rPic;
+        if (rHours.isNotEmpty && _openingHours.isEmpty) {
+          _openingHours = rHours;
+        }
+        if (rDays.isNotEmpty && _openingDays.length == 7) {
+          _openingDays = rDays;
+        }
+        final rLoc = (r['address'] ??
+                r['businessLocation'] ??
+                r['location'] ??
+                r['listingLocation'] ??
+                '')
+            .toString()
+            .trim();
+        final rLat = r['latitude'] ?? r['lat'];
+        final rLng = r['longitude'] ?? r['lng'];
+        if (rLoc.isNotEmpty && _businessLocation.isEmpty) {
+          _businessLocation = rLoc;
+        }
+        if (rLat is num && _businessLat == null) {
+          _businessLat = rLat.toDouble();
+        }
+        if (rLng is num && _businessLng == null) {
+          _businessLng = rLng.toDouble();
+        }
+      }
+    } catch (e) {
+      debugPrint('Hydrate food merchant profile: $e');
     }
   }
 
@@ -258,7 +402,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
 
     if (!mounted) return;
     setState(() {
-      _recentOrders = rows.take(10).toList();
+      _recentOrders = rows.take(60).toList();
       _totalOrders = rows.length;
       _completedOrders = completed;
       _pendingOrders = pending;
@@ -356,7 +500,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       final snapshot = await _firestore
           .collection('food_reviews')
           .where('merchantId', isEqualTo: _uid)
-          .limit(30)
+          .limit(50)
           .get()
           .timeout(_firestoreTimeout);
 
@@ -370,7 +514,33 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
         if (bd is Timestamp) bt = bd.toDate();
         return bt.compareTo(at);
       });
+
+      double sum = 0;
+      int counted = 0;
+      for (final a in rows) {
+        final r = a['rating'] ?? a['stars'] ?? a['score'];
+        final v = r is num
+            ? r.toDouble()
+            : double.tryParse(r?.toString() ?? '');
+        if (v == null || v <= 0) continue;
+        sum += v;
+        counted += 1;
+      }
+
+      int totalCount = counted;
+      try {
+        final agg = await _firestore
+            .collection('food_reviews')
+            .where('merchantId', isEqualTo: _uid)
+            .count()
+            .get()
+            .timeout(const Duration(seconds: 6));
+        totalCount = agg.count ?? counted;
+      } catch (_) {}
+
       _reviews = rows.take(5).toList();
+      _reviewCount = totalCount;
+      _rating = counted > 0 ? (sum / counted) : 0.0;
       if (mounted) setState(() {});
     } catch (e) {
       debugPrint('Error loading reviews: $e');
@@ -453,11 +623,109 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
   }
 
   Future<void> _openKycVerification() async {
+    if (!_kyc.verified) {
+      final go = await showModernKycDialog(
+        context,
+        title: 'Verify your restaurant',
+        message:
+            'Complete a quick KYC check to post dishes, receive orders, and unlock wallet payouts.',
+      );
+      if (go != true || !mounted) return;
+    }
     await Navigator.of(context).push<bool>(
       MaterialPageRoute(builder: (_) => const KycVerificationScreen()),
     );
     if (!mounted) return;
     await _loadKycStatus();
+  }
+
+  void _toastOk(String msg) {
+    ToastHelper.showCustomToast(
+      context,
+      msg,
+      isSuccess: true,
+      errorMessage: '',
+    );
+  }
+
+  void _toastErr(String msg) {
+    ToastHelper.showCustomToast(
+      context,
+      msg,
+      isSuccess: false,
+      errorMessage: msg,
+    );
+  }
+
+  static const int _kDescMax = 280;
+  static const _kDayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  String get _shopHoursSummary {
+    final pair = MarketplaceShopHours.parseRange(_openingHours);
+    if (pair == null) return 'Set business hours';
+    final days = _formatOpenDaysLabel(_openingDays.toSet());
+    return '$days · ${MarketplaceShopHours.formatRangeDisplay(pair.open, pair.close)}';
+  }
+
+  String _formatOpenDaysLabel(Set<int> days) {
+    if (days.isEmpty || days.length == 7) return 'Every day';
+    final sorted = days.toList()..sort();
+    final ranges = <String>[];
+    int start = sorted.first;
+    int prev = sorted.first;
+    for (var i = 1; i < sorted.length; i++) {
+      final d = sorted[i];
+      if (d == prev + 1) {
+        prev = d;
+        continue;
+      }
+      ranges.add(start == prev
+          ? _kDayLabels[start - 1]
+          : '${_kDayLabels[start - 1]}–${_kDayLabels[prev - 1]}');
+      start = prev = d;
+    }
+    ranges.add(start == prev
+        ? _kDayLabels[start - 1]
+        : '${_kDayLabels[start - 1]}–${_kDayLabels[prev - 1]}');
+    return ranges.join(', ');
+  }
+
+  Future<void> _patchOwnedRestaurants(Map<String, dynamic> payload) async {
+    if (_uid.isEmpty) return;
+    try {
+      final q = await _firestore
+          .collection('restaurants')
+          .where('ownerUid', isEqualTo: _uid)
+          .limit(8)
+          .get();
+      await Future.wait(
+        q.docs.map(
+          (d) => d.reference.set(payload, SetOptions(merge: true)),
+        ),
+      );
+    } catch (e) {
+      debugPrint('Patch restaurants: $e');
+    }
+  }
+
+  Future<void> _writeMerchantProfile(Map<String, dynamic> payload) async {
+    final uid = (_auth.currentUser?.uid ?? _uid).trim();
+    if (uid.isEmpty) throw Exception('Not signed in');
+    final withTs = {
+      ...payload,
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+    await Future.wait([
+      _firestore
+          .collection('food_merchants')
+          .doc(uid)
+          .set(withTs, SetOptions(merge: true)),
+      _firestore
+          .collection('users')
+          .doc(uid)
+          .set(withTs, SetOptions(merge: true)),
+      _patchOwnedRestaurants(withTs),
+    ]);
   }
 
   Future<bool> _ensureKycForPosting() {
@@ -485,6 +753,429 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     if (added == true && mounted) await _loadMenuItems();
   }
 
+  void _showPhotoSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'Profile photo',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Color(0xFFFF8A00),
+                  child: Icon(Icons.photo_camera_outlined, color: Colors.white),
+                ),
+                title: const Text(
+                  'Take a photo',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  unawaited(_pickAndUploadProfile(ImageSource.camera));
+                },
+              ),
+              ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Color(0xFF1E88E5),
+                  child: Icon(Icons.photo_library_outlined, color: Colors.white),
+                ),
+                title: const Text(
+                  'Choose from gallery',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  unawaited(_pickAndUploadProfile(ImageSource.gallery));
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickAndUploadProfile(ImageSource source) async {
+    final uid = (_auth.currentUser?.uid ?? _uid).trim();
+    if (uid.isEmpty) {
+      _toastErr('Please sign in again.');
+      return;
+    }
+    final file = await _picker.pickImage(
+      source: source,
+      maxWidth: 1400,
+      imageQuality: 85,
+    );
+    if (file == null) return;
+    if (!mounted) return;
+    setState(() => _profileBusy = true);
+    try {
+      final bytes = await file.readAsBytes();
+      final mime = lookupMimeType(file.name, headerBytes: bytes);
+      final url = await MarketplaceService().uploadBytes(
+        bytes,
+        filename: file.name.isNotEmpty
+            ? file.name
+            : 'food_profile_${DateTime.now().millisecondsSinceEpoch}.jpg',
+        mimeType: mime,
+      );
+      if (url.trim().isEmpty) throw Exception('Empty upload URL');
+
+      await _writeMerchantProfile({
+        'profilePicture': url,
+        'profilepicture': url,
+        'profileImage': url,
+        'logo': url,
+        'logoUrl': url,
+        'image': url,
+      });
+
+      final user = _auth.currentUser;
+      if (user != null) {
+        try {
+          await user.updatePhotoURL(url);
+        } catch (_) {}
+      }
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('profilepicture', url);
+
+      if (!mounted) return;
+      setState(() => _profileUrl = url);
+      _toastOk('Profile picture updated');
+    } catch (e) {
+      debugPrint('Food profile upload: $e');
+      if (mounted) _toastErr('Failed to upload photo. Try again.');
+    } finally {
+      if (mounted) setState(() => _profileBusy = false);
+    }
+  }
+
+  Future<void> _editShopHours() async {
+    final pair = MarketplaceShopHours.parseRange(_openingHours);
+    final result = await showModalBottomSheet<
+        ({TimeOfDay open, TimeOfDay close, Set<int> days})>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _FoodShopHoursSheet(
+        initialOpen: pair?.open ?? const TimeOfDay(hour: 8, minute: 0),
+        initialClose: pair?.close ?? const TimeOfDay(hour: 21, minute: 0),
+        initialDays: _openingDays.isEmpty
+            ? {1, 2, 3, 4, 5, 6, 7}
+            : Set<int>.from(_openingDays),
+        brandColor: _brandOrange,
+      ),
+    );
+    if (result == null || !mounted) return;
+    await _saveShopHours(result.open, result.close, result.days);
+  }
+
+  Future<void> _saveShopHours(
+    TimeOfDay open,
+    TimeOfDay close,
+    Set<int> days,
+  ) async {
+    final hours = MarketplaceShopHours.formatRange(open, close);
+    final dayList = (days.isEmpty || days.length == 7)
+        ? <int>[1, 2, 3, 4, 5, 6, 7]
+        : (days.toList()..sort());
+    try {
+      setState(() => _profileBusy = true);
+      await _writeMerchantProfile({
+        'openingHours': hours,
+        'shopHours': hours,
+        'openingDays': dayList,
+        'isOpen': MarketplaceShopHours.isOpenNow(hours, dayList),
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('food_opening_hours', hours);
+      await prefs.setStringList(
+        'food_opening_days',
+        dayList.map((e) => '$e').toList(),
+      );
+      if (!mounted) return;
+      setState(() {
+        _openingHours = hours;
+        _openingDays = dayList;
+      });
+      _toastOk('Business hours saved');
+    } catch (e) {
+      debugPrint('Save food hours: $e');
+      if (mounted) _toastErr('Could not save hours. Try again.');
+    } finally {
+      if (mounted) setState(() => _profileBusy = false);
+    }
+  }
+
+  Future<void> _editPhone() async {
+    final saved = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _FoodPhoneSheet(
+        initialPhone: _merchantPhone,
+        brandColor: _brandOrange,
+      ),
+    );
+    if (saved == null || !mounted) return;
+    await _savePhone(saved);
+  }
+
+  Future<void> _editBusinessLocation() async {
+    final place = await Navigator.of(context).push<Place>(
+      MaterialPageRoute(
+        builder: (_) => FoodBusinessLocationPickerPage(
+          initialAddress: _businessLocation,
+          initialLatitude: _businessLat,
+          initialLongitude: _businessLng,
+        ),
+      ),
+    );
+    if (place == null || !mounted) return;
+    var label = place.address.trim().isNotEmpty
+        ? place.address.trim()
+        : place.name.trim();
+    // Decode Plus Codes (e.g. 2QMV+XV) into a real street / area name.
+    if (label.isNotEmpty && GooglePlacesService.isPlusCodeLabel(label)) {
+      try {
+        final decoded = await GooglePlacesService().lookupStreetName(
+          label,
+          biasLat: place.latitude,
+          biasLng: place.longitude,
+        );
+        final rev = decoded ??
+            await GooglePlacesService().reverseGeocode(
+              latitude: place.latitude,
+              longitude: place.longitude,
+            );
+        if (rev != null) {
+          final name = rev.name.trim();
+          final addr = rev.address.trim();
+          if (name.isNotEmpty && !GooglePlacesService.isPlusCodeLabel(name)) {
+            label = addr.isNotEmpty && !GooglePlacesService.isPlusCodeLabel(addr)
+                ? addr
+                : name;
+          } else if (addr.isNotEmpty &&
+              !GooglePlacesService.isPlusCodeLabel(addr)) {
+            label = addr;
+          }
+        }
+      } catch (e) {
+        debugPrint('Decode plus-code location: $e');
+      }
+    }
+    if (label.isEmpty) {
+      _toastErr('Could not read that location. Try again.');
+      return;
+    }
+    try {
+      setState(() => _profileBusy = true);
+      await _writeMerchantProfile({
+        'businessLocation': label,
+        'address': label,
+        'location': label,
+        'listingLocation': label,
+        'latitude': place.latitude,
+        'longitude': place.longitude,
+        'lat': place.latitude,
+        'lng': place.longitude,
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('food_business_location', label);
+      await prefs.setDouble('food_business_lat', place.latitude);
+      await prefs.setDouble('food_business_lng', place.longitude);
+      if (!mounted) return;
+      setState(() {
+        _businessLocation = label;
+        _businessLat = place.latitude;
+        _businessLng = place.longitude;
+      });
+      _toastOk('Restaurant location saved');
+    } catch (e) {
+      debugPrint('Save business location: $e');
+      if (mounted) _toastErr('Could not save location. Try again.');
+    } finally {
+      if (mounted) setState(() => _profileBusy = false);
+    }
+  }
+
+  Future<void> _savePhone(String raw) async {
+    final phone = raw.trim();
+    if (phone.length < 7) {
+      _toastErr('Enter a valid phone number.');
+      return;
+    }
+    try {
+      setState(() => _profileBusy = true);
+      await _writeMerchantProfile({
+        'phone': phone,
+        'phoneNumber': phone,
+        'contact': phone,
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('phone', phone);
+      if (!mounted) return;
+      setState(() => _merchantPhone = phone);
+      _toastOk('Phone number saved');
+    } catch (e) {
+      debugPrint('Save phone: $e');
+      if (mounted) _toastErr('Could not save phone. Try again.');
+    } finally {
+      if (mounted) setState(() => _profileBusy = false);
+    }
+  }
+
+  Future<void> _editBusinessDescription() async {
+    final saved = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _FoodBusinessDescriptionSheet(
+        initialText: _businessDescription,
+        maxLength: _kDescMax,
+        brandColor: _brandOrange,
+      ),
+    );
+    if (saved == null || !mounted) return;
+    await _saveBusinessDescription(saved);
+  }
+
+  Future<void> _editBusinessName() async {
+    final saved = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _FoodBusinessNameSheet(
+        initialText: _businessName,
+        brandColor: _brandOrange,
+      ),
+    );
+    if (saved == null || !mounted) return;
+    await _saveBusinessName(saved);
+  }
+
+  Future<void> _saveBusinessName(String raw) async {
+    final name = raw.trim();
+    if (name.length < 2) {
+      _toastErr('Enter a restaurant name customers can recognize.');
+      return;
+    }
+    if (name.length > 80) {
+      _toastErr('Keep the name under 80 characters.');
+      return;
+    }
+    final uid = (_auth.currentUser?.uid ?? _uid).trim();
+    if (uid.isEmpty) {
+      _toastErr('Please sign in again.');
+      return;
+    }
+    try {
+      setState(() => _profileBusy = true);
+      await _writeMerchantProfile({
+        'businessName': name,
+        'name': name,
+        'merchantName': name,
+      });
+      // Keep menu listings in sync so Food browse shows the new name.
+      try {
+        final menu = await _firestore
+            .collection('food_menu_items')
+            .where('merchantId', isEqualTo: uid)
+            .limit(200)
+            .get();
+        final batch = _firestore.batch();
+        for (final d in menu.docs) {
+          batch.set(
+            d.reference,
+            {
+              'businessName': name,
+              'merchantName': name,
+              'RestrauntName': name,
+              'updatedAt': FieldValue.serverTimestamp(),
+            },
+            SetOptions(merge: true),
+          );
+        }
+        if (menu.docs.isNotEmpty) await batch.commit();
+      } catch (e) {
+        debugPrint('Sync menu business name: $e');
+      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('business_name', name);
+      if (!mounted) return;
+      setState(() => _businessName = name);
+      _toastOk('Restaurant name saved');
+    } catch (e) {
+      debugPrint('Save business name: $e');
+      if (mounted) _toastErr('Could not save name. Try again.');
+    } finally {
+      if (mounted) setState(() => _profileBusy = false);
+    }
+  }
+
+  Future<void> _saveBusinessDescription(String raw) async {
+    final desc = raw.trim();
+    if (desc.length > _kDescMax) {
+      _toastErr('Keep it under $_kDescMax characters.');
+      return;
+    }
+    try {
+      setState(() => _profileBusy = true);
+      await _writeMerchantProfile({
+        'businessDescription': desc,
+        'description': desc,
+        'about': desc,
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('food_business_description', desc);
+      if (!mounted) return;
+      setState(() => _businessDescription = desc);
+      _toastOk(desc.isEmpty ? 'Description cleared' : 'Description saved');
+    } catch (e) {
+      debugPrint('Save description: $e');
+      if (mounted) _toastErr('Could not save description. Try again.');
+    } finally {
+      if (mounted) setState(() => _profileBusy = false);
+    }
+  }
+
   AppBar _buildFoodAppBar() {
     return AppBar(
       title: const Row(
@@ -493,7 +1184,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
           Icon(Icons.restaurant_rounded, color: Colors.white, size: 22),
           SizedBox(width: 8),
           Text(
-            'Food Merchant',
+            'Restaurant Dashboard',
             style: TextStyle(
               color: Colors.white,
               fontWeight: FontWeight.w900,
@@ -526,8 +1217,8 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                     merchantId: uid,
                     merchantName: _businessName.isNotEmpty
                         ? _businessName
-                        : (_auth.currentUser?.displayName ?? 'Food Merchant'),
-                    serviceType: 'food',
+                        : (_auth.currentUser?.displayName ?? 'Restaurant Merchant'),
+                    serviceType: 'Restaurant',
                   ),
                 ),
               );
@@ -651,11 +1342,46 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       padding: const EdgeInsets.all(16),
       child: Row(
         children: [
-          CircleAvatar(
-            radius: 28,
-            backgroundColor: Colors.white.withValues(alpha: 0.15),
-            child: const Icon(Icons.restaurant_rounded,
-                color: Colors.white, size: 28),
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              CircleAvatar(
+                radius: 28,
+                backgroundColor: Colors.white.withValues(alpha: 0.15),
+                backgroundImage: _profileUrl.trim().isNotEmpty
+                    ? NetworkImage(_profileUrl.trim())
+                    : null,
+                child: _profileUrl.trim().isEmpty
+                    ? const Icon(Icons.restaurant_rounded,
+                        color: Colors.white, size: 28)
+                    : null,
+              ),
+              Positioned(
+                bottom: -2,
+                right: -2,
+                child: GestureDetector(
+                  onTap: _profileBusy ? null : _showPhotoSheet,
+                  child: Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: _brandOrange,
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                    child: _profileBusy
+                        ? const SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.edit, size: 12, color: Colors.white),
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -727,7 +1453,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                         children: [
                           const Icon(Icons.star, size: 14),
                           Text(
-                            ' ${_rating.toStringAsFixed(1)}',
+                            ' ${_rating.toStringAsFixed(1)} · $_reviewCount review${_reviewCount == 1 ? '' : 's'}',
                             style: const TextStyle(
                               fontWeight: FontWeight.w900,
                               fontSize: 12,
@@ -814,15 +1540,16 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
           'Business Overview',
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
+          padding: EdgeInsets.zero,
           itemCount: 4,
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
             crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
+            mainAxisSpacing: 10,
             mainAxisExtent: 74,
           ),
           itemBuilder: (_, i) {
@@ -870,15 +1597,16 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
           'Quick Actions',
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         GridView(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
+          padding: EdgeInsets.zero,
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
             mainAxisExtent: 74,
             crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
+            mainAxisSpacing: 10,
           ),
           children: [
             _FoodQuickActionTile(
@@ -888,28 +1616,11 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
               onTap: _openPostFood,
             ),
             _FoodQuickActionTile(
-              title: 'My menu',
-              icon: Icons.restaurant_menu_rounded,
+              title: 'My orders',
+              icon: Icons.receipt_long_rounded,
               color: _brandNavy,
               onTap: () => _foodTabs.animateTo(2),
             ),
-            // _FoodQuickActionTile(
-            //   title: 'Wallet',
-            //   icon: Icons.account_balance_wallet_outlined,
-            //   color: Colors.green,
-            //   onTap: () {
-            //     Navigator.push(
-            //       context,
-            //       MaterialPageRoute(
-            //         builder: (_) => MerchantWalletPage(
-            //           merchantId: _uid,
-            //           merchantName: _businessName,
-            //           serviceType: 'food',
-            //         ),
-            //       ),
-            //     );
-            //   },
-            // ),
             _FoodQuickActionTile(
               title: 'Browse app',
               icon: Icons.storefront_outlined,
@@ -953,14 +1664,24 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
               },
             ),
             _FoodQuickActionTile(
-              title: 'Logout',
-              icon: Icons.logout_rounded,
-              color: Colors.red,
-              onTap: _logout,
+              title: 'My Vero Ride',
+              icon: Icons.directions_car_filled_rounded,
+              color: Colors.orange,
+              onTap: _openRideHistory,
             ),
           ],
         ),
       ],
+    );
+  }
+
+  void _openRideHistory() {
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            const RideHistoryScreen(mode: RideHistoryMode.passenger),
+      ),
     );
   }
 
@@ -1044,25 +1765,29 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     );
   }
 
-  Widget _buildRecentOrders() {
+  Widget _buildRecentOrders({bool showAll = false}) {
+    final orders = showAll
+        ? _recentOrders
+        : _recentOrders.take(3).toList(growable: false);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text(
-              'Recent orders',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+            Text(
+              showAll ? 'Received orders' : 'Recent orders',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
             ),
-            TextButton(
-              onPressed: () {},
-              child: const Text('View all'),
-            ),
+            if (!showAll)
+              TextButton(
+                onPressed: () => _foodTabs.animateTo(2),
+                child: const Text('View all'),
+              ),
           ],
         ),
         const SizedBox(height: 8),
-        if (_recentOrders.isEmpty)
+        if (orders.isEmpty)
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(20),
@@ -1074,60 +1799,154 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
             child: const Center(child: Text('No orders yet')),
           )
         else
-          ..._recentOrders.take(3).map((order) {
-            final orderMap = order as Map<String, dynamic>;
-            final oid = orderMap['orderId']?.toString() ?? '';
-            final shortId =
-                oid.length > 8 ? oid.substring(0, 8) : (oid.isEmpty ? 'N/A' : oid);
-            return Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: Colors.black12),
-              ),
-              child: ListTile(
-                leading:
-                    const Icon(Icons.restaurant_menu_rounded, color: _brandOrange),
-                title: Text('Order #$shortId'),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Customer: ${orderMap['customerName'] ?? 'N/A'}'),
-                        Text('Amount: MWK ${orderMap['totalAmount'] ?? '0'}'),
-                        Text(
-                          () {
-                            final track =
-                                '${orderMap['courierTrackingNumber'] ?? ''}'
-                                    .trim();
-                            return track.isEmpty
-                                ? 'Vero Courier'
-                                : 'Vero Courier · $track';
-                          }(),
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey.shade700,
-                          ),
-                        ),
-                      ],
-                    ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
+          ...orders.map((order) {
+            final orderMap = Map<String, dynamic>.from(order as Map);
+            return _orderDetailCard(orderMap);
+          }),
+      ],
+    );
+  }
+
+  String _orderItemsSummary(Map<String, dynamic> order) {
+    final raw = order['lineItems'] ?? order['items'] ?? order['cartItems'];
+    if (raw is! List || raw.isEmpty) {
+      final single = (order['foodName'] ?? order['itemName'] ?? '').toString().trim();
+      return single.isEmpty ? 'Food order' : single;
+    }
+    final names = <String>[];
+    for (final e in raw.take(4)) {
+      if (e is! Map) continue;
+      final n = (e['name'] ?? e['FoodName'] ?? e['title'] ?? '').toString().trim();
+      final qty = e['quantity'] ?? e['qty'] ?? 1;
+      if (n.isEmpty) continue;
+      names.add(qty == 1 || qty == '1' ? n : '${qty}x $n');
+    }
+    if (names.isEmpty) return 'Food order';
+    final extra = raw.length - names.length;
+    return extra > 0 ? '${names.join(', ')} +$extra more' : names.join(', ');
+  }
+
+  String _orderWhenLabel(Map<String, dynamic> order) {
+    final raw = order['createdAt'];
+    DateTime? at;
+    if (raw is Timestamp) at = raw.toDate();
+    if (raw is DateTime) at = raw;
+    if (at == null) return '';
+    return DateFormat('dd MMM · HH:mm').format(at.toLocal());
+  }
+
+  Widget _orderDetailCard(Map<String, dynamic> orderMap) {
+    final oid = orderMap['orderId']?.toString() ?? orderMap['id']?.toString() ?? '';
+    final shortId =
+        oid.length > 8 ? oid.substring(0, 8) : (oid.isEmpty ? 'N/A' : oid);
+    final amount = orderMap['totalAmount'] ?? orderMap['totalMwk'] ?? orderMap['total'];
+    final amountNum =
+        amount is num ? amount.toDouble() : double.tryParse('$amount') ?? 0;
+    final customer = (orderMap['customerName'] ?? 'Customer').toString().trim();
+    final address = (orderMap['deliveryAddress'] ??
+            orderMap['dropoffAddress'] ??
+            orderMap['address'] ??
+            '')
+        .toString()
+        .trim();
+    final track = '${orderMap['courierTrackingNumber'] ?? ''}'.trim();
+    final when = _orderWhenLabel(orderMap);
+    final itemsLine = _orderItemsSummary(orderMap);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.black12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: _brandOrange.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.receipt_long_rounded, color: _brandOrange),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
-                    Chip(
-                      label: Text('${orderMap['status'] ?? 'pending'}'),
-                      backgroundColor: _getStatusColor(orderMap['status']),
+                    Expanded(
+                      child: Text(
+                        'Order #$shortId',
+                        style: const TextStyle(fontWeight: FontWeight.w900),
+                      ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.more_vert_rounded),
-                      onPressed: () => _showOrderActions(orderMap),
+                    Chip(
+                      label: Text(
+                        '${orderMap['status'] ?? 'pending'}',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      backgroundColor: _getStatusColor(orderMap['status']),
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      padding: EdgeInsets.zero,
                     ),
                   ],
                 ),
-              ),
-            );
-          }),
-      ],
+                const SizedBox(height: 4),
+                Text(
+                  itemsLine,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Customer: ${customer.isEmpty ? 'N/A' : customer}',
+                  style: TextStyle(fontSize: 12.5, color: Colors.grey.shade700),
+                ),
+                Text(
+                  'Amount: ${_mwk0(amountNum)}',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.green,
+                  ),
+                ),
+                if (address.isNotEmpty)
+                  Text(
+                    'Deliver to: $address',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                  ),
+                Text(
+                  track.isEmpty
+                      ? 'Vero Courier${when.isEmpty ? '' : ' · $when'}'
+                      : 'Vero Courier · $track${when.isEmpty ? '' : ' · $when'}',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.more_vert_rounded),
+            onPressed: () => _showOrderActions(orderMap),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1385,8 +2204,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            'Add dishes to your in-app menu (food only). They appear '
-                            'under My menu after you save.',
+                            'Add dishes to your in-app menu. They appear below after you save.',
                             style: TextStyle(
                               fontSize: 13,
                               color: Colors.grey.shade700,
@@ -1416,16 +2234,31 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
             ),
             icon: const Icon(Icons.edit_note_rounded),
             label: const Text(
-              'Post Food ',
+              'Post food',
               style: TextStyle(fontWeight: FontWeight.w900),
             ),
           ),
+          const SizedBox(height: 20),
+          _buildMenuGrid(),
         ],
       ),
     );
   }
 
-  Widget _buildDashboardTab() {
+  Widget _buildOrdersTab() {
+    return RefreshIndicator(
+      color: _brandOrange,
+      onRefresh: _loadMerchantData,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        child: _buildRecentOrders(showAll: true),
+      ),
+    );
+  }
+
+  Widget _buildProfileTab() {
+    final openNow = MarketplaceShopHours.isOpenNow(_openingHours, _openingDays);
     return RefreshIndicator(
       color: _brandOrange,
       onRefresh: _loadMerchantData,
@@ -1442,29 +2275,258 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
               onTap: _openKycVerification,
             ),
             const SizedBox(height: 12),
-            _buildStatsSection(),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.black12),
+              ),
+              child: Column(
+                children: [
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      CircleAvatar(
+                        radius: 48,
+                        backgroundColor: const Color(0xFFFFF3E5),
+                        backgroundImage: _profileUrl.trim().isNotEmpty
+                            ? NetworkImage(_profileUrl.trim())
+                            : null,
+                        child: _profileUrl.trim().isEmpty
+                            ? const Icon(
+                                Icons.restaurant_rounded,
+                                size: 42,
+                                color: _brandOrange,
+                              )
+                            : null,
+                      ),
+                      Positioned(
+                        bottom: 0,
+                        right: -2,
+                        child: Material(
+                          color: _brandOrange,
+                          shape: const CircleBorder(),
+                          child: InkWell(
+                            customBorder: const CircleBorder(),
+                            onTap: _profileBusy ? null : _showPhotoSheet,
+                            child: Padding(
+                              padding: const EdgeInsets.all(8),
+                              child: _profileBusy
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Icon(
+                                      Icons.camera_alt_rounded,
+                                      size: 16,
+                                      color: Colors.white,
+                                    ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    _businessName,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '$_reviewCount review${_reviewCount == 1 ? '' : 's'} · ${_rating.toStringAsFixed(1)} ★',
+                    style: TextStyle(
+                      color: Colors.grey.shade700,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: openNow
+                          ? const Color(0xFFE7F6EC)
+                          : const Color(0xFFFFEDEE),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      openNow ? 'OPEN now' : 'CLOSED',
+                      style: TextStyle(
+                        color: openNow
+                            ? Colors.green.shade700
+                            : Colors.red.shade700,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
             const SizedBox(height: 12),
-            _buildQuickActionsSection(),
-            const SizedBox(height: 12),
-            _buildWalletSummary(),
-            const SizedBox(height: 12),
-            _buildRecentOrders(),
-            const SizedBox(height: 12),
-            _buildRecentReviews(),
+            _profileEditTile(
+              icon: Icons.storefront_rounded,
+              title: 'Restaurant business name',
+              subtitle: _businessName.trim().isEmpty
+                  ? 'Name customers see on Food'
+                  : _businessName.trim(),
+              onTap: _editBusinessName,
+            ),
+            const SizedBox(height: 10),
+            _profileEditTile(
+              icon: Icons.schedule_rounded,
+              title: 'Business hours',
+              subtitle: _shopHoursSummary,
+              onTap: _editShopHours,
+            ),
+            const SizedBox(height: 10),
+            _profileEditTile(
+              icon: Icons.phone_rounded,
+              title: 'Phone number',
+              subtitle:
+                  _merchantPhone.isNotEmpty ? _merchantPhone : 'Add phone number',
+              onTap: _editPhone,
+            ),
+            const SizedBox(height: 10),
+            _profileEditTile(
+              icon: Icons.location_on_rounded,
+              title: 'Restaurant location',
+              subtitle: _businessLocation.trim().isEmpty
+                  ? 'Type, search, or pin your kitchen location'
+                  : _businessLocation.trim(),
+              onTap: _editBusinessLocation,
+            ),
+            const SizedBox(height: 10),
+            _profileEditTile(
+              icon: Icons.notes_rounded,
+              title: 'Business description',
+              subtitle: _businessDescription.trim().isEmpty
+                  ? 'Tell customers about your kitchen'
+                  : _businessDescription.trim(),
+              onTap: _editBusinessDescription,
+            ),
+            const SizedBox(height: 10),
+            _profileEditTile(
+              icon: Icons.settings_rounded,
+              title: 'Account settings',
+              subtitle: 'Security, notifications, and more',
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => SettingsPage(onBackToHomeTab: () {}),
+                  ),
+                );
+              },
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildMenuTab() {
+  Widget _profileEditTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: _profileBusy ? null : onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(14, 14, 12, 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Colors.black12),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: _brandOrange.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(icon, color: _brandOrange),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 15,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.grey.shade700,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.edit_outlined, color: Colors.black38, size: 18),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDashboardTab() {
     return RefreshIndicator(
       color: _brandOrange,
       onRefresh: _loadMerchantData,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-        child: _buildMenuGrid(),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildModernHeaderCard(),
+            const SizedBox(height: 10),
+            KycStatusCard(
+              snapshot: _kyc,
+              onTap: _openKycVerification,
+            ),
+            const SizedBox(height: 10),
+            _buildStatsSection(),
+            const SizedBox(height: 10),
+            _buildQuickActionsSection(),
+            const SizedBox(height: 10),
+            _buildWalletSummary(),
+            const SizedBox(height: 10),
+            _buildRecentOrders(),
+            const SizedBox(height: 10),
+            _buildRecentReviews(),
+          ],
+        ),
       ),
     );
   }
@@ -1498,13 +2560,26 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
             color: Colors.white,
             child: TabBar(
               controller: _foodTabs,
+              isScrollable: true,
+              tabAlignment: TabAlignment.start,
+              labelPadding: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
               labelColor: _brandOrange,
               unselectedLabelColor: Colors.grey,
               indicatorColor: _brandOrange,
+              labelStyle: const TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 14,
+              ),
+              unselectedLabelStyle: const TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+              ),
               tabs: const [
                 Tab(text: 'Dashboard'),
                 Tab(text: 'Post food'),
                 Tab(text: 'Orders'),
+                Tab(text: 'Profile'),
               ],
             ),
           ),
@@ -1514,7 +2589,8 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
               children: [
                 _buildDashboardTab(),
                 _buildPostFoodTab(),
-                _buildMenuTab(),
+                _buildOrdersTab(),
+                _buildProfileTab(),
               ],
             ),
           ),
@@ -1648,6 +2724,520 @@ class _FoodQuickActionTile extends StatelessWidget {
               const Icon(Icons.chevron_right_rounded, color: Colors.black38),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FoodShopHoursSheet extends StatefulWidget {
+  const _FoodShopHoursSheet({
+    required this.initialOpen,
+    required this.initialClose,
+    required this.initialDays,
+    required this.brandColor,
+  });
+
+  final TimeOfDay initialOpen;
+  final TimeOfDay initialClose;
+  final Set<int> initialDays;
+  final Color brandColor;
+
+  @override
+  State<_FoodShopHoursSheet> createState() => _FoodShopHoursSheetState();
+}
+
+class _FoodPhoneSheet extends StatefulWidget {
+  const _FoodPhoneSheet({
+    required this.initialPhone,
+    required this.brandColor,
+  });
+
+  final String initialPhone;
+  final Color brandColor;
+
+  @override
+  State<_FoodPhoneSheet> createState() => _FoodPhoneSheetState();
+}
+
+class _FoodPhoneSheetState extends State<_FoodPhoneSheet> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialPhone);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 16,
+        bottom: 16 + bottomInset,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Phone number',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Customers and couriers can reach you on this number.',
+              style: TextStyle(
+                color: Colors.grey.shade700,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _controller,
+              keyboardType: TextInputType.phone,
+              autofocus: true,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) =>
+                  Navigator.pop(context, _controller.text.trim()),
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[0-9+\s-]')),
+              ],
+              decoration: InputDecoration(
+                hintText: 'e.g. +265 99 123 4567',
+                filled: true,
+                fillColor: const Color(0xFFF4F6FA),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: widget.brandColor,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              onPressed: () => Navigator.pop(context, _controller.text.trim()),
+              child: const Text(
+                'Save phone',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FoodShopHoursSheetState extends State<_FoodShopHoursSheet> {
+  static const _labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  late TimeOfDay _open;
+  late TimeOfDay _close;
+  late Set<int> _days;
+
+  @override
+  void initState() {
+    super.initState();
+    _open = widget.initialOpen;
+    _close = widget.initialClose;
+    _days = Set<int>.from(widget.initialDays);
+    if (_days.isEmpty) _days = {1, 2, 3, 4, 5, 6, 7};
+  }
+
+  String _fmt(TimeOfDay t) {
+    final h = t.hour.toString().padLeft(2, '0');
+    final m = t.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+
+  Future<void> _pickOpen() async {
+    final t = await showTimePicker(context: context, initialTime: _open);
+    if (t != null) setState(() => _open = t);
+  }
+
+  Future<void> _pickClose() async {
+    final t = await showTimePicker(context: context, initialTime: _close);
+    if (t != null) setState(() => _close = t);
+  }
+
+  void _toggleDay(int day) {
+    setState(() {
+      if (_days.contains(day)) {
+        if (_days.length > 1) _days.remove(day);
+      } else {
+        _days.add(day);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 16,
+        bottom: 16 + bottomInset,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Business hours',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Customers see OPEN or CLOSED based on these days and times.',
+              style: TextStyle(
+                color: Colors.grey.shade700,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (var i = 1; i <= 7; i++)
+                  FilterChip(
+                    label: Text(
+                      _labels[i - 1],
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 12,
+                        color: _days.contains(i)
+                            ? Colors.white
+                            : Colors.grey.shade800,
+                      ),
+                    ),
+                    selected: _days.contains(i),
+                    onSelected: (_) => _toggleDay(i),
+                    selectedColor: widget.brandColor,
+                    backgroundColor: const Color(0xFFF4F6FA),
+                    side: BorderSide(
+                      color: _days.contains(i)
+                          ? widget.brandColor
+                          : Colors.grey.shade300,
+                    ),
+                    showCheckmark: false,
+                  ),
+              ],
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: () => setState(() => _days = {1, 2, 3, 4, 5, 6, 7}),
+                child: Text(
+                  'Every day',
+                  style: TextStyle(
+                    color: widget.brandColor,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _pickOpen,
+                    icon: const Icon(Icons.wb_sunny_outlined, size: 18),
+                    label: Text('Open ${_fmt(_open)}'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _pickClose,
+                    icon: const Icon(Icons.nights_stay_outlined, size: 18),
+                    label: Text('Close ${_fmt(_close)}'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: widget.brandColor,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              onPressed: () => Navigator.pop(
+                context,
+                (open: _open, close: _close, days: Set<int>.from(_days)),
+              ),
+              child: const Text(
+                'Save hours',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FoodBusinessDescriptionSheet extends StatefulWidget {
+  const _FoodBusinessDescriptionSheet({
+    required this.initialText,
+    required this.maxLength,
+    required this.brandColor,
+  });
+
+  final String initialText;
+  final int maxLength;
+  final Color brandColor;
+
+  @override
+  State<_FoodBusinessDescriptionSheet> createState() =>
+      _FoodBusinessDescriptionSheetState();
+}
+
+class _FoodBusinessDescriptionSheetState
+    extends State<_FoodBusinessDescriptionSheet> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialText);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 16,
+        bottom: 16 + bottomInset,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Business description',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Short blurb customers see on your restaurant profile '
+              '(max ${widget.maxLength} characters).',
+              style: TextStyle(
+                color: Colors.grey.shade700,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _controller,
+              maxLength: widget.maxLength,
+              maxLines: 4,
+              minLines: 2,
+              autofocus: true,
+              decoration: InputDecoration(
+                hintText: 'e.g. Home-style Malawian meals, fresh daily',
+                filled: true,
+                fillColor: const Color(0xFFF4F6FA),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: widget.brandColor,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              onPressed: () => Navigator.pop(context, _controller.text.trim()),
+              child: const Text(
+                'Save description',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FoodBusinessNameSheet extends StatefulWidget {
+  const _FoodBusinessNameSheet({
+    required this.initialText,
+    required this.brandColor,
+  });
+
+  final String initialText;
+  final Color brandColor;
+
+  @override
+  State<_FoodBusinessNameSheet> createState() => _FoodBusinessNameSheetState();
+}
+
+class _FoodBusinessNameSheetState extends State<_FoodBusinessNameSheet> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialText);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 16,
+        bottom: 16 + bottomInset,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Restaurant business name',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'This name appears in orange on Food for customers.',
+              style: TextStyle(
+                color: Colors.grey.shade700,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _controller,
+              maxLength: 80,
+              autofocus: true,
+              textCapitalization: TextCapitalization.words,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) =>
+                  Navigator.pop(context, _controller.text.trim()),
+              decoration: InputDecoration(
+                hintText: 'e.g. Queens Tavern Steakhouse',
+                filled: true,
+                fillColor: const Color(0xFFF4F6FA),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: widget.brandColor,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              onPressed: () => Navigator.pop(context, _controller.text.trim()),
+              child: const Text(
+                'Save name',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ],
         ),
       ),
     );

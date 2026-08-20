@@ -37,6 +37,7 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
   final _price = TextEditingController();
   final _desc = TextEditingController();
   final _prep = TextEditingController();
+  final _quantity = TextEditingController(text: '1');
   final _picker = ImagePicker();
   final _photos = <_PickedDishPhoto>[];
   String? _category;
@@ -55,6 +56,7 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
     _price.dispose();
     _desc.dispose();
     _prep.dispose();
+    _quantity.dispose();
     for (final r in _variantRows) {
       r.dispose();
     }
@@ -204,6 +206,10 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
         });
       }
       final prepMins = int.tryParse(_prep.text.trim());
+      final quantity = int.tryParse(_quantity.text.trim()) ?? 0;
+      if (quantity < 1) {
+        throw Exception('Quantity must be at least 1.');
+      }
 
       await _db.collection('food_menu_items').add({
         'merchantId': uid,
@@ -215,6 +221,7 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
         'galleryUrls': gallery,
         'category': _category,
         'isAvailable': _isAvailable,
+        'quantity': quantity,
         if (businessName.isNotEmpty) 'businessName': businessName,
         if (restaurantId != null && restaurantId.isNotEmpty)
           'restaurantId': restaurantId,
@@ -536,6 +543,18 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
                   validator: (v) {
                     final p = double.tryParse(v?.trim() ?? '');
                     if (p == null || p <= 0) return 'Enter a valid price';
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _quantity,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: _decoration('Quantity available'),
+                  validator: (v) {
+                    final q = int.tryParse(v?.trim() ?? '');
+                    if (q == null || q < 1) return 'Enter quantity (at least 1)';
                     return null;
                   },
                 ),

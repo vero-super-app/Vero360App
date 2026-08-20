@@ -216,6 +216,11 @@ class _BottomnavbarState extends State<Bottomnavbar>
 
   Future<void> _fetchAndUpdateRoleFromServer() async {
     final prefs = await SharedPreferences.getInstance();
+    final cachedRole = RoleHelper.normalizeAccountRole(
+      prefs.getString('user_role') ?? prefs.getString('role'),
+    );
+    final cachedService =
+        normalizeMerchantServiceKey(prefs.getString('merchant_service'));
     final token = RoleSessionService.readToken(prefs) ??
         await AuthHandler.getTokenForApi();
     if (token == null || token.isEmpty) return;
@@ -223,8 +228,18 @@ class _BottomnavbarState extends State<Bottomnavbar>
       final result = await RoleSessionService.syncFromServer(
         prefs: prefs,
         token: token,
+        timeout: const Duration(seconds: 6),
       );
-      if (result == null || result.isUnauthorized || !result.hasUser) return;
+      // Offline / timeout: keep the cached merchant food dashboard.
+      if (result == null || result.isUnauthorized || !result.hasUser) {
+        if (cachedRole == RoleHelper.merchant &&
+            !isKnownMerchantServiceKey(cachedService) &&
+            mounted) {
+          await _checkUserRoleAndSetup();
+          if (mounted) setState(() {});
+        }
+        return;
+      }
       await loadDriverStatusFromPrefs();
       final isMerchant = result.isMerchant;
       final isDriver = result.isDriver;
@@ -238,7 +253,9 @@ class _BottomnavbarState extends State<Bottomnavbar>
         await _checkUserRoleAndSetup();
         if (mounted) setState(() {});
       }
-    } catch (_) {}
+    } catch (_) {
+      // Never demote the shell when the network fails mid-sync.
+    }
   }
 
   Future<void> _checkUserRoleAndSetup({bool forcePagesRebuild = false}) async {
@@ -309,7 +326,10 @@ class _BottomnavbarState extends State<Bottomnavbar>
 
   Widget _merchantProfileTab(SharedPreferences prefs) {
     final email = prefs.getString('email') ?? widget.email;
-    final key = normalizeMerchantServiceKey(prefs.getString('merchant_service'));
+    final key = normalizeMerchantServiceKey(prefs.getString('merchant_service')) ??
+        normalizeMerchantServiceKey(
+          prefs.getString('session_intended_merchant_service'),
+        );
     return switch (key) {
       'food' => FoodMerchantDashboard(email: email, embeddedInMainNav: true),
       'accommodation' => AccommodationMerchantDashboard(
@@ -322,7 +342,15 @@ class _BottomnavbarState extends State<Bottomnavbar>
           onBackToHomeTab: () => setState(() => _selectedIndex = 0),
           embeddedInMainNav: true,
         ),
-      _ => const ProfilePage(),
+      // Merchant role is known but vertical not cached yet (offline / slow sync).
+      // Never fall back to the customer Profile tab.
+      _ => _MerchantVerticalRecoveringTab(
+          email: email,
+          onServiceCached: () async {
+            await _checkUserRoleAndSetup(forcePagesRebuild: true);
+            if (mounted) setState(() {});
+          },
+        ),
     };
   }
 
@@ -859,5 +887,114 @@ class _VeroNavButtonState extends State<_VeroNavButton>
         },
       ),
     );
+  }
+}
+
+/// Keeps merchants on a dashboard shell while `merchant_service` is recovered
+/// offline — never swaps them onto the customer Profile tab.
+class _MerchantVerticalRecoveringTab extends StatefulWidget {
+  const _MerchantVerticalRecoveringTab({
+    required this.email,
+    required this.onServiceCached,
+  });
+
+  final String email;
+  final Future<void> Function() onServiceCached;
+
+  @override
+  State<_MerchantVerticalRecoveringTab> createState() =>
+      _MerchantVerticalRecoveringTabState();
+}
+
+class _MerchantVerticalRecoveringTabState
+    extends State<_MerchantVerticalRecoveringTab> {
+  String? _service;
+  bool _resolving = true;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_resolve());
+  }
+
+  Future<void> _resolve() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      var key = normalizeMerchantServiceKey(prefs.getString('merchant_service')) ??
+          normalizeMerchantServiceKey(
+            prefs.getString('session_intended_merchant_service'),
+          );
+      if (!isKnownMerchantServiceKey(key)) {
+        final uid = FirebaseAuth.instance.currentUser?.uid.trim() ??
+            (prefs.getString('uid') ?? '').trim();
+        if (uid.isNotEmpty) {
+          key = await resolveMerchantServiceForUid(uid)
+              .timeout(const Duration(seconds: 5), onTimeout: () => null);
+        }
+      }
+      if (isKnownMerchantServiceKey(key)) {
+        await prefs.setString('merchant_service', key!);
+        if (!mounted) return;
+        setState(() {
+          _service = key;
+          _resolving = false;
+        });
+        await widget.onServiceCached();
+        return;
+      }
+    } catch (_) {}
+    if (!mounted) return;
+    // Last resort offline: keep a merchant shell (food) instead of customer Profile.
+    setState(() {
+      _service = 'food';
+      _resolving = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_resolving) {
+      return const Scaffold(
+        backgroundColor: Color(0xFFF3F4F7),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.5,
+                  color: Color(0xFFFF8A00),
+                ),
+              ),
+              SizedBox(height: 14),
+              Text(
+                'Loading merchant dashboard…',
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF16284C),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final email = widget.email;
+    return switch (_service) {
+      'accommodation' => AccommodationMerchantDashboard(
+          email: email,
+          embeddedInMainNav: true,
+        ),
+      'courier' => CourierMerchantDashboard(email: email),
+      'marketplace' => MarketplaceMerchantDashboard(
+          email: email,
+          onBackToHomeTab: () {},
+          embeddedInMainNav: true,
+        ),
+      _ => FoodMerchantDashboard(email: email, embeddedInMainNav: true),
+    };
   }
 }

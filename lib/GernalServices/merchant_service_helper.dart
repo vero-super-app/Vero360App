@@ -125,6 +125,11 @@ Future<String?> resolveMerchantServiceForUid(String uid) async {
     if (intendedUid == id && isKnownMerchantServiceKey(intendedService)) {
       return intendedService;
     }
+    // Offline / flaky network: never drop a known local vertical.
+    final cached = normalizeMerchantServiceKey(prefs.getString('merchant_service'));
+    if (isKnownMerchantServiceKey(cached)) {
+      return cached;
+    }
   } catch (_) {}
 
   String? fromUsers;
@@ -133,28 +138,37 @@ Future<String?> resolveMerchantServiceForUid(String uid) async {
         .collection('users')
         .doc(id)
         .get()
-        .timeout(const Duration(seconds: 8));
+        .timeout(const Duration(seconds: 4));
     if (doc.exists && doc.data() != null) {
       fromUsers = _merchantServiceFromUserMap(doc.data()!);
     }
   } catch (_) {}
   if (isKnownMerchantServiceKey(fromUsers)) return fromUsers;
 
-  const services = ['marketplace', 'food', 'accommodation', 'courier'];
-  for (final service in services) {
-    try {
-      final collectionName = merchantCollectionForService(service)!;
-      final merchantDoc = await FirebaseFirestore.instance
-          .collection(collectionName)
-          .doc(id)
-          .get()
-          .timeout(const Duration(seconds: 5));
-      if (merchantDoc.exists &&
-          looksLikeRealMerchantShopDoc(merchantDoc.data())) {
-        return service;
-      }
-    } catch (_) {}
-  }
+  // Parallel probe — stop as soon as one vertical matches (faster on weak networks).
+  const services = ['food', 'marketplace', 'accommodation', 'courier'];
+  try {
+    final probes = await Future.wait(
+      services.map((service) async {
+        try {
+          final collectionName = merchantCollectionForService(service)!;
+          final merchantDoc = await FirebaseFirestore.instance
+              .collection(collectionName)
+              .doc(id)
+              .get()
+              .timeout(const Duration(seconds: 3));
+          if (merchantDoc.exists &&
+              looksLikeRealMerchantShopDoc(merchantDoc.data())) {
+            return service;
+          }
+        } catch (_) {}
+        return null;
+      }),
+    );
+    for (final hit in probes) {
+      if (isKnownMerchantServiceKey(hit)) return hit;
+    }
+  } catch (_) {}
   return null;
 }
 

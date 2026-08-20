@@ -10,6 +10,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/Latest_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/MarkeplaceMerchantServices/latest_Services.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 // ===== Latest Arrivals (API + Firestore image + Cart + Bottomsheet) =====
@@ -291,7 +292,10 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
                   padding: const EdgeInsets.symmetric(vertical: 24),
                   child: Center(
                     child: Text(
-                      'Could not load arrivals.\n${snap.error}',
+                      UserFacingError.from(
+                        snap.error,
+                        fallback: 'Could not load arrivals. Please try again.',
+                      ),
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.red),
                     ),

@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -77,12 +76,18 @@ class DriverOnlineToggle extends StatelessWidget {
 }
 
 class DriverEarningsSummaryCard extends StatelessWidget {
-  final String amountLabel;
-  final String? trendLabel;
+  final String todayAmountLabel;
+  final int todayTrips;
+  final String weekAmountLabel;
+  final int weekTrips;
+  final bool loading;
 
   const DriverEarningsSummaryCard({
-    required this.amountLabel,
-    this.trendLabel,
+    required this.todayAmountLabel,
+    required this.todayTrips,
+    required this.weekAmountLabel,
+    required this.weekTrips,
+    this.loading = false,
     super.key,
   });
 
@@ -90,7 +95,7 @@ class DriverEarningsSummaryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
@@ -101,7 +106,7 @@ class DriverEarningsSummaryCard extends StatelessWidget {
             RideShareColors.primaryDark,
           ],
         ),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
             color: RideShareColors.primary.withValues(alpha: 0.28),
@@ -114,67 +119,137 @@ class DriverEarningsSummaryCard extends StatelessWidget {
       child: Stack(
         children: [
           Positioned(
-            right: -18,
-            bottom: -24,
+            right: -16,
+            bottom: -20,
             child: Icon(
-              Icons.payments_outlined,
-              size: 120,
+              Icons.account_balance_wallet_rounded,
+              size: 110,
               color: Colors.white.withValues(alpha: 0.08),
             ),
           ),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                "TODAY'S EARNINGS",
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.65),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.8,
-                ),
+              Row(
+                children: [
+                  Text(
+                    "TODAY'S EARNINGS",
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.7),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                  const Spacer(),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: Colors.white.withValues(alpha: 0.75),
+                    size: 22,
+                  ),
+                ],
               ),
               const SizedBox(height: 6),
+              if (loading)
+                Container(
+                  height: 36,
+                  width: 140,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                )
+              else
+                Text(
+                  todayAmountLabel,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 34,
+                    fontWeight: FontWeight.w900,
+                    height: 1.05,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+              const SizedBox(height: 6),
               Text(
-                amountLabel,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 36,
-                  fontWeight: FontWeight.w900,
-                  height: 1.05,
+                loading
+                    ? 'Loading…'
+                    : todayTrips == 0
+                        ? 'No trips completed today'
+                        : '$todayTrips trip${todayTrips == 1 ? '' : 's'} today',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.85),
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
                 ),
               ),
-              if (trendLabel != null) ...[
-                const SizedBox(height: 10),
-                Row(
+              const SizedBox(height: 14),
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Row(
                   children: [
-                    const Icon(
-                      Icons.trending_up,
-                      size: 16,
-                      color: RideShareColors.primary,
+                    Expanded(
+                      child: _miniStat(
+                        'This week',
+                        loading ? '—' : weekAmountLabel,
+                      ),
                     ),
-                    const SizedBox(width: 4),
-                    Flexible(
-                      child: Text(
-                        trendLabel!,
-                        style: const TextStyle(
-                          color: RideShareColors.primary,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 12,
-                        ),
+                    Container(
+                      width: 1,
+                      height: 28,
+                      color: Colors.white.withValues(alpha: 0.25),
+                    ),
+                    Expanded(
+                      child: _miniStat(
+                        'Week trips',
+                        loading ? '—' : '$weekTrips',
+                        alignEnd: true,
                       ),
                     ),
                   ],
                 ),
-              ],
+              ),
             ],
           ),
         ],
       ),
     );
   }
+
+  Widget _miniStat(String label, String value, {bool alignEnd = false}) {
+    return Column(
+      crossAxisAlignment:
+          alignEnd ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.65),
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 15,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    );
+  }
 }
 
+/// Motivational daily trip target — progress uses real completed trips.
 class DriverTripsProgressCard extends StatelessWidget {
   final int trips;
   final int target;
@@ -188,6 +263,7 @@ class DriverTripsProgressCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final progress = target <= 0 ? 0.0 : (trips / target).clamp(0.0, 1.0);
+    final remaining = (target - trips).clamp(0, target);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(18),
@@ -195,13 +271,6 @@ class DriverTripsProgressCard extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: RideShareColors.outlineVariant),
-        boxShadow: [
-          BoxShadow(
-            color: RideShareColors.primaryContainer.withValues(alpha: 0.06),
-            blurRadius: 16,
-            offset: const Offset(0, 6),
-          ),
-        ],
       ),
       child: Row(
         children: [
@@ -210,7 +279,7 @@ class DriverTripsProgressCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'TRIPS COMPLETED',
+                  'DAILY TRIP GOAL',
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
@@ -219,20 +288,39 @@ class DriverTripsProgressCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 6),
-                Text(
-                  '$trips',
-                  style: const TextStyle(
-                    fontSize: 32,
-                    fontWeight: FontWeight.w900,
-                    color: RideShareColors.titleText,
-                    height: 1,
+                Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(
+                        text: '$trips',
+                        style: const TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.w900,
+                          color: RideShareColors.titleText,
+                          height: 1,
+                        ),
+                      ),
+                      TextSpan(
+                        text: ' / $target',
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          color: RideShareColors.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'Target: $target trips',
+                  progress >= 1
+                      ? 'Goal reached — great work!'
+                      : remaining == 1
+                          ? '1 more trip to hit today’s goal'
+                          : '$remaining more trips to hit today’s goal',
                   style: const TextStyle(
-                    fontSize: 12,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
                     color: RideShareColors.onSurfaceVariant,
                   ),
                 ),
@@ -280,7 +368,7 @@ class _RingPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = math.min(size.width, size.height) / 2 - 5;
+    final radius = (size.shortestSide / 2) - 5;
     final track = Paint()
       ..color = trackColor
       ..style = PaintingStyle.stroke
@@ -295,8 +383,8 @@ class _RingPainter extends CustomPainter {
     canvas.drawCircle(center, radius, track);
     canvas.drawArc(
       Rect.fromCircle(center: center, radius: radius),
-      -math.pi / 2,
-      2 * math.pi * progress,
+      -3.1415926535 / 2,
+      2 * 3.1415926535 * progress,
       false,
       prog,
     );
@@ -304,9 +392,11 @@ class _RingPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _RingPainter oldDelegate) =>
-      oldDelegate.progress != progress;
+      oldDelegate.progress != progress ||
+      oldDelegate.progressColor != progressColor;
 }
 
+/// Motivational weekly earnings target — earned value is real API data.
 class DriverWeeklyGoalCard extends StatelessWidget {
   final double earned;
   final double goal;
@@ -329,13 +419,6 @@ class DriverWeeklyGoalCard extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: RideShareColors.outlineVariant),
-        boxShadow: [
-          BoxShadow(
-            color: RideShareColors.primaryContainer.withValues(alpha: 0.05),
-            blurRadius: 14,
-            offset: const Offset(0, 5),
-          ),
-        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -344,9 +427,9 @@ class DriverWeeklyGoalCard extends StatelessWidget {
             children: [
               const Expanded(
                 child: Text(
-                  'Weekly Goal',
+                  'Weekly earnings goal',
                   style: TextStyle(
-                    fontSize: 17,
+                    fontSize: 16,
                     fontWeight: FontWeight.w800,
                     color: RideShareColors.titleText,
                   ),
@@ -355,19 +438,20 @@ class DriverWeeklyGoalCard extends StatelessWidget {
               Icon(
                 Icons.emoji_events_rounded,
                 color: RideShareColors.primary.withValues(alpha: 0.9),
-                size: 28,
+                size: 26,
               ),
             ],
           ),
           const SizedBox(height: 4),
           Text(
-            'MK ${money.format(earned)} / MK ${money.format(goal)}',
+            'MK ${money.format(earned)} of MK ${money.format(goal)}',
             style: const TextStyle(
               color: RideShareColors.onSurfaceVariant,
               fontSize: 13,
+              fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
             child: LinearProgressIndicator(
@@ -378,28 +462,16 @@ class DriverWeeklyGoalCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 10),
-          Text.rich(
-            TextSpan(
-              children: [
-                TextSpan(
-                  text: '$pct% Complete',
-                  style: const TextStyle(
-                    color: RideShareColors.primaryDeep,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 12,
-                  ),
-                ),
-                TextSpan(
-                  text: progress >= 1
-                      ? '  Goal crushed!'
-                      : '  Keep going for your bonus',
-                  style: const TextStyle(
-                    color: RideShareColors.onSurfaceVariant,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
+          Text(
+            progress >= 1
+                ? 'Goal crushed — new stretch target unlocked'
+                : '$pct% there — keep driving to hit this week’s goal',
+            style: TextStyle(
+              color: progress >= 1
+                  ? RideShareColors.primaryDeep
+                  : RideShareColors.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
+              fontSize: 12.5,
             ),
           ),
         ],
@@ -411,12 +483,10 @@ class DriverWeeklyGoalCard extends StatelessWidget {
 class DriverRatingCard extends StatelessWidget {
   final double rating;
   final int totalRides;
-  final bool isVerified;
 
   const DriverRatingCard({
     required this.rating,
     required this.totalRides,
-    this.isVerified = false,
     super.key,
   });
 
@@ -425,34 +495,40 @@ class DriverRatingCard extends StatelessWidget {
     final filled = rating.floor().clamp(0, 5);
     final half = (rating - filled) >= 0.4;
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: RideShareColors.outlineVariant),
-        boxShadow: [
-          BoxShadow(
-            color: RideShareColors.primaryContainer.withValues(alpha: 0.05),
-            blurRadius: 14,
-            offset: const Offset(0, 5),
-          ),
-        ],
       ),
       child: Row(
         children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: RideShareColors.primarySoft,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(
+              Icons.star_rounded,
+              color: RideShareColors.primaryDeep,
+            ),
+          ),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Driver Rating',
+                  'Your rating',
                   style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w800,
-                    color: RideShareColors.titleText,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: RideShareColors.onSurfaceVariant,
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 2),
                 Row(
                   children: [
                     for (var i = 0; i < 5; i++)
@@ -463,57 +539,29 @@ class DriverRatingCard extends StatelessWidget {
                                 ? Icons.star_half_rounded
                                 : Icons.star_outline_rounded),
                         color: RideShareColors.primary,
-                        size: 22,
+                        size: 18,
                       ),
                     const SizedBox(width: 8),
                     Text(
-                      rating > 0 ? rating.toStringAsFixed(2) : '—',
+                      rating > 0 ? rating.toStringAsFixed(1) : '—',
                       style: const TextStyle(
-                        fontSize: 26,
+                        fontSize: 18,
                         fontWeight: FontWeight.w900,
                         color: RideShareColors.titleText,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  totalRides > 0
-                      ? 'Across $totalRides trips on Vero Ride'
-                      : 'Complete trips to build your rating',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: RideShareColors.onSurfaceVariant,
-                  ),
-                ),
               ],
             ),
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                isVerified ? 'Verified' : 'Rising',
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: RideShareColors.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                rating >= 4.8
-                    ? 'Gold Tier'
-                    : rating >= 4.5
-                        ? 'Silver Tier'
-                        : 'Starter',
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  color: RideShareColors.titleText,
-                ),
-              ),
-            ],
+          Text(
+            totalRides == 0 ? 'No trips yet' : '$totalRides trips',
+            style: const TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w700,
+              color: RideShareColors.onSurfaceVariant,
+            ),
           ),
         ],
       ),

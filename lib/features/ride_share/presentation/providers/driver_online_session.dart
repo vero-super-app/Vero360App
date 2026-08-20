@@ -254,6 +254,10 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
     }
   }
 
+  void noteLastPosition(Position position) {
+    state = state.copyWith(lastPosition: position);
+  }
+
   Map<String, dynamic>? _primaryTaxi(
     Map<String, dynamic> driver, {
     int? preferId,

@@ -1,6 +1,12 @@
+import 'dart:io';
+
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vero360_app/GernalServices/profile_photo_cache.dart';
 import 'package:vero360_app/features/ride_share/core/fleet_date_picker.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/become_driver_page.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/edit_driver_details_screen.dart';
@@ -8,7 +14,9 @@ import 'package:vero360_app/features/ride_share/presentation/pages/edit_taxi_scr
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_online_session.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_skeleton_loaders.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 /// Central place for drivers to manage profile, documents, payout info and vehicles.
 class DriverProfileHubScreen extends ConsumerStatefulWidget {
@@ -21,15 +29,23 @@ class DriverProfileHubScreen extends ConsumerStatefulWidget {
 
 class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     with SingleTickerProviderStateMixin {
-  static const Color _brandOrange = Color(0xFFFF8A00);
-  static const Color _chipGrey = Color(0xFFF4F5F7);
+  // Calm HCI palette — orange only as accent / CTA.
+  static const Color _accent = Color(0xFFFF8A00);
+  static const Color _ink = Color(0xFF162033);
+  static const Color _muted = Color(0xFF6B7280);
+  static const Color _pageBg = Color(0xFFF5F6F8);
+  static const Color _cardBorder = Color(0xFFE8EAEE);
+  static const Color _chipGrey = Color(0xFFF3F4F6);
 
   late final TabController _tabs;
+  String _localPhotoUrl = '';
+  String? _localPhotoPath;
 
   @override
   void initState() {
     super.initState();
     _tabs = TabController(length: 2, vsync: this);
+    _loadLocalPhoto();
   }
 
   @override
@@ -38,13 +54,95 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     super.dispose();
   }
 
+  Future<void> _loadLocalPhoto() async {
+    final prefs = await SharedPreferences.getInstance();
+    final url = (prefs.getString('profilepicture') ??
+            prefs.getString('profilePicture') ??
+            '')
+        .trim();
+    final localPath = url.isEmpty
+        ? null
+        : await ProfilePhotoCache.peekLocalPath(forRemoteUrl: url);
+
+    if (!mounted) return;
+    setState(() {
+      _localPhotoUrl = url;
+      _localPhotoPath = localPath;
+    });
+
+    // Warm disk + memory cache so the avatar is instant next open.
+    if (url.startsWith('http')) {
+      // ignore: unawaited_futures
+      ProfilePhotoCache.ensureCached(url).then((file) {
+        if (!mounted || file == null) return;
+        if (_localPhotoPath != file.path) {
+          setState(() => _localPhotoPath = file.path);
+        }
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        precacheImage(
+          CachedNetworkImageProvider(url, maxWidth: 192, maxHeight: 192),
+          context,
+        );
+      });
+    }
+  }
+
   void _reload() => ref.invalidate(myDriverProfileProvider);
+
+  /// Strict admin-verified flag — never treat missing/1/status as verified.
+  bool _isTrulyVerified(Map<String, dynamic> source) {
+    final v = source['isVerified'] ?? source['verified'];
+    if (v == true) return true;
+    if (v is String && v.toLowerCase().trim() == 'true') return true;
+    return false;
+  }
 
   bool _bool(dynamic v) {
     if (v is bool) return v;
     if (v is String) return v.toLowerCase() == 'true' || v == '1';
     if (v is num) return v != 0;
     return false;
+  }
+
+  String _photoFrom(Map<String, dynamic> user, Map<String, dynamic> driver) {
+    // Prefer already-known account photo first (instant from prefs / cache).
+    for (final raw in [
+      _localPhotoUrl,
+      user['profilepicture'],
+      user['profilePicture'],
+      user['photoURL'],
+      user['photoUrl'],
+      user['avatar'],
+      driver['profilepicture'],
+      driver['profilePicture'],
+      driver['photoUrl'],
+      driver['avatar'],
+    ]) {
+      final s = (raw ?? '').toString().trim();
+      if (s.isEmpty) continue;
+      if (s.startsWith('http') || s.startsWith('file')) return s;
+    }
+    return '';
+  }
+
+  ({String label, Color color}) _verificationChip(
+    Map<String, dynamic> driver, {
+    required bool isVerified,
+  }) {
+    final status = (driver['status'] ?? '').toString().toUpperCase().trim();
+    if (status.contains('REJECT')) {
+      return (label: 'Rejected', color: const Color(0xFFC62828));
+    }
+    if (status.contains('PENDING') || status.contains('REVIEW')) {
+      return (label: 'Pending review', color: const Color(0xFFB45309));
+    }
+    // Require explicit admin flag + active/verified status (not a soft default).
+    if (isVerified && (status == 'ACTIVE' || status == 'VERIFIED')) {
+      return (label: 'Verified', color: const Color(0xFF059669));
+    }
+    return (label: 'Not verified', color: const Color(0xFFB45309));
   }
 
   num _num(dynamic v) {
@@ -64,7 +162,6 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     if (raw is! List) return [];
     final all =
         raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-    // One vehicle per driver — use the primary (first) record only in UI.
     if (all.isEmpty) return [];
     return [all.first];
   }
@@ -74,38 +171,68 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     final profile = ref.watch(myDriverProfileProvider);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F7),
+      backgroundColor: _pageBg,
       appBar: AppBar(
-        backgroundColor: _brandOrange,
-        foregroundColor: Colors.white,
+        backgroundColor: Colors.white,
+        foregroundColor: _ink,
         elevation: 0,
+        surfaceTintColor: Colors.transparent,
         title: const Text(
           'Driver Center',
-          style: TextStyle(fontWeight: FontWeight.w900),
+          style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: -0.2),
         ),
-        bottom: TabBar(
-          controller: _tabs,
-          indicatorColor: Colors.white,
-          indicatorWeight: 3,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
-          labelStyle: const TextStyle(fontWeight: FontWeight.w800),
-          tabs: const [
-            Tab(text: 'Driver Profile'),
-            Tab(text: 'My Vehicle'),
-          ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(49),
+          child: Column(
+            children: [
+              TabBar(
+                controller: _tabs,
+                indicatorColor: _accent,
+                indicatorWeight: 2.5,
+                indicatorSize: TabBarIndicatorSize.label,
+                labelColor: _ink,
+                unselectedLabelColor: _muted,
+                labelStyle: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 14,
+                ),
+                unselectedLabelStyle: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                ),
+                tabs: const [
+                  Tab(text: 'Profile'),
+                  Tab(text: 'Vehicle'),
+                ],
+              ),
+              const Divider(height: 1, color: _cardBorder),
+            ],
+          ),
         ),
       ),
       body: profile.when(
         loading: () => AnimatedBuilder(
           animation: _tabs,
           builder: (_, __) {
-            return _tabs.index == 0
-                ? const DriverCenterProfileTabSkeleton()
-                : const DriverCenterVehicleTabSkeleton();
+            if (_tabs.index != 0) {
+              return const DriverCenterVehicleTabSkeleton();
+            }
+            // Cached avatar shows immediately; rest of tab still shimmers.
+            return Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                  child: _avatarHeaderPlaceholder(),
+                ),
+                const SizedBox(height: 12),
+                const Expanded(
+                  child: DriverCenterProfileTabSkeleton(skipProfileHeader: true),
+                ),
+              ],
+            );
           },
         ),
-        error: (e, _) => _errorState(e.toString()),
+        error: (e, _) => _errorState(e),
         data: (driver) {
           if (driver.isEmpty || driver['id'] == null) {
             return _noProfileState();
@@ -126,17 +253,22 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     final user = driver['user'] is Map
         ? Map<String, dynamic>.from(driver['user'] as Map)
         : <String, dynamic>{};
-    final isVerified = _bool(driver['isVerified']);
+    final isVerified = _isTrulyVerified(driver);
     final taxis = _taxisFromDriver(driver);
-    final setupComplete = isVerified && taxis.isNotEmpty;
+    final chip = _verificationChip(driver, isVerified: isVerified);
+    final looksVerified = chip.label == 'Verified';
+    final setupComplete = looksVerified && taxis.isNotEmpty;
 
     return RefreshIndicator(
-      color: _brandOrange,
-      onRefresh: () async => _reload(),
+      color: _accent,
+      onRefresh: () async {
+        await _loadLocalPhoto();
+        _reload();
+      },
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
         children: [
-          if (!setupComplete) _setupBanner(isVerified, taxis.isNotEmpty),
+          if (!setupComplete) _setupBanner(looksVerified, taxis.isNotEmpty),
           _profileHeader(driver, user, isVerified),
           const SizedBox(height: 12),
           _statsRow(driver),
@@ -177,33 +309,33 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
           ],
           const SizedBox(height: 20),
           SizedBox(
-            height: 48,
+            height: 50,
             child: FilledButton.icon(
               onPressed: () => _openEditDriver(driver),
-              icon: const Icon(Icons.edit_outlined),
+              icon: const Icon(Icons.edit_outlined, size: 20),
               label: const Text('Edit driver details'),
               style: FilledButton.styleFrom(
-                backgroundColor: _brandOrange,
+                backgroundColor: _ink,
                 foregroundColor: Colors.white,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(14),
                 ),
               ),
             ),
           ),
-          if (!isVerified) ...[
+          if (!looksVerified) ...[
             const SizedBox(height: 10),
             SizedBox(
-              height: 48,
+              height: 50,
               child: OutlinedButton.icon(
                 onPressed: _openVerificationWizard,
                 icon: const Icon(Icons.verified_outlined),
                 label: const Text('Complete verification'),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.green.shade700,
-                  side: BorderSide(color: Colors.green.shade400),
+                  foregroundColor: _ink,
+                  side: const BorderSide(color: _cardBorder),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(14),
                   ),
                 ),
               ),
@@ -218,7 +350,7 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     final taxis = _taxisFromDriver(driver);
 
     return RefreshIndicator(
-      color: _brandOrange,
+      color: _accent,
       onRefresh: () async => _reload(),
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
@@ -228,28 +360,24 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
             style: TextStyle(
               fontWeight: FontWeight.w800,
               fontSize: 16,
-              color: _brandOrange,
+              color: _ink,
             ),
           ),
           const SizedBox(height: 4),
-          Text(
+          const Text(
             'Each driver can register one vehicle on VeroRide.',
-            style: TextStyle(color: Colors.grey.shade600, fontSize: 12.5),
+            style: TextStyle(color: _muted, fontSize: 13, height: 1.35),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           if (taxis.isEmpty)
             _emptyVehicles()
           else ...[
             _vehicleCard(taxis.first),
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
+            const Padding(
+              padding: EdgeInsets.only(top: 10),
               child: Text(
                 'To use a different car, edit your vehicle details above.',
-                style: TextStyle(
-                  color: Colors.grey.shade600,
-                  fontSize: 12,
-                  height: 1.35,
-                ),
+                style: TextStyle(color: _muted, fontSize: 12.5, height: 1.35),
               ),
             ),
           ],
@@ -264,44 +392,88 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     if (!hasTaxi) steps.add('Register your vehicle');
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFE8CC),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFFF8A00).withValues(alpha: 0.45)),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            _accent.withValues(alpha: 0.18),
+            _accent.withValues(alpha: 0.08),
+            Colors.white,
+          ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _accent.withValues(alpha: 0.55), width: 1.4),
+        boxShadow: [
+          BoxShadow(
+            color: _accent.withValues(alpha: 0.18),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
-              Icon(Icons.info_outline, color: Color(0xFFD94F00), size: 20),
-              SizedBox(width: 8),
-              Text(
-                'Complete your setup',
-                style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFFD94F00),
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: _accent,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.flag_rounded,
+                  color: Colors.white,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Finish setup to go online',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF9A4A00),
+                    fontSize: 16,
+                    letterSpacing: -0.2,
+                  ),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 8),
+          Text(
+            'Complete these steps so passengers can find you.',
+            style: TextStyle(
+              color: _ink.withValues(alpha: 0.72),
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 12),
           ...steps.map(
             (s) => Padding(
-              padding: const EdgeInsets.only(bottom: 4),
+              padding: const EdgeInsets.only(bottom: 8),
               child: Row(
                 children: [
-                  const Icon(Icons.radio_button_unchecked,
-                      size: 14, color: Color(0xFFD94F00)),
-                  const SizedBox(width: 8),
+                  Icon(
+                    Icons.radio_button_unchecked,
+                    size: 16,
+                    color: _accent.withValues(alpha: 0.9),
+                  ),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       s,
                       style: const TextStyle(
-                        color: Color(0xFF9A3A00),
-                        fontSize: 13,
+                        color: _ink,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
@@ -314,59 +486,38 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     );
   }
 
-  Widget _profileHeader(
-    Map<String, dynamic> driver,
-    Map<String, dynamic> user,
-    bool isVerified,
-  ) {
-    final name = (user['name'] ?? 'Driver').toString();
-    final photo = (user['profilepicture'] ?? '').toString();
-
+  Widget _avatarHeaderPlaceholder() {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 12,
-            offset: const Offset(0, 6),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _cardBorder),
       ),
       child: Row(
         children: [
-          CircleAvatar(
-            radius: 32,
-            backgroundColor: _brandOrange.withValues(alpha: 0.12),
-            backgroundImage: photo.isNotEmpty ? NetworkImage(photo) : null,
-            child: photo.isEmpty
-                ? const Icon(Icons.person, color: _brandOrange, size: 32)
-                : null,
-          ),
+          _avatar(_localPhotoUrl),
           const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  name,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 17,
-                    color: _brandOrange,
+                Container(
+                  height: 16,
+                  width: 140,
+                  decoration: BoxDecoration(
+                    color: _chipGrey,
+                    borderRadius: BorderRadius.circular(6),
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  'Driver #${driver['id']}',
-                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                ),
                 const SizedBox(height: 8),
-                _statusChip(
-                  isVerified ? 'Verified driver' : 'Pending verification',
-                  isVerified ? Colors.green : _brandOrange,
+                Container(
+                  height: 12,
+                  width: 90,
+                  decoration: BoxDecoration(
+                    color: _chipGrey,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
                 ),
               ],
             ),
@@ -376,13 +527,125 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     );
   }
 
-  Widget _statsRow(Map<String, dynamic> driver) {
+  Widget _profileHeader(
+    Map<String, dynamic> driver,
+    Map<String, dynamic> user,
+    bool isVerified,
+  ) {
+    final name = (user['name'] ??
+            user['fullName'] ??
+            user['fullname'] ??
+            driver['fullName'] ??
+            'Driver')
+        .toString()
+        .trim();
+    final photo = _photoFrom(user, driver);
+    final chip = _verificationChip(driver, isVerified: isVerified);
+
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E6EF)),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _cardBorder),
+      ),
+      child: Row(
+        children: [
+          _avatar(photo),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name.isEmpty ? 'Driver' : name,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                    color: _ink,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                const Text(
+                  'VeroRide driver',
+                  style: TextStyle(color: _muted, fontSize: 12.5),
+                ),
+                const SizedBox(height: 8),
+                _statusChip(chip.label, chip.color),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _avatar(String photo) {
+    const size = 64.0;
+    final local = _localPhotoPath;
+    final hasLocal = !kIsWeb &&
+        local != null &&
+        local.isNotEmpty &&
+        File(local).existsSync();
+
+    Widget child;
+    if (hasLocal) {
+      child = Image.file(
+        File(local),
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) {
+          if (photo.isEmpty) {
+            return const Icon(Icons.person_rounded, color: _muted, size: 32);
+          }
+          return ResilientCachedNetworkImage(
+            url: photo,
+            width: size,
+            height: size,
+            fit: BoxFit.cover,
+            memCacheWidth: 192,
+            showSpinner: false,
+            placeholderColor: _chipGrey,
+          );
+        },
+      );
+    } else if (photo.isNotEmpty) {
+      child = ResilientCachedNetworkImage(
+        url: photo,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        memCacheWidth: 192,
+        showSpinner: false,
+        placeholderColor: _chipGrey,
+      );
+    } else {
+      child = const Icon(Icons.person_rounded, color: _muted, size: 32);
+    }
+
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: _chipGrey,
+        border: Border.all(color: _cardBorder),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: child,
+    );
+  }
+
+  Widget _statsRow(Map<String, dynamic> driver) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _cardBorder),
       ),
       child: Row(
         children: [
@@ -403,15 +666,16 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
           Text(
             value,
             style: const TextStyle(
-              fontWeight: FontWeight.w900,
-              fontSize: 16,
-              color: _brandOrange,
+              fontWeight: FontWeight.w800,
+              fontSize: 17,
+              color: _ink,
+              letterSpacing: -0.3,
             ),
           ),
-          const SizedBox(height: 2),
+          const SizedBox(height: 3),
           Text(
             label,
-            style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+            style: const TextStyle(fontSize: 11.5, color: _muted),
           ),
         ],
       ),
@@ -421,7 +685,7 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
   Widget _divider() => Container(
         width: 1,
         height: 36,
-        color: const Color(0xFFE2E6EF),
+        color: _cardBorder,
       );
 
   Widget _infoSection({
@@ -430,49 +694,51 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     required List<_InfoRow> rows,
   }) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E6EF)),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _cardBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(icon, size: 18, color: _brandOrange),
+              Icon(icon, size: 18, color: _muted),
               const SizedBox(width: 8),
               Text(
                 title,
                 style: const TextStyle(
                   fontWeight: FontWeight.w800,
-                  color: _brandOrange,
+                  color: _ink,
+                  fontSize: 14.5,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           ...rows.map(
             (r) => Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.only(bottom: 10),
               child: r.label.isEmpty
                   ? Text(
                       r.value,
-                      style: TextStyle(
-                        color: Colors.grey.shade800,
-                        height: 1.4,
+                      style: const TextStyle(
+                        color: _ink,
+                        height: 1.45,
+                        fontSize: 14,
                       ),
                     )
                   : Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         SizedBox(
-                          width: 110,
+                          width: 112,
                           child: Text(
                             r.label,
-                            style: TextStyle(
-                              color: Colors.grey.shade600,
+                            style: const TextStyle(
+                              color: _muted,
                               fontSize: 13,
                             ),
                           ),
@@ -482,7 +748,8 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
                             r.value,
                             style: const TextStyle(
                               fontWeight: FontWeight.w600,
-                              color: _brandOrange,
+                              color: _ink,
+                              fontSize: 13.5,
                             ),
                           ),
                         ),
@@ -500,10 +767,19 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     final plate = (taxi['licensePlate'] ?? '').toString();
     final taxiClass = (taxi['taxiClass'] ?? 'STANDARD').toString();
     final isAvailable = _bool(taxi['isAvailable']);
-    final isVerified = _bool(taxi['isVerified']);
+    final isVerified = _isTrulyVerified(taxi);
+    final taxiStatus = (taxi['status'] ?? '').toString().toUpperCase();
+    final taxiChip = () {
+      if (taxiStatus.contains('PENDING') || taxiStatus.contains('REVIEW')) {
+        return (label: 'Pending review', color: const Color(0xFFB45309));
+      }
+      if (isVerified) {
+        return (label: 'Verified', color: const Color(0xFF059669));
+      }
+      return (label: 'Not verified', color: const Color(0xFFB45309));
+    }();
     final taxiId = int.tryParse('${taxi['id']}');
     final session = ref.watch(driverOnlineSessionProvider);
-    // Prefer live session so this switch stays in sync with the dashboard toggle.
     final switchOnline = taxiId != null && session.taxiId == taxiId
         ? session.isOnline
         : isAvailable;
@@ -511,25 +787,25 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E6EF)),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _cardBorder),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.all(10),
+                  padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: _chipGrey,
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(14),
                   ),
                   child: const Icon(
                     Icons.directions_car_filled_outlined,
-                    color: _brandOrange,
+                    color: _ink,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -541,29 +817,26 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
                         model.trim().isEmpty ? 'Vehicle' : model,
                         style: const TextStyle(
                           fontWeight: FontWeight.w800,
-                          color: _brandOrange,
-                          fontSize: 15,
+                          color: _ink,
+                          fontSize: 16,
                         ),
                       ),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 3),
                       Text(
                         plate.isEmpty ? 'No plate' : plate,
-                        style: TextStyle(
-                          color: Colors.grey.shade700,
-                          fontSize: 13,
-                        ),
+                        style: const TextStyle(color: _muted, fontSize: 13),
                       ),
                     ],
                   ),
                 ),
                 _statusChip(
-                  isVerified ? 'Verified' : 'Pending',
-                  isVerified ? Colors.green : _brandOrange,
+                  taxiChip.label,
+                  taxiChip.color,
                   compact: true,
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
             Wrap(
               spacing: 8,
               runSpacing: 6,
@@ -580,36 +853,34 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
                   ),
               ],
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 8),
+            const Divider(color: _cardBorder),
             Row(
               children: [
-                Expanded(
-                  child: Row(
-                    children: [
-                      Text(
-                        'Available for rides',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.grey.shade700,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Switch(
-                        value: switchOnline,
-                        activeThumbColor: _brandOrange,
-                        onChanged: taxiId == null
-                            ? null
-                            : (v) => _toggleAvailability(taxiId, v),
-                      ),
-                    ],
+                const Expanded(
+                  child: Text(
+                    'Available for rides',
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      color: _ink,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-                TextButton.icon(
+                Switch.adaptive(
+                  value: switchOnline,
+                  activeThumbColor: _accent,
+                  onChanged: taxiId == null
+                      ? null
+                      : (v) => _toggleAvailability(taxiId, v),
+                ),
+                TextButton(
                   onPressed: () => _openEditVehicle(taxi),
-                  icon: const Icon(Icons.edit_outlined, size: 18),
-                  label: const Text('Edit'),
-                  style: TextButton.styleFrom(foregroundColor: _brandOrange),
+                  style: TextButton.styleFrom(foregroundColor: _ink),
+                  child: const Text(
+                    'Edit',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
                 ),
               ],
             ),
@@ -621,22 +892,22 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
 
   Widget _metaChip(IconData icon, String label) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: _chipGrey,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: Colors.grey.shade700),
-          const SizedBox(width: 4),
+          Icon(icon, size: 14, color: _muted),
+          const SizedBox(width: 5),
           Text(
             label,
-            style: TextStyle(
-              fontSize: 11,
+            style: const TextStyle(
+              fontSize: 11.5,
               fontWeight: FontWeight.w600,
-              color: Colors.grey.shade800,
+              color: _ink,
             ),
           ),
         ],
@@ -648,19 +919,18 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: compact ? 8 : 10,
-        vertical: compact ? 4 : 6,
+        vertical: compact ? 4 : 5,
       ),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
       ),
       child: Text(
         label,
         style: TextStyle(
           color: color,
           fontWeight: FontWeight.w700,
-          fontSize: compact ? 10 : 11,
+          fontSize: compact ? 10.5 : 11.5,
         ),
       ),
     );
@@ -668,39 +938,57 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
 
   Widget _emptyVehicles() {
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.fromLTRB(22, 28, 22, 24),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E6EF)),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _cardBorder),
       ),
       child: Column(
         children: [
-          Icon(Icons.directions_car_outlined,
-              size: 52, color: Colors.grey.shade400),
-          const SizedBox(height: 12),
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: _chipGrey,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: const Icon(
+              Icons.directions_car_outlined,
+              size: 32,
+              color: _muted,
+            ),
+          ),
+          const SizedBox(height: 14),
           const Text(
-            'No vehicles yet',
+            'No vehicle yet',
             style: TextStyle(
-              fontWeight: FontWeight.w900,
+              fontWeight: FontWeight.w800,
               fontSize: 17,
-              color: _brandOrange,
+              color: _ink,
             ),
           ),
           const SizedBox(height: 6),
-          Text(
-            'Register your taxi or car so passengers can find you on VeroRide. You can add one vehicle per driver account.',
+          const Text(
+            'Register your taxi or car so passengers can find you. One vehicle per driver account.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey.shade700, height: 1.4),
+            style: TextStyle(color: _muted, height: 1.4, fontSize: 13.5),
           ),
-          const SizedBox(height: 16),
-          FilledButton.icon(
-            onPressed: _openVerificationWizard,
-            icon: const Icon(Icons.add),
-            label: const Text('Submit vehicle documents'),
-            style: FilledButton.styleFrom(
-              backgroundColor: _brandOrange,
-              foregroundColor: Colors.white,
+          const SizedBox(height: 18),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: FilledButton.icon(
+              onPressed: _openVerificationWizard,
+              icon: const Icon(Icons.add),
+              label: const Text('Submit vehicle documents'),
+              style: FilledButton.styleFrom(
+                backgroundColor: _ink,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
             ),
           ),
         ],
@@ -711,35 +999,50 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
   Widget _noProfileState() {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(28),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.person_add_alt_1_outlined,
-                size: 56, color: Colors.grey.shade400),
-            const SizedBox(height: 12),
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: _chipGrey,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Icon(
+                Icons.person_add_alt_1_outlined,
+                size: 36,
+                color: _muted,
+              ),
+            ),
+            const SizedBox(height: 16),
             const Text(
               'No driver profile',
               style: TextStyle(
-                fontWeight: FontWeight.w900,
+                fontWeight: FontWeight.w800,
                 fontSize: 18,
-                color: _brandOrange,
+                color: _ink,
               ),
             ),
             const SizedBox(height: 8),
-            Text(
-              'Submit your license and vehicle documents for operator review to start driving on VeroRide.',
+            const Text(
+              'Submit your license and vehicle documents for review to start driving.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey.shade700, height: 1.4),
+              style: TextStyle(color: _muted, height: 1.4),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             FilledButton.icon(
               onPressed: _openVerificationWizard,
               icon: const Icon(Icons.verified_user_outlined),
               label: const Text('Start verification'),
               style: FilledButton.styleFrom(
-                backgroundColor: _brandOrange,
+                backgroundColor: _ink,
                 foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
               ),
             ),
           ],
@@ -748,29 +1051,38 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     );
   }
 
-  Widget _errorState(String message) {
+  Widget _errorState(Object error) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(28),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.error_outline, size: 48, color: _brandOrange),
-            const SizedBox(height: 12),
+            const Icon(Icons.cloud_off_outlined, size: 44, color: _muted),
+            const SizedBox(height: 14),
             const Text(
               'Could not load driver profile',
-              style: TextStyle(fontWeight: FontWeight.w800, color: _brandOrange),
+              style: TextStyle(fontWeight: FontWeight.w800, color: _ink),
             ),
             const SizedBox(height: 8),
             Text(
-              message.replaceFirst('Exception: ', ''),
+              UserFacingError.from(
+                error,
+                fallback: 'Check your connection and try again.',
+              ),
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey.shade700),
+              style: const TextStyle(color: _muted, height: 1.4),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 18),
             FilledButton(
               onPressed: _reload,
-              style: FilledButton.styleFrom(backgroundColor: _brandOrange),
+              style: FilledButton.styleFrom(
+                backgroundColor: _ink,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
               child: const Text('Retry'),
             ),
           ],
@@ -833,7 +1145,7 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
         context,
         'Could not update availability',
         isSuccess: false,
-        errorMessage: e.toString(),
+        errorMessage: '',
       );
     }
   }

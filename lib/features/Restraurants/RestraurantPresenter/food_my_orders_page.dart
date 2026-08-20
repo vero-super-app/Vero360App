@@ -9,6 +9,7 @@ import 'package:vero360_app/features/Restraurants/Models/food_order_model.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_review_service.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_order_tracking_page.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
 
 const Color _veroOrange = Color(0xFFFF8A00);
@@ -98,7 +99,12 @@ class _FoodMyOrdersPageState extends State<FoodMyOrdersPage> {
                   return const AppSkeletonListPlaceholder(items: 6);
                 }
                 if (snap.hasError) {
-                  return _errorState('${snap.error}');
+                  return _errorState(
+                    UserFacingError.from(
+                      snap.error,
+                      fallback: 'Could not load your food orders. Please try again.',
+                    ),
+                  );
                 }
                 final docs = snap.data?.docs ?? const [];
                 if (docs.isEmpty) return _empty();
@@ -224,10 +230,22 @@ class _FoodMyOrdersPageState extends State<FoodMyOrdersPage> {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
-        child: Text(
-          'Could not load orders.\n$message',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: _ink.withValues(alpha: 0.7)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.wifi_off_rounded,
+                size: 44, color: _ink.withValues(alpha: 0.35)),
+            const SizedBox(height: 12),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: _ink.withValues(alpha: 0.75),
+                fontWeight: FontWeight.w600,
+                height: 1.35,
+              ),
+            ),
+          ],
         ),
       ),
     );

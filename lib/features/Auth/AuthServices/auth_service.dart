@@ -898,7 +898,7 @@ class AuthService {
   String _registerFirebaseErrorMessage(FirebaseAuthException e) {
     switch (e.code) {
       case 'email-already-in-use':
-        return 'Account already exists. Please sign in.';
+        return 'Account exists. Please sign in to continue.';
       case 'invalid-email':
         return 'Enter a valid email address.';
       case 'weak-password':
@@ -999,6 +999,9 @@ class AuthService {
       return auth;
     } on FirebaseAuthException catch (e) {
       _toast(context, _registerFirebaseErrorMessage(e), ok: false);
+      if (e.code == 'email-already-in-use') {
+        return const {'accountExists': true};
+      }
       return null;
     } catch (_) {
       _toast(context, 'Sign up failed. Try again later.', ok: false);

@@ -703,6 +703,69 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   // ---------- Registration with API OTP verification ----------
 
+  static const _accountExistsMsg =
+      'Account exists. Please sign in to continue.';
+
+  Future<void> _promptAccountExistsAndGoSignIn() async {
+    if (!mounted) return;
+    ToastHelper.showCustomToast(
+      context,
+      _accountExistsMsg,
+      isSuccess: false,
+      errorMessage: '',
+    );
+    // Register is usually pushed from Login — pop back so they can sign in.
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  /// Best-effort check before OTP so users aren't sent a code for an existing account.
+  Future<bool> _identifierAlreadyRegistered() async {
+    final email = _identifierEmail.trim().toLowerCase();
+    final phoneRaw = _identifierPhone.trim();
+    try {
+      if (email.isNotEmpty) {
+        final byEmail = await _firestore
+            .collection('users')
+            .where('email', isEqualTo: email)
+            .limit(1)
+            .get()
+            .timeout(const Duration(seconds: 5));
+        if (byEmail.docs.isNotEmpty) return true;
+        final byContact = await _firestore
+            .collection('users')
+            .where('contactEmail', isEqualTo: email)
+            .limit(1)
+            .get()
+            .timeout(const Duration(seconds: 5));
+        if (byContact.docs.isNotEmpty) return true;
+      }
+      if (phoneRaw.isNotEmpty) {
+        final e164 =
+            RegistrationVerificationService.formatPhoneE164(phoneRaw);
+        final variants = <String>{
+          e164,
+          phoneRaw,
+          phoneRaw.replaceAll(RegExp(r'\D'), ''),
+        };
+        for (final phone in variants) {
+          if (phone.isEmpty) continue;
+          final byPhone = await _firestore
+              .collection('users')
+              .where('phone', isEqualTo: phone)
+              .limit(1)
+              .get()
+              .timeout(const Duration(seconds: 5));
+          if (byPhone.docs.isNotEmpty) return true;
+        }
+      }
+    } catch (_) {
+      // Rules / offline — fall through; createUser will still catch duplicates.
+    }
+    return false;
+  }
+
   Future<bool> _sendRegistrationOtp() async {
     final email = _identifierEmail;
     final phone = _identifierPhone;
@@ -722,6 +785,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return true;
     } on ApiException catch (e) {
       if (!mounted) return false;
+      if (RegistrationVerificationService.looksLikeAccountExists(e)) {
+        await _promptAccountExistsAndGoSignIn();
+        return false;
+      }
       ToastHelper.showCustomToast(
         context,
         RegistrationVerificationService.friendlyError(e, forSend: true),
@@ -801,7 +868,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
       context: context,
     );
 
-    if (result == null || !mounted) return;
+    if (!mounted) return;
+    if (result != null && result['accountExists'] == true) {
+      // Toast already shown by AuthService.
+      if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+      return;
+    }
+    if (result == null) return;
 
     final userMap = result['user'];
     final uid = userMap is Map
@@ -872,6 +947,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     setState(() => _registering = true);
     try {
+      if (await _identifierAlreadyRegistered()) {
+        await _promptAccountExistsAndGoSignIn();
+        return;
+      }
+
       final sent = await _sendRegistrationOtp();
       if (!sent || !mounted) return;
 
@@ -964,10 +1044,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
           if (!mounted) return;
           ToastHelper.showCustomToast(
             context,
-            'Account already exists. Please sign in.',
+            _accountExistsMsg,
             isSuccess: false,
             errorMessage: '',
           );
+          if (Navigator.of(context).canPop()) {
+            Navigator.of(context).pop();
+          }
           return;
         }
       } catch (_) {
@@ -1037,10 +1120,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
           if (!mounted) return;
           ToastHelper.showCustomToast(
             context,
-            'Account already exists. Please sign in.',
+            _accountExistsMsg,
             isSuccess: false,
             errorMessage: '',
           );
+          if (Navigator.of(context).canPop()) {
+            Navigator.of(context).pop();
+          }
           return;
         }
       } catch (_) {
@@ -1241,7 +1327,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               textInputAction: TextInputAction.next,
                               decoration: _dec(
                                 label: 'Phone number or email',
-                                hint: '09xxxxxxxx or you@vero360.com',
+                                hint: '09xxxxxxxx or you@vero360.app',
                                 icon: Icons.contact_mail_outlined,
                               ),
                               validator: _validateIdentifier,

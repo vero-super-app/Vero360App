@@ -10,12 +10,12 @@ import 'package:vero360_app/GernalServices/role_helper.dart';
 /// Single in-memory + prefs identity for the signed-in account.
 ///
 /// Source of truth order:
-/// 1. Memory (same process)
-/// 2. Prefs bound to this Firebase uid
-/// 3. Firestore `users/{uid}` (`role` + `merchantService`)
-/// 4. Shop docs `{vertical}_merchants/{uid}` (legacy repair / when users is slow)
+/// 1. Firestore `users/{uid}` (`role` + `merchantService`) — authoritative
+/// 2. Strongest real shop doc among `{vertical}_merchants/{uid}`
+/// 3. Prefs / memory bound to this Firebase uid (never cross-account)
 ///
-/// Each merchant vertical dashboard is independently keyed by [uid] + [service].
+/// Dashboards: food → Food, marketplace → Marketplace, accommodation → Stay,
+/// courier → Courier. Drivers use role `driver` (not a merchant vertical).
 class MerchantIdentity {
   const MerchantIdentity({
     required this.uid,
@@ -52,12 +52,25 @@ class MerchantIdentityStore {
 
   static const prefsIdentityUidKey = 'merchant_identity_uid';
 
+  static String prefsServiceKeyForUid(String uid) =>
+      'merchant_service_v1_${uid.trim()}';
+
   static MerchantIdentity? _memory;
 
   static MerchantIdentity? peek() => _memory;
 
   static void clear() {
     _memory = null;
+  }
+
+  /// Drop in-memory + global routing prefs so the next login cannot reopen the
+  /// previous account's dashboard on the same phone.
+  static Future<void> clearRoutingCache(SharedPreferences prefs) async {
+    clear();
+    await prefs.remove('merchant_service');
+    await prefs.remove(prefsIdentityUidKey);
+    await prefs.remove('business_name');
+    await prefs.remove('business_address');
   }
 
   static String _currentUid({SharedPreferences? prefs}) {
@@ -84,7 +97,6 @@ class MerchantIdentityStore {
         .trim();
     // Stale prefs from another account must not drive routing.
     if (boundUid.isNotEmpty && boundUid != id) {
-      // Still allow intended-role keys if they match this uid.
       final intendedUid = (prefs.getString('session_intended_uid') ?? '').trim();
       if (intendedUid != id) return null;
     }
@@ -99,11 +111,11 @@ class MerchantIdentityStore {
             prefs.getString('session_intended_merchant_service'),
           )
         : null;
-    // Prefer any known local vertical even when identity uid binding is empty.
+    // Prefer uid-scoped vertical, then session key, then signup intended.
     final service = intendedService ??
+        normalizeMerchantServiceKey(prefs.getString(prefsServiceKeyForUid(id))) ??
         normalizeMerchantServiceKey(prefs.getString('merchant_service'));
 
-    // If prefs already know this account is a merchant with a vertical, trust it.
     final effectiveRole =
         (isKnownMerchantServiceKey(service) && role == RoleHelper.customer)
             ? RoleHelper.merchant
@@ -143,8 +155,10 @@ class MerchantIdentityStore {
     await sp.setBool('is_merchant', r == RoleHelper.merchant);
     if (r == RoleHelper.merchant && s != null) {
       await sp.setString('merchant_service', s);
+      await sp.setString(prefsServiceKeyForUid(id), s);
     } else if (r != RoleHelper.merchant) {
       await sp.remove('merchant_service');
+      await sp.remove(prefsServiceKeyForUid(id));
     }
 
     final identity = MerchantIdentity(uid: id, role: r, service: s);
@@ -174,11 +188,15 @@ class MerchantIdentityStore {
     return identity;
   }
 
-  /// Resolve role + vertical for [uid]. Cache-first; network only when needed.
+  /// Resolve role + vertical for [uid].
+  ///
+  /// Set [forceRefresh] on login / recovering tab so a stale marketplace
+  /// cache cannot keep a food/stay/courier merchant on the wrong dashboard.
   static Future<MerchantIdentity> resolve({
     String? uid,
     SharedPreferences? prefs,
     bool allowShopProbe = true,
+    bool forceRefresh = false,
     Duration usersTimeout = const Duration(seconds: 8),
     Duration shopTimeout = const Duration(seconds: 5),
   }) async {
@@ -189,21 +207,23 @@ class MerchantIdentityStore {
     }
 
     final cached = readCached(prefs: sp, uid: id);
-    if (cached != null) {
-      if (!cached.isMerchant) {
-        // Still probe shops — role prefs can lag behind a real merchant shop.
-        if (!allowShopProbe) return cached;
-      } else if (cached.hasVertical) {
-        return cached;
-      } else if (!allowShopProbe) {
-        return cached;
-      }
+    if (!forceRefresh &&
+        cached != null &&
+        cached.isMerchant &&
+        cached.hasVertical) {
+      return cached;
+    }
+    if (!forceRefresh &&
+        cached != null &&
+        !cached.isMerchant &&
+        !allowShopProbe) {
+      return cached;
     }
 
     String role = cached?.role ?? RoleHelper.customer;
-    String? service = cached?.service;
+    String? service = forceRefresh ? null : cached?.service;
 
-    // Primary SSOT: users/{uid} (longer timeout — flaky networks were failing at 2.5s).
+    // 1) Authoritative: users/{uid}
     try {
       final doc = await FirebaseFirestore.instance
           .collection('users')
@@ -214,9 +234,12 @@ class MerchantIdentityStore {
       if (data != null) {
         final fromDoc = RoleHelper.normalizeAccountRole(data['role']);
         if (fromDoc != null) {
-          // Sticky: never demote merchant/driver to customer from a flaky read
-          // when prefs already know this uid is merchant/driver.
-          if (!(fromDoc == RoleHelper.customer &&
+          // Sticky: never demote merchant/driver → customer from a flaky read
+          // when prefs already know this uid is merchant/driver (unless refresh
+          // and Firestore explicitly says otherwise for driver/customer).
+          if (forceRefresh) {
+            role = fromDoc;
+          } else if (!(fromDoc == RoleHelper.customer &&
               (role == RoleHelper.merchant || role == RoleHelper.driver))) {
             role = fromDoc;
           }
@@ -233,9 +256,14 @@ class MerchantIdentityStore {
       if (kDebugMode) {
         debugPrint('[MerchantIdentity] users/{uid} read: $e');
       }
+      // On refresh failure, fall back to previous cache rather than blank.
+      if (forceRefresh && cached != null) {
+        service ??= cached.service;
+        role = cached.role;
+      }
     }
 
-    // Intended signup vertical wins when still matching this uid.
+    // 2) Signup intended vertical for this uid only.
     final intendedUid = (sp.getString('session_intended_uid') ?? '').trim();
     final intendedService = intendedUid == id
         ? normalizeMerchantServiceKey(
@@ -243,19 +271,42 @@ class MerchantIdentityStore {
           )
         : null;
     if (isKnownMerchantServiceKey(intendedService)) {
-      service = intendedService;
+      // Intended beats a generic marketplace default from API/users.
+      if (!isKnownMerchantServiceKey(service) || service == 'marketplace') {
+        service = intendedService;
+      }
       if (role == RoleHelper.customer) role = RoleHelper.merchant;
     }
 
-    // Probe shop docs when vertical still unknown.
-    // Also probe when role looks like customer — shop ownership is definitive.
-    if (allowShopProbe && !isKnownMerchantServiceKey(service)) {
+    // 3) Probe shops when vertical unknown, or when refresh still looks like
+    // the generic marketplace default (often wrong for food/stay/courier).
+    final shouldProbe = allowShopProbe &&
+        (!isKnownMerchantServiceKey(service) ||
+            (forceRefresh && service == 'marketplace'));
+    if (shouldProbe) {
       final probed = await _probeShopVertical(id, timeout: shopTimeout);
       if (isKnownMerchantServiceKey(probed)) {
-        service = probed;
+        // Prefer non-marketplace shop over a marketplace-only default.
+        if (!isKnownMerchantServiceKey(service) ||
+            service == 'marketplace' ||
+            probed == service) {
+          service = probed;
+        }
         role = RoleHelper.merchant;
-        // Write vertical back to users/{uid} so next open is instant.
         unawaited(_writeServiceToUsers(id, probed!));
+      }
+    }
+
+    // 4) Last resort: uid-scoped prefs (same phone, same account).
+    if (!isKnownMerchantServiceKey(service)) {
+      service = normalizeMerchantServiceKey(
+            sp.getString(prefsServiceKeyForUid(id)),
+          ) ??
+          (forceRefresh
+              ? null
+              : normalizeMerchantServiceKey(sp.getString('merchant_service')));
+      if (isKnownMerchantServiceKey(service) && role == RoleHelper.customer) {
+        role = RoleHelper.merchant;
       }
     }
 
@@ -268,14 +319,15 @@ class MerchantIdentityStore {
     );
   }
 
+  /// Pick the strongest real shop for this uid.
+  /// Marketplace is last in tie-break — name stubs often exist there wrongly.
   static Future<String?> _probeShopVertical(
     String uid, {
     required Duration timeout,
   }) async {
-    // Marketplace first — most merchants; also avoids food-stub false positives.
-    const services = ['marketplace', 'food', 'accommodation', 'courier'];
+    const services = ['food', 'accommodation', 'courier', 'marketplace'];
     try {
-      final probes = await Future.wait(
+      final scored = await Future.wait(
         services.map((service) async {
           try {
             final collection = merchantCollectionForService(service)!;
@@ -284,16 +336,45 @@ class MerchantIdentityStore {
                 .doc(uid)
                 .get()
                 .timeout(timeout);
-            if (doc.exists && looksLikeRealMerchantShopDoc(doc.data())) {
-              return service;
-            }
-          } catch (_) {}
-          return null;
+            if (!doc.exists) return (service, 0);
+            final strength = merchantShopDocStrength(doc.data());
+            return (service, strength);
+          } catch (_) {
+            return (service, 0);
+          }
         }),
       );
-      for (final hit in probes) {
-        if (isKnownMerchantServiceKey(hit)) return hit;
+
+      String? bestStrong;
+      var bestStrongScore = 0;
+      final weakHits = <String>[];
+      for (final (service, score) in scored) {
+        if (score <= 0) continue;
+        if (score >= 20) {
+          if (score > bestStrongScore) {
+            bestStrongScore = score;
+            bestStrong = service;
+          }
+        } else {
+          weakHits.add(service);
+        }
       }
+      if (bestStrong != null) {
+        if (kDebugMode) {
+          debugPrint(
+            '[MerchantIdentity] shop probe → $bestStrong '
+            '(score $bestStrongScore) for $uid',
+          );
+        }
+        return bestStrong;
+      }
+
+      // Soft fallback: a lone name-only shop (common for new food merchants).
+      // Never guess marketplace when multiple weak stubs exist.
+      if (weakHits.length == 1) return weakHits.first;
+      final nonMarket = weakHits.where((s) => s != 'marketplace').toList();
+      if (nonMarket.length == 1) return nonMarket.first;
+      if (nonMarket.isNotEmpty) return nonMarket.first; // food first in list
     } catch (_) {}
     return null;
   }

@@ -2573,7 +2573,11 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
               return Center(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 24),
-                  child: Text('Could not load arrivals.\n${snap.error}',
+                  child: Text(
+                      UserFacingError.from(
+                        snap.error,
+                        fallback: 'Could not load arrivals. Please try again.',
+                      ),
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.red)),
                 ),

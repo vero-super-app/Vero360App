@@ -428,63 +428,70 @@ class _RideHistoryTripCardSkeleton extends StatelessWidget {
 
 /// Driver Center — profile tab loading.
 class DriverCenterProfileTabSkeleton extends StatelessWidget {
-  const DriverCenterProfileTabSkeleton({super.key});
+  final bool skipProfileHeader;
+
+  const DriverCenterProfileTabSkeleton({
+    super.key,
+    this.skipProfileHeader = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     return AppSkeletonShimmer(
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-        children: const [
-          _SkeletonCard(
-            child: Row(
-              children: [
-                AppSkeletonBox(
-                  width: 64,
-                  height: 64,
-                  radius: 32,
-                  color: RideShareSkeleton.bone,
-                ),
-                SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      AppSkeletonBox(
-                        height: 16,
-                        width: 150,
-                        radius: 6,
-                        color: RideShareSkeleton.bone,
-                      ),
-                      SizedBox(height: 8),
-                      AppSkeletonBox(
-                        height: 11,
-                        width: 80,
-                        radius: 4,
-                        color: RideShareSkeleton.boneLight,
-                      ),
-                      SizedBox(height: 10),
-                      AppSkeletonBox(
-                        height: 22,
-                        width: 120,
-                        radius: 12,
-                        color: RideShareSkeleton.boneLight,
-                      ),
-                    ],
+        padding: EdgeInsets.fromLTRB(16, skipProfileHeader ? 0 : 16, 16, 32),
+        children: [
+          if (!skipProfileHeader) ...const [
+            _SkeletonCard(
+              child: Row(
+                children: [
+                  AppSkeletonBox(
+                    width: 64,
+                    height: 64,
+                    radius: 32,
+                    color: RideShareSkeleton.bone,
                   ),
-                ),
-              ],
+                  SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        AppSkeletonBox(
+                          height: 16,
+                          width: 150,
+                          radius: 6,
+                          color: RideShareSkeleton.bone,
+                        ),
+                        SizedBox(height: 8),
+                        AppSkeletonBox(
+                          height: 11,
+                          width: 80,
+                          radius: 4,
+                          color: RideShareSkeleton.boneLight,
+                        ),
+                        SizedBox(height: 10),
+                        AppSkeletonBox(
+                          height: 22,
+                          width: 120,
+                          radius: 12,
+                          color: RideShareSkeleton.boneLight,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          SizedBox(height: 12),
-          _HistorySummarySkeleton(),
-          SizedBox(height: 16),
-          _InfoSectionSkeleton(lines: 4),
-          SizedBox(height: 12),
-          _InfoSectionSkeleton(lines: 3),
-          SizedBox(height: 20),
-          AppSkeletonBox(
+            SizedBox(height: 12),
+          ],
+          const _HistorySummarySkeleton(),
+          const SizedBox(height: 16),
+          const _InfoSectionSkeleton(lines: 4),
+          const SizedBox(height: 12),
+          const _InfoSectionSkeleton(lines: 3),
+          const SizedBox(height: 20),
+          const AppSkeletonBox(
             height: 48,
             width: double.infinity,
             radius: 12,

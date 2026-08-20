@@ -724,7 +724,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
           if (mounted) {
             ToastHelper.showCustomToast(
               context,
-              'Order updated, but wallet release failed: $e',
+              'Order updated, but wallet payout could not finish. Try again shortly.',
               isSuccess: false,
               errorMessage: '',
             );

@@ -23,6 +23,7 @@ import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/utils/merchant_contact_display.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/widgets/order_message_buyer_button.dart';
 
 /// Simple enum for how the merchant will ship the order.
@@ -1190,7 +1191,10 @@ class _ToShipPageState extends State<ToShipPage> {
                     child: Padding(
                       padding: const EdgeInsets.all(16.0),
                       child: Text(
-                        'Could not load orders: ${snap.error}',
+                        UserFacingError.from(
+                          snap.error,
+                          fallback: 'Could not load orders. Please try again.',
+                        ),
                         textAlign: TextAlign.center,
                       ),
                     ),

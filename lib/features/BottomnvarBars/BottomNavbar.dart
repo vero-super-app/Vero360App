@@ -352,6 +352,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
       final identity = await MerchantIdentityStore.resolve(
         uid: uid,
         allowShopProbe: true,
+        forceRefresh: true,
       );
       if (!mounted) return;
       if (identity.isMerchant &&
@@ -369,11 +370,17 @@ class _BottomnavbarState extends State<Bottomnavbar>
             prefs.getString('uid') ??
             '')
         .trim();
-    final key = normalizeMerchantServiceKey(prefs.getString('merchant_service')) ??
+    final identity = MerchantIdentityStore.readCached(prefs: prefs, uid: uid);
+    final key = normalizeMerchantServiceKey(identity?.service) ??
+        normalizeMerchantServiceKey(
+          uid.isNotEmpty
+              ? prefs.getString(MerchantIdentityStore.prefsServiceKeyForUid(uid))
+              : null,
+        ) ??
+        normalizeMerchantServiceKey(prefs.getString('merchant_service')) ??
         normalizeMerchantServiceKey(
           prefs.getString('session_intended_merchant_service'),
-        ) ??
-        MerchantIdentityStore.peek()?.service;
+        );
     return switch (key) {
       'food' => FoodMerchantDashboard(
           key: ValueKey('food_dash_$uid'),
@@ -399,8 +406,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
           onBackToHomeTab: () => setState(() => _selectedIndex = 0),
           embeddedInMainNav: true,
         ),
-      // Merchant role is known but vertical not cached yet (offline / slow sync).
-      // Never fall back to the customer Profile tab.
+      // Merchant role known but vertical unknown — never guess marketplace.
       _ => _MerchantVerticalRecoveringTab(
           email: email,
           merchantUid: uid,
@@ -992,39 +998,13 @@ class _MerchantVerticalRecoveringTabState
                   ''))
           .trim();
 
-      // Instant prefs / memory — never block the shell on a slow users/{uid} read.
-      final cached = MerchantIdentityStore.readCached(prefs: prefs, uid: uid);
-      final prefService = normalizeMerchantServiceKey(
-            prefs.getString('merchant_service'),
-          ) ??
-          normalizeMerchantServiceKey(
-            prefs.getString('session_intended_merchant_service'),
-          ) ??
-          cached?.service;
-      if (isKnownMerchantServiceKey(prefService)) {
-        final stampUid = uid.isNotEmpty ? uid : (cached?.uid ?? '').trim();
-        if (stampUid.isNotEmpty) {
-          await MerchantIdentityStore.stamp(
-            uid: stampUid,
-            role: RoleHelper.merchant,
-            service: prefService,
-            prefs: prefs,
-            writeFirestore: false,
-          );
-        }
-        if (!mounted) return;
-        setState(() {
-          _service = prefService;
-          _resolving = false;
-        });
-        await widget.onServiceCached();
-        return;
-      }
-
+      // Always re-resolve for this uid — never open marketplace from a stale
+      // global merchant_service left by another account on this phone.
       final identity = await MerchantIdentityStore.resolve(
         uid: uid.isEmpty ? null : uid,
         prefs: prefs,
         allowShopProbe: true,
+        forceRefresh: true,
       );
       if (identity.isMerchant && identity.hasVertical) {
         if (!mounted) return;

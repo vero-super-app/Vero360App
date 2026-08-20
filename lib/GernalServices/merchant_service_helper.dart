@@ -32,41 +32,50 @@ String? merchantCollectionForService(String? raw) {
 }
 
 /// Name-only stubs (e.g. from display-name sync) must not count as a vertical.
-/// Real shops usually have business metadata beyond a lone display name.
-bool looksLikeRealMerchantShopDoc(Map<String, dynamic>? data) {
-  if (data == null || data.isEmpty) return false;
+/// Strength ≥ 20 is required to treat a shop doc as real.
+int merchantShopDocStrength(Map<String, dynamic>? data) {
+  if (data == null || data.isEmpty) return 0;
+  var score = 0;
   if (isKnownMerchantServiceKey(data['serviceType']?.toString()) ||
       isKnownMerchantServiceKey(data['merchantService']?.toString()) ||
       isKnownMerchantServiceKey(data['merchant_service']?.toString())) {
-    return true;
+    score += 100;
   }
-  if (data['status'] != null &&
-      (data['uid'] != null ||
-          data['businessAddress'] != null ||
-          data['isActive'] != null)) {
-    return true;
-  }
+  if (data['status'] != null) score += 20;
   if (data.containsKey('completedOrders') || data.containsKey('totalRatings')) {
-    return true;
+    score += 30;
   }
-  // Marketplace / food merchants often only have business profile fields.
-  final businessName = (data['businessName'] ?? data['name'] ?? data['merchantName'] ?? '')
-      .toString()
-      .trim();
-  if (businessName.isNotEmpty) return true;
-  if (data['ownerUid'] != null ||
-      data['merchantId'] != null ||
-      data['phone'] != null ||
-      data['businessLocation'] != null ||
+  if (data['openingHours'] != null || data['shopHours'] != null) score += 15;
+  if (data['businessLocation'] != null ||
       data['address'] != null ||
-      data['openingHours'] != null ||
-      data['profilePicture'] != null ||
+      data['listingLocation'] != null) {
+    score += 15;
+  }
+  if (data['phone'] != null || data['phoneNumber'] != null) score += 10;
+  if (data['ownerUid'] != null || data['merchantId'] != null) score += 10;
+  if (data['profilePicture'] != null ||
       data['profilepicture'] != null ||
+      data['profileImage'] != null ||
       data['logo'] != null ||
       data['logoUrl'] != null) {
-    return true;
+    score += 10;
   }
-  return false;
+  if (data['menuCount'] != null ||
+      data['itemCount'] != null ||
+      data['productsCount'] != null ||
+      data['isActive'] != null) {
+    score += 20;
+  }
+  final businessName =
+      (data['businessName'] ?? data['name'] ?? data['merchantName'] ?? '')
+          .toString()
+          .trim();
+  if (businessName.isNotEmpty) score += 5; // weak alone — stubs score 5
+  return score;
+}
+
+bool looksLikeRealMerchantShopDoc(Map<String, dynamic>? data) {
+  return merchantShopDocStrength(data) >= 20;
 }
 
 /// Persists API `merchantService` without replacing a non-marketplace local value
@@ -117,9 +126,16 @@ Future<void> hydrateMerchantServiceFromFirestore(SharedPreferences prefs) async 
     final identity = await MerchantIdentityStore.resolve(
       prefs: prefs,
       allowShopProbe: true,
+      forceRefresh: true,
     );
     if (identity.isMerchant && identity.hasVertical) {
       await prefs.setString('merchant_service', identity.service!);
+      if (identity.uid.isNotEmpty) {
+        await prefs.setString(
+          MerchantIdentityStore.prefsServiceKeyForUid(identity.uid),
+          identity.service!,
+        );
+      }
     }
   } catch (_) {}
 }
@@ -133,6 +149,7 @@ Future<String?> resolveMerchantServiceForUid(String uid) async {
     final identity = await MerchantIdentityStore.resolve(
       uid: id,
       allowShopProbe: true,
+      forceRefresh: true,
     );
     return identity.hasVertical ? identity.service : null;
   } catch (_) {

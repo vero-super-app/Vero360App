@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -29,17 +31,28 @@ class _RegisterOtpScreenState extends State<RegisterOtpScreen> {
   bool _verifying = false;
   bool _resending = false;
   String? _error;
+  Timer? _focusRetry;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _focus.requestFocus();
-    });
+    // Route push + keyboard often miss a single post-frame focus. Retry briefly
+    // so the first digit is typeable immediately.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _ensureKeyboard());
+    _focusRetry = Timer(const Duration(milliseconds: 350), _ensureKeyboard);
+  }
+
+  void _ensureKeyboard() {
+    if (!mounted || _verifying) return;
+    if (!_focus.hasFocus) {
+      _focus.requestFocus();
+    }
+    SystemChannels.textInput.invokeMethod('TextInput.show');
   }
 
   @override
   void dispose() {
+    _focusRetry?.cancel();
     _codeCtrl.dispose();
     _focus.dispose();
     super.dispose();
@@ -65,10 +78,16 @@ class _RegisterOtpScreenState extends State<RegisterOtpScreen> {
         Navigator.of(context).pop(true);
       } else {
         setState(() => _error = 'Invalid or expired code. Try again.');
+        _codeCtrl.selection = TextSelection(
+          baseOffset: 0,
+          extentOffset: _codeCtrl.text.length,
+        );
+        _ensureKeyboard();
       }
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = RegistrationVerificationService.friendlyError(e));
+      _ensureKeyboard();
     } finally {
       if (mounted) setState(() => _verifying = false);
     }
@@ -84,7 +103,6 @@ class _RegisterOtpScreenState extends State<RegisterOtpScreen> {
       if (!mounted) return;
       if (ok) {
         _codeCtrl.clear();
-        _focus.requestFocus();
         ToastHelper.showCustomToast(
           context,
           widget.channel == 'email'
@@ -93,39 +111,34 @@ class _RegisterOtpScreenState extends State<RegisterOtpScreen> {
           isSuccess: true,
           errorMessage: '',
         );
+        _ensureKeyboard();
       } else {
         setState(() => _error = 'Could not resend code. Try again.');
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = RegistrationVerificationService.friendlyError(e, forSend: true));
+      setState(
+        () => _error =
+            RegistrationVerificationService.friendlyError(e, forSend: true),
+      );
     } finally {
       if (mounted) setState(() => _resending = false);
     }
   }
 
   void _onCodeChanged(String value) {
-    final digits = value.replaceAll(RegExp(r'\D'), '');
-    if (digits != value) {
-      _codeCtrl.value = TextEditingValue(
-        text: digits,
-        selection: TextSelection.collapsed(offset: digits.length),
-      );
-    }
     if (_error != null) setState(() => _error = null);
-    if (digits.length == 6 && !_verifying) {
+    if (value.length == 6 && !_verifying) {
       _verify();
-    } else {
-      setState(() {});
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final code = _codeCtrl.text;
     final busy = _verifying || _resending;
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       body: AuthBackground(
         child: SafeArea(
           child: Column(
@@ -135,7 +148,8 @@ class _RegisterOtpScreenState extends State<RegisterOtpScreen> {
                 child: Row(
                   children: [
                     IconButton(
-                      onPressed: busy ? null : () => Navigator.of(context).pop(false),
+                      onPressed:
+                          busy ? null : () => Navigator.of(context).pop(false),
                       icon: const Icon(Icons.arrow_back_rounded),
                       color: AuthPalette.ink,
                     ),
@@ -146,6 +160,8 @@ class _RegisterOtpScreenState extends State<RegisterOtpScreen> {
               Expanded(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.manual,
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 520),
                     child: Column(
@@ -186,71 +202,16 @@ class _RegisterOtpScreenState extends State<RegisterOtpScreen> {
                         AuthCard(
                           child: Column(
                             children: [
-                              GestureDetector(
-                                onTap: () => _focus.requestFocus(),
-                                child: Stack(
-                                  alignment: Alignment.center,
-                                  children: [
-                                    Opacity(
-                                      opacity: 0,
-                                      child: TextField(
-                                        controller: _codeCtrl,
-                                        focusNode: _focus,
-                                        keyboardType: TextInputType.number,
-                                        textInputAction: TextInputAction.done,
-                                        maxLength: 6,
-                                        enabled: !_verifying,
-                                        inputFormatters: [
-                                          FilteringTextInputFormatter.digitsOnly,
-                                        ],
-                                        onChanged: _onCodeChanged,
-                                        onSubmitted: (_) {
-                                          if (!_verifying) _verify();
-                                        },
-                                        decoration: const InputDecoration(
-                                          counterText: '',
-                                          border: InputBorder.none,
-                                        ),
-                                      ),
-                                    ),
-                                    Row(
-                                      children: List.generate(6, (i) {
-                                        final filled = i < code.length;
-                                        final active = i == code.length;
-                                        return Expanded(
-                                          child: AnimatedContainer(
-                                            duration: const Duration(milliseconds: 160),
-                                            margin: EdgeInsets.only(right: i == 5 ? 0 : 8),
-                                            height: 56,
-                                            alignment: Alignment.center,
-                                            decoration: BoxDecoration(
-                                              color: AuthPalette.field,
-                                              borderRadius: BorderRadius.circular(14),
-                                              border: Border.all(
-                                                color: _error != null
-                                                    ? const Color(0xFFD32F2F)
-                                                    : active
-                                                        ? AuthPalette.orange
-                                                        : filled
-                                                            ? AuthPalette.orange.withValues(alpha: 0.45)
-                                                            : Colors.transparent,
-                                                width: active || _error != null ? 1.6 : 1,
-                                              ),
-                                            ),
-                                            child: Text(
-                                              filled ? code[i] : '',
-                                              style: const TextStyle(
-                                                fontSize: 22,
-                                                fontWeight: FontWeight.w800,
-                                                color: AuthPalette.ink,
-                                              ),
-                                            ),
-                                          ),
-                                        );
-                                      }),
-                                    ),
-                                  ],
-                                ),
+                              _OtpDigitBoxes(
+                                controller: _codeCtrl,
+                                focusNode: _focus,
+                                error: _error != null,
+                                enabled: !_verifying,
+                                onChanged: _onCodeChanged,
+                                onSubmitted: () {
+                                  if (!_verifying) _verify();
+                                },
+                                onBoxTap: _ensureKeyboard,
                               ),
                               if (_error != null) ...[
                                 const SizedBox(height: 12),
@@ -266,7 +227,8 @@ class _RegisterOtpScreenState extends State<RegisterOtpScreen> {
                               ],
                               const SizedBox(height: 22),
                               AuthPrimaryButton(
-                                label: _verifying ? 'Verifying…' : 'Verify code',
+                                label:
+                                    _verifying ? 'Verifying…' : 'Verify code',
                                 loading: _verifying,
                                 onPressed: busy ? null : _verify,
                               ),
@@ -274,7 +236,9 @@ class _RegisterOtpScreenState extends State<RegisterOtpScreen> {
                               TextButton(
                                 onPressed: busy ? null : _resend,
                                 child: Text(
-                                  _resending ? 'Sending a new code…' : 'Resend code',
+                                  _resending
+                                      ? 'Sending a new code…'
+                                      : 'Resend code',
                                   style: const TextStyle(
                                     color: AuthPalette.orange,
                                     fontWeight: FontWeight.w800,
@@ -292,6 +256,130 @@ class _RegisterOtpScreenState extends State<RegisterOtpScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Digit UI under an always-on-top transparent [TextField] so the first tap
+/// and first keystrokes always reach the input (boxes never steal hits).
+class _OtpDigitBoxes extends StatelessWidget {
+  const _OtpDigitBoxes({
+    required this.controller,
+    required this.focusNode,
+    required this.error,
+    required this.enabled,
+    required this.onChanged,
+    required this.onSubmitted,
+    required this.onBoxTap,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final bool error;
+  final bool enabled;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onSubmitted;
+  final VoidCallback onBoxTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 56,
+      width: double.infinity,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // Visual only — never intercepts taps/keys.
+          IgnorePointer(
+            child: ListenableBuilder(
+              listenable: Listenable.merge([controller, focusNode]),
+              builder: (context, _) {
+                final code = controller.text;
+                return Row(
+                  children: List.generate(6, (i) {
+                    final filled = i < code.length;
+                    final active = focusNode.hasFocus && i == code.length;
+                    return Expanded(
+                      child: Container(
+                        margin: EdgeInsets.only(right: i == 5 ? 0 : 8),
+                        height: 56,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: AuthPalette.field,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: error
+                                ? const Color(0xFFD32F2F)
+                                : active
+                                    ? AuthPalette.orange
+                                    : filled
+                                        ? AuthPalette.orange
+                                            .withValues(alpha: 0.45)
+                                        : Colors.transparent,
+                            width: active || error ? 1.6 : 1,
+                          ),
+                        ),
+                        child: Text(
+                          filled ? code[i] : '',
+                          style: const TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                            color: AuthPalette.ink,
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
+                );
+              },
+            ),
+          ),
+          // Real input on top — full-size hit target, invisible text.
+          Positioned.fill(
+            child: TextField(
+              controller: controller,
+              focusNode: focusNode,
+              autofocus: true,
+              enabled: enabled,
+              keyboardType: const TextInputType.numberWithOptions(
+                signed: false,
+                decimal: false,
+              ),
+              textInputAction: TextInputAction.done,
+              maxLength: 6,
+              showCursor: false,
+              style: const TextStyle(
+                color: Colors.transparent,
+                fontSize: 16,
+                height: 1.2,
+              ),
+              autocorrect: false,
+              enableSuggestions: false,
+              smartDashesType: SmartDashesType.disabled,
+              smartQuotesType: SmartQuotesType.disabled,
+              enableInteractiveSelection: false,
+              keyboardAppearance: Brightness.light,
+              autofillHints: const [AutofillHints.oneTimeCode],
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(6),
+              ],
+              onChanged: onChanged,
+              onSubmitted: (_) => onSubmitted(),
+              onTap: onBoxTap,
+              decoration: const InputDecoration(
+                counterText: '',
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                filled: true,
+                fillColor: Colors.transparent,
+                contentPadding: EdgeInsets.symmetric(vertical: 18),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

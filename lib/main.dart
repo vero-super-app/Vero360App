@@ -33,7 +33,7 @@ import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodatio
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_share_link.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_share_navigation.dart';
-import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
+import 'package:vero360_app/GernalServices/merchant_identity.dart';
 import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/app_nav_key.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/active_ride_controller.dart';
@@ -382,7 +382,10 @@ class _AppBootstrapState extends State<AppBootstrap> {
         }
         if (onboardingDone) {
           if (initialRole == 'merchant') {
-            unawaited(hydrateMerchantServiceFromFirestore(prefs));
+            unawaited(MerchantIdentityStore.resolve(
+              prefs: prefs,
+              allowShopProbe: true,
+            ));
             initialShell = merchantDashboardFromPrefs(email, prefs);
           } else {
             initialShell = Bottomnavbar(email: email);
@@ -840,32 +843,23 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   Future<void> _pushMerchant(String email) async {
     if (!mounted) return;
-    final prefs = await SharedPreferences.getInstance();
-    await hydrateMerchantServiceFromFirestore(prefs);
-    final uid = (FirebaseAuth.instance.currentUser?.uid ??
-            prefs.getString('uid') ??
-            '')
-        .trim();
-    var service = normalizeMerchantServiceKey(prefs.getString('merchant_service'));
-    if (uid.isNotEmpty && !isKnownMerchantServiceKey(service)) {
-      final discovered = await resolveMerchantServiceForUid(uid);
-      if (isKnownMerchantServiceKey(discovered)) {
-        service = discovered;
-        await persistMerchantServiceFromApi(prefs, discovered);
-      }
-    }
-    if (!mounted) return;
-    if (service == null || service.isEmpty) {
-      if (_currentShell != 'customer') _pushCustomer(email);
-      return;
-    }
+    // Paint merchant shell immediately — resolve vertical in background.
     _currentShell = 'merchant';
     navKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(
-        builder: (_) => merchantDashboardFromPrefs(email, prefs),
+        builder: (_) => Bottomnavbar(email: email, initialIndex: 4),
       ),
       (route) => false,
     );
+    unawaited(() async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await MerchantIdentityStore.resolve(
+          prefs: prefs,
+          allowShopProbe: true,
+        );
+      } catch (_) {}
+    }());
   }
 
   void _pushCustomer(String email) {
@@ -1130,27 +1124,22 @@ class AuthFlow {
   // Extract common nav logic
   static Future<void> _navigateByRole(
       String email, bool isMerchant, bool isDriver) async {
-    final prefs = await SharedPreferences.getInstance();
     if (isMerchant) {
-      await hydrateMerchantServiceFromFirestore(prefs);
-      final uid = (FirebaseAuth.instance.currentUser?.uid ??
-              prefs.getString('uid') ??
-              '')
-          .trim();
-      var service =
-          normalizeMerchantServiceKey(prefs.getString('merchant_service'));
-      if (uid.isNotEmpty && !isKnownMerchantServiceKey(service)) {
-        final discovered = await resolveMerchantServiceForUid(uid);
-        if (isKnownMerchantServiceKey(discovered)) {
-          await persistMerchantServiceFromApi(prefs, discovered);
-        }
-      }
       navKey.currentState?.pushAndRemoveUntil(
         MaterialPageRoute(
-          builder: (_) => merchantDashboardFromPrefs(email, prefs),
+          builder: (_) => Bottomnavbar(email: email, initialIndex: 4),
         ),
         (route) => false,
       );
+      unawaited(() async {
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await MerchantIdentityStore.resolve(
+            prefs: prefs,
+            allowShopProbe: true,
+          );
+        } catch (_) {}
+      }());
     } else if (isDriver) {
       navKey.currentState?.pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => Bottomnavbar(email: email)),

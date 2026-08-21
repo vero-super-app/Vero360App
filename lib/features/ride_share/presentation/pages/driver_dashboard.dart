@@ -39,6 +39,9 @@ class DriverDashboard extends ConsumerStatefulWidget {
 
 class _DriverDashboardState extends ConsumerState<DriverDashboard> {
   static const Color primaryColor = Color(0xFFFF8A00);
+  static const int _dailyTripGoal = 15;
+  static const double _baseWeeklyEarningsGoal = 50000;
+
   GoogleMapController? mapController;
   Timer? _mapCenteringTimer;
   final DriverService _driverService = DriverService();
@@ -46,10 +49,13 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
   final NumberFormat _money = NumberFormat('#,##0', 'en');
   Future<DriverEarningsSummary>? _earningsFuture;
   Future<List<Ride>>? _recentRidesFuture;
+  Position? _detectedPosition;
+  bool _locatingDriver = false;
 
   bool get _isOnline => ref.watch(driverOnlineSessionProvider).isOnline;
 
   Position? get _lastPosition =>
+      _detectedPosition ??
       ref.watch(driverOnlineSessionProvider).lastPosition;
 
   bool get _hasActiveTrip {
@@ -83,6 +89,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       await LocationPermissionHelper.ensureLocationAccess(context);
+      if (!mounted) return;
+      await _detectAndCenterDriverLocation(force: true);
       if (!mounted) return;
       await _ensureDriverActive();
       await _syncOnlineSessionFromProfile();
@@ -139,20 +147,70 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     }
   }
 
+  /// Motivational stretch goal from real weekly earnings.
+  double _weeklyGoalFor(double weekEarned) {
+    if (weekEarned <= 0) return _baseWeeklyEarningsGoal;
+    if (weekEarned < _baseWeeklyEarningsGoal) return _baseWeeklyEarningsGoal;
+    return (weekEarned / 0.85).ceilToDouble();
+  }
+
+  Future<void> _detectAndCenterDriverLocation({bool force = false}) async {
+    if (_locatingDriver) return;
+    _locatingDriver = true;
+    try {
+      // Instant last-known pin, then refine with a fresh GPS fix.
+      if (_detectedPosition == null) {
+        try {
+          final lastKnown = await Geolocator.getLastKnownPosition();
+          if (lastKnown != null && mounted) {
+            setState(() => _detectedPosition = lastKnown);
+            ref
+                .read(driverOnlineSessionProvider.notifier)
+                .noteLastPosition(lastKnown);
+            await _animateMapTo(lastKnown);
+          }
+        } catch (_) {}
+      }
+
+      final pos = await LocationPermissionHelper.getCurrentPositionIfGranted(
+        timeLimit: const Duration(seconds: 8),
+      );
+      if (pos == null || !mounted) return;
+
+      final prev = _detectedPosition;
+      final moved = prev == null ||
+          force ||
+          (prev.latitude - pos.latitude).abs() > 0.00008 ||
+          (prev.longitude - pos.longitude).abs() > 0.00008;
+
+      setState(() => _detectedPosition = pos);
+      ref.read(driverOnlineSessionProvider.notifier).noteLastPosition(pos);
+      if (moved || force) await _animateMapTo(pos);
+    } finally {
+      _locatingDriver = false;
+    }
+  }
+
+  Future<void> _animateMapTo(Position pos) async {
+    final controller = mapController;
+    if (controller == null) return;
+    try {
+      await controller.animateCamera(
+        CameraUpdate.newLatLngZoom(
+          LatLng(pos.latitude, pos.longitude),
+          15,
+        ),
+      );
+    } catch (_) {}
+  }
+
   /// Start auto-centering map on driver location
   void _startMapCentering() {
-    _mapCenteringTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
-      final last = ref.read(driverOnlineSessionProvider).lastPosition;
-      if (mapController != null && last != null) {
-        await mapController!.animateCamera(
-          CameraUpdate.newCameraPosition(
-            CameraPosition(
-              target: LatLng(last.latitude, last.longitude),
-              zoom: 15.0,
-            ),
-          ),
-        );
-      }
+    _mapCenteringTimer?.cancel();
+    _mapCenteringTimer =
+        Timer.periodic(const Duration(seconds: 8), (_) async {
+      if (!mounted) return;
+      await _detectAndCenterDriverLocation();
     });
   }
 
@@ -343,8 +401,12 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
                             _buildEarningsRow(),
                             const SizedBox(height: 16),
                             _buildDemandMapSection(driver),
-                            const SizedBox(height: 16),
-                            _buildGoalsAndRating(driver),
+                            const SizedBox(height: 14),
+                            _buildDailyTripGoal(),
+                            const SizedBox(height: 12),
+                            _buildWeeklyEarningsGoal(),
+                            const SizedBox(height: 14),
+                            _buildRatingRow(driver),
                             const SizedBox(height: 18),
                             _buildRecentActivitySection(),
                             const SizedBox(height: 18),
@@ -513,25 +575,89 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     return FutureBuilder<DriverEarningsSummary>(
       future: _earningsFuture,
       builder: (context, snap) {
-        final todayEarnings = snap.data?.today.earnings ?? 0;
-        final todayTrips = snap.data?.today.trips ?? 0;
-        final weekTrips = snap.data?.thisWeek.trips ?? 0;
-        final trend = weekTrips > 0
-            ? '$weekTrips trips this week'
-            : 'Go online to start earning';
+        final loading = snap.connectionState == ConnectionState.waiting &&
+            !snap.hasData;
+        final today = snap.data?.today;
+        final week = snap.data?.thisWeek;
+        final todayEarnings = today?.earnings ?? 0;
+        final todayTrips = today?.trips ?? 0;
+        final weekEarnings = week?.earnings ?? 0;
+        final weekTrips = week?.trips ?? 0;
 
         return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            DriverEarningsSummaryCard(
-              amountLabel: formatRideMoney(todayEarnings, _money),
-              trendLabel: trend,
+            GestureDetector(
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const RideHistoryScreen(
+                      mode: RideHistoryMode.driver,
+                      focus: RideHistoryFocus.earnings,
+                    ),
+                  ),
+                );
+              },
+              child: DriverEarningsSummaryCard(
+                todayAmountLabel: formatRideMoney(todayEarnings, _money),
+                todayTrips: todayTrips,
+                weekAmountLabel: formatRideMoney(weekEarnings, _money),
+                weekTrips: weekTrips,
+                loading: loading,
+              ),
             ),
-            const SizedBox(height: 12),
-            DriverTripsProgressCard(trips: todayTrips),
+            if (snap.hasError) ...[
+              const SizedBox(height: 8),
+              Text(
+                UserFacingError.from(
+                  snap.error,
+                  fallback: 'Could not refresh earnings',
+                ),
+                style: TextStyle(
+                  color: Colors.red.shade700,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
           ],
         );
       },
     );
+  }
+
+  Widget _buildDailyTripGoal() {
+    return FutureBuilder<DriverEarningsSummary>(
+      future: _earningsFuture,
+      builder: (context, snap) {
+        final todayTrips = snap.data?.today.trips ?? 0;
+        return DriverTripsProgressCard(
+          trips: todayTrips,
+          target: _dailyTripGoal,
+        );
+      },
+    );
+  }
+
+  Widget _buildWeeklyEarningsGoal() {
+    return FutureBuilder<DriverEarningsSummary>(
+      future: _earningsFuture,
+      builder: (context, snap) {
+        final weekEarned = snap.data?.thisWeek.earnings ?? 0;
+        final weekGoal = _weeklyGoalFor(weekEarned.toDouble());
+        return DriverWeeklyGoalCard(
+          earned: weekEarned.toDouble(),
+          goal: weekGoal,
+          money: _money,
+        );
+      },
+    );
+  }
+
+  Widget _buildRatingRow(Map<String, dynamic> driver) {
+    final rating = (_getNumericValue(driver['rating']) as num).toDouble();
+    final totalRides = (_getNumericValue(driver['totalRides']) as num).toInt();
+    return DriverRatingCard(rating: rating, totalRides: totalRides);
   }
 
   Widget _buildDemandMapSection(Map<String, dynamic> driver) {
@@ -569,22 +695,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
               ),
             ),
             TextButton.icon(
-              onPressed: () async {
-                final pos = ref
-                        .read(driverOnlineSessionProvider)
-                        .lastPosition ??
-                    await LocationPermissionHelper.getCurrentPositionIfGranted(
-                      timeLimit: const Duration(seconds: 4),
-                    );
-                if (pos != null && mapController != null) {
-                  await mapController!.animateCamera(
-                    CameraUpdate.newLatLngZoom(
-                      LatLng(pos.latitude, pos.longitude),
-                      15,
-                    ),
-                  );
-                }
-              },
+              onPressed: () => _detectAndCenterDriverLocation(force: true),
               icon: const Icon(Icons.my_location, size: 18),
               label: const Text(
                 'Recenter',
@@ -614,8 +725,9 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
           child: Stack(
             children: [
               MapViewWidget(
-                onMapCreated: (controller) {
+                onMapCreated: (controller) async {
                   mapController = controller;
+                  await _detectAndCenterDriverLocation(force: true);
                 },
                 initialPosition: _lastPosition,
                 // Nearby taxis are a passenger-facing feature.
@@ -699,40 +811,6 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     );
   }
 
-  Widget _buildGoalsAndRating(Map<String, dynamic> driver) {
-    final rating = (_getNumericValue(driver['rating']) as num).toDouble();
-    final totalRides = (_getNumericValue(driver['totalRides']) as num).toInt();
-    final isVerified = _getBoolValue(driver['isVerified']);
-
-    return FutureBuilder<DriverEarningsSummary>(
-      future: _earningsFuture,
-      builder: (context, snap) {
-        final weekEarned = snap.data?.thisWeek.earnings ?? 0;
-        final weekGoal = weekEarned <= 0
-            ? 50000.0
-            : (weekEarned < 50000
-                ? 50000.0
-                : (weekEarned / 0.85).ceilToDouble());
-
-        return Column(
-          children: [
-            DriverWeeklyGoalCard(
-              earned: weekEarned,
-              goal: weekGoal,
-              money: _money,
-            ),
-            const SizedBox(height: 12),
-            DriverRatingCard(
-              rating: rating,
-              totalRides: totalRides,
-              isVerified: isVerified,
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   Widget _buildRecentActivitySection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -755,6 +833,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
                   MaterialPageRoute<void>(
                     builder: (_) => const RideHistoryScreen(
                       mode: RideHistoryMode.driver,
+                      focus: RideHistoryFocus.history,
                     ),
                   ),
                 );
@@ -1035,24 +1114,6 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
                   ? () => _navigateToRideRequests(context)
                   : null,
             ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: DriverQuickActionButton(
-            label: 'Trip History & Earnings',
-            icon: Icons.history_rounded,
-            color: RideShareColors.primaryContainer,
-            outlined: true,
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => const RideHistoryScreen(
-                    mode: RideHistoryMode.driver,
-                  ),
-                ),
-              );
-            },
           ),
         ),
       ],

@@ -856,23 +856,32 @@ class RideHistoryFilterChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(right: 8),
-      child: ChoiceChip(
-        label: Text(label),
-        selected: selected,
-        onSelected: (_) => onTap(),
-        selectedColor: RideShareColors.primary,
-        labelStyle: TextStyle(
-          color: selected ? Colors.white : RideShareColors.titleText,
-          fontWeight: FontWeight.w700,
-          fontSize: 12,
+      child: Material(
+        color: selected ? RideShareColors.primary : Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(22),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(
+                color: selected
+                    ? RideShareColors.primary
+                    : RideShareColors.outlineVariant,
+              ),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: selected ? Colors.white : RideShareColors.titleText,
+                fontWeight: FontWeight.w700,
+                fontSize: 12.5,
+              ),
+            ),
+          ),
         ),
-        backgroundColor: Colors.white,
-        side: BorderSide(
-          color: selected
-              ? RideShareColors.primary
-              : RideShareColors.outlineVariant,
-        ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       ),
     );
   }

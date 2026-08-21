@@ -1,5 +1,6 @@
 // lib/Pages/MerchantDashboards/food_merchant_dashboard.dart
 import 'dart:async';
+import 'dart:io' show File;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -23,11 +24,17 @@ import 'package:vero360_app/utils/kyc_gate.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/kyc_status_card.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
+import 'package:vero360_app/GernalServices/profile_photo_cache.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_courier_dispatch.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/ride_history_screen.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_business_location_picker.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/GernalServices/google_places_service.dart';
+import 'package:vero360_app/utils/display_name_sync.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/config/api_config.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 final NumberFormat _mwk0Fmt =
     NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
@@ -36,11 +43,14 @@ String _mwk0(num v) => _mwk0Fmt.format(v);
 
 class FoodMerchantDashboard extends StatefulWidget {
   final String email;
+  /// Firebase uid this kitchen dashboard is bound to (single source of truth).
+  final String? merchantUid;
   /// When [Bottomnavbar] already wraps this screen (tab 4), hide the bar to avoid duplicates.
   final bool embeddedInMainNav;
   const FoodMerchantDashboard({
     super.key,
     required this.email,
+    this.merchantUid,
     this.embeddedInMainNav = false,
   });
 
@@ -77,6 +87,8 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
   String _merchantPhone = '';
   String _businessDescription = '';
   String _profileUrl = '';
+  /// Disk-cached avatar for instant paint (same pattern as marketplace).
+  String? _localPhotoPath;
   String _openingHours = '';
   List<int> _openingDays = const [1, 2, 3, 4, 5, 6, 7];
   String _businessLocation = '';
@@ -97,11 +109,60 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
   static const Color _brandOrange = Color(0xFFFF8A00);
   static const Color _brandNavy = Color(0xFF16284C);
 
+  ImageProvider? _profileImageProvider() {
+    final local = (_localPhotoPath ?? '').trim();
+    if (local.isNotEmpty) {
+      try {
+        final f = File(local);
+        if (f.existsSync()) return FileImage(f);
+      } catch (_) {}
+    }
+    final remote = _profileUrl.trim();
+    if (remote.isNotEmpty) return NetworkImage(remote);
+    return null;
+  }
+
+  static String _foodBusinessNamePrefsKey(String uid) =>
+      'food_business_name_v1_$uid';
+
+  /// Sync paint from Auth before prefs/Firestore — avoids blank name/avatar flash.
+  void _bootstrapIdentityFast() {
+    final pinned = (widget.merchantUid ?? '').trim();
+    final user = _auth.currentUser;
+    _uid = pinned.isNotEmpty ? pinned : (user?.uid ?? '');
+    final authName = (user?.displayName ?? '').trim();
+    if (authName.isNotEmpty) {
+      _businessName = authName;
+    }
+    final authPic = (user?.photoURL ?? '').trim();
+    if (authPic.isNotEmpty) {
+      _profileUrl = authPic;
+    }
+    final email = (user?.email ?? widget.email).trim();
+    if (email.isNotEmpty) _merchantEmail = email;
+  }
+
+  Future<void> _warmProfilePhotoCache([String? url]) async {
+    final remote = (url ?? _profileUrl).trim();
+    if (remote.isEmpty) return;
+    try {
+      final peeked = await ProfilePhotoCache.peekLocalPath(forRemoteUrl: remote);
+      if (peeked != null && mounted && _localPhotoPath != peeked) {
+        setState(() => _localPhotoPath = peeked);
+      }
+    } catch (_) {}
+    final file = await ProfilePhotoCache.ensureCached(remote);
+    if (!mounted || file == null) return;
+    if (_localPhotoPath == file.path) return;
+    setState(() => _localPhotoPath = file.path);
+  }
+
   @override
   void initState() {
     super.initState();
     _foodTabs = TabController(length: 4, vsync: this);
-    _loadMerchantData(showLoader: false);
+    _bootstrapIdentityFast();
+    unawaited(_loadMerchantData(showLoader: false));
     // Orders are live via snapshots(); wallet/reviews are less time-critical.
     _refreshTimer = Timer.periodic(const Duration(minutes: 5), (_) {
       if (!mounted || _uid.isEmpty) return;
@@ -123,14 +184,42 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     _isFetching = true;
     try {
       final prefs = await SharedPreferences.getInstance();
-      _uid = _auth.currentUser?.uid ?? prefs.getString('uid') ?? '';
-      _businessName = prefs.getString('business_name') ?? 'Restaurant Business';
-      _merchantEmail = prefs.getString('email') ?? widget.email;
-      _merchantPhone = (prefs.getString('phone') ?? '').trim();
-      _profileUrl = (prefs.getString('profilepicture') ??
+      final pinned = (widget.merchantUid ?? '').trim();
+      _uid = pinned.isNotEmpty
+          ? pinned
+          : (_auth.currentUser?.uid ?? prefs.getString('uid') ?? _uid);
+      // Prefer uid-scoped name (survives logout). Session `business_name` is
+      // cleared on sign-out and can be overwritten by Nest with the signup name.
+      final scopedName = _uid.isNotEmpty
+          ? (prefs.getString(_foodBusinessNamePrefsKey(_uid)) ?? '').trim()
+          : '';
+      final prefsName = (prefs.getString('business_name') ?? '').trim();
+      if (scopedName.isNotEmpty) {
+        _businessName = scopedName;
+      } else if (prefsName.isNotEmpty) {
+        _businessName = prefsName;
+      } else if (_businessName.trim().isEmpty) {
+        _businessName = 'Restaurant Business';
+      }
+      final prefsEmail = (prefs.getString('email') ?? '').trim();
+      if (prefsEmail.isNotEmpty) {
+        _merchantEmail = prefsEmail;
+      } else if (_merchantEmail.trim().isEmpty) {
+        _merchantEmail = widget.email;
+      }
+      _merchantPhone = (prefs.getString('phone') ?? _merchantPhone).trim();
+      final prefsPic = (prefs.getString('profilepicture') ??
               prefs.getString('profilePicture') ??
               '')
           .trim();
+      if (prefsPic.isNotEmpty) {
+        _profileUrl = prefsPic;
+      } else {
+        final authPic = (_auth.currentUser?.photoURL ?? '').trim();
+        if (authPic.isNotEmpty && _profileUrl.trim().isEmpty) {
+          _profileUrl = authPic;
+        }
+      }
       _businessDescription =
           (prefs.getString('food_business_description') ?? '').trim();
       _openingHours =
@@ -145,12 +234,21 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
         _openingDays = MarketplaceShopHours.parseDays(dayPref);
       }
 
+      // Paint name/photo immediately — do not wait for menu/wallet/Firestore.
+      if (mounted) setState(() {});
+      if (_profileUrl.trim().isNotEmpty) {
+        unawaited(_warmProfilePhotoCache(_profileUrl));
+      }
+
       if (_uid.isNotEmpty) {
         _subscribeToOrders();
         // Hydrate profile in parallel with menu/wallet so a slow network cannot
         // leave merchants staring at a blank shell (or fall back to customer UI).
         unawaited(_hydrateProfileFromFirestore().then((_) {
           if (mounted) setState(() {});
+          if (_profileUrl.trim().isNotEmpty) {
+            unawaited(_warmProfilePhotoCache(_profileUrl));
+          }
         }));
         await Future.wait<void>([
           _loadMenuItems(),
@@ -170,17 +268,17 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     try {
       final results = await Future.wait([
         _firestore.collection('users').doc(_uid).get().timeout(
-              const Duration(seconds: 5),
+              _firestoreTimeout,
             ),
         _firestore.collection('food_merchants').doc(_uid).get().timeout(
-              const Duration(seconds: 5),
+              _firestoreTimeout,
             ),
         _firestore
             .collection('restaurants')
             .where('ownerUid', isEqualTo: _uid)
             .limit(1)
             .get()
-            .timeout(const Duration(seconds: 5)),
+            .timeout(_firestoreTimeout),
       ]);
 
       final userDoc = results[0] as DocumentSnapshot<Map<String, dynamic>>;
@@ -188,6 +286,15 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       final restQ = results[2] as QuerySnapshot<Map<String, dynamic>>;
 
       final u = userDoc.data() ?? {};
+      final fsName = (u['businessName'] ??
+              u['merchantName'] ??
+              u['name'] ??
+              u['fullName'] ??
+              u['displayName'] ??
+              '')
+          .toString()
+          .trim();
+      if (fsName.isNotEmpty) _businessName = fsName;
       final fsPhone =
           (u['phone'] ?? u['phoneNumber'] ?? '').toString().trim();
       final fsPic = (u['profilepicture'] ??
@@ -329,6 +436,20 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
           _businessLng = rLng.toDouble();
         }
       }
+
+      // Keep next open instant from prefs (incl. after logout → re-login).
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        if (_businessName.trim().isNotEmpty &&
+            _businessName != 'Restaurant Business') {
+          final name = _businessName.trim();
+          await prefs.setString('business_name', name);
+          await prefs.setString(_foodBusinessNamePrefsKey(_uid), name);
+        }
+        if (_profileUrl.trim().isNotEmpty) {
+          await prefs.setString('profilepicture', _profileUrl.trim());
+        }
+      } catch (_) {}
     } catch (e) {
       debugPrint('Hydrate food merchant profile: $e');
     }
@@ -603,7 +724,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
           if (mounted) {
             ToastHelper.showCustomToast(
               context,
-              'Order updated, but wallet release failed: $e',
+              'Order updated, but wallet payout could not finish. Try again shortly.',
               isSuccess: false,
               errorMessage: '',
             );
@@ -863,6 +984,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       if (!mounted) return;
       setState(() => _profileUrl = url);
       _toastOk('Profile picture updated');
+      unawaited(_warmProfilePhotoCache(url));
     } catch (e) {
       debugPrint('Food profile upload: $e');
       if (mounted) _toastErr('Failed to upload photo. Try again.');
@@ -1112,6 +1234,8 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
         'businessName': name,
         'name': name,
         'merchantName': name,
+        'fullName': name,
+        'displayName': name,
       });
       // Keep menu listings in sync so Food browse shows the new name.
       try {
@@ -1137,8 +1261,18 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       } catch (e) {
         debugPrint('Sync menu business name: $e');
       }
+      // Auth + Nest must match — logout clears prefs and re-login used to
+      // restore the old Auth/API signup name.
+      try {
+        await _auth.currentUser?.updateDisplayName(name);
+      } catch (_) {}
+      unawaited(DisplayNameSync.syncEverywhere(uid: uid, name: name));
+      unawaited(_syncBusinessNameToBackend(name));
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('business_name', name);
+      await prefs.setString(_foodBusinessNamePrefsKey(uid), name);
+      await prefs.setString('fullName', name);
+      await prefs.setString('name', name);
       if (!mounted) return;
       setState(() => _businessName = name);
       _toastOk('Restaurant name saved');
@@ -1147,6 +1281,29 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       if (mounted) _toastErr('Could not save name. Try again.');
     } finally {
       if (mounted) setState(() => _profileBusy = false);
+    }
+  }
+
+  Future<void> _syncBusinessNameToBackend(String name) async {
+    try {
+      final token = await AuthHandler.getTokenForApi();
+      if (token == null || token.isEmpty) return;
+      await http
+          .put(
+            ApiConfig.endpoint('/users/me'),
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+            },
+            body: json.encode({
+              'name': name,
+              'businessName': name,
+            }),
+          )
+          .timeout(const Duration(seconds: 8));
+    } catch (e) {
+      debugPrint('Sync food business name to API: $e');
     }
   }
 
@@ -1348,10 +1505,8 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
               CircleAvatar(
                 radius: 28,
                 backgroundColor: Colors.white.withValues(alpha: 0.15),
-                backgroundImage: _profileUrl.trim().isNotEmpty
-                    ? NetworkImage(_profileUrl.trim())
-                    : null,
-                child: _profileUrl.trim().isEmpty
+                backgroundImage: _profileImageProvider(),
+                child: _profileImageProvider() == null
                     ? const Icon(Icons.restaurant_rounded,
                         color: Colors.white, size: 28)
                     : null,
@@ -2291,10 +2446,8 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                       CircleAvatar(
                         radius: 48,
                         backgroundColor: const Color(0xFFFFF3E5),
-                        backgroundImage: _profileUrl.trim().isNotEmpty
-                            ? NetworkImage(_profileUrl.trim())
-                            : null,
-                        child: _profileUrl.trim().isEmpty
+                        backgroundImage: _profileImageProvider(),
+                        child: _profileImageProvider() == null
                             ? const Icon(
                                 Icons.restaurant_rounded,
                                 size: 42,

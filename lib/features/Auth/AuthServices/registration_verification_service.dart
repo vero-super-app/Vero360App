@@ -82,11 +82,33 @@ class RegistrationVerificationService {
     bool forSend = false,
   }) {
     if (e is ApiException) {
+      if (looksLikeAccountExists(e)) {
+        return 'Account exists. Please sign in to continue.';
+      }
       final msg = e.message.trim();
       if (msg.isNotEmpty) return msg;
     }
     return forSend
         ? 'Could not send verification code. Try again.'
         : 'Invalid or expired code. Try again.';
+  }
+
+  /// Backend / OTP responses that mean this email or phone is already registered.
+  static bool looksLikeAccountExists(Object e) {
+    if (e is! ApiException) return false;
+    if (e.requiresLogin) return true;
+    final hay = '${e.message} ${e.backendMessage ?? ''}'.toLowerCase();
+    return hay.contains('already exist') ||
+        hay.contains('already registered') ||
+        hay.contains('already in use') ||
+        hay.contains('email is taken') ||
+        hay.contains('phone is taken') ||
+        hay.contains('account exists') ||
+        hay.contains('user already') ||
+        (e.statusCode == 409 &&
+            (hay.contains('exist') ||
+                hay.contains('registered') ||
+                hay.contains('taken') ||
+                hay.contains('duplicate')));
   }
 }

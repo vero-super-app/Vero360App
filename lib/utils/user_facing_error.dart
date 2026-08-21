@@ -168,6 +168,11 @@ class UserFacingError {
     RegExp(r'handshakeexception', caseSensitive: false),
     RegExp(r'xmlhttprequest'),
     RegExp(r'firestore\.googleapis'),
-    RegExp(r'firebase'),
+    RegExp(r'googleapis\.com'),
+    RegExp(r'cloud_firestore', caseSensitive: false),
+    RegExp(r'firebase', caseSensitive: false),
+    RegExp(r'api[_-]?key', caseSensitive: false),
+    RegExp(r'authorization', caseSensitive: false),
+    RegExp(r'bearer\s+', caseSensitive: false),
   ];
 }

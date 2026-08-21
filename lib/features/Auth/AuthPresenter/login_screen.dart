@@ -19,8 +19,10 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/firebaseAuth.dart';
 import 'package:vero360_app/features/Auth/AuthServices/recent_login_storage.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
+import 'package:vero360_app/GernalServices/merchant_identity.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:vero360_app/GernalServices/role_session_service.dart';
+import 'package:vero360_app/utils/session_local_cache.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 
 class AppColors {
@@ -249,9 +251,12 @@ class _LoginScreenState extends State<LoginScreen> {
             .toString()
             .trim();
     final prevUid = (prefs.getString('uid') ?? '').trim();
-    if (incomingUid.isNotEmpty && prevUid.isNotEmpty && incomingUid != prevUid) {
-      await RoleSessionService.clearRoleKeys(prefs);
-    }
+    // Always drop previous routing on this phone so food/marketplace/driver
+    // dashboards cannot leak across accounts (or stick after a wrong resolve).
+    await SessionLocalCache.clearRoutingOnLogin(
+      previousUid: prevUid,
+      nextUid: incomingUid,
+    );
     if (fbUid.isNotEmpty) {
       user['uid'] = fbUid;
       user['firebaseUid'] = fbUid;
@@ -353,6 +358,18 @@ class _LoginScreenState extends State<LoginScreen> {
       try {
         await hydrateMerchantServiceFromFirestore(prefs);
       } catch (_) {}
+    } else if (role == RoleHelper.driver) {
+      await prefs.remove('merchant_service');
+      MerchantIdentityStore.clear();
+      final id = (uid ?? '').trim();
+      if (id.isNotEmpty) {
+        await MerchantIdentityStore.stamp(
+          uid: id,
+          role: RoleHelper.driver,
+          prefs: prefs,
+          writeFirestore: false,
+        );
+      }
     } else {
       await prefs.remove('merchant_service');
     }

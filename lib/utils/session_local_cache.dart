@@ -14,6 +14,8 @@ import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
 import 'package:vero360_app/GernalServices/chat_outbox.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
+import 'package:vero360_app/GernalServices/merchant_identity.dart';
+import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/GernalServices/local_message_database.dart';
 import 'package:vero360_app/GernalServices/profile_photo_cache.dart';
 import 'package:vero360_app/features/ride_share/services/active_ride_storage.dart';
@@ -47,6 +49,11 @@ class SessionLocalCache {
     'active_ride_taxi_id',
     'nearby_taxis_cache',
     'has_driver_profile',
+    // Routing — never leave previous account's dashboard on this phone.
+    'merchant_service',
+    'merchant_identity_uid',
+    'business_name',
+    'business_address',
   ];
 
   static const _prefixes = <String>[
@@ -59,6 +66,47 @@ class SessionLocalCache {
     'chat_list_hidden_',
     'guest_paid_stay_bookings_v1_',
   ];
+
+  /// Call on every successful login so a prior merchant/driver session cannot
+  /// open the wrong dashboard for the next account on the same device.
+  static Future<void> clearRoutingOnLogin({
+    String? previousUid,
+    String? nextUid,
+  }) async {
+    MerchantIdentityStore.clear();
+    try {
+      final sp = await SharedPreferences.getInstance();
+      final next = (nextUid ?? '').trim();
+      final intendedUid =
+          (sp.getString(RoleSessionService.intendedUidKey) ?? '').trim();
+      final intendedRole = sp.getString(RoleSessionService.intendedRoleKey);
+      final intendedService =
+          sp.getString(RoleSessionService.intendedServiceKey);
+      final keepIntended = next.isNotEmpty && intendedUid == next;
+
+      await MerchantIdentityStore.clearRoutingCache(sp);
+      await RoleSessionService.clearRoleKeys(sp);
+
+      if (keepIntended) {
+        if (intendedRole != null && intendedRole.isNotEmpty) {
+          await sp.setString(RoleSessionService.intendedRoleKey, intendedRole);
+        }
+        if (intendedService != null && intendedService.isNotEmpty) {
+          await sp.setString(
+            RoleSessionService.intendedServiceKey,
+            intendedService,
+          );
+        }
+        await sp.setString(RoleSessionService.intendedUidKey, next);
+      }
+
+      // Drop other accounts' uid-scoped verticals when switching users.
+      final prev = (previousUid ?? '').trim();
+      if (prev.isNotEmpty && next.isNotEmpty && prev != next) {
+        await sp.remove(MerchantIdentityStore.prefsServiceKeyForUid(prev));
+      }
+    } catch (_) {}
+  }
 
   static Future<void> clearOnLogout() async {
     await _clearLocalState(accountDeleted: false);
@@ -79,6 +127,7 @@ class SessionLocalCache {
     MarketplaceMerchantDashboard.clearSessionCaches();
     BackendChatService.clearAuthCache();
     BlockedMerchantService.clearSessionCache();
+    MerchantIdentityStore.clear();
 
     // Fire-and-forget socket close — do not block Settings logout.
     unawaited(

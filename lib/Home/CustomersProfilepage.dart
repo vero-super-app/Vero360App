@@ -79,10 +79,11 @@ class _ProfilePageState extends State<ProfilePage> {
     _fetchCurrentUser();
   }
 
-  void _openRideHistory() {
+  void _openRideHistory({RideHistoryFocus focus = RideHistoryFocus.combined}) {
     _openBottomSheet(
       RideHistoryScreen(
         mode: _isDriver ? RideHistoryMode.driver : RideHistoryMode.passenger,
+        focus: _isDriver ? focus : RideHistoryFocus.combined,
       ),
     );
   }
@@ -1277,8 +1278,8 @@ class _ProfilePageState extends State<ProfilePage> {
           if (_isDriver) ...[
             _orderAction(
               'Trip Earnings',
-              Icons.local_taxi_rounded,
-              _openRideHistory,
+              Icons.payments_rounded,
+              () => _openRideHistory(focus: RideHistoryFocus.earnings),
             ),
             _orderAction(
               'Driver Center',
@@ -1288,7 +1289,7 @@ class _ProfilePageState extends State<ProfilePage> {
             _orderAction(
               'Trip History',
               Icons.history_rounded,
-              _openRideHistory,
+              () => _openRideHistory(focus: RideHistoryFocus.history),
             ),
           ] else ...[
             _orderAction(

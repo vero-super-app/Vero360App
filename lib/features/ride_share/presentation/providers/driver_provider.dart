@@ -119,6 +119,9 @@ final verifiedDriversProvider =
 /// Active session role only — set at login/register, never inferred from driver API rows.
 bool? _isDriverCachedValue;
 
+/// Optional bump so Riverpod rebuilds when [loadDriverStatusFromPrefs] updates the cache.
+void Function()? driverSessionRiverpodBump;
+
 const _hasDriverProfileKey = 'has_driver_profile';
 
 /// Load whether the current session is driver mode (`user_role == 'driver'`).
@@ -130,7 +133,13 @@ Future<bool?> loadDriverStatusFromPrefs() async {
         ) ??
         '';
     final value = role == RoleHelper.driver;
+    final changed = _isDriverCachedValue != value;
     _isDriverCachedValue = value;
+    if (changed) {
+      try {
+        driverSessionRiverpodBump?.call();
+      } catch (_) {}
+    }
     return value;
   } catch (_) {
     return null;
@@ -140,16 +149,23 @@ Future<bool?> loadDriverStatusFromPrefs() async {
 /// Clears in-memory driver session cache (call after logout).
 void resetDriverSessionCache() {
   _isDriverCachedValue = false;
+  try {
+    driverSessionRiverpodBump?.call();
+  } catch (_) {}
 }
+
+final driverSessionTickProvider = StateProvider<int>((ref) => 0);
 
 /// Whether ride-request popups should run (explicit driver session only).
 final driverRideNotificationsEnabledProvider = Provider<bool>((ref) {
+  ref.watch(driverSessionTickProvider);
   final cached = ref.watch(isCurrentUserDriverProvider);
   return cached == true;
 });
 
 /// Loads driver status from SharedPreferences (local cache, no network call)
 final isCurrentUserDriverProvider = Provider<bool?>((ref) {
+  ref.watch(driverSessionTickProvider);
   return _isDriverCachedValue;
 });
 

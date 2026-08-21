@@ -32,6 +32,8 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.mod
     as market;
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/LatestArrival_page.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/driver_incoming_ride_from_notification_page.dart';
+import 'package:vero360_app/features/ride_share/presentation/services/driver_ride_offer_inbox.dart';
 
 /// Central service for handling Firebase Cloud Messaging (FCM) + local notifications
 class NotificationService {
@@ -57,6 +59,16 @@ class NotificationService {
     'high_importance_channel',
     'High Importance Notifications',
     description: 'Important alerts: ride updates, new messages, order status',
+    importance: Importance.max,
+    playSound: true,
+    enableVibration: true,
+  );
+
+  static const AndroidNotificationChannel _rideRequestChannel =
+      AndroidNotificationChannel(
+    'driver_ride_requests',
+    'Driver Ride Requests',
+    description: 'Incoming ride offers for drivers',
     importance: Importance.max,
     playSound: true,
     enableVibration: true,
@@ -111,10 +123,11 @@ class NotificationService {
     );
 
     // Create Android notification channel (required Android 8+)
-    await _localNotifications
+    final androidImpl = _localNotifications
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(_highPriorityChannel);
+            AndroidFlutterLocalNotificationsPlugin>();
+    await androidImpl?.createNotificationChannel(_highPriorityChannel);
+    await androidImpl?.createNotificationChannel(_rideRequestChannel);
 
     // Request Android 13+ notification permission (required to show notifications)
     final androidPlugin = _localNotifications.resolvePlatformSpecificImplementation<
@@ -145,13 +158,13 @@ class NotificationService {
     final initial = await messaging.getInitialMessage();
     if (initial != null) {
       _handleInitialMessage(initial);
+    } else {
+      // Background handler may have stashed a ride offer before process restart.
+      unawaited(_consumePendingDriverRideOffer());
     }
 
     // 6. FCM token: register with backend (if user logged in). Never log token material.
-    final token = await messaging.getToken();
-    if (token != null) {
-      await _registerTokenWithBackend(token);
-    }
+    unawaited(registerTokenWithBackend(retries: 3));
 
     messaging.onTokenRefresh.listen((newToken) async {
       await _registerTokenWithBackend(newToken);
@@ -162,7 +175,7 @@ class NotificationService {
       if (user != null) {
         // Always rebind store to this Firebase UID before accepting pushes.
         await NotificationStore.instance.switchToUser(user.uid);
-        await registerTokenWithBackend();
+        await registerTokenWithBackend(retries: 4);
         _syncOrderPartyAlertListener(user);
         _syncChatAlertListener(user);
         await EngagementNotificationService.instance.syncTopicSubscription();
@@ -310,11 +323,34 @@ class NotificationService {
 
   /// Register FCM token with backend. Call this when user logs in, or it runs
   /// automatically on init/token refresh (no-op if not logged in).
-  Future<void> registerTokenWithBackend() async {
-    final token = await FirebaseMessaging.instance.getToken();
-    if (token != null) {
-      await _registerTokenWithBackend(token);
+  Future<void> registerTokenWithBackend({int retries = 1}) async {
+    for (var attempt = 0; attempt < retries; attempt++) {
+      try {
+        final token = await FirebaseMessaging.instance.getToken();
+        if (token != null && token.isNotEmpty) {
+          await _registerTokenWithBackend(token);
+          return;
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('FCM getToken attempt ${attempt + 1} failed: $e');
+        }
+      }
+      if (attempt < retries - 1) {
+        await Future<void>.delayed(Duration(seconds: 1 + attempt));
+      }
     }
+    if (kDebugMode) {
+      debugPrint('FCM token unavailable after $retries attempts');
+    }
+  }
+
+  Future<void> _consumePendingDriverRideOffer() async {
+    final pending = await DriverRideOfferInbox.instance.takePendingOffer();
+    if (pending == null) return;
+    // Delay until navigator is ready after cold start.
+    await Future<void>.delayed(const Duration(milliseconds: 800));
+    _navigateBasedOnPayload(pending);
   }
 
   Future<void> _registerTokenWithBackend(String fcmToken) async {
@@ -455,9 +491,27 @@ class NotificationService {
       }
       return;
     }
+    final type = (data['type'] as String?)?.toLowerCase() ?? '';
     final title = notification?.title ?? data['title'] as String? ?? 'Vero360';
     final body = notification?.body ?? data['body'] as String? ?? 'New notification';
     if (kDebugMode) debugPrint("Foreground FCM received");
+
+    // Driver ride offers: feed the same overlay path as WebSocket.
+    if (type == 'new_ride') {
+      unawaited(DriverRideOfferInbox.instance.ingestFcm(Map<String, dynamic>.from(data)));
+      try {
+        await _showLocalNotification(
+          id: message.hashCode.abs(),
+          title: title,
+          body: body,
+          payload: jsonEncode(data),
+          rideRequest: true,
+        );
+      } catch (e) {
+        if (kDebugMode) debugPrint("Show ride local notification failed");
+      }
+      return;
+    }
 
     final id = message.messageId ?? 'fcm_${message.hashCode}_${DateTime.now().millisecondsSinceEpoch}';
     try {
@@ -640,27 +694,32 @@ class NotificationService {
     required String body,
     String? payload,
     bool interactive = false,
+    bool rideRequest = false,
   }) async {
+    final channel = rideRequest ? _rideRequestChannel : _highPriorityChannel;
     await _localNotifications.show(
       id,
       title,
       body,
       NotificationDetails(
         android: AndroidNotificationDetails(
-          _highPriorityChannel.id,
-          _highPriorityChannel.name,
-          channelDescription: _highPriorityChannel.description,
-          importance: _highPriorityChannel.importance,
-          priority: Priority.high,
+          channel.id,
+          channel.name,
+          channelDescription: channel.description,
+          importance: channel.importance,
+          priority: Priority.max,
           icon: '@mipmap/ic_launcher',
           enableVibration: true,
           visibility: NotificationVisibility.public,
+          category: rideRequest ? AndroidNotificationCategory.call : null,
+          fullScreenIntent: rideRequest,
           actions: interactive ? _interactiveActions : null,
         ),
         iOS: const DarwinNotificationDetails(
           presentAlert: true,
           presentBadge: true,
           presentSound: true,
+          interruptionLevel: InterruptionLevel.timeSensitive,
         ),
       ),
       payload: payload,
@@ -681,8 +740,22 @@ class NotificationService {
 
     switch (type ?? '') {
       case 'new_ride':
+        final rideId = (data['rideId'] ?? data['id'] ?? '').toString().trim();
+        if (rideId.isEmpty) {
+          if (kDebugMode) debugPrint("→ new_ride missing rideId");
+          break;
+        }
+        if (kDebugMode) debugPrint("→ Open driver ride accept ($rideId)");
+        navigator.push(MaterialPageRoute(
+          builder: (_) => DriverIncomingRideFromNotificationPage(
+            rideId: rideId,
+            fcmData: Map<String, dynamic>.from(data),
+          ),
+        ));
+        break;
+
       case 'ride_update':
-        if (kDebugMode) debugPrint("→ Open ride");
+        if (kDebugMode) debugPrint("→ Open ride notifications");
         navigator.push(MaterialPageRoute(
           builder: (_) => const NotificationsPage(),
         ));

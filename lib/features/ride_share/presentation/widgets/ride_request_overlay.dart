@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_ride_requests_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_notification_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
+import 'package:vero360_app/features/ride_share/presentation/services/driver_ride_offer_inbox.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_notification_popup.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/driver_request_accept_dialog.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/driver_ride_execution_screen.dart';
@@ -31,10 +32,22 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
   final Set<String> _shownRequestIds = <String>{};
   /// Declined locally/server-side — suppress re-showing until request expires.
   final Set<String> _declinedRequestIds = <String>{};
+  StreamSubscription<DriverRideRequest>? _fcmOfferSub;
 
   @override
   void initState() {
     super.initState();
+    _fcmOfferSub = DriverRideOfferInbox.instance.offers.listen((request) {
+      if (!mounted) return;
+      if (!ref.read(driverRideNotificationsEnabledProvider)) return;
+      final requestId = request.id;
+      if (_declinedRequestIds.contains(requestId)) return;
+      if (_shownRequestIds.contains(requestId)) return;
+      _shownRequestIds.add(requestId);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showNotification(request);
+      });
+    });
     Future.microtask(() {
       if (mounted) {
         try {
@@ -44,6 +57,12 @@ class _RideRequestOverlayState extends ConsumerState<RideRequestOverlay> {
         }
       }
     });
+  }
+
+  @override
+  void dispose() {
+    _fcmOfferSub?.cancel();
+    super.dispose();
   }
 
   @override

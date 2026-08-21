@@ -24,6 +24,7 @@ import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/utils/session_local_cache.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
+import 'package:vero360_app/GernalServices/notification_service.dart';
 
 class AppColors {
   static const brandOrange = AuthPalette.orange;
@@ -374,6 +375,9 @@ class _LoginScreenState extends State<LoginScreen> {
       await prefs.remove('merchant_service');
     }
     await loadDriverStatusFromPrefs();
+    unawaited(
+      NotificationService.instance.registerTokenWithBackend(retries: 4),
+    );
   }
 
   // -------------------- Firebase profile helpers --------------------

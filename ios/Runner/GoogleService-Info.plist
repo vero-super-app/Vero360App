@@ -10,7 +10,7 @@
 	<string>1010595167807-bcc68cq4f384aeu9460rgii55km1l8cm.apps.googleusercontent.com</string>
 	<key>API_KEY</key>
 	<string>AIzaSyBJX498cAin_BXc_IAvs_spisGl2kKtuCE</string>
-	<key>GCM_SENDER_ID</key>
+	<key>GCM_SENDER_ID</key>	
 	<string>1010595167807</string>
 	<key>PLIST_VERSION</key>
 	<string>1</string>

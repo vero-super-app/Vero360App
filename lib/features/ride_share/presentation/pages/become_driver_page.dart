@@ -841,6 +841,7 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
   Widget _statusView() {
     final status = _profile?['status']?.toString() ?? 'PENDING_VERIFICATION';
     final isVerified = _profile?['isVerified'] == true;
+    final isActive = _profile?['isActive'] != false;
     final reason = (_profile?['rejectionReason']?.toString() ?? '').trim();
     final taxis = (_profile?['taxis'] is List)
         ? List<Map<String, dynamic>>.from(
@@ -850,7 +851,12 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
           )
         : <Map<String, dynamic>>[];
     final taxi = taxis.isNotEmpty ? taxis.first : null;
-    final taxiStatus = taxi?['status']?.toString() ?? ',';
+    final taxiStatus = taxi?['status']?.toString() ?? '';
+
+    final readyToDrive = isVerified &&
+        isActive &&
+        (status == 'VERIFIED' || status == 'ACTIVE') &&
+        taxiStatus == 'ACTIVE';
 
     String headline;
     String body;
@@ -861,7 +867,13 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
           ? 'Please update your documents and resubmit.'
           : reason;
       tone = const Color(0xFFB91C1C);
-    } else if (isVerified && taxiStatus == 'ACTIVE') {
+    } else if (status == 'SUSPENDED') {
+      headline = 'Account suspended';
+      body = reason.isEmpty
+          ? 'Contact support before going online.'
+          : reason;
+      tone = const Color(0xFFB91C1C);
+    } else if (readyToDrive) {
       headline = 'You are ready to drive';
       body =
           'Both gates are approved. Return to the driver dashboard and go online.';
@@ -871,6 +883,13 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
       body =
           'Your identity documents are verified. Wait for an operator to approve your vehicle.';
       tone = RideShareColors.primaryDeep;
+    } else if (isVerified &&
+        taxiStatus == 'ACTIVE' &&
+        (!isActive || status == 'INACTIVE')) {
+      headline = 'Account needs reactivation';
+      body =
+          'Your documents and vehicle are approved, but the account was marked inactive (often after a previous sign-out). Tap Refresh, then go online from the dashboard.';
+      tone = const Color(0xFFB45309);
     } else if (status == 'PENDING_VERIFICATION') {
       headline = 'Documents under review';
       body =
@@ -878,7 +897,7 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
       tone = RideShareColors.primaryDeep;
     } else {
       headline = 'Verification in progress';
-      body = 'Driver: $status · Vehicle: $taxiStatus';
+      body = 'Driver: $status · Vehicle: ${taxiStatus.isEmpty ? 'none' : taxiStatus}';
       tone = RideShareColors.primaryDeep;
     }
 

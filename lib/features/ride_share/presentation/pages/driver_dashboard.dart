@@ -495,6 +495,11 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
       final hasTaxi =
           driver['taxis'] is List && (driver['taxis'] as List).isNotEmpty;
       final isVerified = _getBoolValue(driver['isVerified']);
+      final isActive = driver['isActive'] == null
+          ? true
+          : _getBoolValue(driver['isActive']);
+      final driverStatus =
+          (driver['status']?.toString() ?? '').toUpperCase().trim();
       final taxiId = _primaryTaxiId(driver);
       final taxi = _primaryTaxi(driver);
       final taxiActive = (taxi?['status']?.toString() ?? '') == 'ACTIVE';
@@ -516,7 +521,9 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
         );
         return;
       }
-      if (!isVerified) {
+      if (!isVerified ||
+          driverStatus == 'PENDING_VERIFICATION' ||
+          driverStatus == 'REJECTED') {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text(
@@ -533,6 +540,24 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
           ),
         );
         return;
+      }
+      if (!isActive ||
+          driverStatus == 'SUSPENDED' ||
+          driverStatus == 'INACTIVE') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              driverStatus == 'SUSPENDED'
+                  ? 'Your driver account is suspended. Contact support.'
+                  : 'Reactivating your driver account… Try again in a moment.',
+            ),
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+            backgroundColor: Colors.orange.shade800,
+          ),
+        );
+        // Backend heals stale INACTIVE flags on availability; still attempt.
+        if (driverStatus == 'SUSPENDED') return;
       }
       if (!taxiActive) {
         ScaffoldMessenger.of(context).showSnackBar(

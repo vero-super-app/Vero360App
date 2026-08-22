@@ -370,15 +370,15 @@ class AuthService {
         );
       }
 
+      // Mobile / ride-share require a Firebase ID token — do not keep a Nest JWT session.
       if (showErrorToast) {
         _toast(
           context,
-          'Signed in, but Firebase sync failed. Sign out and sign in again to save data.',
+          'Signed in, but Firebase session failed. Try again or reset password.',
           ok: false,
         );
       }
-
-      return normalized;
+      return null;
     } on ApiException catch (e) {
       if (trimmedId.contains('@')) {
         final fb = await _loginWithFirebaseEmailPassword(

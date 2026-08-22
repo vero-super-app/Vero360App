@@ -171,28 +171,28 @@ class ApiClient {
     }
 
     try {
-      Future<http.Response> future;
-      switch (lineUpper(method)) {
-        case 'GET':
-          future = http.get(uri, headers: allHeaders);
-          break;
-        case 'POST':
-          future = http.post(uri, headers: allHeaders, body: body);
-          break;
-        case 'PUT':
-          future = http.put(uri, headers: allHeaders, body: body);
-          break;
-        case 'DELETE':
-          future = http.delete(uri, headers: allHeaders, body: body);
-          break;
-        case 'PATCH':
-          future = http.patch(uri, headers: allHeaders, body: body);
-          break;
-        default:
-          throw ArgumentError('Unsupported HTTP method: $method');
-      }
+      var res = await _send(
+        method: method,
+        uri: uri,
+        headers: allHeaders,
+        body: body,
+        timeout: timeout ?? _defaultTimeout,
+      );
 
-      final res = await future.timeout(timeout ?? _defaultTimeout);
+      // One force-refresh retry on 401 when a Firebase session exists.
+      if (res.statusCode == 401 || res.statusCode == 403) {
+        final refreshed = await AuthHandler.refreshTokenAfterUnauthorized();
+        if (refreshed != null && refreshed.isNotEmpty) {
+          allHeaders['Authorization'] = 'Bearer $refreshed';
+          res = await _send(
+            method: method,
+            uri: uri,
+            headers: allHeaders,
+            body: body,
+            timeout: timeout ?? _defaultTimeout,
+          );
+        }
+      }
 
       final allowed = allowedStatusCodes?.contains(res.statusCode) ?? false;
       if ((res.statusCode >= 200 && res.statusCode < 300) || allowed) {
@@ -248,6 +248,36 @@ class ApiClient {
         message: 'Something went wrong. Please try again.',
       );
     }
+  }
+
+  static Future<http.Response> _send({
+    required String method,
+    required Uri uri,
+    required Map<String, String> headers,
+    Object? body,
+    required Duration timeout,
+  }) {
+    Future<http.Response> future;
+    switch (lineUpper(method)) {
+      case 'GET':
+        future = http.get(uri, headers: headers);
+        break;
+      case 'POST':
+        future = http.post(uri, headers: headers, body: body);
+        break;
+      case 'PUT':
+        future = http.put(uri, headers: headers, body: body);
+        break;
+      case 'DELETE':
+        future = http.delete(uri, headers: headers, body: body);
+        break;
+      case 'PATCH':
+        future = http.patch(uri, headers: headers, body: body);
+        break;
+      default:
+        throw ArgumentError('Unsupported HTTP method: $method');
+    }
+    return future.timeout(timeout);
   }
 
   static String lineUpper(String s) => s.toUpperCase();

@@ -16,6 +16,7 @@ import 'package:vero360_app/Gernalproviders/notification_store.dart';
 
 // ✅ use your existing API base resolver (unchanged)
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_my_orders_page.dart';
@@ -223,13 +224,10 @@ class _ProfilePageState extends State<ProfilePage> {
     return parts.join(' ');
   }
 
-  Future<String> _getAuthToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    // Be robust to multiple keys used elsewhere in the app
-    return prefs.getString('jwt_token') ??
-        prefs.getString('token') ??
-        prefs.getString('authToken') ??
-        '';
+  Future<String> _getAuthToken({bool forceRefresh = false}) async {
+    final token =
+        await AuthHandler.getTokenForApi(forceRefresh: forceRefresh);
+    return token?.trim() ?? '';
   }
 
   /// True if [s] looks like a phone number (digits only or +digits), not a display name.
@@ -377,13 +375,27 @@ class _ProfilePageState extends State<ProfilePage> {
 
       await ApiConfig.init();
       final uri = ApiConfig.endpoint('/users/me');
-      final response = await http.get(
+      var response = await http.get(
         uri,
         headers: {
           'Authorization': 'Bearer $token',
           'Accept': 'application/json',
         },
       );
+
+      if ((response.statusCode == 401 || response.statusCode == 403) &&
+          mounted) {
+        final refreshed = await AuthHandler.refreshTokenAfterUnauthorized();
+        if (refreshed != null && refreshed.isNotEmpty) {
+          response = await http.get(
+            uri,
+            headers: {
+              'Authorization': 'Bearer $refreshed',
+              'Accept': 'application/json',
+            },
+          );
+        }
+      }
 
       if (!mounted) return;
 

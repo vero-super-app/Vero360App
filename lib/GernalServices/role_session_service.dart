@@ -530,17 +530,28 @@ class RoleSessionService {
     Duration timeout,
   ) async {
     try {
-      final headers = <String, String>{
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      };
-      await applyIntendedRoleHeader(headers);
-      final resp = await http
-          .get(
-            ApiConfig.endpoint('/users/me'),
-            headers: headers,
-          )
-          .timeout(timeout);
+      Future<http.Response> once(String bearer) async {
+        final headers = <String, String>{
+          'Authorization': 'Bearer $bearer',
+          'Accept': 'application/json',
+        };
+        await applyIntendedRoleHeader(headers);
+        return http
+            .get(
+              ApiConfig.endpoint('/users/me'),
+              headers: headers,
+            )
+            .timeout(timeout);
+      }
+
+      var resp = await once(token);
+
+      if (resp.statusCode == 401 || resp.statusCode == 403) {
+        final refreshed = await AuthHandler.refreshTokenAfterUnauthorized();
+        if (refreshed != null && refreshed.isNotEmpty) {
+          resp = await once(refreshed);
+        }
+      }
 
       if (resp.statusCode == 401 || resp.statusCode == 403) {
         return const _FetchedUser(isUnauthorized: true);

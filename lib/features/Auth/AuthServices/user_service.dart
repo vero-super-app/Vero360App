@@ -17,19 +17,28 @@ class UserService {
 
   /// Calls NestJS /vero/users/me with the Firebase ID token in Authorization header.
   Future<Map<String, dynamic>> getMe() async {
-    final token = await AuthHandler.getFirebaseToken();
+    var token = await AuthHandler.getFirebaseToken();
     if (token == null || token.isEmpty) {
       throw Exception('No Firebase token found (please log in).');
     }
 
     final url = ApiConfig.endpoint('/users/me');
-    final res = await http.get(
-      url,
-      headers: {
-        'Accept': 'application/json',
-        'Authorization': 'Bearer $token',
-      },
-    );
+    Future<http.Response> once(String bearer) => http.get(
+          url,
+          headers: {
+            'Accept': 'application/json',
+            'Authorization': 'Bearer $bearer',
+          },
+        );
+
+    var res = await once(token);
+    if (res.statusCode == 401 || res.statusCode == 403) {
+      final refreshed = await AuthHandler.refreshTokenAfterUnauthorized();
+      if (refreshed != null && refreshed.isNotEmpty) {
+        token = refreshed;
+        res = await once(token);
+      }
+    }
 
     if (res.statusCode == 200) {
       final data = jsonDecode(res.body);

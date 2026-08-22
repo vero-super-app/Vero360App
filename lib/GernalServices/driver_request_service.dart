@@ -1,9 +1,8 @@
 import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 
 /// Model for driver-specific ride request
 /// Result of fetching pending rides (distinguishes empty list vs error).
@@ -204,10 +203,10 @@ class DriverRequestService {
   /// Same as [getIncomingRequests] but surfaces HTTP failures for UI messaging.
   static Future<PendingRidesFetchResult> getIncomingRequestsDetailed() async {
     try {
-      final headers = await _authorizedJsonHeaders();
-
       final url = ApiConfig.endpoint('$_baseUrl/pending-rides');
-      final response = await http.get(url, headers: headers);
+      final response = await _withFirebaseAuth(
+        (headers) => http.get(url, headers: headers),
+      );
 
       if (response.statusCode == 200) {
         final decoded = jsonDecode(response.body);
@@ -506,47 +505,45 @@ class DriverRequestService {
     }
   }
 
-  /// Get auth token - tries Firebase first, then falls back to SharedPreferences
-  static Future<String?> _getAuthToken() async {
+  /// Get Firebase ID token only (ride-share / driver requests).
+  static Future<String?> _getAuthToken({bool forceRefresh = false}) async {
     try {
-      // Try to get fresh Firebase ID token if user is logged in
-      final firebaseUser = FirebaseAuth.instance.currentUser;
-      if (firebaseUser != null) {
-        try {
-          final freshToken = await firebaseUser.getIdToken();
-          if (freshToken != null && freshToken.isNotEmpty) {
-            return freshToken;
-          }
-        } catch (e) {}
-      }
-
-      // Fallback to SharedPreferences if Firebase token not available
-      final prefs = await SharedPreferences.getInstance();
-      final storedToken = prefs.getString('jwt_token') ??
-          prefs.getString('token') ??
-          prefs.getString('jwt');
-
-      if (storedToken != null) {
-        return storedToken;
-      }
-
-      return null;
+      return await AuthHandler.getFirebaseTokenForApi(
+        forceRefresh: forceRefresh,
+      );
     } catch (e) {
-      print('Error reading auth token: $e');
+      print('Error reading Firebase auth token: $e');
       return null;
     }
   }
 
-  static Future<Map<String, String>> _authorizedJsonHeaders() async {
+  static Future<Map<String, String>> _authorizedJsonHeaders({
+    bool forceRefresh = false,
+  }) async {
     final headers = <String, String>{
       'Content-Type': 'application/json',
+      'Accept': 'application/json',
     };
 
-    final token = await _getAuthToken();
+    final token = await _getAuthToken(forceRefresh: forceRefresh);
     if (token != null && token.isNotEmpty) {
       headers['Authorization'] = 'Bearer $token';
     }
 
     return headers;
+  }
+
+  static Future<http.Response> _withFirebaseAuth(
+    Future<http.Response> Function(Map<String, String> headers) send,
+  ) async {
+    var headers = await _authorizedJsonHeaders();
+    var res = await send(headers);
+    if (res.statusCode == 401 || res.statusCode == 403) {
+      headers = await _authorizedJsonHeaders(forceRefresh: true);
+      if (headers['Authorization'] != null) {
+        res = await send(headers);
+      }
+    }
+    return res;
   }
 }

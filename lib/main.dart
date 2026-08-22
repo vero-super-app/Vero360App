@@ -37,6 +37,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_sha
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_share_navigation.dart';
 import 'package:vero360_app/GernalServices/merchant_identity.dart';
 import 'package:vero360_app/GernalServices/role_session_service.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/app_nav_key.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/active_ride_controller.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_request_overlay.dart';
@@ -878,17 +879,33 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   Future<void> _verifyRoleFromServerInBg() async {
     final prefs = await SharedPreferences.getInstance();
-    final token = RoleSessionService.readToken(prefs);
+    var token = RoleSessionService.readToken(prefs) ??
+        await AuthHandler.getTokenForApi();
 
     if (token == null || token.trim().isEmpty) return;
 
-    final result = await RoleSessionService.syncFromServer(
+    var result = await RoleSessionService.syncFromServer(
       prefs: prefs,
       token: token,
     );
     if (result == null) return;
+
+    // One Firebase refresh before treating as logged out.
     if (result.isUnauthorized) {
-      await _clearAuth(prefs);
+      final refreshed = await AuthHandler.refreshTokenAfterUnauthorized();
+      if (refreshed != null && refreshed.isNotEmpty) {
+        result = await RoleSessionService.syncFromServer(
+          prefs: prefs,
+          token: refreshed,
+        );
+      }
+    }
+    if (result == null) return;
+    if (result.isUnauthorized) {
+      // Keep Firebase session; only clear stale SP tokens if Firebase is gone.
+      if (FirebaseAuth.instance.currentUser == null) {
+        await _clearAuth(prefs);
+      }
       return;
     }
 

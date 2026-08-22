@@ -16,13 +16,17 @@ class AuthHandler {
   static const Duration _cachedTokenTimeout = Duration(seconds: 5);
   static const Duration _refreshTokenTimeout = Duration(seconds: 10);
 
-  static Future<String?> getFirebaseToken() async {
+  static Future<String?> getFirebaseToken({bool forceRefresh = false}) async {
     final user = _firebaseAuth.currentUser;
     if (user == null) return null;
     try {
-      var token = await user.getIdToken(false).timeout(_cachedTokenTimeout);
+      var token =
+          await user.getIdToken(forceRefresh).timeout(_cachedTokenTimeout);
       if (token == null || token.isEmpty) {
         token = await user.getIdToken(true).timeout(_refreshTokenTimeout);
+      }
+      if (token != null && token.isNotEmpty) {
+        await persistTokenToSp(token);
       }
       return token;
     } on TimeoutException {
@@ -36,13 +40,20 @@ class AuthHandler {
     }
   }
 
+  /// Ride Share and other Firebase-only surfaces: never fall back to Nest JWT.
+  static Future<String?> getFirebaseTokenForApi({
+    bool forceRefresh = false,
+  }) async {
+    return getFirebaseToken(forceRefresh: forceRefresh);
+  }
+
   /// Prefer Firebase token so session stays valid after 1hr refresh; fallback to SP.
-  /// Use this everywhere you need a token for API calls (cart, checkout, ride, etc.).
+  /// Use this everywhere you need a token for API calls (cart, checkout, etc.).
   /// When we get a token from Firebase we sync it to SP so other code paths stay aligned.
-  static Future<String?> getTokenForApi() async {
-    final firebaseToken = await getFirebaseToken();
+  static Future<String?> getTokenForApi({bool forceRefresh = false}) async {
+    final firebaseToken =
+        await getFirebaseToken(forceRefresh: forceRefresh);
     if (firebaseToken != null && firebaseToken.isNotEmpty) {
-      await persistTokenToSp(firebaseToken);
       return firebaseToken;
     }
     final sp = await SharedPreferences.getInstance();
@@ -52,6 +63,20 @@ class AuthHandler {
         return v;
       }
     }
+    return null;
+  }
+
+  /// On HTTP 401: force-refresh Firebase ID token once and return it (or null).
+  static Future<String?> refreshTokenAfterUnauthorized() async {
+    final user = _firebaseAuth.currentUser;
+    if (user == null) return null;
+    try {
+      final token = await user.getIdToken(true).timeout(_refreshTokenTimeout);
+      if (token != null && token.isNotEmpty) {
+        await persistTokenToSp(token);
+        return token;
+      }
+    } catch (_) {}
     return null;
   }
 
@@ -66,7 +91,7 @@ class AuthHandler {
 
   /// Single source of truth for “are we signed in?” — must match [getTokenForApi].
   ///
-  /// Fast + offline-safe:
+  /// Fast + flicker-safe:
   /// - Firebase [currentUser] alone means logged in (do not await ID token here;
   ///   waiting caused BottomNavbar to treat the user as logged out for seconds
   ///   while Home/cart still worked).

@@ -4,14 +4,13 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/GeneralModels/ride_history_model.dart';
 import 'package:vero360_app/features/ride_share/services/active_ride_storage.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 
-/// HTTP-based Ride Share Service replacing Firebase completely
+/// HTTP-based Ride Share Service. Auth is Firebase ID token only (no Nest JWT).
 class RideShareHttpService {
   late IO.Socket socket;
   late StreamController<String> _connectionStatusController;
@@ -49,40 +48,47 @@ class RideShareHttpService {
     await Future.delayed(const Duration(milliseconds: 500));
   }
 
-  /// Get auth token - tries Firebase first, then falls back to SharedPreferences
-  Future<String?> _getAuthToken() async {
+  /// Firebase ID token only — ride-share backend rejects Nest access_token.
+  Future<String?> _getAuthToken({bool forceRefresh = false}) async {
     try {
-      // Try to get fresh Firebase ID token if user is logged in
-      final firebaseUser = FirebaseAuth.instance.currentUser;
-      if (firebaseUser != null) {
-        try {
-          final freshToken = await firebaseUser.getIdToken();
-          if (freshToken != null && freshToken.isNotEmpty) {
-            print('[RideShare] Using fresh Firebase ID token');
-            return freshToken;
-          }
-        } catch (e) {
-          print('[RideShare] Error getting fresh Firebase token');
-        }
+      final token = await AuthHandler.getFirebaseTokenForApi(
+        forceRefresh: forceRefresh,
+      );
+      if (token == null || token.isEmpty) {
+        print('[RideShare] No Firebase ID token (user must be signed in)');
       }
-
-      // Fallback to SharedPreferences if Firebase token not available
-      final prefs = await SharedPreferences.getInstance();
-      final storedToken = prefs.getString('jwt_token') ??
-          prefs.getString('token') ??
-          prefs.getString('jwt');
-
-      if (storedToken != null) {
-        print('[RideShare] Using stored token from SharedPreferences');
-        return storedToken;
-      }
-
-      print('[RideShare] No authentication token available');
-      return null;
+      return token;
     } catch (e) {
-      print('Error reading auth token');
+      print('Error reading Firebase auth token');
       return null;
     }
+  }
+
+  Future<Map<String, String>> _authHeaders({
+    bool forceRefresh = false,
+    bool json = true,
+  }) async {
+    final token = await _getAuthToken(forceRefresh: forceRefresh);
+    return {
+      if (json) 'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+    };
+  }
+
+  /// Run an authorized HTTP call; on 401/403 force-refresh Firebase token once.
+  Future<http.Response> _withFirebaseAuth(
+    Future<http.Response> Function(Map<String, String> headers) send,
+  ) async {
+    var headers = await _authHeaders();
+    var res = await send(headers);
+    if (res.statusCode == 401 || res.statusCode == 403) {
+      headers = await _authHeaders(forceRefresh: true);
+      if (headers['Authorization'] != null) {
+        res = await send(headers);
+      }
+    }
+    return res;
   }
 
   /// Initialize stream controllers
@@ -233,29 +239,21 @@ class RideShareHttpService {
     String? notes,
   }) async {
     try {
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-      };
-
-      // Add auth token if available
-      final token = await _getAuthToken();
-      if (token != null && token.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $token';
-      }
-
-      final response = await http.post(
-        ApiConfig.endpoint('/ride-share/rides'),
-        headers: headers,
-        body: jsonEncode({
-          'pickupLatitude': pickupLatitude,
-          'pickupLongitude': pickupLongitude,
-          'pickupAddress': pickupAddress,
-          'dropoffLatitude': dropoffLatitude,
-          'dropoffLongitude': dropoffLongitude,
-          'dropoffAddress': dropoffAddress,
-          'preferredVehicleClass': vehicleClass,
-          'notes': notes,
-        }),
+      final response = await _withFirebaseAuth(
+        (headers) => http.post(
+          ApiConfig.endpoint('/ride-share/rides'),
+          headers: headers,
+          body: jsonEncode({
+            'pickupLatitude': pickupLatitude,
+            'pickupLongitude': pickupLongitude,
+            'pickupAddress': pickupAddress,
+            'dropoffLatitude': dropoffLatitude,
+            'dropoffLongitude': dropoffLongitude,
+            'dropoffAddress': dropoffAddress,
+            'preferredVehicleClass': vehicleClass,
+            'notes': notes,
+          }),
+        ),
       );
 
       if (response.statusCode == 201) {
@@ -331,14 +329,6 @@ class RideShareHttpService {
     }
   }
 
-  Map<String, String> _authHeaders(String? token) {
-    final headers = <String, String>{'Content-Type': 'application/json'};
-    if (token != null && token.isNotEmpty) {
-      headers['Authorization'] = 'Bearer $token';
-    }
-    return headers;
-  }
-
   String? _apiErrorMessage(String body) {
     try {
       final errorData = jsonDecode(body);
@@ -391,7 +381,6 @@ class RideShareHttpService {
     int limit = 20,
   }) async {
     try {
-      final token = await _getAuthToken();
       final uri = ApiConfig.endpoint('/ride-share/rides').replace(
         queryParameters: {
           'status': status,
@@ -399,9 +388,8 @@ class RideShareHttpService {
           'limit': '$limit',
         },
       );
-      final response = await http.get(
-        uri,
-        headers: _authHeaders(token),
+      final response = await _withFirebaseAuth(
+        (headers) => http.get(uri, headers: headers),
       );
 
       if (response.statusCode == 200) {
@@ -417,10 +405,11 @@ class RideShareHttpService {
   /// Newest completed trip that still blocks booking, if any.
   Future<Ride?> findUnpaidCompletedRide() async {
     try {
-      final token = await _getAuthToken();
-      final response = await http.get(
-        ApiConfig.endpoint('/ride-share/rides/unpaid-completed'),
-        headers: _authHeaders(token),
+      final response = await _withFirebaseAuth(
+        (headers) => http.get(
+          ApiConfig.endpoint('/ride-share/rides/unpaid-completed'),
+          headers: headers,
+        ),
       );
       if (response.statusCode == 200) {
         final body = response.body.trim();
@@ -454,7 +443,6 @@ class RideShareHttpService {
     int limit = 20,
   }) async {
     try {
-      final token = await _getAuthToken();
       final uri =
           ApiConfig.endpoint('/ride-share/drivers/me/rides').replace(
         queryParameters: {
@@ -463,9 +451,8 @@ class RideShareHttpService {
           'limit': '$limit',
         },
       );
-      final response = await http.get(
-        uri,
-        headers: _authHeaders(token),
+      final response = await _withFirebaseAuth(
+        (headers) => http.get(uri, headers: headers),
       );
 
       if (response.statusCode == 200) {
@@ -481,10 +468,11 @@ class RideShareHttpService {
   /// Get driver earnings summary by period
   Future<DriverEarningsSummary> getDriverEarningsSummary() async {
     try {
-      final token = await _getAuthToken();
-      final response = await http.get(
-        ApiConfig.endpoint('/ride-share/drivers/me/earnings/summary'),
-        headers: _authHeaders(token),
+      final response = await _withFirebaseAuth(
+        (headers) => http.get(
+          ApiConfig.endpoint('/ride-share/drivers/me/earnings/summary'),
+          headers: headers,
+        ),
       );
 
       if (response.statusCode == 200) {
@@ -639,10 +627,11 @@ class RideShareHttpService {
   /// Passenger selects cash for a completed ride.
   Future<Ride> selectCashPayment(int rideId) async {
     try {
-      final token = await _getAuthToken();
-      final response = await http.patch(
-        ApiConfig.endpoint('/ride-share/rides/$rideId/payment/cash'),
-        headers: _authHeaders(token),
+      final response = await _withFirebaseAuth(
+        (headers) => http.patch(
+          ApiConfig.endpoint('/ride-share/rides/$rideId/payment/cash'),
+          headers: headers,
+        ),
       );
 
       if (response.statusCode == 200) {
@@ -660,10 +649,11 @@ class RideShareHttpService {
   /// Driver confirms cash was received.
   Future<Ride> confirmCashPayment(int rideId) async {
     try {
-      final token = await _getAuthToken();
-      final response = await http.patch(
-        ApiConfig.endpoint('/ride-share/rides/$rideId/payment/cash/confirm'),
-        headers: _authHeaders(token),
+      final response = await _withFirebaseAuth(
+        (headers) => http.patch(
+          ApiConfig.endpoint('/ride-share/rides/$rideId/payment/cash/confirm'),
+          headers: headers,
+        ),
       );
 
       if (response.statusCode == 200) {
@@ -681,11 +671,12 @@ class RideShareHttpService {
   /// Confirm passenger payment for a completed ride
   Future<Ride> confirmRidePayment(int rideId, String txRef) async {
     try {
-      final token = await _getAuthToken();
-      final response = await http.patch(
-        ApiConfig.endpoint('/ride-share/rides/$rideId/payment'),
-        headers: _authHeaders(token),
-        body: jsonEncode({'txRef': txRef}),
+      final response = await _withFirebaseAuth(
+        (headers) => http.patch(
+          ApiConfig.endpoint('/ride-share/rides/$rideId/payment'),
+          headers: headers,
+          body: jsonEncode({'txRef': txRef}),
+        ),
       );
 
       if (response.statusCode == 200) {

@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as status;
 
@@ -197,13 +197,10 @@ class TaxiRealtimeService {
     });
   }
 
-  /// Get JWT auth token from Firebase
+  /// Get Firebase ID token for taxi realtime (Firebase only).
   Future<String?> _getAuthToken() async {
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
-        return await user.getIdToken();
-      }
+      return await AuthHandler.getFirebaseTokenForApi();
     } catch (e) {
       print('[TaxiRealtimeService] Error getting auth token: $e');
     }

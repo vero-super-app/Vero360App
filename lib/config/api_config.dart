@@ -94,6 +94,19 @@ class ApiConfig {
   // ADMIN (service fee) — optional extra report; the fee is credited to
   // wallets/super_admin in Firestore regardless of this.
   // ---------------------------------------------------------------------------
+  /// Vero360 web (Next) — announcements, tenders, etc.
+  /// Override: --dart-define=SITE_API_BASE_URL=https://vero360.app
+  static const String siteApiBase = String.fromEnvironment(
+    'SITE_API_BASE_URL',
+    defaultValue: 'https://vero360.app',
+  );
+
+  static Uri siteEndpoint(String path) {
+    final clean = path.startsWith('/') ? path : '/$path';
+    final root = siteApiBase.trim().replaceFirst(RegExp(r'/+$'), '');
+    return Uri.parse('$root$clean');
+  }
+
   static const String adminApiBase = String.fromEnvironment(
     'ADMIN_API_BASE_URL',
     defaultValue: '',

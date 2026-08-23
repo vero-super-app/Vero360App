@@ -27,6 +27,7 @@ import 'package:vero360_app/utils/ExchangeRate.dart';
 import 'package:vero360_app/Quickservices/customerservice.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food.dart';
 import 'package:vero360_app/Quickservices/jobs.dart';
+import 'package:vero360_app/Quickservices/tenders.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/verocourier.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
@@ -97,6 +98,7 @@ const List<Mini> kQuickServices = [
   Mini('fx',             'Forex',     Icons.currency_exchange_rounded,   emoji: '💱'),
   Mini('food',           'Food',      Icons.fastfood_rounded,            emoji: '🍔'),
   Mini('jobs',           'Jobs',      Icons.business_center_rounded,     emoji: '💼'),
+  Mini('tenders',        'Tenders',   Icons.description_rounded,         emoji: '📋'),
   Mini('accommodation',  'Stay',      Icons.hotel_rounded,               emoji: '🛏️'),
   Mini('customer_service', 'Support', Icons.support_agent_rounded,       emoji: '💬'),
 ];
@@ -111,6 +113,7 @@ const Map<String, String> kQuickServiceGuideNotes = {
   'fx':               'Check live exchange rates instantly.',
   'food':             'Browse restaurants and order food.',
   'jobs':             'Discover job opportunities near you.',
+  'tenders':          'Browse Malawi procurement notices and RFQs.',
   'accommodation':    'Find hotels and places to stay.',
   'customer_service': 'Chat with Vero Assist in English or Chichewa.',
 };
@@ -565,6 +568,10 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
         break;
       case 'jobs':
         page = JobsPage();
+        break;
+      case 'tenders':
+      case 'tender':
+        page = const TendersPage();
         break;
       case 'courier':
         page = const VerocourierPage();
@@ -1594,6 +1601,10 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
     'jobs': 'jobs',
     'work': 'jobs',
     'vacancies': 'jobs',
+    'tenders': 'tenders',
+    'tender': 'tenders',
+    'procurement': 'tenders',
+    'rfq': 'tenders',
     'more': 'more'
   };
 
@@ -1624,6 +1635,7 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
         'Hotel',
         'FX',
         'Jobs',
+        'Tenders',
         'Courier'
       ];
       return Padding(
@@ -1654,7 +1666,7 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Text(
-            'No matches. Try: taxi, support, bike, hotel, forex, food, jobs...',
+            'No matches. Try: taxi, support, bike, hotel, forex, food, jobs, tenders...',
             textAlign: TextAlign.center,
             style: Theme.of(context)
                 .textTheme
@@ -3267,6 +3279,7 @@ class _GuideCard extends StatelessWidget {
     'fx':               Icons.currency_exchange_rounded,
     'food':             Icons.fastfood_rounded,
     'jobs':             Icons.business_center_rounded,
+    'tenders':          Icons.description_rounded,
     'accommodation':    Icons.hotel_rounded,
   };
 

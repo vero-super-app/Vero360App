@@ -43,22 +43,60 @@ class DriverService {
   }
 
   // ==================== DRIVER PROFILE ====================
-  
-  /// Get current authenticated driver profile using Firebase token
-  Future<Map<String, dynamic>> getMyDriverProfile() async {
+
+  /// Get current authenticated driver profile using Firebase token.
+  /// [forceRefresh] adds a cache-buster so go-online never uses a stale body.
+  Future<Map<String, dynamic>> getMyDriverProfile({
+    bool forceRefresh = true,
+  }) async {
     try {
-      final response = await _dio.get('/vero/drivers/me');
-      return response.data as Map<String, dynamic>;
+      final response = await _dio.get(
+        '/vero/drivers/me',
+        queryParameters: forceRefresh
+            ? {'_': DateTime.now().millisecondsSinceEpoch.toString()}
+            : null,
+        options: Options(
+          headers: const {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+          },
+        ),
+      );
+      return _unwrapDriverMap(response.data);
     } catch (e) {
       throw _handleError(e);
     }
+  }
+
+  /// Heal verified drivers stuck inactive after legacy logout.
+  Future<Map<String, dynamic>> reactivateMySession() async {
+    try {
+      final response = await _dio.post('/vero/drivers/me/reactivate-session');
+      return _unwrapDriverMap(response.data);
+    } catch (e) {
+      throw _handleError(e);
+    }
+  }
+
+  Map<String, dynamic> _unwrapDriverMap(dynamic raw) {
+    var body = raw;
+    if (body is Map && body['data'] is Map) {
+      body = body['data'];
+    }
+    if (body is Map && body['driver'] is Map) {
+      body = body['driver'];
+    }
+    if (body is! Map) {
+      throw 'Unexpected driver profile response';
+    }
+    return Map<String, dynamic>.from(body);
   }
 
   /// Get driver by database user ID (legacy method, use getMyDriverProfile instead)
   Future<Map<String, dynamic>> getDriverByUserId(int userId) async {
     try {
       final response = await _dio.get('/vero/drivers/user/$userId');
-      return response.data as Map<String, dynamic>;
+      return _unwrapDriverMap(response.data);
     } catch (e) {
       throw _handleError(e);
     }
@@ -366,8 +404,12 @@ class DriverService {
 
   Future<Map<String, dynamic>> activateDriver(int driverId) async {
     try {
+      // Prefer self-heal (verified + inactive). Admin activate is forbidden for drivers.
+      try {
+        return await reactivateMySession();
+      } catch (_) {}
       final response = await _dio.post('/vero/drivers/$driverId/activate');
-      return response.data as Map<String, dynamic>;
+      return _unwrapDriverMap(response.data);
     } catch (e) {
       throw _handleError(e);
     }

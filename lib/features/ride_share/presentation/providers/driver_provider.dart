@@ -12,11 +12,27 @@ final driverServiceProvider = Provider<DriverService>((ref) {
 
 // ==================== DRIVER PROFILE ====================
 
-/// Get current authenticated driver profile (uses Firebase token)
+/// Fresh driver profile from the API (never reuse a stale FutureProvider value
+/// for go-online / eligibility gates).
 final myDriverProfileProvider = FutureProvider<Map<String, dynamic>>((ref) async {
   final driverService = ref.watch(driverServiceProvider);
-  return await driverService.getMyDriverProfile();
+  return await driverService.getMyDriverProfile(forceRefresh: true);
 });
+
+/// Invalidate + await a brand-new /drivers/me (and optional session heal).
+Future<Map<String, dynamic>> refreshMyDriverProfile(
+  WidgetRef ref, {
+  bool healSession = true,
+}) async {
+  final driverService = ref.read(driverServiceProvider);
+  if (healSession) {
+    try {
+      await driverService.reactivateMySession();
+    } catch (_) {}
+  }
+  ref.invalidate(myDriverProfileProvider);
+  return ref.read(myDriverProfileProvider.future);
+}
 
 /// Get driver by database user ID (legacy - prefer myDriverProfileProvider)
 final driverProfileProvider =

@@ -11,7 +11,6 @@ import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_online_session.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/map_view_widget.dart';
-import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
@@ -44,7 +43,6 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
 
   GoogleMapController? mapController;
   Timer? _mapCenteringTimer;
-  final DriverService _driverService = DriverService();
   final RideShareHttpService _http = RideShareHttpService();
   final NumberFormat _money = NumberFormat('#,##0', 'en');
   Future<DriverEarningsSummary>? _earningsFuture;
@@ -111,28 +109,23 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     super.dispose();
   }
 
-  /// Ensure driver is marked as active in the backend while the app is open.
-  /// Availability for matching still requires the online toggle / session.
+  /// Ensure driver session is healed (legacy logout left isActive=false).
   Future<void> _ensureDriverActive() async {
     try {
-      final driverProfile = await ref.read(myDriverProfileProvider.future);
-      if (driverProfile['id'] != null) {
-        await _driverService
-            .activateDriver(int.parse(driverProfile['id'].toString()));
-        if (kDebugMode) {
-          print('[DriverDashboard] ✓ Driver activated successfully');
-        }
+      await refreshMyDriverProfile(ref, healSession: true);
+      if (kDebugMode) {
+        print('[DriverDashboard] ✓ Driver session refreshed/healed');
       }
     } catch (e) {
       if (kDebugMode) {
-        print('[DriverDashboard] ✗ Error activating driver: $e');
+        print('[DriverDashboard] ✗ Error refreshing driver session: $e');
       }
     }
   }
 
   Future<void> _syncOnlineSessionFromProfile() async {
     try {
-      final driver = await ref.read(myDriverProfileProvider.future);
+      final driver = await refreshMyDriverProfile(ref, healSession: true);
       if (!mounted) return;
       await ref
           .read(driverOnlineSessionProvider.notifier)
@@ -490,7 +483,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
       return;
     }
     try {
-      final driver = await ref.read(myDriverProfileProvider.future);
+      // Always heal + refetch — do not trust Riverpod cache after verification.
+      final driver = await refreshMyDriverProfile(ref, healSession: true);
       if (!mounted) return;
       final hasTaxi =
           driver['taxis'] is List && (driver['taxis'] as List).isNotEmpty;
@@ -1149,7 +1143,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(builder: (_) => const BecomeDriverPage()),
     );
-    if (mounted) ref.invalidate(myDriverProfileProvider);
+    if (!mounted) return;
+    await refreshMyDriverProfile(ref, healSession: true);
   }
 
   void _showTaxiDetailsDialog(BuildContext context, Map<String, dynamic> taxi) {

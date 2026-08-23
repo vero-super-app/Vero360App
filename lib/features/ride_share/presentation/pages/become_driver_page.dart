@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -15,14 +16,14 @@ import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_
 enum _OnboardingPhase { driver, vehicle, status }
 
 /// Dual-gate driver verification wizard (identity docs → vehicle docs → status).
-class BecomeDriverPage extends StatefulWidget {
+class BecomeDriverPage extends ConsumerStatefulWidget {
   const BecomeDriverPage({super.key});
 
   @override
-  State<BecomeDriverPage> createState() => _BecomeDriverPageState();
+  ConsumerState<BecomeDriverPage> createState() => _BecomeDriverPageState();
 }
 
-class _BecomeDriverPageState extends State<BecomeDriverPage> {
+class _BecomeDriverPageState extends ConsumerState<BecomeDriverPage> {
   final _driverService = DriverService();
   final _formKey = GlobalKey<FormState>();
   final _picker = ImagePicker();
@@ -47,6 +48,17 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
   bool _compressing = false;
   String? _error;
 
+  bool _asBool(dynamic v) {
+    if (v == true) return true;
+    if (v == false || v == null) return false;
+    if (v is num) return v != 0;
+    if (v is String) {
+      final s = v.toLowerCase().trim();
+      return s == 'true' || s == '1' || s == 'yes';
+    }
+    return false;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -68,7 +80,12 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
       _error = null;
     });
     try {
-      final profile = await _driverService.getMyDriverProfile();
+      // Heal stale inactive flags, then fetch — keep Riverpod dashboard in sync.
+      try {
+        await _driverService.reactivateMySession();
+      } catch (_) {}
+      final profile = await _driverService.getMyDriverProfile(forceRefresh: true);
+      ref.invalidate(myDriverProfileProvider);
       _applyLoadedProfile(profile);
     } catch (e) {
       // Empty / missing profile is fine for first apply
@@ -84,7 +101,7 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
   void _applyLoadedProfile(Map<String, dynamic> profile) {
     _profile = profile;
     final status = profile['status']?.toString() ?? '';
-    final isVerified = profile['isVerified'] == true;
+    final isVerified = _asBool(profile['isVerified']);
     final hasLicenseImage =
         (profile['licenseImageUrl']?.toString() ?? '').trim().isNotEmpty;
     final hasNationalIdImage =
@@ -225,7 +242,7 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
       };
 
       Map<String, dynamic> profile;
-      final wasVerified = _profile?['isVerified'] == true;
+      final wasVerified = _asBool(_profile?['isVerified']);
       final prefs = await SharedPreferences.getInstance();
       final wasDriverSession =
           RoleHelper.normalizeAccountRole(
@@ -840,8 +857,10 @@ class _BecomeDriverPageState extends State<BecomeDriverPage> {
 
   Widget _statusView() {
     final status = _profile?['status']?.toString() ?? 'PENDING_VERIFICATION';
-    final isVerified = _profile?['isVerified'] == true;
-    final isActive = _profile?['isActive'] != false;
+    final isVerified = _asBool(_profile?['isVerified']);
+    final isActive = _profile?['isActive'] == null
+        ? true
+        : _asBool(_profile?['isActive']);
     final reason = (_profile?['rejectionReason']?.toString() ?? '').trim();
     final taxis = (_profile?['taxis'] is List)
         ? List<Map<String, dynamic>>.from(

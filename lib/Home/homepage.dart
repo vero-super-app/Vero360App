@@ -44,6 +44,7 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/Home/notifications_page.dart';
 import 'package:vero360_app/Home/story_section.dart';
+import 'package:vero360_app/Home/homepage_adverts.dart';
 import 'package:vero360_app/features/Promotions/presentation/promotions_page.dart';
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_services_page.dart';
@@ -414,11 +415,11 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                   ),
                 ),
 
-                /* ── Filter chips ────────────────────────── */
+                /* ── Sliding ads (above Quick Services) ──── */
                 const SliverToBoxAdapter(
                   child: Padding(
                     padding: EdgeInsets.only(top: 14),
-                    child: _FilterChips(),
+                    child: HomepageAdvertsSection(),
                   ),
                 ),
 
@@ -459,14 +460,6 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                         );
                       },
                     ),
-                  ),
-                ),
-
-                /* ── Deals strip ─────────────────────────── */
-                const SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.only(top: 14),
-                    child: _DealsStrip(),
                   ),
                 ),
 
@@ -1130,76 +1123,6 @@ class _CollapsedBar extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-/* ═══════════════════════════════════════════════════
-   FILTER CHIPS
-═══════════════════════════════════════════════════ */
-class _FilterChips extends StatefulWidget {
-  const _FilterChips();
-  @override
-  State<_FilterChips> createState() => _FilterChipsState();
-}
-
-class _FilterChipsState extends State<_FilterChips> {
-  int _active = 0;
-  static const _items = [
-    ['⚡', 'Lightning deal'],
-    ['🗺️', 'Explore nearby'],
-    ['⭐', 'Top rated'],
-    ['🛟', 'Support'],
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 44,
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        scrollDirection: Axis.horizontal,
-        itemCount: _items.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (_, i) {
-          final active = i == _active;
-          return GestureDetector(
-            onTap: () => setState(() => _active = i),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 220),
-              curve:    Curves.easeOutCubic,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: BoxDecoration(
-                gradient:     active ? kBrandGradient : null,
-                color:        active ? null : Colors.white,
-                borderRadius: BorderRadius.circular(99),
-                border:       Border.all(
-                  color: active ? Colors.transparent : AppColors.brandOrangeSoft,
-                ),
-                boxShadow: active
-                    ? [
-                        BoxShadow(
-                          color:      AppColors.brandOrange.withOpacity(0.35),
-                          blurRadius: 10,
-                          offset:     const Offset(0, 3),
-                        )
-                      ]
-                    : null,
-              ),
-              child: Center(
-                child: Text(
-                  '${_items[i][0]}  ${_items[i][1]}',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize:   12,
-                    color:      active ? Colors.white : AppColors.title,
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
       ),
     );
   }
@@ -1957,51 +1880,6 @@ class _ProviderCard extends StatelessWidget {
 }
 
 /* ═══════════════════════════════════════════════════
-   DEALS STRIP
-═══════════════════════════════════════════════════ */
-class _DealsStrip extends StatelessWidget {
-  const _DealsStrip();
-
-  @override
-  Widget build(BuildContext context) {
-    final deals = const [
-      ['🚗', 'Book VeroRide'],
-      ['🍔', 'Order food on Vero'],
-      ['🚲', 'Book VeroBike'],
-      ['🚚', 'Book VeroCourier'],
-      ['🏨', 'Book YourStay'],
-    ];
-    return SizedBox(
-      height: 42,
-      child: ListView.separated(
-        padding:         const EdgeInsets.symmetric(horizontal: 16),
-        scrollDirection: Axis.horizontal,
-        itemCount:       deals.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (_, i) => Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(colors: [Color(0xFFFFF0D9), Colors.white]),
-            border:   Border.all(color: AppColors.brandOrangeSoft),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Center(
-            child: Text(
-              '${deals[i][0]}  ${deals[i][1]}',
-              style: const TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 12,
-                color: AppColors.title,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/* ═══════════════════════════════════════════════════
    PROMO BANNER
 ═══════════════════════════════════════════════════ */
 class _PromoBanner extends StatelessWidget {
@@ -2018,127 +1896,137 @@ class _PromoBanner extends StatelessWidget {
     return GestureDetector(
       onTap: () => _openPromotions(context),
       child: Container(
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [AppColors.brandOrangeDeep, AppColors.brandOrange],
-          begin:  Alignment.topLeft,
-          end:    Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color:      AppColors.brandOrange.withOpacity(0.40),
-            blurRadius: 20,
-            offset:     const Offset(0, 8),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [AppColors.brandOrangeDeep, AppColors.brandOrange],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: Stack(
-          children: [
-            Positioned(
-              right: -20, top: -20,
-              child: Container(
-                width: 130, height: 130,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white.withOpacity(0.10),
-                ),
-              ),
-            ),
-            Positioned(
-              left: -10, bottom: -30,
-              child: Container(
-                width: 90, height: 90,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white.withOpacity(0.06),
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-                          decoration: BoxDecoration(
-                            color:        Colors.white.withOpacity(0.18),
-                            borderRadius: BorderRadius.circular(99),
-                          ),
-                          child: const Text(
-                            'Promotions',
-                            style: TextStyle(
-                              fontSize:   9,
-                              fontWeight: FontWeight.w800,
-                              color:      Colors.white,
-                              letterSpacing: 1.2,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 7),
-                        const Text(
-                          'Promotions with Vero360',
-                          style: TextStyle(
-                            fontSize:   17,
-                            fontWeight: FontWeight.w900,
-                            color:      Colors.white,
-                            height:     1.25,
-                            letterSpacing: -0.3,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'special promotions for you',
-                          style: TextStyle(
-                            fontSize:   12,
-                            fontWeight: FontWeight.w600,
-                            color:      Colors.white.withOpacity(0.80),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Material(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    child: InkWell(
-                      onTap: () => _openPromotions(context),
-                      borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color:      Colors.black.withOpacity(0.10),
-                          blurRadius: 8,
-                        ),
-                      ],
-                    ),
-                    child: const Text(
-                      'See all →',
-                      style: TextStyle(
-                        color:      AppColors.brandOrange,
-                        fontWeight: FontWeight.w900,
-                        fontSize:   13,
-                      ),
-                    ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.brandOrange.withOpacity(0.40),
+              blurRadius: 20,
+              offset: const Offset(0, 8),
             ),
           ],
         ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: Stack(
+            children: [
+              Positioned(
+                right: -20,
+                top: -20,
+                child: Container(
+                  width: 130,
+                  height: 130,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withOpacity(0.10),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: -10,
+                bottom: -30,
+                child: Container(
+                  width: 90,
+                  height: 90,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withOpacity(0.06),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 9,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.18),
+                              borderRadius: BorderRadius.circular(99),
+                            ),
+                            child: const Text(
+                              'Promotions',
+                              style: TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w800,
+                                color: Colors.white,
+                                letterSpacing: 1.2,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 7),
+                          const Text(
+                            'Promotions with Vero360',
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.white,
+                              height: 1.25,
+                              letterSpacing: -0.3,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'special promotions for you',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white.withOpacity(0.80),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Material(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      child: InkWell(
+                        onTap: () => _openPromotions(context),
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 18,
+                            vertical: 13,
+                          ),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.10),
+                                blurRadius: 8,
+                              ),
+                            ],
+                          ),
+                          child: const Text(
+                            'See all →',
+                            style: TextStyle(
+                              color: AppColors.brandOrange,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
-    ),
     );
   }
 }

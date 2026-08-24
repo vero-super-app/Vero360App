@@ -8,6 +8,7 @@ import 'package:vero360_app/GeneralModels/order_list_helpers.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/GernalServices/buyer_phone_resolver.dart';
 import 'package:vero360_app/GernalServices/merchant_phone_resolver.dart';
+import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GernalServices/order_refund_service.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/GernalServices/paychangu_service.dart';
@@ -15,11 +16,27 @@ import 'package:vero360_app/utils/merchant_contact_display.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/order_message_buyer_button.dart';
 
-/// Shows paid / confirmed orders that may qualify for a refund.
+class _RefundPageData {
+  final List<OrderItem> orders;
+  final List<RefundRequestRecord> refunds;
+  final Map<String, OrderEscrowSnapshot?> escrowByOrderId;
+
+  const _RefundPageData({
+    required this.orders,
+    required this.refunds,
+    required this.escrowByOrderId,
+  });
+}
+
+/// Shows paid / confirmed orders that may qualify for a refund, plus your
+/// submitted refund details.
 ///
 /// Refund types:
 /// 1) Cancel order and refund (before delivery)
-/// 2) Return goods and refund (after delivery)
+/// 2) Return goods and refund (after delivery, within return window)
+///
+/// After [OrderRefundService.returnWindowDays] of receiving the parcel,
+/// business is sealed — return refunds are closed.
 ///
 /// Refunds are processed via the payments API and settle within 3 days.
 class ToRefundPage extends StatefulWidget {
@@ -34,17 +51,18 @@ class _ToRefundPageState extends State<ToRefundPage> {
   final Color _brand = const Color(0xFFFF8A00);
   final _money = NumberFormat.currency(symbol: 'MK ', decimalDigits: 0);
   final _date = DateFormat('dd MMM yyyy, HH:mm');
+  final _day = DateFormat('dd MMM yyyy');
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
-  late Future<List<OrderItem>> _future;
+  late Future<_RefundPageData> _future;
   final Map<String, String> _buyerPhoneByOrder = {};
   final Map<String, String> _merchantPhoneByOrder = {};
 
   @override
   void initState() {
     super.initState();
-    _future = _loadOrdersWithMerchantPhones();
+    _future = _loadPageData();
   }
 
   @override
@@ -53,9 +71,19 @@ class _ToRefundPageState extends State<ToRefundPage> {
     super.dispose();
   }
 
-  Future<List<OrderItem>> _loadOrdersWithMerchantPhones() async {
+  Future<_RefundPageData> _loadPageData() async {
     final list = await _svc.getMyOrders();
     OrderListHelpers.sortNewestFirst(list);
+
+    final delivered = list
+        .where((o) => o.status == OrderStatus.delivered)
+        .toList(growable: false);
+    final escrowByOrderId = delivered.isEmpty
+        ? <String, OrderEscrowSnapshot?>{}
+        : await OrderEscrowService.fetchEscrowForOrdersResolved(delivered);
+
+    final refunds = await OrderRefundService.fetchMyRefundRequests();
+
     // Paint list first; resolve phones in the background.
     unawaited(() async {
       try {
@@ -74,7 +102,12 @@ class _ToRefundPageState extends State<ToRefundPage> {
         });
       } catch (_) {}
     }());
-    return list;
+
+    return _RefundPageData(
+      orders: list,
+      refunds: refunds,
+      escrowByOrderId: escrowByOrderId,
+    );
   }
 
   String _displayMerchantPhone(OrderItem o) {
@@ -99,10 +132,19 @@ class _ToRefundPageState extends State<ToRefundPage> {
     return myUid == sellerUid;
   }
 
+  bool _isSealed(OrderItem o, Map<String, OrderEscrowSnapshot?> escrowMap) {
+    if (o.status != OrderStatus.delivered) return false;
+    final esc = escrowMap[o.id];
+    return !OrderRefundService.isReturnWindowOpen(
+      receivedAt: esc?.deliveredAt ?? o.orderDate,
+      escrow: esc,
+    );
+  }
+
   Future<void> _reload() async {
     if (!mounted) return;
     setState(() {
-      _future = _loadOrdersWithMerchantPhones();
+      _future = _loadPageData();
     });
     try {
       await _future;
@@ -179,6 +221,19 @@ class _ToRefundPageState extends State<ToRefundPage> {
     }
   }
 
+  Color _refundStatusColor(String label) {
+    switch (label) {
+      case 'Completed':
+        return Colors.green;
+      case 'Failed':
+        return Colors.redAccent;
+      case 'Processing':
+        return Colors.blueAccent;
+      default:
+        return _brand;
+    }
+  }
+
   /// Shown when the same account has both sales and purchases eligible for refund.
   Widget _mixedRefundRolesHint() {
     return Container(
@@ -200,9 +255,9 @@ class _ToRefundPageState extends State<ToRefundPage> {
               '“Apply for refund” — even if your account is a merchant.',
               style: TextStyle(
                 fontSize: 13,
+                fontWeight: FontWeight.w600,
                 color: Color(0xFF1565C0),
                 height: 1.35,
-                fontWeight: FontWeight.w600,
               ),
             ),
           ),
@@ -211,21 +266,115 @@ class _ToRefundPageState extends State<ToRefundPage> {
     );
   }
 
-  Widget _infoRow(IconData icon, String text) {
-    final t = text.trim();
-    return Row(
-      children: [
-        Icon(icon, size: 18, color: const Color(0xFF6B778C)),
-        const SizedBox(width: 6),
-        Expanded(
-          child: Text(
-            t.isEmpty ? '—' : t,
-            style: const TextStyle(color: Color(0xFF6B778C)),
-            overflow: TextOverflow.ellipsis,
-            maxLines: 1,
+  Widget _refundDetailCard(RefundRequestRecord r) {
+    final expected = r.expectedBy;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFFFE0B2)),
+        boxShadow: const [
+          BoxShadow(
+            blurRadius: 18,
+            spreadRadius: -8,
+            offset: Offset(0, 10),
+            color: Color(0x14000000),
           ),
-        ),
-      ],
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  r.itemName.isEmpty ? 'Refund' : r.itemName,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15,
+                    color: Color(0xFF222222),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              _chip(_refundStatusColor(r.statusLabel), r.statusLabel),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            r.isStay ? 'Stay · ${r.orderNumber}' : 'Order · ${r.orderNumber}',
+            style: const TextStyle(
+              color: Color(0xFF6B778C),
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            r.typeLabel,
+            style: TextStyle(
+              color: _brand,
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
+            ),
+          ),
+          if (r.reason.trim().isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Reason: ${r.reason.trim()}',
+              style: const TextStyle(
+                color: Color(0xFF444444),
+                fontWeight: FontWeight.w500,
+                fontSize: 13,
+                height: 1.35,
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  r.createdAt == null
+                      ? 'Requested —'
+                      : 'Requested ${_day.format(r.createdAt!.toLocal())}',
+                  style: const TextStyle(
+                    color: Color(0xFF6B778C),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              Text(
+                _money.format(r.amount),
+                style: TextStyle(
+                  color: _brand,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 15,
+                ),
+              ),
+            ],
+          ),
+          if (expected != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Funds typically by ${_day.format(expected.toLocal())} '
+              '(within ${r.processingDays > 0 ? r.processingDays : OrderRefundService.processingDays} days)',
+              style: TextStyle(
+                color: Colors.green.shade700,
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -298,21 +447,39 @@ class _ToRefundPageState extends State<ToRefundPage> {
     );
   }
 
-  Future<void> _openRefundSheet(OrderItem o) async {
+  Future<void> _openRefundSheet(
+    OrderItem o, {
+    OrderEscrowSnapshot? escrow,
+  }) async {
     if (!mounted) return;
     if (o.status == OrderStatus.cancelled) return;
+
+    final sealed = o.status == OrderStatus.delivered &&
+        !OrderRefundService.isReturnWindowOpen(
+          receivedAt: escrow?.deliveredAt ?? o.orderDate,
+          escrow: escrow,
+        );
+    if (sealed) {
+      ToastHelper.showCustomToast(
+        context,
+        OrderRefundService.sealedBusinessMessage(),
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
 
     final reasonCtrl = TextEditingController();
     final selling = _isSellerForOrder(o);
     final delivered = o.status == OrderStatus.delivered;
     final sheetTitle = selling ? 'Refund this order' : 'Apply for refund';
     final submitLabel = selling ? 'Submit refund' : 'Submit refund request';
+    final windowDays = OrderRefundService.returnWindowDays;
 
     PaymentRefundType? selectedType =
         delivered ? PaymentRefundType.returnGoods : PaymentRefundType.cancelOrder;
 
     try {
-      // Nested sheets from dashboards assert — always use the root navigator.
       final result = await showModalBottomSheet<Map<String, dynamic>>(
         context: context,
         useRootNavigator: true,
@@ -347,55 +514,36 @@ class _ToRefundPageState extends State<ToRefundPage> {
                       Text(
                         sheetTitle,
                         style: const TextStyle(
-                          fontWeight: FontWeight.w900,
                           fontSize: 18,
+                          fontWeight: FontWeight.w900,
                         ),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 4),
                       Text(
-                        'Order ${o.orderNumber} • ${o.itemName}',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _money.format(o.total),
-                        style: TextStyle(
-                          color: _brand,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 16,
+                        o.itemName,
+                        style: const TextStyle(
+                          color: Color(0xFF6B778C),
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                       const SizedBox(height: 12),
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFFF4E5),
+                          color: const Color(0xFFFFF8E1),
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: const Color(0xFFFFE0B2)),
+                          border: Border.all(color: const Color(0xFFFFE082)),
                         ),
-                        child: const Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Icon(
-                              Icons.schedule,
-                              size: 20,
-                              color: Color(0xFFE65100),
-                            ),
-                            SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                'Refunds are processed within 3 days after approval.',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  color: Color(0xFFE65100),
-                                  height: 1.35,
-                                ),
-                              ),
-                            ),
-                          ],
+                        child: Text(
+                          delivered
+                              ? 'Return goods is available for $windowDays days after receiving the parcel. After that, business is sealed.'
+                              : 'Refunds are processed within 3 days after approval.',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            height: 1.35,
+                            color: Color(0xFF5D4037),
+                          ),
                         ),
                       ),
                       const SizedBox(height: 14),
@@ -413,10 +561,10 @@ class _ToRefundPageState extends State<ToRefundPage> {
                             : 'Cancel before delivery and refund payment',
                         onTap: delivered
                             ? null
-                            : () => setSheet(
-                                  () => selectedType =
-                                      PaymentRefundType.cancelOrder,
-                                ),
+                            : () => setSheet(() {
+                                  selectedType =
+                                      PaymentRefundType.cancelOrder;
+                                }),
                       ),
                       const SizedBox(height: 8),
                       _refundTypeTile(
@@ -428,35 +576,32 @@ class _ToRefundPageState extends State<ToRefundPage> {
                             : 'Available after the order is delivered',
                         onTap: !delivered
                             ? null
-                            : () => setSheet(
-                                  () => selectedType =
-                                      PaymentRefundType.returnGoods,
-                                ),
+                            : () => setSheet(() {
+                                  selectedType =
+                                      PaymentRefundType.returnGoods;
+                                }),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 14),
                       TextField(
                         controller: reasonCtrl,
-                        maxLines: 4,
+                        maxLines: 3,
                         decoration: const InputDecoration(
                           labelText: 'Reason for refund',
+                          hintText: 'Describe why you need a refund',
                           border: OutlineInputBorder(),
-                          hintText:
-                              'Example: item not as described, damaged, never arrived…',
                         ),
                       ),
                       const SizedBox(height: 16),
                       FilledButton(
                         style: FilledButton.styleFrom(
-                          backgroundColor: _brand,
+                          backgroundColor: Colors.redAccent,
                           padding: const EdgeInsets.symmetric(vertical: 14),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
                         ),
                         onPressed: () {
-                          final type = selectedType;
-                          final reason = reasonCtrl.text.trim();
-                          if (type == null) {
+                          if (selectedType == null) {
                             ToastHelper.showCustomToast(
                               ctx,
                               'Select a refund type',
@@ -465,6 +610,7 @@ class _ToRefundPageState extends State<ToRefundPage> {
                             );
                             return;
                           }
+                          final reason = reasonCtrl.text.trim();
                           if (reason.isEmpty) {
                             ToastHelper.showCustomToast(
                               ctx,
@@ -474,15 +620,12 @@ class _ToRefundPageState extends State<ToRefundPage> {
                             );
                             return;
                           }
-                          Navigator.of(ctx).pop(<String, dynamic>{
-                            'type': type,
+                          Navigator.pop(ctx, {
+                            'type': selectedType,
                             'reason': reason,
                           });
                         },
-                        child: Text(
-                          submitLabel,
-                          style: const TextStyle(fontWeight: FontWeight.w800),
-                        ),
+                        child: Text(submitLabel),
                       ),
                     ],
                   ),
@@ -495,8 +638,8 @@ class _ToRefundPageState extends State<ToRefundPage> {
 
       if (result != null && mounted) {
         final type = result['type'] as PaymentRefundType;
-        final reason = (result['reason'] as String?)?.trim() ?? '';
-        await _submitRefundRequest(o, type, reason);
+        final reason = result['reason'] as String;
+        await _submitRefundRequest(o, type, reason, escrow: escrow);
       }
     } catch (e) {
       if (!mounted) return;
@@ -516,8 +659,9 @@ class _ToRefundPageState extends State<ToRefundPage> {
   Future<void> _submitRefundRequest(
     OrderItem o,
     PaymentRefundType type,
-    String reason,
-  ) async {
+    String reason, {
+    OrderEscrowSnapshot? escrow,
+  }) async {
     showDialog<void>(
       context: context,
       useRootNavigator: true,
@@ -533,6 +677,7 @@ class _ToRefundPageState extends State<ToRefundPage> {
         refundType: type,
         reason: reason,
         initiatedBySeller: _isSellerForOrder(o),
+        escrow: escrow,
       );
 
       if (!mounted) return;
@@ -542,7 +687,8 @@ class _ToRefundPageState extends State<ToRefundPage> {
       ToastHelper.showCustomToast(
         context,
         'Refund applied and order cancelled. '
-        'Funds are processed within $days days.',
+        'Funds are processed within $days days. '
+        'Details are on this page.',
         isSuccess: true,
         errorMessage: '',
       );
@@ -559,12 +705,37 @@ class _ToRefundPageState extends State<ToRefundPage> {
     }
   }
 
-  Widget _card(OrderItem o) {
+  Widget _infoRow(IconData icon, String text) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: const Color(0xFF6B778C)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text.isEmpty ? '—' : text,
+            style: const TextStyle(
+              color: Color(0xFF444444),
+              fontWeight: FontWeight.w600,
+              height: 1.3,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _card(
+    OrderItem o, {
+    required Map<String, OrderEscrowSnapshot?> escrowMap,
+  }) {
     final qty = o.quantity;
     final unitPrice = o.price;
     final total = unitPrice * qty;
     final orderDate = o.orderDate;
     final isReceived = o.status == OrderStatus.delivered;
+    final sealed = _isSealed(o, escrowMap);
+    final escrow = escrowMap[o.id];
     final refundLabel =
         _isSellerForOrder(o) ? 'Refund this order' : 'Apply for refund';
 
@@ -573,6 +744,7 @@ class _ToRefundPageState extends State<ToRefundPage> {
     final addressTxt =
         [addressCity, addressDesc].where((s) => s.trim().isNotEmpty).join(' • ');
     final buyerName = (o.customerName ?? '').trim();
+    final windowDays = OrderRefundService.returnWindowDays;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
@@ -728,11 +900,11 @@ class _ToRefundPageState extends State<ToRefundPage> {
             ],
           ),
           const SizedBox(height: 12),
-          if (isReceived)
+          if (isReceived && !sealed)
             Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: Text(
-                'Delivered — you can request “Return goods and refund”.',
+                'Delivered — return refunds within $windowDays days of receiving.',
                 style: TextStyle(
                   color: Colors.green.shade700,
                   fontWeight: FontWeight.w600,
@@ -740,26 +912,57 @@ class _ToRefundPageState extends State<ToRefundPage> {
                 ),
               ),
             ),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              style: FilledButton.styleFrom(
-                backgroundColor: Colors.redAccent,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+          if (sealed)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(
+                OrderRefundService.sealedBusinessMessage(),
+                style: TextStyle(
+                  color: Colors.red.shade700,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                  height: 1.35,
                 ),
               ),
-              onPressed: () => _openRefundSheet(o),
-              icon: const Icon(Icons.undo),
-              label: Text(refundLabel),
             ),
-          ),
+          if (!sealed)
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.redAccent,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () => _openRefundSheet(o, escrow: escrow),
+                icon: const Icon(Icons.undo),
+                label: Text(refundLabel),
+              ),
+            )
+          else
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.red.shade700,
+                  side: BorderSide(color: Colors.red.shade200),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: null,
+                icon: const Icon(Icons.lock_outline),
+                label: const Text('Business sealed'),
+              ),
+            ),
         ],
       ),
     );
   }
 
   Widget _processingBanner() {
+    final days = OrderRefundService.returnWindowDays;
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       padding: const EdgeInsets.all(12),
@@ -768,16 +971,16 @@ class _ToRefundPageState extends State<ToRefundPage> {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xFFFFE0B2)),
       ),
-      child: const Row(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.info_outline, size: 20, color: Color(0xFFE65100)),
-          SizedBox(width: 8),
+          const Icon(Icons.info_outline, size: 20, color: Color(0xFFE65100)),
+          const SizedBox(width: 8),
           Expanded(
             child: Text(
-              'Refunds are processed within 3 days. Choose cancel order '
-              '(before delivery) or return goods (after delivery).',
-              style: TextStyle(
+              'Refunds settle within 3 days. Cancel before delivery, or return '
+              'goods within $days days of receiving. After that, business is sealed.',
+              style: const TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
                 color: Color(0xFFE65100),
@@ -824,7 +1027,7 @@ class _ToRefundPageState extends State<ToRefundPage> {
             child: RefreshIndicator(
               color: _brand,
               onRefresh: _reload,
-              child: FutureBuilder<List<OrderItem>>(
+              child: FutureBuilder<_RefundPageData>(
                 future: _future,
                 builder: (context, snap) {
                   if (snap.connectionState != ConnectionState.done) {
@@ -859,9 +1062,21 @@ class _ToRefundPageState extends State<ToRefundPage> {
                     );
                   }
 
-                  final all = snap.data ?? const <OrderItem>[];
+                  final data = snap.data!;
+                  final all = data.orders;
+                  final escrowMap = data.escrowByOrderId;
+                  final q = _searchQuery.trim().toLowerCase();
 
-                  // Eligible: paid/confirmed, not already cancelled.
+                  final refundDetails = data.refunds.where((r) {
+                    if (q.isEmpty) return true;
+                    return r.orderNumber.toLowerCase().contains(q) ||
+                        r.itemName.toLowerCase().contains(q) ||
+                        r.reason.toLowerCase().contains(q) ||
+                        r.status.toLowerCase().contains(q);
+                  }).toList();
+
+                  // Eligible: paid/confirmed/delivered, not cancelled.
+                  // Sealed delivered orders still appear (locked) so the rule is clear.
                   final eligible = all.where((o) {
                     if (o.status == OrderStatus.cancelled) return false;
                     final isConfirmed = o.status == OrderStatus.confirmed;
@@ -872,7 +1087,7 @@ class _ToRefundPageState extends State<ToRefundPage> {
                   }).toList();
                   OrderListHelpers.sortNewestFirst(eligible);
 
-                  if (eligible.isEmpty) {
+                  if (eligible.isEmpty && refundDetails.isEmpty) {
                     return ListView(
                       physics: const AlwaysScrollableScrollPhysics(),
                       children: [
@@ -880,7 +1095,7 @@ class _ToRefundPageState extends State<ToRefundPage> {
                         Center(
                           child: Text(
                             _searchQuery.trim().isEmpty
-                                ? 'No orders available for refund right now'
+                                ? 'No orders or refunds to show right now'
                                 : 'No orders match your search',
                             style: const TextStyle(color: Colors.redAccent),
                             textAlign: TextAlign.center,
@@ -890,21 +1105,52 @@ class _ToRefundPageState extends State<ToRefundPage> {
                     );
                   }
 
-                  final showMixedRoleHint =
+                  final showMixedRoleHint = eligible.isNotEmpty &&
                       eligible.any(_isSellerForOrder) &&
-                          eligible.any((o) => !_isSellerForOrder(o));
+                      eligible.any((o) => !_isSellerForOrder(o));
 
-                  return ListView.builder(
+                  return ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                    itemCount: eligible.length + (showMixedRoleHint ? 1 : 0),
-                    itemBuilder: (_, i) {
-                      if (showMixedRoleHint && i == 0) {
-                        return _mixedRefundRolesHint();
-                      }
-                      final o = eligible[showMixedRoleHint ? i - 1 : i];
-                      return _card(o);
-                    },
+                    children: [
+                      if (refundDetails.isNotEmpty) ...[
+                        const Text(
+                          'Your refund details',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF222222),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Status and timeline for refunds you submitted.',
+                          style: TextStyle(
+                            color: Colors.grey.shade700,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 12.5,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        ...refundDetails.map(_refundDetailCard),
+                        if (eligible.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Orders eligible to refund',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF222222),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                        ],
+                      ],
+                      if (showMixedRoleHint) _mixedRefundRolesHint(),
+                      ...eligible.map(
+                        (o) => _card(o, escrowMap: escrowMap),
+                      ),
+                    ],
                   );
                 },
               ),

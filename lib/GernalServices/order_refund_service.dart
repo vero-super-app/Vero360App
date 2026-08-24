@@ -11,6 +11,101 @@ import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodatio
 import 'package:vero360_app/features/Accomodation/AccomodationService/accommodation_occupancy_service.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/guest_booking_local_cache.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/mybookingData_service.dart';
+import 'package:vero360_app/GernalServices/notification_service.dart';
+import 'package:vero360_app/utils/firebase_bootstrap.dart';
+
+/// One row from Firestore [OrderRefundService.collectionName].
+class RefundRequestRecord {
+  final String id;
+  final String orderId;
+  final String orderNumber;
+  final String itemName;
+  final int amount;
+  final String refundType;
+  final String reason;
+  final String status;
+  final int processingDays;
+  final String? serviceType;
+  final DateTime? createdAt;
+  final bool initiatedBySeller;
+
+  const RefundRequestRecord({
+    required this.id,
+    required this.orderId,
+    required this.orderNumber,
+    required this.itemName,
+    required this.amount,
+    required this.refundType,
+    required this.reason,
+    required this.status,
+    required this.processingDays,
+    this.serviceType,
+    this.createdAt,
+    this.initiatedBySeller = false,
+  });
+
+  bool get isStay =>
+      serviceType == 'accommodation' ||
+      refundType == 'cancel_stay' ||
+      refundType.toLowerCase().contains('stay');
+
+  String get typeLabel {
+    switch (refundType) {
+      case 'cancel_order':
+        return 'Cancel order and refund';
+      case 'return_goods':
+        return 'Return goods and refund';
+      case 'cancel_stay':
+        return 'Stay cancelled';
+      default:
+        return refundType.replaceAll('_', ' ');
+    }
+  }
+
+  String get statusLabel {
+    final s = status.toLowerCase().trim();
+    if (s == 'success' || s == 'completed' || s == 'paid') return 'Completed';
+    if (s == 'failed' || s == 'rejected') return 'Failed';
+    if (s == 'processing') return 'Processing';
+    return 'Pending';
+  }
+
+  /// Approximate funds-settlement deadline from request time.
+  DateTime? get expectedBy {
+    final start = createdAt;
+    if (start == null) return null;
+    final days = processingDays > 0 ? processingDays : OrderRefundService.processingDays;
+    return start.add(Duration(days: days));
+  }
+
+  factory RefundRequestRecord.fromDoc(
+    String id,
+    Map<String, dynamic> m,
+  ) {
+    DateTime? created;
+    final raw = m['createdAt'];
+    if (raw is Timestamp) created = raw.toDate();
+    return RefundRequestRecord(
+      id: id,
+      orderId: (m['orderId'] ?? '').toString(),
+      orderNumber: (m['orderNumber'] ?? '').toString(),
+      itemName: (m['itemName'] ?? '').toString(),
+      amount: (m['amount'] is num)
+          ? (m['amount'] as num).round()
+          : int.tryParse('${m['amount']}') ?? 0,
+      refundType: (m['refundType'] ?? '').toString(),
+      reason: (m['reason'] ?? '').toString(),
+      status: (m['status'] ?? 'pending').toString(),
+      processingDays: (m['processingDays'] is num)
+          ? (m['processingDays'] as num).toInt()
+          : int.tryParse('${m['processingDays']}') ??
+              OrderRefundService.processingDays,
+      serviceType: m['serviceType']?.toString(),
+      createdAt: created,
+      initiatedBySeller: m['initiatedBySeller'] == true,
+    );
+  }
+}
 
 /// Orchestrates marketplace refunds: payments API → escrow void → order cancel.
 class OrderRefundService {
@@ -18,6 +113,82 @@ class OrderRefundService {
 
   static const String collectionName = 'refund_requests';
   static const int processingDays = 3;
+
+  /// Days after receiving the parcel before return refunds are sealed.
+  static const int returnWindowDays = 3;
+
+  static const Duration returnWindowAfter =
+      Duration(days: returnWindowDays);
+
+  /// Whether a delivered order can still request “return goods”.
+  ///
+  /// After [returnWindowDays] from receipt (or when escrow is already released),
+  /// business is sealed — no refund.
+  static bool isReturnWindowOpen({
+    DateTime? receivedAt,
+    OrderEscrowSnapshot? escrow,
+  }) {
+    if (escrow != null) {
+      if (escrow.isReleased || escrow.isRefunded) return false;
+      final shipped = escrow.deliveredAt;
+      if (shipped != null) {
+        final sealAt = shipped.add(returnWindowAfter);
+        if (!DateTime.now().isBefore(sealAt)) return false;
+      }
+      return true;
+    }
+    if (receivedAt == null) return true;
+    final sealAt = receivedAt.add(returnWindowAfter);
+    return DateTime.now().isBefore(sealAt);
+  }
+
+  static String sealedBusinessMessage() =>
+      'Business is sealed. After $returnWindowDays days of receiving the parcel '
+      'you can\'t refund.';
+
+  /// Refund requests for the signed-in user (buyer, requester, or merchant).
+  static Future<List<RefundRequestRecord>> fetchMyRefundRequests({
+    int limit = 40,
+  }) async {
+    final firebaseOk = await ensureFirebaseApp();
+    if (!firebaseOk) return const [];
+
+    String uid = '';
+    try {
+      uid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    } catch (_) {}
+    if (uid.isEmpty) return const [];
+
+    final col = FirebaseFirestore.instance.collection(collectionName);
+    final byId = <String, RefundRequestRecord>{};
+
+    Future<void> merge(Query<Map<String, dynamic>> query) async {
+      try {
+        final snap = await query.limit(limit).get();
+        for (final doc in snap.docs) {
+          byId[doc.id] =
+              RefundRequestRecord.fromDoc(doc.id, doc.data());
+        }
+      } catch (e) {
+        debugPrint('[OrderRefund] fetchMyRefundRequests query failed: $e');
+      }
+    }
+
+    await Future.wait([
+      merge(col.where('requestedByUid', isEqualTo: uid)),
+      merge(col.where('buyerUid', isEqualTo: uid)),
+      merge(col.where('merchantUid', isEqualTo: uid)),
+    ]);
+
+    final list = byId.values.toList()
+      ..sort((a, b) {
+        final aa = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final bb = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return bb.compareTo(aa);
+      });
+    if (list.length <= limit) return list;
+    return list.sublist(0, limit);
+  }
 
   /// Submit a refund for [order].
   ///
@@ -30,6 +201,7 @@ class OrderRefundService {
     required PaymentRefundType refundType,
     required String reason,
     bool initiatedBySeller = false,
+    OrderEscrowSnapshot? escrow,
   }) async {
     final trimmed = reason.trim();
     if (trimmed.isEmpty) {
@@ -60,10 +232,28 @@ class OrderRefundService {
       );
     }
 
+    if (refundType == PaymentRefundType.returnGoods) {
+      final esc = escrow ??
+          await OrderEscrowService.fetchEscrowResolvingOrderId(order);
+      if (!isReturnWindowOpen(
+        receivedAt: esc?.deliveredAt ?? order.orderDate,
+        escrow: esc,
+      )) {
+        throw Exception(sealedBusinessMessage());
+      }
+    }
+
     final amount = (order.price * order.quantity).toDouble();
     final txRef = (order.paymentTxRef ?? '').trim().isNotEmpty
         ? order.paymentTxRef!.trim()
         : await OrderEscrowService.fetchTxRefForOrder(order.id);
+
+    final firebaseOk = await ensureFirebaseApp();
+    if (!firebaseOk) {
+      throw Exception(
+        'App is still connecting. Please wait a moment and try the refund again.',
+      );
+    }
 
     PaymentRefundResponse apiResult;
     try {
@@ -94,36 +284,47 @@ class OrderRefundService {
       );
     }
 
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    String uid = '';
+    try {
+      uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    } catch (_) {}
     final days = apiResult.processingDays > 0
         ? apiResult.processingDays
         : processingDays;
 
-    await FirebaseFirestore.instance.collection(collectionName).add({
-      'orderId': order.id,
-      'orderNumber': order.orderNumber,
-      'itemName': order.itemName,
-      'amount': amount.round(),
-      'currency': 'MWK',
-      'refundType': refundType.apiValue,
-      'reason': trimmed,
-      'txRef': txRef,
-      'status': (apiResult.status ?? 'pending').toString(),
-      'refundId': apiResult.refundId,
-      'processingDays': days,
-      'initiatedBySeller': initiatedBySeller,
-      'requestedByUid': uid,
-      'buyerUid': order.customerUid,
-      'merchantUid': order.merchantUid,
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
+    try {
+      await FirebaseFirestore.instance.collection(collectionName).add({
+        'orderId': order.id,
+        'orderNumber': order.orderNumber,
+        'itemName': order.itemName,
+        'amount': amount.round(),
+        'currency': 'MWK',
+        'refundType': refundType.apiValue,
+        'reason': trimmed,
+        'txRef': txRef,
+        'status': (apiResult.status ?? 'pending').toString(),
+        'refundId': apiResult.refundId,
+        'processingDays': days,
+        'initiatedBySeller': initiatedBySeller,
+        'requestedByUid': uid,
+        'buyerUid': order.customerUid,
+        'merchantUid': order.merchantUid,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('[OrderRefund] refund_requests write failed (continuing): $e');
+    }
 
-    await OrderEscrowService.cancelHoldForRefund(
-      orderId: order.id,
-      reason: trimmed,
-      refundType: refundType.apiValue,
-    );
+    try {
+      await OrderEscrowService.cancelHoldForRefund(
+        orderId: order.id,
+        reason: trimmed,
+        refundType: refundType.apiValue,
+      );
+    } catch (e) {
+      debugPrint('[OrderRefund] escrow void failed (continuing): $e');
+    }
 
     // Both refund types end the order so it leaves active shipping queues.
     try {
@@ -145,7 +346,7 @@ class OrderRefundService {
     }
 
     final buyerUid = (order.customerUid ?? '').trim();
-    if (buyerUid.isNotEmpty && initiatedBySeller) {
+    if (buyerUid.isNotEmpty) {
       await OrderPartyNotificationService.publishRefundUpdateToBuyer(
         buyerUid: buyerUid,
         orderNumber: order.orderNumber,
@@ -205,6 +406,15 @@ class OrderRefundService {
       }
     }
 
+    // Must be ready before Auth/Firestore — otherwise we crash with core/no-app
+    // after the payments API may already have cancelled the stay.
+    final firebaseOk = await ensureFirebaseApp();
+    if (!firebaseOk) {
+      throw Exception(
+        'App is still connecting. Please wait a moment and try the refund again.',
+      );
+    }
+
     final amount = booking.total.toDouble();
     if (amount <= 0) {
       throw Exception('Invalid refund amount.');
@@ -245,38 +455,50 @@ class OrderRefundService {
       );
     }
 
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    String uid = '';
+    try {
+      uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    } catch (_) {}
+
     final days = apiResult.processingDays > 0
         ? apiResult.processingDays
         : processingDays;
 
-    await FirebaseFirestore.instance.collection(collectionName).add({
-      'orderId': escrow.orderId,
-      'bookingId': booking.id,
-      'orderNumber': bookingRef,
-      'itemName': stayName,
-      'amount': amount.round(),
-      'currency': 'MWK',
-      'refundType': 'cancel_stay',
-      'serviceType': 'accommodation',
-      'reason': trimmed,
-      'txRef': txRef,
-      'status': (apiResult.status ?? 'pending').toString(),
-      'refundId': apiResult.refundId,
-      'processingDays': days,
-      'initiatedBySeller': false,
-      'requestedByUid': uid,
-      'buyerUid': escrow.buyerUid,
-      'merchantUid': escrow.merchantUid,
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
+    try {
+      await FirebaseFirestore.instance.collection(collectionName).add({
+        'orderId': escrow.orderId,
+        'bookingId': booking.id,
+        'orderNumber': bookingRef,
+        'itemName': stayName,
+        'amount': amount.round(),
+        'currency': 'MWK',
+        'refundType': 'cancel_stay',
+        'serviceType': 'accommodation',
+        'reason': trimmed,
+        'txRef': txRef,
+        'status': (apiResult.status ?? 'pending').toString(),
+        'refundId': apiResult.refundId,
+        'processingDays': days,
+        'initiatedBySeller': false,
+        'requestedByUid': uid,
+        'buyerUid': escrow.buyerUid,
+        'merchantUid': escrow.merchantUid,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('[OrderRefund] refund_requests write failed (continuing): $e');
+    }
 
-    await OrderEscrowService.cancelHoldForRefund(
-      orderId: escrow.orderId,
-      reason: trimmed,
-      refundType: 'cancel_stay',
-    );
+    try {
+      await OrderEscrowService.cancelHoldForRefund(
+        orderId: escrow.orderId,
+        reason: trimmed,
+        refundType: 'cancel_stay',
+      );
+    } catch (e) {
+      debugPrint('[OrderRefund] escrow void failed (continuing): $e');
+    }
 
     try {
       final id = booking.id.trim();
@@ -296,7 +518,11 @@ class OrderRefundService {
     final accId = booking.accommodationId;
     if (accId != null && accId > 0) {
       final occ = AccommodationOccupancyService();
-      for (final ref in {bookingRef, booking.id.trim(), booking.displayBookingRef.trim()}) {
+      for (final ref in {
+        bookingRef,
+        booking.id.trim(),
+        booking.displayBookingRef.trim()
+      }) {
         if (ref.isEmpty) continue;
         try {
           await occ.releaseCancelledStay(
@@ -311,14 +537,49 @@ class OrderRefundService {
 
     final hostUid = escrow.merchantUid.trim();
     if (hostUid.isNotEmpty) {
-      await OrderPartyNotificationService.publishRefundRequestedToMerchant(
-        merchantUid: hostUid,
-        orderNumber: bookingRef,
-        itemName: stayName,
-        orderId: escrow.orderId,
-        refundType: 'Stay cancelled — guest changed their mind',
-        reason: trimmed,
+      try {
+        await OrderPartyNotificationService.publishRefundRequestedToMerchant(
+          merchantUid: hostUid,
+          orderNumber: bookingRef,
+          itemName: stayName,
+          orderId: escrow.orderId,
+          refundType: 'Stay cancelled — guest changed their mind',
+          reason: trimmed,
+        );
+      } catch (e) {
+        debugPrint('[OrderRefund] host notify failed: $e');
+      }
+    }
+
+    final guestUid = escrow.buyerUid.trim().isNotEmpty
+        ? escrow.buyerUid.trim()
+        : uid;
+    if (guestUid.isNotEmpty) {
+      try {
+        await OrderPartyNotificationService.publishRefundUpdateToBuyer(
+          buyerUid: guestUid,
+          orderNumber: bookingRef,
+          itemName: stayName,
+          orderId: escrow.orderId,
+          refundType: 'Stay cancelled — refund requested',
+          processingDays: days,
+        );
+      } catch (e) {
+        debugPrint('[OrderRefund] guest refund notify failed: $e');
+      }
+    }
+
+    try {
+      await NotificationService.instance.showManualNotification(
+        title: 'Stay refund requested',
+        body:
+            'Your stay at $stayName was cancelled. Refund for booking $bookingRef '
+            'is processing (within $days days).',
+        payload:
+            '{"type":"refund_update","orderId":"${escrow.orderId}","bookingRef":"$bookingRef"}',
       );
+    } catch (e) {
+      debugPrint('[OrderRefund] local guest notification failed: $e');
     }
 
     return PaymentRefundResponse(

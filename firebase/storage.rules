@@ -43,6 +43,15 @@ service firebase.storage {
         && request.resource.size < 12 * 1024 * 1024;
     }
 
+    // Homepage advert creatives — public read; uploader folder must match auth uid
+    // (includes anonymous Firebase sessions so guests can advertise without login).
+    match /homepage_adverts/{userId}/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.size < 8 * 1024 * 1024;
+    }
+
     // Deny everything else (production default)
     match /{allPaths=**} {
       allow read, write: if false;

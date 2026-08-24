@@ -61,6 +61,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/utils/low_ram_android.dart';
 import 'package:vero360_app/utils/session_local_cache.dart';
+import 'package:vero360_app/utils/firebase_bootstrap.dart';
 import 'package:vero360_app/widgets/vero_launch_splash.dart';
 
 final GlobalKey<NavigatorState> navKey = appNavKey;
@@ -186,34 +187,7 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   }
 }
 
-const FirebaseOptions _kFirebaseOptionsAndroid = FirebaseOptions(
-  apiKey: 'AIzaSyCQ5_4N2J_xwKqmY-lAa8-ifRxovoRTTYk',
-  authDomain: 'vero360app-ca423.firebaseapp.com',
-  projectId: 'vero360app-ca423',
-  storageBucket: 'vero360app-ca423.firebasestorage.app',
-  messagingSenderId: '1010595167807',
-  appId: '1:1010595167807:android:86f213f63fa2f8391dc28a',
-);
-
-const FirebaseOptions _kFirebaseOptionsIos = FirebaseOptions(
-  apiKey: 'AIzaSyBJX498cAin_BXc_IAvs_spisGl2kKtuCE',
-  authDomain: 'vero360app-ca423.firebaseapp.com',
-  databaseURL: 'https://vero360app-ca423-default-rtdb.firebaseio.com',
-  projectId: 'vero360app-ca423',
-  storageBucket: 'vero360app-ca423.firebasestorage.app',
-  messagingSenderId: '1010595167807',
-  appId: '1:1010595167807:ios:83dcb52c7e1285251dc28a',
-  iosBundleId: 'com.vero265.app',
-);
-
-FirebaseOptions get _kFirebaseOptions {
-  if (!kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.iOS ||
-          defaultTargetPlatform == TargetPlatform.macOS)) {
-    return _kFirebaseOptionsIos;
-  }
-  return _kFirebaseOptionsAndroid;
-}
+FirebaseOptions get _kFirebaseOptions => kFirebaseOptions;
 
 bool _fcmBackgroundHandlerRegistered = false;
 Future<bool>? _firebaseHealInFlight;
@@ -233,7 +207,8 @@ Future<bool> _ensureFirebaseHealthy({
     const maxAttempts = 3;
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        if (Firebase.apps.isEmpty) {
+        final ok = await ensureFirebaseApp(maxAttempts: 1);
+        if (!ok && Firebase.apps.isEmpty) {
           say('Firebase init (attempt $attempt/$maxAttempts)…');
           await Firebase.initializeApp(options: _kFirebaseOptions);
         } else {

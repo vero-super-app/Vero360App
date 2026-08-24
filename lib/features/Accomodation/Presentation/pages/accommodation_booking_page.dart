@@ -1178,27 +1178,6 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     }
   }
 
-  Future<String?> _resolveHostMerchantUidForAlerts({
-    required String? fromListing,
-    required dynamic bookingDetails,
-    required int accommodationId,
-  }) async {
-    final a = fromListing?.trim();
-    if (a != null &&
-        a.isNotEmpty &&
-        Accommodation.looksLikeFirebaseAuthUid(a)) {
-      return a;
-    }
-    final fromApi =
-        BookingService.extractHostFirebaseUidFromBookingResponse(
-            bookingDetails);
-    if (fromApi != null &&
-        Accommodation.looksLikeFirebaseAuthUid(fromApi)) {
-      return fromApi.trim();
-    }
-    return _lookupHostMerchantUidInFirestore(accommodationId);
-  }
-
   Future<String?> _lookupHostMerchantUidInFirestore(int accommodationId) async {
     if (accommodationId <= 0) return null;
     try {
@@ -1225,6 +1204,87 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     return null;
   }
 
+  /// Warn guest that stay payment is held until they arrive.
+  Future<bool> _confirmPaymentEscrowWarning() async {
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        const warnRed = Color(0xFFC62828);
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+          contentPadding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+          actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+          title: const Row(
+            children: [
+              Icon(Icons.info_outline_rounded, color: warnRed),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Before you pay',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFEBEE),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: warnRed.withValues(alpha: 0.35)),
+                ),
+                child: const Text(
+                  'Your money will be held securely and released when you arrive at your stay.',
+                  style: TextStyle(
+                    color: warnRed,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14.5,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'After check-in, confirm arrival in My Bookings to release payment to the host. '
+                'You can request a refund before check-in day if your plans change.',
+                style: TextStyle(
+                  color: Colors.grey.shade800,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                  height: 1.4,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: _brandOrange,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('I understand — pay'),
+            ),
+          ],
+        );
+      },
+    );
+    return result == true;
+  }
+
   Future<void> _submit() async {
     final ok = await AuthHandler.isAuthenticated();
     if (!mounted) return;
@@ -1239,8 +1299,15 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
       return;
     }
 
-    await _prefillFromAccount();
-    if (!mounted) return;
+    // Only refetch profile when the form is incomplete (saves a Firestore round-trip).
+    final needsPrefill = _nameController.text.trim().length < 2 ||
+        !_emailController.text.trim().contains('@') ||
+        _phoneController.text.trim().length < 6;
+    if (needsPrefill) {
+      await _prefillFromAccount();
+      if (!mounted) return;
+    }
+
     final name = _nameController.text.trim();
     final email = _emailController.text.trim();
     final phone = _phoneController.text.trim();
@@ -1271,6 +1338,9 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
       );
       return;
     }
+
+    final proceed = await _confirmPaymentEscrowWarning();
+    if (!proceed || !mounted) return;
 
     setState(() => _submitting = true);
     _paymentSucceeded = false;
@@ -1320,34 +1390,35 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
         );
       }
 
-      await _occupancy.reserveStay(
+      reservedRef = bookingNo;
+      unawaited(_loadOccupancy());
+
+      final parts = name.split(RegExp(r'\s+'));
+      final firstName = parts.isNotEmpty ? parts.first : 'Guest';
+      final lastName =
+          parts.length > 1 ? parts.sublist(1).join(' ') : '';
+      final txRef =
+          'acc-${widget.accommodationId}-$bookingNo-${DateTime.now().millisecondsSinceEpoch}';
+
+      // Fast path: listing/API host uid (no Firestore). Fall back in parallel.
+      String? hostForAlerts = _hostUidFromListingOrBooking(
+        fromListing: widget.hostMerchantUid,
+        bookingDetails: result['bookingDetails'],
+      );
+
+      // Reserve inventory + PayChangu init together (was sequential + DNS probe).
+      final reserveFuture = _occupancy.reserveStay(
         accommodationId: widget.accommodationId,
         bookingRef: bookingNo,
         checkIn: _checkIn,
         checkOut: _checkOut,
         capacity: _inventoryCapacity,
       );
-      reservedRef = bookingNo;
-      // Refresh local view of inventory after reserve.
-      unawaited(_loadOccupancy());
-
-      final hostForAlerts = await _resolveHostMerchantUidForAlerts(
-        fromListing: widget.hostMerchantUid,
-        bookingDetails: result['bookingDetails'],
-        accommodationId: widget.accommodationId,
-      );
-
-      await InternetAddress.lookup('api.paychangu.com');
-
-      final parts = name.split(RegExp(r'\s+'));
-      final firstName = parts.isNotEmpty ? parts.first : 'Guest';
-      final lastName =
-          parts.length > 1 ? parts.sublist(1).join(' ') : '';
-
-      final txRef =
-          'acc-${widget.accommodationId}-$bookingNo-${DateTime.now().millisecondsSinceEpoch}';
-
-      final response = await http
+      final hostFuture = hostForAlerts != null
+          ? Future<String?>.value(hostForAlerts)
+          : _lookupHostMerchantUidInFirestore(widget.accommodationId)
+              .timeout(const Duration(seconds: 4), onTimeout: () => null);
+      final payFuture = http
           .post(
             PayChanguConfig.paymentUri,
             headers: PayChanguConfig.authHeaders,
@@ -1369,7 +1440,21 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
               },
             }),
           )
-          .timeout(const Duration(seconds: 30));
+          .timeout(const Duration(seconds: 20));
+
+      late final http.Response response;
+      try {
+        final waited = await Future.wait<Object?>([
+          reserveFuture,
+          payFuture,
+          hostFuture,
+        ]);
+        response = waited[1] as http.Response;
+        hostForAlerts = (waited[2] as String?)?.trim();
+      } catch (e) {
+        // If PayChangu failed after reserve, free the hold.
+        rethrow;
+      }
 
       if (response.statusCode != 200 && response.statusCode != 201) {
         throw Exception('HTTP ${response.statusCode}: ${response.body}');
@@ -1534,6 +1619,27 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  /// Instant host uid from listing / booking payload (no network).
+  String? _hostUidFromListingOrBooking({
+    required String? fromListing,
+    required dynamic bookingDetails,
+  }) {
+    final a = fromListing?.trim();
+    if (a != null &&
+        a.isNotEmpty &&
+        Accommodation.looksLikeFirebaseAuthUid(a)) {
+      return a;
+    }
+    final fromApi =
+        BookingService.extractHostFirebaseUidFromBookingResponse(
+            bookingDetails);
+    if (fromApi != null &&
+        Accommodation.looksLikeFirebaseAuthUid(fromApi)) {
+      return fromApi.trim();
+    }
+    return null;
   }
 
   @override
@@ -2035,11 +2141,46 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          'secure your stay using secure payment on the next step.',
+                          'Secure your stay with payment on the next step.',
                           style: TextStyle(
                             fontSize: 12,
                             color: Colors.grey.shade600,
                             fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFEBEE),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: const Color(0xFFC62828)
+                                  .withValues(alpha: 0.35),
+                            ),
+                          ),
+                          child: const Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                Icons.lock_clock_rounded,
+                                color: Color(0xFFC62828),
+                                size: 20,
+                              ),
+                              SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  'Money will be released when you arrive at your stay.',
+                                  style: TextStyle(
+                                    color: Color(0xFFC62828),
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 13,
+                                    height: 1.35,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],

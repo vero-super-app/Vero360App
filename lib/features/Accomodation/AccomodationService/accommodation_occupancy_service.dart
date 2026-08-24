@@ -12,9 +12,15 @@ import 'package:intl/intl.dart';
 /// Subcollections: `nights/{day}`, `stays/{bookingRef}` (source of truth for locks).
 class AccommodationOccupancyService {
   AccommodationOccupancyService({FirebaseFirestore? firestore})
-      : _db = firestore ?? FirebaseFirestore.instance;
+      : _firestoreOverride = firestore;
 
-  final FirebaseFirestore _db;
+  final FirebaseFirestore? _firestoreOverride;
+
+  FirebaseFirestore get _db {
+    final override = _firestoreOverride;
+    if (override != null) return override;
+    return FirebaseFirestore.instance;
+  }
   static final _dayFmt = DateFormat('yyyy-MM-dd');
 
   static const statusReserved = 'reserved';

@@ -1,10 +1,12 @@
 import 'dart:convert';
 
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/mybookingData_service.dart';
+import 'package:vero360_app/utils/firebase_bootstrap.dart';
 
 /// Device-local paid stays shown in “My bookings” until `GET /bookings/me` catches up.
 ///
@@ -16,12 +18,25 @@ class GuestBookingLocalCache {
   static const _prefsPrefix = 'guest_paid_stay_bookings_v1_';
   static const _maxEntries = 20;
 
-  static String? get _uid => FirebaseAuth.instance.currentUser?.uid.trim();
+  static String? get _uid {
+    try {
+      if (Firebase.apps.isEmpty) return null;
+      final u = FirebaseAuth.instance.currentUser?.uid.trim();
+      return (u == null || u.isEmpty) ? null : u;
+    } catch (_) {
+      return null;
+    }
+  }
 
   static String? _prefsKeyForCurrentUser() {
     final uid = _uid;
     if (uid == null || uid.isEmpty) return null;
     return '$_prefsPrefix$uid';
+  }
+
+  static Future<String?> _prefsKeyReady() async {
+    await ensureFirebaseApp();
+    return _prefsKeyForCurrentUser();
   }
 
   static String _refKey(BookingItem b) {
@@ -54,11 +69,8 @@ class GuestBookingLocalCache {
 
   /// Remove one stay from the current user’s local cache (e.g. after delete / 404).
   static Future<void> removeStay(BookingItem item) async {
-    final key = _prefsKeyForCurrentUser();
-    if (key == null) {
-      await clearOnLogout();
-      return;
-    }
+    final key = await _prefsKeyReady();
+    if (key == null) return;
     try {
       final existing = await loadPaidStays();
       final remaining =
@@ -76,7 +88,7 @@ class GuestBookingLocalCache {
   }
 
   static Future<List<BookingItem>> loadPaidStays() async {
-    final key = _prefsKeyForCurrentUser();
+    final key = await _prefsKeyReady();
     if (key == null) return [];
     try {
       final sp = await SharedPreferences.getInstance();
@@ -100,7 +112,7 @@ class GuestBookingLocalCache {
 
   static Future<void> rememberPaidStay(BookingItem item) async {
     if (!item.includeInGuestMyBookings) return;
-    final key = _prefsKeyForCurrentUser();
+    final key = await _prefsKeyReady();
     if (key == null) return;
 
     final existing = await loadPaidStays();
@@ -134,7 +146,7 @@ class GuestBookingLocalCache {
 
   static Future<void> pruneIfPresentInApi(List<BookingItem> api) async {
     if (api.isEmpty) return;
-    final key = _prefsKeyForCurrentUser();
+    final key = await _prefsKeyReady();
     if (key == null) return;
     final local = await loadPaidStays();
     if (local.isEmpty) return;

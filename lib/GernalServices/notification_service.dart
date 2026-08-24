@@ -136,15 +136,36 @@ class NotificationService {
       await androidPlugin.requestNotificationsPermission();
     }
 
+    // iOS local notification permission (alerts when app is open / showManualNotification)
+    final iosPlugin = _localNotifications.resolvePlatformSpecificImplementation<
+        IOSFlutterLocalNotificationsPlugin>();
+    await iosPlugin?.requestPermissions(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+
     // 2. Request FCM notification permissions (mainly for iOS)
     final messaging = FirebaseMessaging.instance;
-    await messaging.requestPermission(
+    final settingsPermission = await messaging.requestPermission(
       alert: true,
       announcement: false,
       badge: true,
       carPlay: false,
       criticalAlert: false,
       provisional: false,
+      sound: true,
+    );
+    if (kDebugMode) {
+      debugPrint(
+        '[NotificationService] iOS/FCM permission: ${settingsPermission.authorizationStatus}',
+      );
+    }
+
+    // Show system banners while the app is in the foreground (iOS).
+    await messaging.setForegroundNotificationPresentationOptions(
+      alert: true,
+      badge: true,
       sound: true,
     );
 
@@ -326,6 +347,17 @@ class NotificationService {
   Future<void> registerTokenWithBackend({int retries = 1}) async {
     for (var attempt = 0; attempt < retries; attempt++) {
       try {
+        // iOS: FCM token is unavailable until APNs token is set.
+        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+          final apns = await _waitForApnsToken(
+            attempts: attempt == 0 ? 8 : 4,
+          );
+          if (apns == null && kDebugMode) {
+            debugPrint(
+              '[NotificationService] APNs token not ready (attempt ${attempt + 1})',
+            );
+          }
+        }
         final token = await FirebaseMessaging.instance.getToken();
         if (token != null && token.isNotEmpty) {
           await _registerTokenWithBackend(token);
@@ -342,6 +374,23 @@ class NotificationService {
     }
     if (kDebugMode) {
       debugPrint('FCM token unavailable after $retries attempts');
+    }
+  }
+
+  /// Wait until iOS has an APNs device token (required before FCM getToken).
+  Future<String?> _waitForApnsToken({int attempts = 8}) async {
+    final messaging = FirebaseMessaging.instance;
+    for (var i = 0; i < attempts; i++) {
+      try {
+        final token = await messaging.getAPNSToken();
+        if (token != null && token.isNotEmpty) return token;
+      } catch (_) {}
+      await Future<void>.delayed(Duration(milliseconds: 400 + (i * 200)));
+    }
+    try {
+      return await messaging.getAPNSToken();
+    } catch (_) {
+      return null;
     }
   }
 

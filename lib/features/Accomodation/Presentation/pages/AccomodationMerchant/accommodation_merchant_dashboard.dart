@@ -1104,7 +1104,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   void initState() {
     super.initState();
     if (widget.embeddedInMainNav) _selectedIndex = 4;
-    _accommodationTabs = TabController(length: 3, vsync: this);
+    _accommodationTabs = TabController(length: 4, vsync: this);
     _loadMerchantData();
     // No periodic refresh – data updates only on pull-to-refresh
   }
@@ -3673,13 +3673,26 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
           color: Colors.white,
           child: TabBar(
             controller: _accommodationTabs!,
+            isScrollable: true,
+            tabAlignment: TabAlignment.start,
+            labelPadding: const EdgeInsets.symmetric(horizontal: 20),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
             labelColor: _brandOrange,
             unselectedLabelColor: Colors.grey,
             indicatorColor: _brandOrange,
+            labelStyle: const TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 14,
+            ),
+            unselectedLabelStyle: const TextStyle(
+              fontWeight: FontWeight.w600,
+              fontSize: 14,
+            ),
             tabs: const [
               Tab(text: 'Dashboard'),
               Tab(text: 'My properties'),
               Tab(text: 'Bookings'),
+              Tab(text: 'Profile'),
             ],
           ),
         ),
@@ -3726,11 +3739,318 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                   ],
                 ),
               ),
+              _buildProfileTab(),
             ],
           ),
         ),
       ],
     );
+  }
+
+  // ----------------- Profile tab (like marketplace) -----------------
+  Widget _buildProfileTab() {
+    return RefreshIndicator(
+      color: _brandOrange,
+      onRefresh: () async => _loadMerchantData(showLoading: false),
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildWelcomeSection(),
+            const SizedBox(height: 12),
+            const Text(
+              'Stay profile',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Edit what guests see for your accommodation business.',
+              style: TextStyle(
+                color: Colors.grey.shade700,
+                fontWeight: FontWeight.w600,
+                fontSize: 12.5,
+              ),
+            ),
+            const SizedBox(height: 10),
+            _profileEditTile(
+              icon: Icons.hotel_rounded,
+              title: 'Business name',
+              subtitle: _businessNameIsPlaceholder
+                  ? 'Add your property / business name'
+                  : _businessName,
+              onTap: _showEditBusinessNameDialog,
+            ),
+            const SizedBox(height: 10),
+            _profileEditTile(
+              icon: Icons.email_rounded,
+              title: 'Email',
+              subtitle: _merchantEmail,
+              onTap: _showEditEmailDialog,
+            ),
+            const SizedBox(height: 10),
+            _profileEditTile(
+              icon: Icons.phone_rounded,
+              title: 'Phone number',
+              subtitle: _merchantPhone,
+              onTap: _showEditPhoneDialog,
+            ),
+            const SizedBox(height: 10),
+            _profileEditTile(
+              icon: Icons.spa_rounded,
+              title: 'Services offered',
+              subtitle: _servicesOffered.isEmpty
+                  ? 'Pool, bar, conference, Wi‑Fi…'
+                  : _servicesOffered.join(', '),
+              onTap: _showEditServicesSheet,
+            ),
+            const SizedBox(height: 10),
+            _profileEditTile(
+              icon: Icons.settings_rounded,
+              title: 'Account settings',
+              subtitle: 'Security, notifications, and more',
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => SettingsPage(onBackToHomeTab: () {}),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _profileEditTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: _profileUploading ? null : onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(14, 14, 12, 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Colors.black12),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: _brandOrange.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(icon, color: _brandOrange),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 15,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.grey.shade700,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, color: Colors.black38),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showEditBusinessNameDialog() async {
+    final controller = TextEditingController(
+      text: _businessNameIsPlaceholder ? '' : _businessName,
+    );
+    final result = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Business name'),
+        content: TextField(
+          controller: controller,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(
+            hintText: 'e.g. Lakeview Lodge',
+          ),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (result == null || !mounted) return;
+    if (result.isEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'Enter a business name',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    try {
+      await Future.wait([
+        _firestore.collection('users').doc(_uid).set({
+          'businessName': result,
+          'business_name': result,
+          'name': result,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true)),
+        _firestore.collection('accommodation_merchants').doc(_uid).set({
+          'businessName': result,
+          'business_name': result,
+          'name': result,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true)),
+      ]);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('business_name', result);
+      if (!mounted) return;
+      setState(() => _businessName = result);
+      ToastHelper.showCustomToast(
+        context,
+        'Business name updated',
+        isSuccess: true,
+        errorMessage: '',
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Failed to update business name',
+        isSuccess: false,
+        errorMessage: '',
+      );
+    }
+  }
+
+  Future<void> _showEditServicesSheet() async {
+    var selected = _servicesOffered.toSet();
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (sheetCtx) {
+        return StatefulBuilder(
+          builder: (sheetCtx, setSheet) {
+            final bottomInset = MediaQuery.of(sheetCtx).viewInsets.bottom;
+            return Padding(
+              padding: EdgeInsets.fromLTRB(16, 14, 16, 16 + bottomInset),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Services offered',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(sheetCtx, false),
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Shown to guests on your stay profile.',
+                    style: TextStyle(
+                      color: Colors.grey.shade700,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.sizeOf(sheetCtx).height * 0.5,
+                    ),
+                    child: SingleChildScrollView(
+                      child: AccommodationAmenityPicker(
+                        selected: selected,
+                        onChanged: (next) => setSheet(() => selected = next),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _brandOrange,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    onPressed: () {
+                      _servicesOffered = selected.toList()..sort();
+                      Navigator.pop(sheetCtx, true);
+                    },
+                    child: const Text(
+                      'Save services',
+                      style: TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+    if (saved == true) {
+      await _saveServicesOffered();
+      if (mounted) setState(() {});
+    }
   }
 
   // ----------------- Profile image helpers -----------------
@@ -4351,113 +4671,116 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
 
   Widget _buildStatsSection() {
     final revFmt = NumberFormat('#,##0', 'en');
+    // Use fixed Rows (not nested GridView) so TabBarView/scroll nesting
+    // cannot invent a full-viewport empty gap under the tiles.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-       const Text(
+        const Text(
           'Business Overview',
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
         ),
         const SizedBox(height: 10),
-        GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: 4,
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            mainAxisExtent: 74,
-          ),
-          itemBuilder: (_, i) {
-            switch (i) {
-              case 0:
-                return _compactStatTile(
-                  title: 'Total Bookings',
-                  value: '${_overviewBookingCount}',
-                  icon: Icons.book_online,
-                  color: _brandOrange,
-                );
-              case 1:
-                return _compactStatTile(
-                  title: 'Total Revenue',
-                  value: 'MWK ${revFmt.format(_overviewRevenueMwk.round())}',
-                  icon: Icons.attach_money,
-                  color: Colors.green,
-                );
-              case 2:
-                return _compactStatTile(
-                  title: 'Active Guests',
-                  value: '${_overviewActiveGuestsCount}',
-                  icon: Icons.people,
-                  color: _brandNavy,
-                );
-              default:
-                return _compactStatTile(
-                  title: 'Available listings',
-                  value: '${_availableRooms}',
-                  icon: Icons.bed,
-                  color: Colors.orange,
-                );
-            }
-          },
+        _twoColumnTiles(
+          height: 74,
+          children: [
+            _compactStatTile(
+              title: 'Total Bookings',
+              value: '$_overviewBookingCount',
+              icon: Icons.book_online,
+              color: _brandOrange,
+            ),
+            _compactStatTile(
+              title: 'Total Revenue',
+              value: 'MWK ${revFmt.format(_overviewRevenueMwk.round())}',
+              icon: Icons.attach_money,
+              color: Colors.green,
+            ),
+            _compactStatTile(
+              title: 'Active Guests',
+              value: '$_overviewActiveGuestsCount',
+              icon: Icons.people,
+              color: _brandNavy,
+            ),
+            _compactStatTile(
+              title: 'Available listings',
+              value: '$_availableRooms',
+              icon: Icons.bed,
+              color: Colors.orange,
+            ),
+          ],
         ),
       ],
     );
   }
 
+  /// Compact 2-column tile grid without nested scrollables.
+  Widget _twoColumnTiles({
+    required List<Widget> children,
+    double height = 74,
+    double gap = 12,
+  }) {
+    final rows = <Widget>[];
+    for (var i = 0; i < children.length; i += 2) {
+      if (i > 0) rows.add(SizedBox(height: gap));
+      final right = i + 1 < children.length ? children[i + 1] : null;
+      rows.add(
+        SizedBox(
+          height: height,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: children[i]),
+              SizedBox(width: gap),
+              Expanded(child: right ?? const SizedBox.shrink()),
+            ],
+          ),
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: rows,
+    );
+  }
+
   Widget _buildQuickActions() {
+    final actions = <Widget>[
+      _QuickActionTile(
+        title: 'Add Property',
+        icon: Icons.add_business_outlined,
+        color: _brandOrange,
+        onTap: _showAddPropertySheet,
+      ),
+      _QuickActionTile(
+        title: 'My properties',
+        icon: Icons.apartment_outlined,
+        color: _brandNavy,
+        onTap: () => _accommodationTabs?.animateTo(1),
+      ),
+      _QuickActionTile(
+        title: 'Bookings',
+        icon: Icons.book_online_outlined,
+        color: Colors.green,
+        onTap: () => _accommodationTabs?.animateTo(2),
+      ),
+      _QuickActionTile(
+        title: 'Profile',
+        icon: Icons.person_outline_rounded,
+        color: Colors.blueGrey,
+        onTap: () => _accommodationTabs?.animateTo(3),
+      ),
+    ];
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 20),
         const Text(
           'Quick Actions',
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
         ),
         const SizedBox(height: 10),
-        GridView(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            mainAxisExtent: 74,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-          ),
-          children: [
-            _QuickActionTile(
-             title: 'Add Property',
-              icon: Icons.add_business_outlined,
-              color: _brandOrange,
-              onTap: _showAddPropertySheet,
-            ),
-            _QuickActionTile(
-              title: 'My properties',
-              icon: Icons.apartment_outlined,
-              color: _brandNavy,
-              onTap: () => _accommodationTabs?.animateTo(1),
-            ),
-            _QuickActionTile(
-              title: 'Bookings',
-              icon: Icons.book_online_outlined,
-              color: Colors.green,
-              onTap: () => _accommodationTabs?.animateTo(2),
-            ),
-       
-           
-            
-            _QuickActionTile(
-              title: 'Promotions',
-              icon: Icons.campaign_outlined,
-              color: Colors.orange,
-              onTap: () {
-                // Promotions for properties
-              },
-            ),
-        
-          ],
-        ),
+        _twoColumnTiles(height: 74, children: actions),
       ],
     );
   }

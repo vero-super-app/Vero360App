@@ -3,11 +3,11 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:vero360_app/GernalServices/engagement_notification_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/Latest_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/MarkeplaceMerchantServices/postlatestArrivalservices.dart';
+import 'package:vero360_app/utils/formatters.dart';
 
 import '../../../../utils/toasthelper.dart';
 
@@ -138,7 +138,7 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
         filename: filename,
       );
 
-      final priceVal = double.tryParse(_price.text.trim()) ?? 0;
+      final priceVal = parseMwkInput(_price.text) ?? 0;
 
       // ✅ Create latest arrival (NOW hits /vero/latestarrivals)
       final postedName = _name.text.trim();
@@ -184,6 +184,199 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
       );
     } finally {
       if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  Future<void> _edit(LatestArrivalModel it) async {
+    final nameCtrl = TextEditingController(text: it.name);
+    final priceCtrl =
+        TextEditingController(text: formatMwkInput(it.price));
+    XFile? picked;
+    Uint8List? pickedBytes;
+    var saving = false;
+
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (sheetCtx) {
+        return StatefulBuilder(
+          builder: (sheetCtx, setSheet) {
+            final bottomInset = MediaQuery.of(sheetCtx).viewInsets.bottom;
+
+            Future<void> pick(ImageSource src) async {
+              final x = await _picker.pickImage(
+                source: src,
+                imageQuality: 90,
+                maxWidth: 2048,
+              );
+              if (x == null) return;
+              final bytes = await x.readAsBytes();
+              setSheet(() {
+                picked = x;
+                pickedBytes = bytes;
+              });
+            }
+
+            Future<void> save() async {
+              if (saving) return;
+              final n = nameCtrl.text.trim();
+              final p = parseMwkInput(priceCtrl.text) ?? 0;
+              if (n.isEmpty || p <= 0) {
+                ToastHelper.showCustomToast(
+                  context,
+                  'Enter a name and valid price',
+                  isSuccess: false,
+                  errorMessage: 'Invalid',
+                );
+                return;
+              }
+
+              setSheet(() => saving = true);
+              try {
+                final patch = <String, dynamic>{
+                  'name': n,
+                  'price': p,
+                };
+                if (pickedBytes != null && picked != null) {
+                  final filename =
+                      picked!.name.isNotEmpty ? picked!.name : 'latest.jpg';
+                  final imageUrl = await svc.uploadImageBytes(
+                    pickedBytes!,
+                    filename: filename,
+                  );
+                  patch['image'] = imageUrl;
+                }
+
+                await svc.update(it.id, patch);
+                if (sheetCtx.mounted) Navigator.of(sheetCtx).pop(true);
+              } catch (e) {
+                if (!mounted) return;
+                ToastHelper.showCustomToast(
+                  context,
+                  'Update failed: ${_shortErr(e)}',
+                  isSuccess: false,
+                  errorMessage: 'Update failed',
+                );
+                setSheet(() => saving = false);
+              }
+            }
+
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 16,
+                right: 16,
+                top: 14,
+                bottom: 16 + bottomInset,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Edit Latest Arrival',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.of(sheetCtx).pop(false),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: AspectRatio(
+                        aspectRatio: 16 / 9,
+                        child: pickedBytes != null
+                            ? Image.memory(pickedBytes!, fit: BoxFit.cover)
+                            : _NetworkCover(url: it.image),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: saving
+                              ? null
+                              : () => pick(ImageSource.gallery),
+                          icon: const Icon(Icons.photo_library),
+                          label: const Text('Gallery'),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton.icon(
+                          onPressed:
+                              saving ? null : () => pick(ImageSource.camera),
+                          icon: const Icon(Icons.photo_camera),
+                          label: const Text('Camera'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: nameCtrl,
+                      enabled: !saving,
+                      decoration: _inputDecoration(label: 'Name'),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: priceCtrl,
+                      enabled: !saving,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [ThousandsSeparatorInputFormatter()],
+                      decoration: _inputDecoration(
+                        label: 'Price (MWK)',
+                        hint: 'e.g. 12,000',
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      style: _filledBtnStyle(),
+                      onPressed: saving ? null : save,
+                      icon: saving
+                          ? const SizedBox(
+                              height: 18,
+                              width: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.save_outlined),
+                      label: Text(saving ? 'Saving...' : 'Save changes'),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    nameCtrl.dispose();
+    priceCtrl.dispose();
+
+    if (saved == true && mounted) {
+      ToastHelper.showCustomToast(
+        context,
+        'Latest arrival updated',
+        isSuccess: true,
+        errorMessage: 'Updated',
+      );
+      await _loadMine();
     }
   }
 
@@ -358,10 +551,13 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
                   controller: _price,
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: false),
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: _inputDecoration(label: 'Price (MWK)'),
+                  inputFormatters: [ThousandsSeparatorInputFormatter()],
+                  decoration: _inputDecoration(
+                    label: 'Price (MWK)',
+                    hint: 'e.g. 12,000',
+                  ),
                   validator: (v) {
-                    final pv = double.tryParse(v?.trim() ?? '');
+                    final pv = parseMwkInput(v);
                     if (pv == null || pv <= 0) return 'Enter a valid price';
                     return null;
                   },
@@ -464,7 +660,7 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
                                     Border.all(color: _brandOrange, width: 1),
                               ),
                               child: Text(
-                                'MWK ${it.price.toStringAsFixed(0)}',
+                                'MWK ${formatMwkInput(it.price)}',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
@@ -476,7 +672,19 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
                             visualDensity: VisualDensity.compact,
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(
-                              minWidth: 40,
+                              minWidth: 36,
+                              minHeight: 40,
+                            ),
+                            icon: const Icon(Icons.edit_outlined,
+                                color: _brandOrange),
+                            onPressed: _busyRow ? null : () => _edit(it),
+                            tooltip: 'Edit',
+                          ),
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                              minWidth: 36,
                               minHeight: 40,
                             ),
                             icon: const Icon(Icons.delete_outline,

@@ -43,6 +43,7 @@ import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/widgets/vero_thumb_image.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/utils/formatters.dart';
 // Add login screen import (using your correct path)
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/kyc_verification_screen.dart';
@@ -3061,7 +3062,7 @@ class _MarketplaceMerchantDashboardState
 
       final data = <String, dynamic>{
         'name': _name.text.trim(),
-        'price': double.tryParse(_price.text.trim()) ?? 0,
+        'price': parseMwkInput(_price.text) ?? 0,
         if (coverUrl != null) 'imageUrl': coverUrl,
         if (coverBase64 != null) 'image': coverBase64,
         if (galleryUrls.isNotEmpty) 'galleryUrls': galleryUrls,
@@ -3175,8 +3176,9 @@ class _MarketplaceMerchantDashboardState
 
     final nameCtrl =
         TextEditingController(text: (item['name'] ?? '').toString());
-    final priceCtrl =
-        TextEditingController(text: (item['price'] ?? '').toString());
+    final priceCtrl = TextEditingController(
+      text: formatMwkInput(_asNum(item['price'])),
+    );
     final locationCtrl =
         TextEditingController(text: (item['location'] ?? '').toString());
     final descCtrl =
@@ -3345,7 +3347,7 @@ class _MarketplaceMerchantDashboardState
               FocusScope.of(sheetCtx).unfocus();
 
               final n = nameCtrl.text.trim();
-              final p = double.tryParse(priceCtrl.text.trim()) ?? 0;
+              final p = parseMwkInput(priceCtrl.text) ?? 0;
               final loc = locationCtrl.text.trim();
               final stockRaw = stockCtrl.text.trim();
               final stock = int.tryParse(stockRaw);
@@ -3535,7 +3537,11 @@ class _MarketplaceMerchantDashboardState
                     TextField(
                       controller: priceCtrl,
                       keyboardType: TextInputType.number,
-                      decoration: _inputDecoration(label: 'Price (MWK)'),
+                      inputFormatters: [ThousandsSeparatorInputFormatter()],
+                      decoration: _inputDecoration(
+                        label: 'Price (MWK)',
+                        hint: 'e.g. 12,000',
+                      ),
                     ),
                     const SizedBox(height: 10),
                     Row(
@@ -5578,7 +5584,11 @@ class _MarketplaceMerchantDashboardState
               TextField(
                   controller: _price,
                   keyboardType: TextInputType.number,
-                  decoration: _inputDecoration(label: 'Price (MWK)')),
+                  inputFormatters: [ThousandsSeparatorInputFormatter()],
+                  decoration: _inputDecoration(
+                    label: 'Price (MWK)',
+                    hint: 'e.g. 12,000',
+                  )),
               const SizedBox(height: 10),
               Row(
                 children: [

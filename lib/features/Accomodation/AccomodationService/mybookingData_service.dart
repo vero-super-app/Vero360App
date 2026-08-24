@@ -206,8 +206,9 @@ class MyBookingService {
         }
       }
 
-      // Keep stays that are paid on the server, or paid locally after checkout.
-      if (apiItem.includeInGuestMyBookings) {
+      // Keep paid stays, cancelled/refunded stays (history), or local paid cache.
+      if (apiItem.includeInGuestMyBookings ||
+          apiItem.status == BookingStatus.cancelled) {
         merged.add(apiItem);
       } else if (localMatch != null) {
         merged.add(localMatch);

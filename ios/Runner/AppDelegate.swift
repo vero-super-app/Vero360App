@@ -2,6 +2,10 @@ import Flutter
 import UIKit
 import FirebaseCore
 import GoogleMaps
+import UserNotifications
+#if canImport(FirebaseMessaging)
+import FirebaseMessaging
+#endif
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
@@ -20,7 +24,25 @@ import GoogleMaps
     if FirebaseApp.app() == nil {
       FirebaseApp.configure()
     }
+
+    // iOS push: show banners while app is foregrounded; register for APNs.
+    if #available(iOS 10.0, *) {
+      UNUserNotificationCenter.current().delegate = self
+    }
+    application.registerForRemoteNotifications()
+
     GeneratedPluginRegistrant.register(with: self)
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  override func application(
+    _ application: UIApplication,
+    didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+  ) {
+#if canImport(FirebaseMessaging)
+    // Forward APNs token to Firebase Messaging so FCM getToken() can succeed on iOS.
+    Messaging.messaging().apnsToken = deviceToken
+#endif
+    super.application(application, didRegisterForRemoteNotificationsWithDeviceToken: deviceToken)
   }
 }

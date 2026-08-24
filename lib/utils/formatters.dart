@@ -1,4 +1,53 @@
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+
+final NumberFormat _mwkIntCommaFmt = NumberFormat('#,##0', 'en_US');
+
+/// Formats whole MWK amounts while typing (e.g. 12000 → 12,000).
+class ThousandsSeparatorInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final text = newValue.text;
+    if (text.isEmpty) return newValue;
+
+    final digits = text.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.isEmpty) {
+      return const TextEditingValue(
+        text: '',
+        selection: TextSelection.collapsed(offset: 0),
+      );
+    }
+
+    // Avoid leading zeros like "00012" → keep numeric value.
+    final n = int.tryParse(digits);
+    if (n == null) return oldValue;
+    final formatted = _mwkIntCommaFmt.format(n);
+
+    final selectionIndexFromEnd =
+        newValue.text.length - newValue.selection.end;
+    final newSelection = (formatted.length - selectionIndexFromEnd)
+        .clamp(0, formatted.length);
+
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: newSelection),
+    );
+  }
+}
+
+/// Display helper for price fields (no currency symbol).
+String formatMwkInput(num value) => _mwkIntCommaFmt.format(value.round());
+
+/// Parse a typed price that may include commas ("12,000" → 12000).
+double? parseMwkInput(String? text) {
+  if (text == null) return null;
+  final cleaned = text.replaceAll(',', '').trim();
+  if (cleaned.isEmpty) return null;
+  return double.tryParse(cleaned);
+}
 
 class CarHireFormatters {
   static final _currencyFormatter = NumberFormat.currency(

@@ -67,7 +67,10 @@ class LatestArrivalModel {
       id: id,
       image: (j['image'] ?? '').toString(),
       name: (j['name'] ?? '').toString(),
-      price: double.tryParse(j['price']?.toString() ?? '0') ?? 0,
+      price: () {
+        final raw = (j['price']?.toString() ?? '0').replaceAll(',', '').trim();
+        return double.tryParse(raw) ?? 0;
+      }(),
       createdAt: j['createdAt'] != null ? DateTime.tryParse(j['createdAt'].toString()) : null,
     );
   }

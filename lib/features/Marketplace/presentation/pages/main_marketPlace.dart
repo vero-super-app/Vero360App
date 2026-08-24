@@ -524,6 +524,10 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   String _lastQuery = '';
   bool _loading = false;
   bool _photoMode = false;
+  /// True while photo search runs — keep the current grid visible.
+  bool _photoSearching = false;
+  /// Last non-empty grid so photo search can run without blanking the feed.
+  List<MarketplaceDetailModel> _lastGridItems = const [];
   bool _comfortableView = false;
   bool _forYouMode = true;
   int _suggestionIndex = 0;
@@ -1308,7 +1312,6 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   }
 
   Future<List<MarketplaceDetailModel>> _searchByPhoto(dynamic imageSource) async {
-    setState(() { _loading = true; _photoMode = true; _selectedCategory = null; _aiSummary = ''; });
     try {
       final Uint8List bytes; final String filename;
       if (imageSource is XFile) { bytes = await imageSource.readAsBytes(); final path = imageSource.path.toLowerCase(); filename = path.endsWith('.png') ? 'photo.png' : path.endsWith('.webp') ? 'photo.webp' : 'photo.jpg'; }
@@ -1345,7 +1348,28 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
         ));
       }
       return const <MarketplaceDetailModel>[];
-    } finally { if (mounted) setState(() => _loading = false); }
+    }
+  }
+
+  /// Runs photo search without blanking the marketplace grid.
+  Future<void> _startPhotoSearch(dynamic imageSource) async {
+    if (_photoSearching) return;
+    setState(() {
+      _photoSearching = true;
+      _photoMode = true;
+      _selectedCategory = null;
+      _aiSummary = '';
+    });
+    try {
+      final results = await _searchByPhoto(imageSource);
+      if (!mounted) return;
+      setState(() {
+        _future = Future.value(results);
+        if (results.isNotEmpty) _lastGridItems = results;
+      });
+    } finally {
+      if (mounted) setState(() => _photoSearching = false);
+    }
   }
 
   Future<bool> _isUserLoggedIn() async { final token = await AuthHandler.getTokenForApi(); return token != null && token.isNotEmpty; }
@@ -1680,13 +1704,13 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
             _PhotoPickerOption(iconBg: _kAmber, icon: Icons.camera_alt_rounded, title: 'Use Camera', subtitle: 'Take a photo now', onTap: () async {
               Navigator.pop(context);
               final XFile? picked = await _picker.pickImage(source: ImageSource.camera, imageQuality: 85, maxWidth: 1280);
-              if (picked != null) setState(() => _future = _searchByPhoto(picked));
+              if (picked != null) unawaited(_startPhotoSearch(picked));
             }),
             const SizedBox(height: 10),
             _PhotoPickerOption(iconBg: _kBlue, icon: Icons.photo_library_rounded, title: 'Choose from Gallery', subtitle: 'Pick an existing photo', onTap: () async {
               Navigator.pop(context);
               final XFile? picked = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 85, maxWidth: 1280);
-              if (picked != null) setState(() => _future = _searchByPhoto(picked));
+              if (picked != null) unawaited(_startPhotoSearch(picked));
             }),
             const SizedBox(height: 8),
           ])),
@@ -2280,6 +2304,9 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
             titleCase: _titleCase,
           ),
 
+          if (_photoSearching)
+            const _PhotoSearchingBanner(),
+
           // ── VERO AI QUESTION BOX ──
           if (_aiSearchMode)
             _AiQuestionBox(controller: _askQuestionCtrl, loading: _veroAiLoading, onSubmit: _onAskQuestionSubmitted),
@@ -2294,7 +2321,10 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                 child: FutureBuilder<List<MarketplaceDetailModel>>(
                   future: _future,
                   builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+                    final waitingFresh = snapshot.connectionState == ConnectionState.waiting &&
+                        !snapshot.hasData;
+                    // Photo search runs in the background — keep showing the feed.
+                    if (waitingFresh && !(_photoSearching && _lastGridItems.isNotEmpty)) {
                       return LayoutBuilder(builder: (context, constraints) {
                         final layout = _marketplaceSliverGridLayout(comfortable: _comfortableView, width: constraints.maxWidth);
                         return AppSkeletonShimmer(
@@ -2315,14 +2345,19 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                         );
                       });
                     }
-                    if (snapshot.hasError) {
+                    if (snapshot.hasError && !_photoSearching) {
                       return ListView(physics: const AlwaysScrollableScrollPhysics(), children: [
                         SizedBox(height: MediaQuery.of(context).size.height * 0.2),
                         Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(UserFacingError.from(snapshot.error), textAlign: TextAlign.center, style: const TextStyle(color: _kInkLight)))),
                       ]);
                     }
-                    final items = snapshot.data ?? [];
-                    if (items.isEmpty && !_loading) {
+                    final items = snapshot.hasData
+                        ? (snapshot.data ?? const <MarketplaceDetailModel>[])
+                        : (_photoSearching ? _lastGridItems : const <MarketplaceDetailModel>[]);
+                    if (snapshot.hasData && items.isNotEmpty) {
+                      _lastGridItems = items;
+                    }
+                    if (items.isEmpty && !_loading && !_photoSearching) {
                       return ListView(physics: const AlwaysScrollableScrollPhysics(), children: [
                         SizedBox(height: MediaQuery.of(context).size.height * 0.22),
                         Center(child: Column(children: [
@@ -2343,6 +2378,24 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                           ),
                         ])),
                       ]);
+                    }
+                    if (items.isEmpty && _photoSearching) {
+                      return ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: [
+                          SizedBox(height: MediaQuery.of(context).size.height * 0.18),
+                          const Center(
+                            child: Text(
+                              'Searching your photo in the background…',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: _kInkMid,
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
                     }
                     return LayoutBuilder(builder: (context, constraints) {
                       final layout = _marketplaceSliverGridLayout(comfortable: _comfortableView, width: constraints.maxWidth);
@@ -2690,6 +2743,50 @@ class _AiQuestionBox extends StatelessWidget {
               ? const Padding(padding: EdgeInsets.all(12), child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: _kBlue)))
               : IconButton(icon: const Icon(Icons.send_rounded, color: _kBlue, size: 18), onPressed: onSubmit),
         ]),
+      ),
+    );
+  }
+}
+
+class _PhotoSearchingBanner extends StatelessWidget {
+  const _PhotoSearchingBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF8E1),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFFFE082)),
+        ),
+        child: const Row(
+          children: [
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: _kAmber,
+              ),
+            ),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Searching by photo ',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF5D4037),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

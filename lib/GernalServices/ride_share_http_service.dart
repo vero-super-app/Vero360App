@@ -19,6 +19,8 @@ class RideShareHttpService {
   late StreamController<Ride> _rideUpdateController;
   Future<void>? _initializationFuture;
   bool _globalSocketListenersRegistered = false;
+  bool _socketCreated = false;
+  bool _socketAuthRetryInFlight = false;
   int? _subscribedRideId;
   ActiveRideRole? _subscribedRole;
 
@@ -33,7 +35,7 @@ class RideShareHttpService {
   /// Ensure socket is initialized before using it
   Future<void> _ensureSocketInitialized() async {
     print('[RideShareHttpService] _ensureSocketInitialized called');
-    if (_initializationFuture == null) {
+    if (!_socketCreated || _initializationFuture == null) {
       print('[RideShareHttpService] Creating new initialization future');
       _initializationFuture = _initializeSocketNow();
     }
@@ -110,23 +112,36 @@ class RideShareHttpService {
   Stream<Ride> get rideUpdateStream => _rideUpdateController.stream;
 
   Future<void> _initializeSocket() async {
-    // Get auth token before connecting
-    final token = await _getAuthToken();
+    // Always force-refresh: Socket.IO caches the handshake token; a cached
+    // Firebase ID token expires after ~1h and causes auth/id-token-expired.
+    final token = await _getAuthToken(forceRefresh: true);
+    if (token == null || token.isEmpty) {
+      print('[RideShareHttpService] No Firebase token — skipping socket connect');
+      return;
+    }
+
+    if (_socketCreated) {
+      try {
+        socket.dispose();
+      } catch (_) {}
+    }
 
     socket = IO.io(
       ApiConfig.prod,
       IO.OptionBuilder()
           .setTransports(['websocket'])
           .disableAutoConnect()
+          .enableForceNew()
+          .setExtraHeaders({'Authorization': 'Bearer $token'})
           .setQuery({'token': token})
           .build(),
     );
+    _socketCreated = true;
 
     _globalSocketListenersRegistered = false;
 
-    socket.connect();
     socket.onConnect((_) {
-      print('[RideShareHttpService] Socket connected with token');
+      print('[RideShareHttpService] Socket connected with fresh token');
       _connectionStatusController.add('connected');
       _resubscribeIfNeeded();
     });
@@ -139,9 +154,37 @@ class RideShareHttpService {
     socket.onError((error) {
       print('[RideShareHttpService] Socket error');
       _connectionStatusController.add('error');
+      unawaited(_retrySocketAuthIfNeeded(error));
+    });
+
+    socket.on('error', (data) {
+      unawaited(_retrySocketAuthIfNeeded(data));
     });
 
     _registerGlobalSocketListeners();
+    socket.connect();
+  }
+
+  /// Backend emits auth failures then disconnects; rebuild with a new ID token.
+  Future<void> _retrySocketAuthIfNeeded(Object? error) async {
+    final msg = error?.toString().toLowerCase() ?? '';
+    final looksExpired = msg.contains('expired') ||
+        msg.contains('id-token') ||
+        msg.contains('authentication') ||
+        msg.contains('unauthorized');
+    if (!looksExpired || _socketAuthRetryInFlight) return;
+
+    _socketAuthRetryInFlight = true;
+    try {
+      print('[RideShareHttpService] Auth failed on socket — refreshing token');
+      _initializationFuture = null;
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      await _initializeSocketNow();
+    } catch (e) {
+      print('[RideShareHttpService] Socket auth retry failed');
+    } finally {
+      _socketAuthRetryInFlight = false;
+    }
   }
 
   /// Single registration — [subscribeToRideTracking] used to add duplicate
@@ -904,15 +947,12 @@ class RideShareHttpService {
     }
   }
 
-  /// Reconnect websocket with retry logic
+  /// Reconnect websocket with a fresh Firebase ID token (never reuse handshake).
   Future<void> reconnectWebSocket() async {
     try {
-      await _ensureSocketInitialized();
-      if (!socket.connected) {
-        socket.connect();
-        print('WebSocket reconnected');
-        _connectionStatusController.add('connected');
-      }
+      _initializationFuture = null;
+      await _initializeSocketNow();
+      print('WebSocket reconnected with fresh token');
       await _resubscribeIfNeeded();
     } catch (e) {
       print('Error reconnecting WebSocket');

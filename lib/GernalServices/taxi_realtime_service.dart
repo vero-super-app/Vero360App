@@ -71,9 +71,10 @@ class TaxiRealtimeService {
     _isConnecting = true;
 
     try {
-      // Get JWT token if not provided
-      final authToken = token ?? await _getAuthToken();
-      if (authToken == null) {
+      // Force-refresh unless caller already passed a token (avoids id-token-expired).
+      final authToken =
+          token ?? await AuthHandler.getFirebaseTokenForApi(forceRefresh: true);
+      if (authToken == null || authToken.isEmpty) {
         print('[TaxiRealtimeService] No auth token available');
         _isConnecting = false;
         return false;

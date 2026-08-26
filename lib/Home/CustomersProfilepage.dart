@@ -29,8 +29,9 @@ import 'package:vero360_app/GeneralPages/Toship.dart';
 import 'package:vero360_app/GeneralPages/address.dart';
 import 'package:vero360_app/GeneralPages/changepassword.dart';
 //import 'package:vero360_app/features/Accomodation/Presentation/pages/myaccomodation.dart';
-import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
+import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart'
+    show openVeroMainShell;
 
 import 'package:vero360_app/Home/homepage.dart' show LatestArrivalsSection;
 import 'package:vero360_app/utils/toasthelper.dart';
@@ -68,6 +69,8 @@ class _ProfilePageState extends State<ProfilePage> {
 
   bool _loading = false;
   bool _isDriver = false;
+  StreamSubscription<User?>? _authSub;
+  int _profileFetchGen = 0;
 
   // demo wallet figures – replace with real values if you have them
   double balance = 450;
@@ -76,8 +79,37 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   void initState() {
     super.initState();
-    _loadUserData();
-    _fetchCurrentUser();
+    _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
+      if (user == null || user.isAnonymous) {
+        _profileFetchGen++;
+        _resetGuestProfile();
+      } else {
+        unawaited(_loadUserData());
+        unawaited(_fetchCurrentUser());
+      }
+    });
+    unawaited(_loadUserData());
+    unawaited(_fetchCurrentUser());
+  }
+
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    super.dispose();
+  }
+
+  void _resetGuestProfile() {
+    if (!mounted) return;
+    setState(() {
+      name = 'Guest User';
+      email = 'No Email';
+      phone = 'No Phone';
+      address = 'No Address';
+      profileUrl = '';
+      _localPhotoPath = null;
+      _isDriver = false;
+      _loading = false;
+    });
   }
 
   void _openRideHistory({RideHistoryFocus focus = RideHistoryFocus.combined}) {
@@ -108,7 +140,7 @@ class _ProfilePageState extends State<ProfilePage> {
     String loadedProfileUrl = prefs.getString('profilepicture') ?? '';
     // Fallback to Firebase Auth so name/email/phone/photo show after password change or when API hasn't synced
     final firebaseUser = FirebaseAuth.instance.currentUser;
-    if (firebaseUser != null) {
+    if (firebaseUser != null && !firebaseUser.isAnonymous) {
       if ((loadedName.isEmpty || loadedName == 'Guest User') &&
           (firebaseUser.displayName ?? '').trim().isNotEmpty) {
         loadedName = firebaseUser.displayName!.trim();
@@ -364,12 +396,19 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _fetchCurrentUser() async {
+    if (!await AuthHandler.isAuthenticated()) {
+      _resetGuestProfile();
+      return;
+    }
+
+    final gen = ++_profileFetchGen;
     setState(() => _loading = true);
     try {
       final token = await _getAuthToken();
-      if (token.isEmpty) {
-        debugPrint('No auth token found. Showing stored/fallback user.');
-        setState(() => _loading = false);
+      if (token.isEmpty || gen != _profileFetchGen) {
+        if (gen == _profileFetchGen && mounted) {
+          setState(() => _loading = false);
+        }
         return;
       }
 
@@ -384,6 +423,7 @@ class _ProfilePageState extends State<ProfilePage> {
       );
 
       if ((response.statusCode == 401 || response.statusCode == 403) &&
+          gen == _profileFetchGen &&
           mounted) {
         final refreshed = await AuthHandler.refreshTokenAfterUnauthorized();
         if (refreshed != null && refreshed.isNotEmpty) {
@@ -397,7 +437,7 @@ class _ProfilePageState extends State<ProfilePage> {
         }
       }
 
-      if (!mounted) return;
+      if (gen != _profileFetchGen || !mounted) return;
 
       if (response.statusCode == 200) {
         final decoded = json.decode(response.body);
@@ -408,6 +448,10 @@ class _ProfilePageState extends State<ProfilePage> {
                 : (decoded is Map ? Map<String, dynamic>.from(decoded) : {});
         await _persistUserToPrefs(payload);
       } else if (response.statusCode == 401 || response.statusCode == 403) {
+        // Ignore stale responses after logout or anonymous sessions.
+        if (gen != _profileFetchGen || !mounted) return;
+        if (!await AuthHandler.isAuthenticated()) return;
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Session expired. Please log in.')),
         );
@@ -418,7 +462,9 @@ class _ProfilePageState extends State<ProfilePage> {
     } catch (e) {
       debugPrint('Error fetching user: $e');
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && gen == _profileFetchGen) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -1028,16 +1074,11 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<void> _logout() async {
     setState(() => _loading = true);
+    _profileFetchGen++;
+    final rootNav = Navigator.of(context, rootNavigator: true);
     try {
       await AuthService().logout(context: context);
 
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('fullName');
-      await prefs.remove('name');
-      await prefs.remove('email');
-      await prefs.remove('phone');
-      await prefs.remove('address');
-      await prefs.remove('profilepicture');
       await ProfilePhotoCache.clear();
 
       if (mounted) {
@@ -1051,12 +1092,8 @@ class _ProfilePageState extends State<ProfilePage> {
     } catch (e) {
       debugPrint('Logout error: $e');
     } finally {
-      if (!mounted) return;
-      setState(() => _loading = false);
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
-        (route) => false,
-      );
+      if (mounted) setState(() => _loading = false);
+      openVeroMainShell(rootNav.context, email: '', tabIndex: 0);
     }
   }
 

@@ -1,7 +1,10 @@
+import 'dart:async';
+
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/guest_booking_local_cache.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/mybookingData_service.dart'
@@ -9,16 +12,26 @@ import 'package:vero360_app/features/Accomodation/AccomodationService/mybookingD
 import 'package:vero360_app/features/Accomodation/Presentation/widgets/booking_delete_confirm_dialog.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GernalServices/order_refund_service.dart';
+import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 import 'package:vero360_app/utils/app_wallet_pin.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
-/// Lists the signed-in user’s accommodation bookings from `GET /vero/bookings/me`.
+/// Guest stays (`GET /bookings/me`) and, for hosts, incoming guest bookings
+/// (`GET /bookings/merchant/me`).
 class AccommodationMyBookingsTab extends StatefulWidget {
   final bool isDark;
+  final bool isAccommodationHost;
 
-  const AccommodationMyBookingsTab({super.key, required this.isDark});
+  const AccommodationMyBookingsTab({
+    super.key,
+    required this.isDark,
+    this.isAccommodationHost = false,
+  });
 
   @override
   State<AccommodationMyBookingsTab> createState() =>
@@ -40,7 +53,11 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
   final Map<String, OrderEscrowSnapshot?> _escrowByBooking = {};
   String? _releasingBookingKey;
   String? _refundingBookingKey;
-  String _accountPhone = '';
+  bool _showIncomingGuestBookings = true;
+  bool _messagingBooker = false;
+
+  bool get _isHostIncomingView =>
+      widget.isAccommodationHost && _showIncomingGuestBookings;
 
   @override
   bool get wantKeepAlive => true;
@@ -72,18 +89,15 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
   Future<List<BookingItem>> _load() async {
     final loggedIn = await AuthHandler.isAuthenticated();
     if (!loggedIn) {
-      // Avoid showing a previous account’s cached stays while signed out.
       await GuestBookingLocalCache.clearOnLogout();
       throw AuthRequiredException('Sign in to see your bookings');
     }
-    try {
-      final sp = await SharedPreferences.getInstance();
-      _accountPhone = _displayPhone(
-        sp.getString('user_phone') ?? sp.getString('phone') ?? '',
-      );
-    } catch (_) {}
-    final list = await _svc.getGuestMyBookings();
-    await _loadEscrowForBookings(list);
+    final list = _isHostIncomingView
+        ? await _svc.getMerchantIncomingBookings()
+        : await _svc.getGuestMyBookings();
+    if (!_isHostIncomingView) {
+      await _loadEscrowForBookings(list);
+    }
     return list;
   }
 
@@ -105,10 +119,117 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
     return s;
   }
 
-  String _bookerPhone(BookingItem b) {
-    final fromBooking = _displayPhone(b.guestPhone);
-    if (fromBooking.isNotEmpty) return fromBooking;
-    return _displayPhone(_accountPhone);
+  String _guestPhone(BookingItem b) => _displayPhone(b.guestPhone);
+
+  String _bookerDisplayName(BookingItem b) {
+    final name = (b.guestName ?? '').trim();
+    if (name.isNotEmpty) return name;
+    final email = (b.guestEmail ?? '').trim();
+    if (email.isNotEmpty) return email.split('@').first;
+    return 'Guest';
+  }
+
+  bool _canMessageBooker(BookingItem b) {
+    final uid = (b.guestUid ?? '').trim();
+    final backend = b.guestBackendUserId;
+    return uid.isNotEmpty || (backend != null && backend > 0);
+  }
+
+  Future<void> _messageBooker(BookingItem b) async {
+    if (_messagingBooker == true) return;
+    final guestUid = (b.guestUid ?? '').trim();
+    final guestName = _bookerDisplayName(b);
+    final property = (b.accommodationName ?? 'Stay').trim();
+
+    if (!_canMessageBooker(b)) {
+      ToastHelper.showCustomToast(
+        context,
+        'Guest contact is not available for messaging yet.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
+    final me = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    if (me.isNotEmpty && guestUid.isNotEmpty && me == guestUid) {
+      ToastHelper.showCustomToast(
+        context,
+        'You can’t message yourself.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
+    setState(() => _messagingBooker = true);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(color: _brandOrange),
+      ),
+    );
+
+    try {
+      unawaited(BackendChatService.warmForMarketplaceChat().catchError((_) {}));
+      unawaited(BackendMessagingSocket.connect().catchError((_) {}));
+
+      int? peerUserId = b.guestBackendUserId;
+      if ((peerUserId == null || peerUserId <= 0) && guestUid.isNotEmpty) {
+        peerUserId =
+            await BackendChatService.getUserIdByFirebaseUidValidated(guestUid);
+      }
+      if (peerUserId == null || peerUserId <= 0) {
+        throw Exception('Could not find the guest’s chat account.');
+      }
+
+      var chatId = BackendChatService.findCachedDirectChatWithPeer(peerUserId)?.id ??
+          '';
+      if (chatId.isEmpty) {
+        final chat = await BackendChatService.ensureChat(
+          peerUserId: peerUserId,
+          peerName: guestName,
+        );
+        chatId = chat.id;
+      }
+
+      final hostUid = me;
+      final productContext = ChatProductContext(
+        productId: b.accommodationId != null ? 'acc_${b.accommodationId}' : b.id,
+        name: property,
+        image: (b.imageUrl ?? '').trim().isEmpty ? null : b.imageUrl!.trim(),
+        price: b.total.toDouble(),
+        description: 'Booking ${b.displayBookingRef}',
+        merchantId: hostUid.isEmpty ? null : hostUid,
+      );
+
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => MessagePageBackendApi(
+            peerId: chatId,
+            peerName: guestName,
+            productContext: productContext,
+            peerMerchantId: guestUid.isEmpty ? null : guestUid,
+            peerUserId: peerUserId,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+        ToastHelper.showCustomToast(
+          context,
+          UserFacingError.from(e, fallback: 'Could not open chat.'),
+          isSuccess: false,
+          errorMessage: 'Chat failed',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _messagingBooker = false);
+    }
   }
 
   String _bookingEscrowKey(BookingItem b) {
@@ -649,7 +770,7 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
       b.guestName ?? '',
       b.guestEmail ?? '',
       b.guestPhone ?? '',
-      _bookerPhone(b),
+      _guestPhone(b),
       if (b.bookingDate != null) dateFmt.format(b.bookingDate!),
       if (b.bookingDate != null) DateFormat('yyyy-MM-dd').format(b.bookingDate!),
       if (b.bookingDate != null) formatStayReceiptDate(b.bookingDate),
@@ -679,10 +800,12 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
     setState(() => _searchDate = DateTime(picked.year, picked.month, picked.day));
   }
 
-  bool _hasBookerDetails(BookingItem b) {
-    return (b.guestName ?? '').trim().isNotEmpty ||
-        (b.guestEmail ?? '').trim().isNotEmpty ||
-        _bookerPhone(b).isNotEmpty;
+  void _setBookingsSegment(bool incomingGuestBookings) {
+    if (_showIncomingGuestBookings == incomingGuestBookings) return;
+    setState(() {
+      _showIncomingGuestBookings = incomingGuestBookings;
+    });
+    _reload();
   }
 
   Future<void> _confirmAndDelete(BuildContext context, BookingItem b) async {
@@ -817,10 +940,10 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
             children: [
               Icon(Icons.hotel_outlined, size: 56, color: Colors.grey.shade400),
               const SizedBox(height: 16),
-              const Text(
-                'No bookings yet',
+              Text(
+                _isHostIncomingView ? 'No guest bookings yet' : 'No bookings yet',
                 textAlign: TextAlign.center,
-                style: TextStyle(
+                style: const TextStyle(
                   fontWeight: FontWeight.w900,
                   fontSize: 18,
                   color: _brandNavy,
@@ -828,7 +951,9 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
               ),
               const SizedBox(height: 8),
               Text(
-                'Only stays with successful payment appear here. After checkout completes, pull to refresh if needed.',
+                _isHostIncomingView
+                    ? 'When guests book your stays, their name and phone appear here. Pull to refresh.'
+                    : 'Only stays with successful payment appear here. After checkout completes, pull to refresh if needed.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.grey.shade700,
@@ -863,9 +988,51 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Search bookings',
-                        style: TextStyle(
+                      if (widget.isAccommodationHost) ...[
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ChoiceChip(
+                                label: const Text('Guest bookings'),
+                                selected: _showIncomingGuestBookings,
+                                onSelected: (_) =>
+                                    _setBookingsSegment(true),
+                                selectedColor:
+                                    _brandOrange.withValues(alpha: 0.18),
+                                labelStyle: TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  color: _showIncomingGuestBookings
+                                      ? _brandOrange
+                                      : _brandNavy,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ChoiceChip(
+                                label: const Text('My stays'),
+                                selected: !_showIncomingGuestBookings,
+                                onSelected: (_) =>
+                                    _setBookingsSegment(false),
+                                selectedColor:
+                                    _brandOrange.withValues(alpha: 0.18),
+                                labelStyle: TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  color: !_showIncomingGuestBookings
+                                      ? _brandOrange
+                                      : _brandNavy,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                      Text(
+                        _isHostIncomingView
+                            ? 'Search guest bookings'
+                            : 'Search bookings',
+                        style: const TextStyle(
                           fontWeight: FontWeight.w800,
                           color: _brandNavy,
                         ),
@@ -874,7 +1041,9 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
                       TextField(
                         controller: _searchController,
                         decoration: InputDecoration(
-                          hintText: 'Booking ref, name or booking date',
+                          hintText: _isHostIncomingView
+                              ? 'Guest name, phone, property, ref…'
+                              : 'Booking ref, property or date',
                           prefixIcon: const Icon(Icons.search_rounded),
                           isDense: true,
                           filled: true,
@@ -929,14 +1098,24 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
                 );
               }
               final b = filtered[index - 1];
-              final title = (b.accommodationName ?? 'Accommodation').trim();
+              final propertyTitle =
+                  (b.accommodationName ?? 'Accommodation').trim();
               final loc = (b.accommodationLocation ?? '').trim();
               final paid = _showPaidBadge(b);
               final when = formatStayReceiptDate(b.bookingDate);
               final txWhen = formatStayReceiptDate(
                 b.transactionDate ?? b.bookingDate,
               );
-              final phone = _bookerPhone(b);
+              final phone = _guestPhone(b);
+              final cardTitle = _isHostIncomingView
+                  ? _bookerDisplayName(b)
+                  : propertyTitle;
+              final cardSubtitle = _isHostIncomingView
+                  ? [
+                      if (propertyTitle.isNotEmpty) propertyTitle,
+                      if (loc.isNotEmpty) loc,
+                    ].join(' · ')
+                  : loc;
 
               return Material(
                 color: widget.isDark ? const Color(0xFF1E293B) : Colors.white,
@@ -979,8 +1158,13 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
                                   color: _brandOrange.withValues(alpha: 0.12),
                                   borderRadius: BorderRadius.circular(12),
                                 ),
-                                child: const Icon(Icons.apartment_rounded,
-                                    color: _brandOrange, size: 32),
+                                child: Icon(
+                                  _isHostIncomingView
+                                      ? Icons.person_rounded
+                                      : Icons.apartment_rounded,
+                                  color: _brandOrange,
+                                  size: 32,
+                                ),
                               ),
                             const SizedBox(width: 12),
                             Expanded(
@@ -988,7 +1172,7 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    title,
+                                    cardTitle,
                                     style: TextStyle(
                                       fontWeight: FontWeight.w900,
                                       fontSize: 16,
@@ -999,10 +1183,10 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
                                   ),
-                                  if (loc.isNotEmpty) ...[
+                                  if (cardSubtitle.isNotEmpty) ...[
                                     const SizedBox(height: 4),
                                     Text(
-                                      loc,
+                                      cardSubtitle,
                                       style: TextStyle(
                                         fontSize: 13,
                                         color: widget.isDark
@@ -1014,27 +1198,8 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                   ],
-                                  if (_hasBookerDetails(b)) ...[
+                                  if (_isHostIncomingView) ...[
                                     const SizedBox(height: 8),
-                                    Text(
-                                      'Booked by',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w800,
-                                        color: Colors.grey.shade600,
-                                      ),
-                                    ),
-                                    if ((b.guestName ?? '').trim().isNotEmpty)
-                                      Text(
-                                        b.guestName!.trim(),
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w700,
-                                          color: widget.isDark
-                                              ? Colors.white70
-                                              : Colors.grey.shade800,
-                                        ),
-                                      ),
                                     if ((b.guestEmail ?? '').trim().isNotEmpty)
                                       Text(
                                         b.guestEmail!.trim(),
@@ -1045,20 +1210,31 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
                                               : Colors.grey.shade700,
                                         ),
                                       ),
-                                    if (phone.isNotEmpty)
-                                      Text(
-                                        phone,
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: widget.isDark
-                                              ? Colors.white54
-                                              : Colors.grey.shade700,
-                                        ),
+                                    Text(
+                                      phone.isNotEmpty ? phone : 'Phone not provided',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                        color: phone.isNotEmpty
+                                            ? (widget.isDark
+                                                ? Colors.white70
+                                                : Colors.grey.shade800)
+                                            : Colors.grey.shade500,
                                       ),
+                                    ),
                                   ],
                                 ],
                               ),
                             ),
+                            if (_isHostIncomingView && _canMessageBooker(b))
+                              IconButton(
+                                tooltip: 'Message guest',
+                                icon: const Icon(Icons.chat_bubble_rounded),
+                                color: _brandOrange,
+                                onPressed: _messagingBooker
+                                    ? null
+                                    : () => _messageBooker(b),
+                              ),
                             IconButton(
                               tooltip: 'Delete booking',
                               icon: Icon(
@@ -1131,26 +1307,26 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
                           ],
                         ),
                         const Divider(height: 22),
-                        if ((b.guestName ?? '').trim().isNotEmpty ||
-                            (b.guestEmail ?? '').trim().isNotEmpty) ...[
+                        if (_isHostIncomingView) ...[
                           _detailRow(
                             Icons.person_outline_rounded,
-                            'Guest / booker',
-                            [
-                              if ((b.guestName ?? '').trim().isNotEmpty)
-                                b.guestName!.trim(),
-                              if ((b.guestEmail ?? '').trim().isNotEmpty)
-                                b.guestEmail!.trim(),
-                            ].join('\n'),
+                            'Booked by',
+                            () {
+                              final lines = <String>[
+                                if ((b.guestName ?? '').trim().isNotEmpty)
+                                  b.guestName!.trim(),
+                                if ((b.guestEmail ?? '').trim().isNotEmpty)
+                                  b.guestEmail!.trim(),
+                              ];
+                              return lines.isEmpty ? '—' : lines.join('\n');
+                            }(),
                             widget.isDark,
                           ),
                           const SizedBox(height: 8),
-                        ],
-                        if (phone.isNotEmpty) ...[
                           _detailRow(
                             Icons.phone_iphone_rounded,
-                            'Booker phone',
-                            phone,
+                            'Guest phone',
+                            phone.isNotEmpty ? phone : '—',
                             widget.isDark,
                           ),
                           const SizedBox(height: 8),

@@ -1197,15 +1197,34 @@ class _MarketplaceMerchantDashboardState
     final authDisplay = (u.displayName ?? '').trim();
     String resolved = '';
 
+    String? fromMap(Map<String, dynamic>? m, {bool includeListingName = false}) {
+      if (m == null) return null;
+      for (final k in [
+        'businessName',
+        'business_name',
+        'merchantName',
+        'merchant_name',
+        'companyName',
+        'company_name',
+      ]) {
+        final v = m[k]?.toString().trim();
+        if (v != null && v.isNotEmpty) return v;
+      }
+      if (includeListingName) {
+        final v = m['name']?.toString().trim();
+        if (v != null && v.isNotEmpty) return v;
+      }
+      return null;
+    }
+
     // Always hydrate shop profile fields from marketplace_merchants.
     try {
       final doc =
           await _firestore.collection('marketplace_merchants').doc(u.uid).get();
       final data = doc.data();
       if (data != null) {
-        final fromDoc =
-            (data['businessName'] ?? data['name'] ?? '').toString().trim();
-        if (fromDoc.isNotEmpty) resolved = fromDoc;
+        final fromDoc = fromMap(data, includeListingName: true);
+        if (fromDoc != null && fromDoc.isNotEmpty) resolved = fromDoc;
         final desc = (data['businessDescription'] ?? data['description'] ?? '')
             .toString()
             .trim();
@@ -1267,28 +1286,22 @@ class _MarketplaceMerchantDashboardState
       }
     } catch (_) {}
 
-    if (resolved.isEmpty && authDisplay.isNotEmpty) {
-      resolved = authDisplay;
-    }
-
-    // 2) Firestore users
+    // 2) Firestore users — business fields only (not personal name).
     if (resolved.isEmpty) {
       try {
         final doc = await _firestore.collection('users').doc(u.uid).get();
-        final data = doc.data();
-        if (data != null) {
-          resolved = (data['businessName'] ??
-                  data['fullName'] ??
-                  data['name'] ??
-                  data['displayName'] ??
-                  '')
-              .toString()
-              .trim();
-        }
+        final fromUser = fromMap(doc.data());
+        if (fromUser != null && fromUser.isNotEmpty) resolved = fromUser;
       } catch (_) {}
     }
 
-    // 3) API /users/me
+    // 3) Prefs
+    if (resolved.isEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      resolved = (prefs.getString('business_name') ?? '').trim();
+    }
+
+    // 4) API /users/me
     if (resolved.isEmpty) {
       try {
         final bearer = await _getBearerTokenForApi();
@@ -1315,28 +1328,14 @@ class _MarketplaceMerchantDashboardState
                 (user['businessName'] ?? user['merchantName'] ?? '')
                     .toString()
                     .trim();
-            final name = (user['name'] ?? '').toString().trim();
-            final first = (user['firstName'] ?? '').toString().trim();
-            final last = (user['lastName'] ?? '').toString().trim();
-            final joined =
-                [first, last].where((x) => x.isNotEmpty).join(' ').trim();
-
-            resolved = business.isNotEmpty
-                ? business
-                : (name.isNotEmpty ? name : joined);
+            if (business.isNotEmpty) resolved = business;
           }
         }
       } catch (_) {}
     }
 
-    // 4) Prefs fallback
-    if (resolved.isEmpty) {
-      final prefs = await SharedPreferences.getInstance();
-      resolved = (prefs.getString('business_name') ??
-              prefs.getString('fullName') ??
-              prefs.getString('name') ??
-              '')
-          .trim();
+    if (resolved.isEmpty && authDisplay.isNotEmpty) {
+      resolved = authDisplay;
     }
 
     if (resolved.isEmpty) resolved = 'Marketplace Merchant';
@@ -1355,8 +1354,6 @@ class _MarketplaceMerchantDashboardState
 
   String _displayBusinessName() {
     if (_businessName.trim().isNotEmpty) return _businessName.trim();
-    final authName = (_auth.currentUser?.displayName ?? '').trim();
-    if (authName.isNotEmpty) return authName;
     return 'Marketplace Merchant';
   }
 
@@ -1765,13 +1762,16 @@ class _MarketplaceMerchantDashboardState
       place = await Navigator.of(context).push<Place>(
         MaterialPageRoute(
           builder: (_) => FoodBusinessLocationPickerPage(
-            initialAddress: _businessLocation,
-            initialLatitude: _businessLat,
-            initialLongitude: _businessLng,
-            title: 'Shop location',
-            hint:
-                'Type your address, search for a place, or pin your storefront.',
-          ),
+          initialAddress: _businessLocation,
+          initialLatitude: _businessLat,
+          initialLongitude: _businessLng,
+          title: 'Shop location',
+          hint:
+              'Type your address, search for a place, or pin your storefront.',
+          emptyAddressMessage: 'Type your shop address first.',
+          mapPinHintSubtitle:
+              'Drop a pin exactly where your storefront is.',
+        ),
         ),
       );
     } finally {
@@ -3944,9 +3944,7 @@ class _MarketplaceMerchantDashboardState
             children: [
               StoryProfileRing(
                 merchantId: _auth.currentUser?.uid ?? _uid,
-                merchantName: _businessName.isNotEmpty
-                    ? _businessName
-                    : (_auth.currentUser?.displayName ?? 'Merchant'),
+                merchantName: _displayBusinessName(),
                 merchantImageUrl:
                     _merchantProfileUrl.isNotEmpty ? _merchantProfileUrl : null,
                 size: 36,
@@ -3963,9 +3961,7 @@ class _MarketplaceMerchantDashboardState
                     MaterialPageRoute<bool>(
                       builder: (_) => PostStoryPage(
                         merchantId: uid,
-                        merchantName: _businessName.isNotEmpty
-                            ? _businessName
-                            : (_auth.currentUser?.displayName ?? 'Merchant'),
+                        merchantName: _displayBusinessName(),
                         merchantImageUrl: _merchantProfileUrl.isNotEmpty
                             ? _merchantProfileUrl
                             : null,
@@ -3990,9 +3986,7 @@ class _MarketplaceMerchantDashboardState
                       MaterialPageRoute<bool>(
                         builder: (_) => PostStoryPage(
                           merchantId: uid,
-                          merchantName: _businessName.isNotEmpty
-                              ? _businessName
-                              : (_auth.currentUser?.displayName ?? 'Merchant'),
+                          merchantName: _displayBusinessName(),
                           merchantImageUrl: _merchantProfileUrl.isNotEmpty
                               ? _merchantProfileUrl
                               : null,

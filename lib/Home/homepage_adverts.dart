@@ -12,14 +12,91 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/config/paychangu_config.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
+import 'package:vero360_app/GeneralPages/checkout_page.dart';
+import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
+import 'package:vero360_app/Home/MessagePageBackendApi.dart';
+import 'package:vero360_app/utils/profile_open_helper.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
-/// Fixed weekly rate to appear on the homepage advert slider.
-const int kHomepageAdvertWeeklyMwk = 5000;
-const int kHomepageAdvertDurationDays = 7;
+/// Homepage advert packages.
+class AdvertPlan {
+  final String id;
+  final String label;
+  final String subtitle;
+  final int priceMwk;
+  final Duration duration;
+
+  const AdvertPlan({
+    required this.id,
+    required this.label,
+    required this.subtitle,
+    required this.priceMwk,
+    required this.duration,
+  });
+
+  int get durationHours => duration.inHours;
+  int get durationDays => (duration.inHours / 24).ceil();
+
+  String get priceLabel => 'MK ${_fmt(priceMwk)}';
+
+  static String formatMwk(num n) {
+    final whole = n.round();
+    return 'MK ${_fmt(whole)}';
+  }
+
+  static String _fmt(int n) {
+    final s = n.toString();
+    final buf = StringBuffer();
+    for (var i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) buf.write(',');
+      buf.write(s[i]);
+    }
+    return buf.toString();
+  }
+}
+
+const kAdvertPlans = <AdvertPlan>[
+  AdvertPlan(
+    id: '24h',
+    label: '24 hours',
+    subtitle: 'Quick boost',
+    priceMwk: 1000,
+    duration: Duration(hours: 24),
+  ),
+  AdvertPlan(
+    id: '3d',
+    label: '3 days',
+    subtitle: 'Best value',
+    priceMwk: 2500,
+    duration: Duration(days: 3),
+  ),
+  AdvertPlan(
+    id: '7d',
+    label: '1 week',
+    subtitle: 'Max reach',
+    priceMwk: 5000,
+    duration: Duration(days: 7),
+  ),
+];
+
+const kAdvertCategories = <String>[
+  'Food & Drinks',
+  'Electronics',
+  'Fashion',
+  'Services',
+  'Real Estate',
+  'Events',
+  'Transport',
+  'Other',
+];
 
 class _AdColors {
   static const brandOrange = Color(0xFFFF6B00);
@@ -29,6 +106,8 @@ class _AdColors {
   static const title = Color(0xFF111111);
   static const body = Color(0xFF666666);
   static const pageBg = Color(0xFFFFFBF6);
+  static const card = Color(0xFFFFFFFF);
+  static const line = Color(0xFFF0E6DA);
 }
 
 const _adBrandGradient = LinearGradient(
@@ -43,7 +122,12 @@ class HomepageAdvert {
   final String description;
   final String imageUrl;
   final String userId;
+  final String userName;
   final String status;
+  final String category;
+  final int? backendUserId;
+  /// Selling price for Buy now (optional). Not the advert package fee.
+  final double? productPrice;
   final DateTime? endsAt;
   final DateTime? startsAt;
 
@@ -54,9 +138,24 @@ class HomepageAdvert {
     required this.imageUrl,
     required this.userId,
     required this.status,
+    this.userName = '',
+    this.category = '',
+    this.backendUserId,
+    this.productPrice,
     this.endsAt,
     this.startsAt,
   });
+
+  String get displayName {
+    if (userName.trim().isNotEmpty) return userName.trim();
+    if (title.trim().isNotEmpty) return title.trim();
+    return 'Advertiser';
+  }
+
+  bool get hasBuyNow => productPrice != null && productPrice! > 0;
+
+  String? get productPriceLabel =>
+      hasBuyNow ? AdvertPlan.formatMwk(productPrice!) : null;
 
   factory HomepageAdvert.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final j = doc.data() ?? const <String, dynamic>{};
@@ -67,13 +166,34 @@ class HomepageAdvert {
       return null;
     }
 
+    int? backendId;
+    final rawBackend = j['backendUserId'] ?? j['user_id'];
+    if (rawBackend is int) {
+      backendId = rawBackend;
+    } else if (rawBackend != null) {
+      backendId = int.tryParse(rawBackend.toString());
+    }
+
+    double? productPrice;
+    final rawPrice = j['productPrice'] ?? j['sellingPrice'];
+    if (rawPrice is num) {
+      productPrice = rawPrice.toDouble();
+    } else if (rawPrice != null) {
+      productPrice = double.tryParse(rawPrice.toString().replaceAll(',', ''));
+    }
+    if (productPrice != null && productPrice <= 0) productPrice = null;
+
     return HomepageAdvert(
       id: doc.id,
       title: (j['title'] ?? '').toString().trim(),
       description: (j['description'] ?? '').toString().trim(),
       imageUrl: (j['imageUrl'] ?? '').toString().trim(),
-      userId: (j['userId'] ?? '').toString(),
+      userId: (j['userId'] ?? '').toString().trim(),
+      userName: (j['userName'] ?? '').toString().trim(),
       status: (j['status'] ?? '').toString().toLowerCase(),
+      category: (j['category'] ?? '').toString().trim(),
+      backendUserId: (backendId != null && backendId > 0) ? backendId : null,
+      productPrice: productPrice,
       endsAt: ts(j['endsAt']),
       startsAt: ts(j['startsAt']),
     );
@@ -93,16 +213,22 @@ class HomepageAdvertService {
   static final _col =
       FirebaseFirestore.instance.collection('homepage_adverts');
 
-  /// Guests can advertise: reuse existing Firebase session, else anonymous.
-  static Future<User> ensureAuth() async {
-    final existing = FirebaseAuth.instance.currentUser;
-    if (existing != null) return existing;
-    final cred = await FirebaseAuth.instance.signInAnonymously();
-    final user = cred.user;
-    if (user == null) {
-      throw Exception('Could not start advert session. Try again.');
+  /// Real account required — no anonymous advertising.
+  static Future<User> requireLoggedInUser() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || user.isAnonymous) {
+      throw Exception('Please log in to place an advert.');
+    }
+    if (!await AuthHandler.isAuthenticated()) {
+      throw Exception('Please log in to place an advert.');
     }
     return user;
+  }
+
+  static Future<bool> isProperlyLoggedIn() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || user.isAnonymous) return false;
+    return AuthHandler.isAuthenticated();
   }
 
   static Stream<List<HomepageAdvert>> watchActiveAdverts() {
@@ -150,9 +276,13 @@ class HomepageAdvertService {
     required String description,
     required String imageUrl,
     required String txRef,
+    required String category,
+    required AdvertPlan plan,
     String? userName,
     String? userEmail,
     String? phone,
+    int? backendUserId,
+    double? productPrice,
   }) async {
     final doc = _col.doc();
     await doc.set({
@@ -160,12 +290,19 @@ class HomepageAdvertService {
       'description': description,
       'imageUrl': imageUrl,
       'userId': userId,
+      'merchantId': userId,
       'userName': userName,
       'userEmail': userEmail,
       'phone': phone,
+      if (backendUserId != null && backendUserId > 0)
+        'backendUserId': backendUserId,
+      if (productPrice != null && productPrice > 0) 'productPrice': productPrice,
+      'category': category,
+      'planId': plan.id,
       'status': 'pending_payment',
-      'priceMwk': kHomepageAdvertWeeklyMwk,
-      'durationDays': kHomepageAdvertDurationDays,
+      'priceMwk': plan.priceMwk,
+      'durationHours': plan.durationHours,
+      'durationDays': plan.durationDays,
       'txRef': txRef,
       'active': false,
       'createdAt': FieldValue.serverTimestamp(),
@@ -177,9 +314,32 @@ class HomepageAdvertService {
     required String advertId,
     required String txRef,
   }) async {
+    final ref = _col.doc(advertId);
+    final snap = await ref.get();
+    final data = snap.data() ?? const <String, dynamic>{};
+    final hours = (data['durationHours'] as num?)?.toInt() ??
+        (((data['durationDays'] as num?)?.toInt() ?? 7) * 24);
+    final amount = (data['priceMwk'] as num?)?.toDouble() ?? 0;
+    final title = (data['title'] ?? 'Homepage advert').toString().trim();
+    final alreadyCredited = data['platformFeeCredited'] == true;
     final now = DateTime.now();
-    final ends = now.add(const Duration(days: kHomepageAdvertDurationDays));
-    await _col.doc(advertId).set({
+    final ends = now.add(Duration(hours: hours));
+
+    var feeCreditedNow = false;
+    if (!alreadyCredited && amount > 0) {
+      try {
+        await FirebaseWalletService.creditPlatformServiceFee(
+          amount: amount,
+          description: 'Homepage advert fee · $title',
+          reference: txRef.isNotEmpty ? txRef : 'homepage_ad:$advertId',
+        );
+        feeCreditedNow = true;
+      } catch (_) {
+        // Admin dashboard can backfill via "Credit platform fee".
+      }
+    }
+
+    await ref.set({
       'status': 'active',
       'active': true,
       'txRef': txRef,
@@ -187,6 +347,10 @@ class HomepageAdvertService {
       'startsAt': Timestamp.fromDate(now),
       'endsAt': Timestamp.fromDate(ends),
       'updatedAt': FieldValue.serverTimestamp(),
+      if (!alreadyCredited && feeCreditedNow) ...{
+        'platformFeeCredited': true,
+        'platformFeeCreditedAt': FieldValue.serverTimestamp(),
+      },
     }, SetOptions(merge: true));
   }
 }
@@ -202,8 +366,24 @@ class HomepageAdvertsSection extends StatefulWidget {
 class _HomepageAdvertsSectionState extends State<HomepageAdvertsSection> {
   int _index = 0;
 
-  void _openAdvertise() {
-    Navigator.of(context).push(
+  Future<void> _openAdvertise() async {
+    final ok = await HomepageAdvertService.isProperlyLoggedIn();
+    if (!ok) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Log in to advertise on the homepage',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      );
+      if (!mounted) return;
+      if (!await HomepageAdvertService.isProperlyLoggedIn()) return;
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const AdvertiseHerePage()),
     );
   }
@@ -240,17 +420,77 @@ class _HomepageAdvertsSectionState extends State<HomepageAdvertsSection> {
                 ),
               ),
               const SizedBox(height: 16),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: AspectRatio(
-                  aspectRatio: 16 / 9,
-                  child: ResilientCachedNetworkImage(
-                    url: ad.imageUrl,
-                    fit: BoxFit.cover,
+              GestureDetector(
+                onTap: () => _viewAdvertPicture(ad.imageUrl),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        ResilientCachedNetworkImage(
+                          url: ad.imageUrl,
+                          fit: BoxFit.cover,
+                        ),
+                        Positioned(
+                          right: 10,
+                          bottom: 10,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(99),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.fullscreen_rounded,
+                                  color: Colors.white,
+                                  size: 16,
+                                ),
+                                SizedBox(width: 4),
+                                Text(
+                                  'View picture',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
               const SizedBox(height: 14),
+              if (ad.category.isNotEmpty) ...[
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: _AdColors.brandOrangeSoft,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                  child: Text(
+                    ad.category,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: _AdColors.brandOrangeDeep,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
               Text(
                 ad.title,
                 style: const TextStyle(
@@ -259,6 +499,18 @@ class _HomepageAdvertsSectionState extends State<HomepageAdvertsSection> {
                   color: _AdColors.title,
                 ),
               ),
+              if (ad.hasBuyNow) ...[
+                const SizedBox(height: 8),
+                Text(
+                  ad.productPriceLabel!,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: _AdColors.brandOrangeDeep,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+              ],
               if (ad.description.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Text(
@@ -271,10 +523,235 @@ class _HomepageAdvertsSectionState extends State<HomepageAdvertsSection> {
                   ),
                 ),
               ],
+              if (ad.hasBuyNow) ...[
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: _AdvertActionButton(
+                    icon: Icons.shopping_bag_rounded,
+                    label: 'Buy now',
+                    filled: true,
+                    onTap: () {
+                      Navigator.of(ctx).pop();
+                      _buyNowFromAdvert(ad);
+                    },
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: _AdvertActionButton(
+                      icon: Icons.chat_bubble_rounded,
+                      label: 'Message',
+                      filled: !ad.hasBuyNow,
+                      onTap: () {
+                        Navigator.of(ctx).pop();
+                        _messageAdvertiser(ad);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _AdvertActionButton(
+                      icon: Icons.storefront_rounded,
+                      label: 'View shop',
+                      filled: false,
+                      onTap: () {
+                        Navigator.of(ctx).pop();
+                        _viewAdvertiserShop(ad);
+                      },
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
         );
       },
+    );
+  }
+
+  Future<void> _messageAdvertiser(HomepageAdvert ad) async {
+    final merchantId = ad.userId.trim();
+    if (merchantId.isEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'This advertiser is not available for messaging yet.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
+    if (!await AuthHandler.isAuthenticated() ||
+        FirebaseAuth.instance.currentUser == null ||
+        FirebaseAuth.instance.currentUser!.isAnonymous) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Log in to message this advertiser',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      );
+      if (!mounted) return;
+      if (!await AuthHandler.isAuthenticated()) return;
+    }
+
+    final me = FirebaseAuth.instance.currentUser?.uid ?? '';
+    if (me.isNotEmpty && me == merchantId) {
+      ToastHelper.showCustomToast(
+        context,
+        'You can’t message your own advert.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(color: _AdColors.brandOrange),
+      ),
+    );
+
+    try {
+      final result = await BackendChatService.startMerchantChat(
+        merchantId: merchantId,
+        sellerUserId: ad.backendUserId?.toString(),
+        ownerId: ad.backendUserId,
+      );
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop(); // loading
+
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => MessagePageBackendApi(
+            peerId: result.chat.id,
+            peerName: ad.displayName,
+            peerMerchantId: merchantId,
+            peerUserId: result.sellerId,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop(); // loading
+        ToastHelper.showCustomToast(
+          context,
+          UserFacingError.from(
+            e,
+            fallback: 'Could not open chat. Try again.',
+          ),
+          isSuccess: false,
+          errorMessage: 'Chat failed',
+        );
+      }
+    }
+  }
+
+  Future<void> _viewAdvertiserShop(HomepageAdvert ad) async {
+    final merchantId = ad.userId.trim();
+    if (merchantId.isEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'Shop is not available for this advert yet.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    await openMerchantOrDriverProfile(
+      context,
+      profileId: merchantId,
+      displayName: ad.displayName,
+    );
+  }
+
+  void _viewAdvertPicture(String imageUrl) {
+    final url = imageUrl.trim();
+    if (url.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _AdvertPictureViewer(imageUrl: url),
+      ),
+    );
+  }
+
+  int _stablePositiveId(String input) {
+    const int fnvOffset = 0x811C9DC5;
+    const int fnvPrime = 0x01000193;
+    var hash = fnvOffset;
+    for (final cu in input.codeUnits) {
+      hash ^= cu;
+      hash = (hash * fnvPrime) & 0xFFFFFFFF;
+    }
+    final v = hash & 0x7FFFFFFF;
+    return v == 0 ? 1 : v;
+  }
+
+  Future<void> _buyNowFromAdvert(HomepageAdvert ad) async {
+    if (!ad.hasBuyNow) return;
+
+    if (!await AuthHandler.isAuthenticated() ||
+        FirebaseAuth.instance.currentUser == null ||
+        FirebaseAuth.instance.currentUser!.isAnonymous) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Log in to buy this item',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      );
+      if (!mounted) return;
+      if (!await AuthHandler.isAuthenticated()) return;
+    }
+
+    final me = FirebaseAuth.instance.currentUser?.uid ?? '';
+    if (me.isNotEmpty && me == ad.userId.trim()) {
+      ToastHelper.showCustomToast(
+        context,
+        'You can’t buy your own advert.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
+    final merchantId = ad.userId.trim();
+    final checkoutItem = MarketplaceDetailModel(
+      id: _stablePositiveId('homepage_ad:${ad.id}'),
+      name: ad.title.isEmpty ? 'Homepage advert' : ad.title,
+      image: ad.imageUrl,
+      price: ad.productPrice!,
+      description: ad.description,
+      location: '',
+      category: ad.category.isEmpty ? null : ad.category,
+      merchantId: merchantId.isEmpty ? null : merchantId,
+      merchantName: ad.displayName,
+      sellerUserId: ad.backendUserId?.toString() ??
+          (merchantId.isEmpty ? null : merchantId),
+      merchantBackendId: ad.backendUserId,
+      firestoreDocId: ad.id,
+      serviceType: 'homepage_advert',
+      stockQuantity: 99,
+    );
+
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CheckoutPage(item: checkoutItem),
+      ),
     );
   }
 
@@ -325,6 +802,108 @@ class _HomepageAdvertsSectionState extends State<HomepageAdvertsSection> {
           ],
         );
       },
+    );
+  }
+}
+
+class _AdvertPictureViewer extends StatelessWidget {
+  final String imageUrl;
+  const _AdvertPictureViewer({required this.imageUrl});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Center(
+              child: InteractiveViewer(
+                minScale: 0.8,
+                maxScale: 4,
+                child: ResilientCachedNetworkImage(
+                  url: imageUrl,
+                  fit: BoxFit.contain,
+                ),
+              ),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Material(
+                color: Colors.white.withOpacity(0.15),
+                shape: const CircleBorder(),
+                child: IconButton(
+                  tooltip: 'Close',
+                  onPressed: () => Navigator.of(context).maybePop(),
+                  icon: const Icon(Icons.close_rounded, color: Colors.white),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AdvertActionButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool filled;
+  final VoidCallback onTap;
+
+  const _AdvertActionButton({
+    required this.icon,
+    required this.label,
+    required this.filled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = filled ? Colors.white : _AdColors.brandOrangeDeep;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Ink(
+          height: 48,
+          decoration: BoxDecoration(
+            gradient: filled ? _adBrandGradient : null,
+            color: filled ? null : Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: filled
+                ? null
+                : Border.all(color: _AdColors.brandOrange.withOpacity(0.45)),
+            boxShadow: filled
+                ? [
+                    BoxShadow(
+                      color: _AdColors.brandOrange.withOpacity(0.28),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: fg, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: TextStyle(
+                  color: fg,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -452,7 +1031,7 @@ class _AdvertiseCtaSlide extends StatelessWidget {
                           ),
                           const SizedBox(height: 3),
                           Text(
-                            'MK $kHomepageAdvertWeeklyMwk / week',
+                            'From MK 1,000',
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
@@ -504,9 +1083,11 @@ class _AdvertSlide extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final title = advert.title.isEmpty ? 'Sponsored' : advert.title;
-    final subtitle = advert.description.isEmpty
-        ? 'Tap to view'
-        : advert.description;
+    final subtitle = advert.hasBuyNow
+        ? advert.productPriceLabel!
+        : (advert.category.isNotEmpty
+            ? advert.category
+            : (advert.description.isEmpty ? 'Tap to view' : advert.description));
 
     return GestureDetector(
       onTap: onTap,
@@ -608,7 +1189,7 @@ class _AdvertSlide extends StatelessWidget {
   }
 }
 
-/// Submit title, description, image and pay MK 5000 / week.
+/// Create a homepage advert — login required, plans + categories.
 class AdvertiseHerePage extends StatefulWidget {
   const AdvertiseHerePage({super.key});
 
@@ -620,20 +1201,46 @@ class _AdvertiseHerePageState extends State<AdvertiseHerePage> {
   final _formKey = GlobalKey<FormState>();
   final _titleCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
-  final _nameCtrl = TextEditingController();
-  final _emailCtrl = TextEditingController();
-  final _phoneCtrl = TextEditingController();
+  final _productPriceCtrl = TextEditingController();
+
   File? _imageFile;
   bool _submitting = false;
-  bool _prefillDone = false;
+  bool _checkingAuth = true;
+  bool _loggedIn = false;
+  bool _enableBuyNow = false;
+
+  AdvertPlan _plan = kAdvertPlans[1];
+  String? _category;
+
+  String _accountName = '';
+  String _accountEmail = '';
+  String _accountPhone = '';
 
   @override
   void initState() {
     super.initState();
-    _prefillContact();
+    _bootstrap();
   }
 
-  Future<void> _prefillContact() async {
+  Future<void> _bootstrap() async {
+    final ok = await HomepageAdvertService.isProperlyLoggedIn();
+    if (!ok) {
+      if (!mounted) return;
+      setState(() {
+        _checkingAuth = false;
+        _loggedIn = false;
+      });
+      return;
+    }
+    await _loadAccount();
+    if (!mounted) return;
+    setState(() {
+      _checkingAuth = false;
+      _loggedIn = true;
+    });
+  }
+
+  Future<void> _loadAccount() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final user = FirebaseAuth.instance.currentUser;
@@ -644,32 +1251,33 @@ class _AdvertiseHerePageState extends State<AdvertiseHerePage> {
           .trim();
       final email =
           (prefs.getString('email') ?? user?.email ?? '').trim();
-      final phone = (prefs.getString('phone') ??
+      var phone = (prefs.getString('phone') ??
               user?.phoneNumber ??
               '')
           .trim();
+      if (phone.toLowerCase().startsWith('+firebase_')) phone = '';
       if (!mounted) return;
       setState(() {
-        if (name.isNotEmpty) _nameCtrl.text = name;
-        if (email.isNotEmpty) _emailCtrl.text = email;
-        if (phone.isNotEmpty &&
-            !phone.toLowerCase().startsWith('+firebase_')) {
-          _phoneCtrl.text = phone;
-        }
-        _prefillDone = true;
+        _accountName = name.isNotEmpty ? name : 'Vero360 member';
+        _accountEmail = email;
+        _accountPhone = phone;
       });
-    } catch (_) {
-      if (mounted) setState(() => _prefillDone = true);
-    }
+    } catch (_) {}
+  }
+
+  Future<void> _goLogin() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+    );
+    if (!mounted) return;
+    await _bootstrap();
   }
 
   @override
   void dispose() {
     _titleCtrl.dispose();
     _descCtrl.dispose();
-    _nameCtrl.dispose();
-    _emailCtrl.dispose();
-    _phoneCtrl.dispose();
+    _productPriceCtrl.dispose();
     super.dispose();
   }
 
@@ -699,7 +1307,20 @@ class _AdvertiseHerePageState extends State<AdvertiseHerePage> {
   }
 
   Future<void> _submitAndPay() async {
+    if (!_loggedIn) {
+      await _goLogin();
+      return;
+    }
     if (!_formKey.currentState!.validate()) return;
+    if (_category == null || _category!.isEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'Choose a category for your advert',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
     if (_imageFile == null) {
       ToastHelper.showCustomToast(
         context,
@@ -709,16 +1330,42 @@ class _AdvertiseHerePageState extends State<AdvertiseHerePage> {
       );
       return;
     }
+    if (_accountEmail.isEmpty || !_accountEmail.contains('@')) {
+      ToastHelper.showCustomToast(
+        context,
+        'Your account needs a valid email. Update your profile, then try again.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
+    double? productPrice;
+    if (_enableBuyNow) {
+      final raw = _productPriceCtrl.text.trim().replaceAll(',', '');
+      productPrice = double.tryParse(raw);
+      if (productPrice == null || productPrice <= 0) {
+        ToastHelper.showCustomToast(
+          context,
+          'Enter a valid product price for Buy now',
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return;
+      }
+    }
 
     setState(() => _submitting = true);
     String? advertId;
     try {
-      final user = await HomepageAdvertService.ensureAuth();
+      final user = await HomepageAdvertService.requireLoggedInUser();
       final title = _titleCtrl.text.trim();
       final description = _descCtrl.text.trim();
-      final name = _nameCtrl.text.trim();
-      final email = _emailCtrl.text.trim();
-      final phone = _normalizePhone(_phoneCtrl.text.trim());
+      final name = _accountName.trim().isEmpty
+          ? 'Vero360 member'
+          : _accountName.trim();
+      final email = _accountEmail.trim();
+      final phone = _normalizePhone(_accountPhone);
       final parts = name.split(RegExp(r'\s+'));
       final firstName = parts.isNotEmpty ? parts.first : 'Advertiser';
       final lastName =
@@ -729,11 +1376,12 @@ class _AdvertiseHerePageState extends State<AdvertiseHerePage> {
         file: _imageFile!,
       );
 
-      final shortUid = user.uid.length >= 6
-          ? user.uid.substring(0, 6)
-          : user.uid;
+      final shortUid =
+          user.uid.length >= 6 ? user.uid.substring(0, 6) : user.uid;
       final txRef =
           'vero-ad-$shortUid-${DateTime.now().millisecondsSinceEpoch}';
+
+      final backendUserId = await AuthStorage.userIdFromToken();
 
       advertId = await HomepageAdvertService.createPendingAdvert(
         userId: user.uid,
@@ -741,9 +1389,13 @@ class _AdvertiseHerePageState extends State<AdvertiseHerePage> {
         description: description,
         imageUrl: imageUrl,
         txRef: txRef,
+        category: _category!,
+        plan: _plan,
         userName: name,
         userEmail: email,
         phone: phone,
+        backendUserId: backendUserId,
+        productPrice: productPrice,
       );
 
       final response = await http
@@ -757,13 +1409,14 @@ class _AdvertiseHerePageState extends State<AdvertiseHerePage> {
               'email': email,
               'phone_number': phone,
               'currency': 'MWK',
-              'amount': kHomepageAdvertWeeklyMwk.toString(),
+              'amount': _plan.priceMwk.toString(),
               'payment_methods': ['card', 'mobile_money', 'bank'],
               'callback_url': PayChanguConfig.callbackUrl,
               'return_url': PayChanguConfig.returnUrl,
               'customization': {
                 'title': 'Vero360 Homepage Ad',
-                'description': 'Homepage advert - 1 week - $title',
+                'description':
+                    'Homepage advert · ${_plan.label} · $_category · $title',
               },
             }),
           )
@@ -784,12 +1437,13 @@ class _AdvertiseHerePageState extends State<AdvertiseHerePage> {
 
       if (!mounted) return;
       final paidId = advertId;
+      final planLabel = _plan.label;
       await Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => InAppPaymentPage(
             checkoutUrl: checkoutUrl,
             txRef: txRef,
-            totalAmount: kHomepageAdvertWeeklyMwk.toDouble(),
+            totalAmount: _plan.priceMwk.toDouble(),
             rootContext: context,
             popOnlyOnSuccess: true,
             onSuccessNavigate: (rootCtx) async {
@@ -802,8 +1456,7 @@ class _AdvertiseHerePageState extends State<AdvertiseHerePage> {
               if (rootCtx.mounted) {
                 ToastHelper.showCustomToast(
                   rootCtx,
-                  'Advert live for $kHomepageAdvertDurationDays days. '
-                  'Thank you!',
+                  'Advert live for $planLabel. Thank you!',
                   isSuccess: true,
                   errorMessage: '',
                 );
@@ -837,260 +1490,708 @@ class _AdvertiseHerePageState extends State<AdvertiseHerePage> {
     }
   }
 
+  InputDecoration _fieldDeco({
+    required String label,
+    String? hint,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      filled: true,
+      fillColor: _AdColors.card,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: _AdColors.line),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: _AdColors.line),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: _AdColors.brandOrange, width: 1.6),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _AdColors.pageBg,
-      appBar: AppBar(
-        title: const Text(
-          'Advertise here',
-          style: TextStyle(fontWeight: FontWeight.w800),
-        ),
-        backgroundColor: Colors.white,
-        foregroundColor: _AdColors.title,
-        elevation: 0,
-      ),
-      body: AbsorbPointer(
-        absorbing: _submitting,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-          children: [
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                gradient: _adBrandGradient,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Homepage advert',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 16,
-                    ),
-                  ),
-                  SizedBox(height: 4),
-                  Text(
-                    'MK $kHomepageAdvertWeeklyMwk per week. Your image and title '
-                    'slide on the home screen for 7 days after payment.',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                      height: 1.35,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 18),
-            Form(
-              key: _formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  GestureDetector(
-                    onTap: _pickImage,
-                    child: Container(
-                      height: 170,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: _AdColors.brandOrangeSoft),
-                      ),
-                      clipBehavior: Clip.antiAlias,
-                      child: _imageFile != null
-                          ? Stack(
-                              fit: StackFit.expand,
-                              children: [
-                                Image.file(_imageFile!, fit: BoxFit.cover),
-                                Positioned(
-                                  right: 10,
-                                  bottom: 10,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 6,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.black54,
-                                      borderRadius: BorderRadius.circular(99),
-                                    ),
-                                    child: const Text(
-                                      'Change photo',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 12,
+      body: _checkingAuth
+          ? const Center(
+              child: CircularProgressIndicator(color: _AdColors.brandOrange),
+            )
+          : !_loggedIn
+              ? _LoginGate(onLogin: _goLogin)
+              : Column(
+                  children: [
+                    Expanded(
+                      child: AbsorbPointer(
+                        absorbing: _submitting,
+                        child: CustomScrollView(
+                          slivers: [
+                            SliverAppBar(
+                              pinned: true,
+                              expandedHeight: 148,
+                              backgroundColor: _AdColors.brandOrange,
+                              foregroundColor: Colors.white,
+                              flexibleSpace: FlexibleSpaceBar(
+                                background: Container(
+                                  decoration: const BoxDecoration(
+                                    gradient: _adBrandGradient,
+                                  ),
+                                  child: SafeArea(
+                                    bottom: false,
+                                    child: Padding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                          56, 12, 20, 20),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.end,
+                                        children: [
+                                          const Text(
+                                            'Advertise here',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.w900,
+                                              fontSize: 24,
+                                              letterSpacing: -0.4,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 6),
+                                          Text(
+                                            'Reach the Vero360 homepage. From MK 1,000.',
+                                            style: TextStyle(
+                                              color:
+                                                  Colors.white.withOpacity(0.9),
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: 13,
+                                              height: 1.3,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ),
                                 ),
-                              ],
-                            )
-                          : Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.add_photo_alternate_outlined,
-                                  size: 40,
-                                  color: _AdColors.brandOrange.withOpacity(0.9),
-                                ),
-                                const SizedBox(height: 8),
-                                const Text(
-                                  'Add advert picture',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w800,
-                                    color: _AdColors.title,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Recommended 16:9',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey.shade600,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
+                              ),
                             ),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  TextFormField(
-                    controller: _titleCtrl,
-                    textCapitalization: TextCapitalization.sentences,
-                    decoration: const InputDecoration(
-                      labelText: 'Title',
-                      hintText: 'e.g. Fresh juice - Blantyre',
-                      border: OutlineInputBorder(),
-                      filled: true,
-                      fillColor: Colors.white,
-                    ),
-                    validator: (v) {
-                      if (v == null || v.trim().isEmpty) {
-                        return 'Enter a title';
-                      }
-                      if (v.trim().length < 3) return 'Title is too short';
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _descCtrl,
-                    maxLines: 3,
-                    textCapitalization: TextCapitalization.sentences,
-                    decoration: const InputDecoration(
-                      labelText: 'Description',
-                      hintText: 'What should people know?',
-                      border: OutlineInputBorder(),
-                      filled: true,
-                      fillColor: Colors.white,
-                    ),
-                    validator: (v) {
-                      if (v == null || v.trim().isEmpty) {
-                        return 'Enter a short description';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 18),
-                  const Text(
-                    'Billing contact',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 14,
-                      color: _AdColors.title,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  TextFormField(
-                    controller: _nameCtrl,
-                    textCapitalization: TextCapitalization.words,
-                    decoration: const InputDecoration(
-                      labelText: 'Full name',
-                      border: OutlineInputBorder(),
-                      filled: true,
-                      fillColor: Colors.white,
-                    ),
-                    validator: (v) =>
-                        (v == null || v.trim().isEmpty) ? 'Required' : null,
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _emailCtrl,
-                    keyboardType: TextInputType.emailAddress,
-                    decoration: const InputDecoration(
-                      labelText: 'Email',
-                      border: OutlineInputBorder(),
-                      filled: true,
-                      fillColor: Colors.white,
-                    ),
-                    validator: (v) {
-                      final t = (v ?? '').trim();
-                      if (t.isEmpty || !t.contains('@')) {
-                        return 'Valid email required';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _phoneCtrl,
-                    keyboardType: TextInputType.phone,
-                    decoration: const InputDecoration(
-                      labelText: 'Phone (Malawi)',
-                      hintText: '088... or 099...',
-                      border: OutlineInputBorder(),
-                      filled: true,
-                      fillColor: Colors.white,
-                    ),
-                    validator: (v) {
-                      final digits =
-                          (v ?? '').replaceAll(RegExp(r'\D'), '');
-                      if (!RegExp(r'^(0|265)?[89]\d{8}$')
-                          .hasMatch(digits)) {
-                        return 'Enter a valid MW phone';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 20),
-                  FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: _AdColors.brandOrange,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                            SliverPadding(
+                              padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+                              sliver: SliverList(
+                                delegate: SliverChildListDelegate([
+                                  const _SectionLabel('Duration'),
+                                  const SizedBox(height: 10),
+                                  ...kAdvertPlans.map((p) {
+                                    final selected = _plan.id == p.id;
+                                    return Padding(
+                                      padding: const EdgeInsets.only(bottom: 10),
+                                      child: _PlanTile(
+                                        plan: p,
+                                        selected: selected,
+                                        onTap: () =>
+                                            setState(() => _plan = p),
+                                      ),
+                                    );
+                                  }),
+                                  const SizedBox(height: 8),
+                                  const _SectionLabel('Category'),
+                                  const SizedBox(height: 10),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: kAdvertCategories.map((c) {
+                                      final on = _category == c;
+                                      return ChoiceChip(
+                                        label: Text(c),
+                                        selected: on,
+                                        onSelected: (_) =>
+                                            setState(() => _category = c),
+                                        selectedColor:
+                                            _AdColors.brandOrangeSoft,
+                                        labelStyle: TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          color: on
+                                              ? _AdColors.brandOrangeDeep
+                                              : _AdColors.body,
+                                          fontSize: 13,
+                                        ),
+                                        side: BorderSide(
+                                          color: on
+                                              ? _AdColors.brandOrange
+                                              : _AdColors.line,
+                                        ),
+                                        backgroundColor: Colors.white,
+                                        showCheckmark: false,
+                                      );
+                                    }).toList(),
+                                  ),
+                                  const SizedBox(height: 18),
+                                  const _SectionLabel('Creative'),
+                                  const SizedBox(height: 10),
+                                  Form(
+                                    key: _formKey,
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        GestureDetector(
+                                          onTap: _pickImage,
+                                          child: AnimatedContainer(
+                                            duration: const Duration(
+                                                milliseconds: 200),
+                                            height: 180,
+                                            decoration: BoxDecoration(
+                                              color: Colors.white,
+                                              borderRadius:
+                                                  BorderRadius.circular(18),
+                                              border: Border.all(
+                                                color: _imageFile == null
+                                                    ? _AdColors.line
+                                                    : _AdColors.brandOrange
+                                                        .withOpacity(0.45),
+                                              ),
+                                              boxShadow: [
+                                                BoxShadow(
+                                                  color: Colors.black
+                                                      .withOpacity(0.04),
+                                                  blurRadius: 12,
+                                                  offset: const Offset(0, 4),
+                                                ),
+                                              ],
+                                            ),
+                                            clipBehavior: Clip.antiAlias,
+                                            child: _imageFile != null
+                                                ? Stack(
+                                                    fit: StackFit.expand,
+                                                    children: [
+                                                      Image.file(
+                                                        _imageFile!,
+                                                        fit: BoxFit.cover,
+                                                      ),
+                                                      Positioned(
+                                                        right: 10,
+                                                        bottom: 10,
+                                                        child: Container(
+                                                          padding:
+                                                              const EdgeInsets
+                                                                  .symmetric(
+                                                            horizontal: 10,
+                                                            vertical: 6,
+                                                          ),
+                                                          decoration:
+                                                              BoxDecoration(
+                                                            color: Colors
+                                                                .black54,
+                                                            borderRadius:
+                                                                BorderRadius
+                                                                    .circular(
+                                                                        99),
+                                                          ),
+                                                          child: const Text(
+                                                            'Change photo',
+                                                            style: TextStyle(
+                                                              color: Colors
+                                                                  .white,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w700,
+                                                              fontSize: 12,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  )
+                                                : Column(
+                                                    mainAxisAlignment:
+                                                        MainAxisAlignment
+                                                            .center,
+                                                    children: [
+                                                      Container(
+                                                        width: 52,
+                                                        height: 52,
+                                                        decoration:
+                                                            BoxDecoration(
+                                                          color: _AdColors
+                                                              .brandOrangeSoft,
+                                                          borderRadius:
+                                                              BorderRadius
+                                                                  .circular(
+                                                                      16),
+                                                        ),
+                                                        child: const Icon(
+                                                          Icons
+                                                              .add_photo_alternate_outlined,
+                                                          color: _AdColors
+                                                              .brandOrange,
+                                                          size: 26,
+                                                        ),
+                                                      ),
+                                                      const SizedBox(
+                                                          height: 10),
+                                                      const Text(
+                                                        'Add advert picture',
+                                                        style: TextStyle(
+                                                          fontWeight:
+                                                              FontWeight.w800,
+                                                          color:
+                                                              _AdColors.title,
+                                                        ),
+                                                      ),
+                                                      const SizedBox(
+                                                          height: 4),
+                                                      Text(
+                                                        'Recommended 16:9',
+                                                        style: TextStyle(
+                                                          fontSize: 12,
+                                                          color: Colors
+                                                              .grey.shade600,
+                                                          fontWeight:
+                                                              FontWeight.w600,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 14),
+                                        TextFormField(
+                                          controller: _titleCtrl,
+                                          textCapitalization:
+                                              TextCapitalization.sentences,
+                                          decoration: _fieldDeco(
+                                            label: 'Title',
+                                            hint: 'e.g. Fresh juice · Blantyre',
+                                          ),
+                                          validator: (v) {
+                                            if (v == null ||
+                                                v.trim().isEmpty) {
+                                              return 'Enter a title';
+                                            }
+                                            if (v.trim().length < 3) {
+                                              return 'Title is too short';
+                                            }
+                                            return null;
+                                          },
+                                        ),
+                                        const SizedBox(height: 12),
+                                        TextFormField(
+                                          controller: _descCtrl,
+                                          maxLines: 3,
+                                          textCapitalization:
+                                              TextCapitalization.sentences,
+                                          decoration: _fieldDeco(
+                                            label: 'Description',
+                                            hint: 'What should people know?',
+                                          ),
+                                          validator: (v) {
+                                            if (v == null ||
+                                                v.trim().isEmpty) {
+                                              return 'Enter a short description';
+                                            }
+                                            return null;
+                                          },
+                                        ),
+                                        const SizedBox(height: 14),
+                                        Container(
+                                          padding: const EdgeInsets.all(12),
+                                          decoration: BoxDecoration(
+                                            color: Colors.white,
+                                            borderRadius:
+                                                BorderRadius.circular(14),
+                                            border: Border.all(
+                                              color: _AdColors.line,
+                                            ),
+                                          ),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.stretch,
+                                            children: [
+                                              SwitchListTile.adaptive(
+                                                contentPadding: EdgeInsets.zero,
+                                                activeColor:
+                                                    _AdColors.brandOrange,
+                                                title: const Text(
+                                                  'Enable Buy now',
+                                                  style: TextStyle(
+                                                    fontWeight: FontWeight.w800,
+                                                    fontSize: 14,
+                                                    color: _AdColors.title,
+                                                  ),
+                                                ),
+                                                subtitle: const Text(
+                                                  'Add a product price so buyers can checkout',
+                                                  style: TextStyle(
+                                                    fontSize: 12,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: _AdColors.body,
+                                                  ),
+                                                ),
+                                                value: _enableBuyNow,
+                                                onChanged: (v) => setState(
+                                                    () => _enableBuyNow = v),
+                                              ),
+                                              if (_enableBuyNow) ...[
+                                                const SizedBox(height: 8),
+                                                TextFormField(
+                                                  controller:
+                                                      _productPriceCtrl,
+                                                  keyboardType:
+                                                      const TextInputType
+                                                          .numberWithOptions(
+                                                    decimal: true,
+                                                  ),
+                                                  decoration: _fieldDeco(
+                                                    label:
+                                                        'Product price (MWK)',
+                                                    hint: 'e.g. 15000',
+                                                  ),
+                                                  validator: (v) {
+                                                    if (!_enableBuyNow) {
+                                                      return null;
+                                                    }
+                                                    final n = double.tryParse(
+                                                      (v ?? '')
+                                                          .trim()
+                                                          .replaceAll(',', ''),
+                                                    );
+                                                    if (n == null || n <= 0) {
+                                                      return 'Enter a valid price';
+                                                    }
+                                                    return null;
+                                                  },
+                                                ),
+                                              ],
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                ]),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                    onPressed: (_submitting || !_prefillDone)
-                        ? null
-                        : _submitAndPay,
-                    child: _submitting
-                        ? const SizedBox(
-                            height: 22,
-                            width: 22,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2.4,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Text(
-                            'Pay MK $kHomepageAdvertWeeklyMwk · Go live',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w900,
-                              fontSize: 15,
+                    SafeArea(
+                      top: false,
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          border: Border(
+                            top: BorderSide(
+                              color: _AdColors.line.withOpacity(0.9),
                             ),
                           ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.05),
+                              blurRadius: 18,
+                              offset: const Offset(0, -6),
+                            ),
+                          ],
+                        ),
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onTap: _submitting ? null : _submitAndPay,
+                            borderRadius: BorderRadius.circular(16),
+                            child: Ink(
+                              width: double.infinity,
+                              height: 56,
+                              decoration: BoxDecoration(
+                                gradient: _submitting
+                                    ? null
+                                    : _adBrandGradient,
+                                color: _submitting
+                                    ? _AdColors.brandOrange.withOpacity(0.55)
+                                    : null,
+                                borderRadius: BorderRadius.circular(16),
+                                boxShadow: _submitting
+                                    ? null
+                                    : [
+                                        BoxShadow(
+                                          color: _AdColors.brandOrange
+                                              .withOpacity(0.35),
+                                          blurRadius: 14,
+                                          offset: const Offset(0, 6),
+                                        ),
+                                      ],
+                              ),
+                              child: Center(
+                                child: _submitting
+                                    ? const SizedBox(
+                                        height: 22,
+                                        width: 22,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2.4,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          const Icon(
+                                            Icons.bolt_rounded,
+                                            color: Colors.white,
+                                            size: 20,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Flexible(
+                                            child: Text(
+                                              'Pay ${_plan.priceLabel}',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.w900,
+                                                fontSize: 16,
+                                                letterSpacing: -0.2,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 10,
+                                              vertical: 5,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color:
+                                                  Colors.white.withOpacity(0.22),
+                                              borderRadius:
+                                                  BorderRadius.circular(99),
+                                            ),
+                                            child: Text(
+                                              _plan.label,
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.w800,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+    );
+  }
+}
+
+class _SectionLabel extends StatelessWidget {
+  final String text;
+  const _SectionLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: const TextStyle(
+        fontWeight: FontWeight.w900,
+        fontSize: 15,
+        color: _AdColors.title,
+        letterSpacing: -0.2,
+      ),
+    );
+  }
+}
+
+class _PlanTile extends StatelessWidget {
+  final AdvertPlan plan;
+  final bool selected;
+  final VoidCallback onTap;
+  const _PlanTile({
+    required this.plan,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          decoration: BoxDecoration(
+            color: selected
+                ? _AdColors.brandOrangeSoft.withOpacity(0.55)
+                : Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: selected ? _AdColors.brandOrange : _AdColors.line,
+              width: selected ? 1.6 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color:
+                      selected ? _AdColors.brandOrange : Colors.transparent,
+                  border: Border.all(
+                    color: selected
+                        ? _AdColors.brandOrange
+                        : Colors.grey.shade400,
+                    width: 2,
+                  ),
+                ),
+                child: selected
+                    ? const Icon(Icons.check, size: 14, color: Colors.white)
+                    : null,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      plan.label,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 15,
+                        color: _AdColors.title,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      plan.subtitle,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                        color: _AdColors.body,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Text(
+                plan.priceLabel,
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 15,
+                  color: selected
+                      ? _AdColors.brandOrangeDeep
+                      : _AdColors.title,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LoginGate extends StatelessWidget {
+  final VoidCallback onLogin;
+  const _LoginGate({required this.onLogin});
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: IconButton(
+                onPressed: () => Navigator.of(context).maybePop(),
+                icon: const Icon(Icons.arrow_back_rounded),
+              ),
+            ),
+            const Spacer(),
+            Container(
+              width: 88,
+              height: 88,
+              decoration: BoxDecoration(
+                gradient: _adBrandGradient,
+                borderRadius: BorderRadius.circular(28),
+                boxShadow: [
+                  BoxShadow(
+                    color: _AdColors.brandOrange.withOpacity(0.35),
+                    blurRadius: 24,
+                    offset: const Offset(0, 10),
                   ),
                 ],
               ),
+              child: const Icon(
+                Icons.campaign_rounded,
+                color: Colors.white,
+                size: 42,
+              ),
             ),
+            const SizedBox(height: 24),
+            const Text(
+              'Log in to advertise',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+                color: _AdColors.title,
+                letterSpacing: -0.3,
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'We use your account details for payment. '
+              'Sign in to create a homepage advert.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.4,
+                fontWeight: FontWeight.w600,
+                color: _AdColors.body,
+              ),
+            ),
+            const Spacer(),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: _AdColors.brandOrange,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                onPressed: onLogin,
+                child: const Text(
+                  'Log in',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 15,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
           ],
         ),
       ),

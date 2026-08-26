@@ -170,6 +170,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   String _ownerPhone = '';
   String _ownerPhotoUrl = '';
   Map<String, int> _nightCounts = {};
+  bool _occupancyLoading = true;
   List<String> _amenities = const [];
   bool _paymentSucceeded = false;
   /// Prevents double-open while a check-in / check-out dialog is showing.
@@ -264,7 +265,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   Future<void> _bootstrap() async {
     unawaited(_loadOwnerProfile());
     unawaited(_loadAmenitiesFromFirestore());
-    unawaited(_loadOccupancy().then((_) {
+    unawaited(_loadOccupancy(fromServer: true).then((_) {
       if (!mounted) return;
       if (_isMonthlyRent) {
         _applyMonthlyStayWindow();
@@ -290,15 +291,62 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     bool fromServer = false,
     bool prune = true,
   }) async {
-    if (widget.accommodationId <= 0) return;
-    final counts = await _occupancy.fetchNightCounts(
-      widget.accommodationId,
-      fromServer: fromServer,
-      prune: prune,
-    );
-    if (!mounted) return;
-    setState(() => _nightCounts = counts);
+    if (widget.accommodationId <= 0) {
+      if (mounted) setState(() => _occupancyLoading = false);
+      return;
+    }
+    if (mounted) setState(() => _occupancyLoading = true);
+    try {
+      final counts = await _occupancy.fetchNightCounts(
+        widget.accommodationId,
+        fromServer: fromServer,
+        prune: prune,
+      );
+      if (!mounted) return;
+      setState(() {
+        _nightCounts = counts;
+        _occupancyLoading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _occupancyLoading = false);
+    }
   }
+
+  int get _roomsFreeForSelectedStay =>
+      AccommodationOccupancyService.minRoomsFreeInRange(
+        nightCounts: _nightCounts,
+        checkIn: _checkIn,
+        checkOut: _checkOut,
+        capacity: _inventoryCapacity,
+      );
+
+  int get _nightsWithBookingsInSelection =>
+      AccommodationOccupancyService.nightsWithBookingsInRange(
+        nightCounts: _nightCounts,
+        checkIn: _checkIn,
+        checkOut: _checkOut,
+      );
+
+  int get _roomsFreeTonight =>
+      AccommodationOccupancyService.roomsFreeOnNight(
+        nightCounts: _nightCounts,
+        night: DateTime.now(),
+        capacity: _inventoryCapacity,
+      );
+
+  String get _roomsFreeTonightLabel =>
+      AccommodationOccupancyService.roomsFreeLabel(
+        free: _roomsFreeTonight,
+        total: _inventoryCapacity,
+        loading: _occupancyLoading,
+      );
+
+  String get _roomsFreeForDatesLabel =>
+      AccommodationOccupancyService.roomsFreeLabel(
+        free: _roomsFreeForSelectedStay,
+        total: _inventoryCapacity,
+        loading: _occupancyLoading,
+      );
 
   bool _isNightBooked(DateTime day) {
     return _occupancy.isNightFull(
@@ -1043,14 +1091,19 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   Future<void> _pickCheckIn() async {
     if (_datePickerOpen || _submitting) return;
     _datePickerOpen = true;
-    // Soft refresh in background — do not block the calendar open.
-    unawaited(_loadOccupancy(fromServer: true, prune: false));
+    await _loadOccupancy(fromServer: true, prune: false);
 
     try {
       if (!mounted) return;
       final countsSnap = Map<String, int>.from(_nightCounts);
       final capacity = _inventoryCapacity;
-      bool isBooked(DateTime day) => _occupancy.isNightFull(
+      bool isFullyBooked(DateTime day) => _occupancy.isNightFull(
+            nightCounts: countsSnap,
+            night: day,
+            capacity: capacity,
+          );
+      bool isPartiallyBooked(DateTime day) =>
+          AccommodationOccupancyService.isNightPartiallyBooked(
             nightCounts: countsSnap,
             night: day,
             capacity: capacity,
@@ -1060,7 +1113,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
         final today = DateTime.now();
         final first = DateTime(today.year, today.month, today.day);
         if (d.isBefore(first)) return false;
-        return !isBooked(d);
+        return !isFullyBooked(d);
       }
 
       final first = DateTime.now();
@@ -1080,11 +1133,12 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
         barrierDismissible: true,
         builder: (ctx) => _BookedAwareDatePickerDialog(
           title: 'Check-in',
-          helpText: 'Red days are already booked. Tap a free day, then Confirm.',
+          helpText: 'Red = fully booked. Orange = some rooms taken. Tap a free day, then Confirm.',
           initialDate: initial,
           firstDate: firstDay,
           lastDate: firstDay.add(const Duration(days: 365 * 2)),
-          isBooked: isBooked,
+          isFullyBooked: isFullyBooked,
+          isPartiallyBooked: isPartiallyBooked,
           isSelectable: isSelectable,
         ),
       );
@@ -1123,14 +1177,20 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   Future<void> _pickCheckOut() async {
     if (_datePickerOpen || _submitting) return;
     _datePickerOpen = true;
-    unawaited(_loadOccupancy(fromServer: true, prune: false));
+    await _loadOccupancy(fromServer: true, prune: false);
 
     try {
       if (!mounted) return;
       final countsSnap = Map<String, int>.from(_nightCounts);
       final capacity = _inventoryCapacity;
       final checkInSnap = DateTime(_checkIn.year, _checkIn.month, _checkIn.day);
-      bool isBooked(DateTime day) => _occupancy.isNightFull(
+      bool isFullyBooked(DateTime day) => _occupancy.isNightFull(
+            nightCounts: countsSnap,
+            night: day,
+            capacity: capacity,
+          );
+      bool isPartiallyBooked(DateTime day) =>
+          AccommodationOccupancyService.isNightPartiallyBooked(
             nightCounts: countsSnap,
             night: day,
             capacity: capacity,
@@ -1163,11 +1223,12 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
         barrierDismissible: true,
         builder: (ctx) => _BookedAwareDatePickerDialog(
           title: 'Check-out',
-          helpText: 'Red days are booked. Tap a free day, then Confirm.',
+          helpText: 'Red = fully booked. Orange = some rooms taken. Tap a free day, then Confirm.',
           initialDate: initial,
           firstDate: minOut,
           lastDate: checkInSnap.add(const Duration(days: 365 * 2)),
-          isBooked: isBooked,
+          isFullyBooked: isFullyBooked,
+          isPartiallyBooked: isPartiallyBooked,
           isSelectable: isSelectable,
         ),
       );
@@ -1495,6 +1556,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
         guestName: name,
         guestEmail: email,
         guestPhone: phone,
+        guestUid: FirebaseAuth.instance.currentUser?.uid,
       );
 
       if (!mounted) return;
@@ -1806,7 +1868,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                                 ),
                               ),
                               child: Text(
-                                '${widget.roomsAvailable < 1 ? 1 : widget.roomsAvailable} room${(widget.roomsAvailable < 1 ? 1 : widget.roomsAvailable) == 1 ? '' : 's'} available',
+                                _roomsFreeTonightLabel,
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 12,
@@ -2053,29 +2115,139 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                                 ],
                               ),
                               const SizedBox(height: 10),
-                              Row(
-                                children: [
-                                  Container(
-                                    width: 12,
-                                    height: 12,
-                                    decoration: BoxDecoration(
-                                      color: Colors.red.shade600,
-                                      borderRadius: BorderRadius.circular(3),
+                              if (_occupancyLoading)
+                                Row(
+                                  children: [
+                                    SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.grey.shade600,
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Expanded(
-                                    child: Text(
-                                      'Red on calendar = Booked on this day',
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'Loading calendar availability…',
                                       style: TextStyle(
                                         fontSize: 11.5,
                                         fontWeight: FontWeight.w600,
                                         color: Colors.grey.shade700,
                                       ),
                                     ),
+                                  ],
+                                )
+                              else ...[
+                                if (_isMultiRoomType ||
+                                    _inventoryCapacity == 1) ...[
+                                  Container(
+                                    width: double.infinity,
+                                    margin: const EdgeInsets.only(bottom: 8),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 8,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: _roomsFreeForSelectedStay <= 0 &&
+                                              !_occupancyLoading
+                                          ? Colors.red.shade50
+                                          : Colors.green.shade50,
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: _roomsFreeForSelectedStay <= 0 &&
+                                                !_occupancyLoading
+                                            ? Colors.red.shade200
+                                            : Colors.green.shade200,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      _roomsFreeForDatesLabel,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w800,
+                                        color: _roomsFreeForSelectedStay <= 0 &&
+                                                !_occupancyLoading
+                                            ? Colors.red.shade800
+                                            : Colors.green.shade800,
+                                      ),
+                                    ),
+                                  ),
+                                ] else if (_nightsWithBookingsInSelection > 0)
+                                  Container(
+                                    width: double.infinity,
+                                    margin: const EdgeInsets.only(bottom: 8),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 8,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.orange.shade50,
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: Colors.orange.shade200,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      '$_nightsWithBookingsInSelection night${_nightsWithBookingsInSelection == 1 ? '' : 's'} already booked in this stay',
+                                      style: TextStyle(
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w700,
+                                        height: 1.35,
+                                        color: Colors.orange.shade900,
+                                      ),
+                                    ),
+                                  ),
+                                Row(
+                                  children: [
+                                    Container(
+                                      width: 12,
+                                      height: 12,
+                                      decoration: BoxDecoration(
+                                        color: Colors.red.shade600,
+                                        borderRadius: BorderRadius.circular(3),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        'Red = fully booked',
+                                        style: TextStyle(
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.grey.shade700,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                if (_isMultiRoomType) ...[
+                                  const SizedBox(height: 4),
+                                  Row(
+                                    children: [
+                                      Container(
+                                        width: 12,
+                                        height: 12,
+                                        decoration: BoxDecoration(
+                                          color: Colors.orange.shade600,
+                                          borderRadius:
+                                              BorderRadius.circular(3),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: Text(
+                                          'Orange = some rooms booked',
+                                          style: TextStyle(
+                                            fontSize: 11.5,
+                                            fontWeight: FontWeight.w600,
+                                            color: Colors.grey.shade700,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ],
-                              ),
+                              ],
                             ],
                           ),
                   ),
@@ -2097,14 +2269,24 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                               vertical: 6,
                             ),
                             decoration: BoxDecoration(
-                              color: Colors.green.shade50,
+                              color: _occupancyLoading || _roomsFreeForSelectedStay <= 0
+                                  ? Colors.red.shade50
+                                  : Colors.green.shade50,
                               borderRadius: BorderRadius.circular(999),
-                              border: Border.all(color: Colors.green.shade200),
+                              border: Border.all(
+                                color: _occupancyLoading ||
+                                        _roomsFreeForSelectedStay <= 0
+                                    ? Colors.red.shade200
+                                    : Colors.green.shade200,
+                              ),
                             ),
                             child: Text(
-                              '${widget.roomsAvailable < 1 ? 1 : widget.roomsAvailable} room${(widget.roomsAvailable < 1 ? 1 : widget.roomsAvailable) == 1 ? '' : 's'} available now',
+                              _roomsFreeForDatesLabel,
                               style: TextStyle(
-                                color: Colors.green.shade800,
+                                color: _occupancyLoading ||
+                                        _roomsFreeForSelectedStay <= 0
+                                    ? Colors.red.shade800
+                                    : Colors.green.shade800,
                                 fontSize: 12,
                                 fontWeight: FontWeight.w800,
                               ),
@@ -2659,14 +2841,15 @@ class _DateTile extends StatelessWidget {
   }
 }
 
-/// Custom month calendar: booked nights are red. Stable one-tap select + Confirm.
+/// Custom month calendar: fully booked nights are red; partial (multi-room) orange.
 class _BookedAwareDatePickerDialog extends StatefulWidget {
   final String title;
   final String helpText;
   final DateTime initialDate;
   final DateTime firstDate;
   final DateTime lastDate;
-  final bool Function(DateTime day) isBooked;
+  final bool Function(DateTime day) isFullyBooked;
+  final bool Function(DateTime day) isPartiallyBooked;
   final bool Function(DateTime day) isSelectable;
 
   const _BookedAwareDatePickerDialog({
@@ -2675,9 +2858,12 @@ class _BookedAwareDatePickerDialog extends StatefulWidget {
     required this.initialDate,
     required this.firstDate,
     required this.lastDate,
-    required this.isBooked,
+    required this.isFullyBooked,
+    this.isPartiallyBooked = _neverPartial,
     required this.isSelectable,
   });
+
+  static bool _neverPartial(DateTime _) => false;
 
   @override
   State<_BookedAwareDatePickerDialog> createState() =>
@@ -2868,7 +3054,9 @@ class _BookedAwareDatePickerDialogState
                     final day = cells[i];
                     if (day == null) return const SizedBox.shrink();
 
-                    final booked = widget.isBooked(day);
+                    final fullyBooked = widget.isFullyBooked(day);
+                    final partiallyBooked =
+                        !fullyBooked && widget.isPartiallyBooked(day);
                     final selectable = widget.isSelectable(day);
                     final selected = _sameDay(day, _selected);
                     final beforeFirst = day.isBefore(
@@ -2890,8 +3078,11 @@ class _BookedAwareDatePickerDialogState
 
                     Color bg;
                     Color fg;
-                    if (booked) {
+                    if (fullyBooked) {
                       bg = Colors.red.shade600;
+                      fg = Colors.white;
+                    } else if (partiallyBooked) {
+                      bg = Colors.orange.shade600;
                       fg = Colors.white;
                     } else if (selected) {
                       bg = _orange;
@@ -2923,7 +3114,7 @@ class _BookedAwareDatePickerDialogState
                                   color: fg,
                                 ),
                               ),
-                              if (booked) ...[
+                              if (fullyBooked || partiallyBooked) ...[
                                 const SizedBox(height: 2),
                                 Container(
                                   width: 5,

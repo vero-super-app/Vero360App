@@ -10,16 +10,19 @@ import 'package:vero360_app/features/ride_share/presentation/pages/map_location_
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
-/// Shop / restaurant location: type an address, search suggestions, or pin on the map.
+/// Merchant shop location: type an address, search suggestions, or pin on the map.
 class FoodBusinessLocationPickerPage extends ConsumerStatefulWidget {
   const FoodBusinessLocationPickerPage({
     super.key,
     this.initialAddress,
     this.initialLatitude,
     this.initialLongitude,
-    this.title = 'Restaurant location',
+    this.title = 'Business location',
     this.hint =
         'Type your address, search for a place, or pin it on the map.',
+    this.emptyAddressMessage = 'Type your business address first.',
+    this.mapPinHintSubtitle =
+        'Drop a pin exactly where your business is.',
   });
 
   final String? initialAddress;
@@ -27,6 +30,8 @@ class FoodBusinessLocationPickerPage extends ConsumerStatefulWidget {
   final double? initialLongitude;
   final String title;
   final String hint;
+  final String emptyAddressMessage;
+  final String mapPinHintSubtitle;
 
   @override
   ConsumerState<FoodBusinessLocationPickerPage> createState() =>
@@ -106,7 +111,7 @@ class _FoodBusinessLocationPickerPageState
     if (typed.isEmpty) {
       ToastHelper.showCustomToast(
         context,
-        'Type your restaurant address first.',
+        widget.emptyAddressMessage,
         isSuccess: false,
         errorMessage: 'Address required',
       );
@@ -388,8 +393,7 @@ class _FoodBusinessLocationPickerPageState
                         _hintTile(
                           icon: Icons.location_on_rounded,
                           title: 'Pin on map',
-                          subtitle:
-                              'Drop a pin exactly where your kitchen is.',
+                          subtitle: widget.mapPinHintSubtitle,
                           onTap: () => unawaited(_openMapPin()),
                         ),
                       ],

@@ -175,6 +175,7 @@ class GuestBookingLocalCache {
     String? guestName,
     String? guestEmail,
     String? guestPhone,
+    String? guestUid,
   }) {
     final m = Map<String, dynamic>.from(bookingDetails);
     final data = m['data'];
@@ -211,6 +212,9 @@ class GuestBookingLocalCache {
     if ((guestPhone ?? '').trim().isNotEmpty) {
       m['guestPhone'] = guestPhone!.trim();
     }
+    if ((guestUid ?? '').trim().isNotEmpty) {
+      m['guestUid'] = guestUid!.trim();
+    }
 
     return BookingItem.fromJson(m);
   }
@@ -236,6 +240,7 @@ class GuestBookingLocalCache {
         if (b.guestName != null) 'guestName': b.guestName,
         if (b.guestEmail != null) 'guestEmail': b.guestEmail,
         if (b.guestPhone != null) 'guestPhone': b.guestPhone,
+        if (b.guestUid != null) 'guestUid': b.guestUid,
         if (b.bookingNumber != null) 'bookingNumber': b.bookingNumber,
         if (b.checkOutDate != null)
           'checkOut': b.checkOutDate!.toIso8601String(),

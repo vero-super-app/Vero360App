@@ -1206,18 +1206,19 @@ class AuthService {
     // Skip getMyDriverProfile + per-taxi loops (those alone could hang for seconds).
     await _logoutRemoteCleanup(token: token);
 
-    // Local sign-out must complete even if remote cleanup timed out.
-    try {
-      await _firebaseAuth.signOut();
-    } catch (_) {}
-
     try {
       BackendChatService.clearAuthCache();
       // Don't await socket teardown — local session clear is enough for UX.
       unawaited(BackendMessagingSocket.disconnect());
     } catch (_) {}
 
+    // Clear prefs/tokens before Firebase signOut so auth listeners see logged-out
+    // state immediately (avoids staying on merchant Profile tab after logout).
     final ok = await _clearLocalSession();
+
+    try {
+      await _firebaseAuth.signOut();
+    } catch (_) {}
     if (context != null) {
       _toast(context, 'Signed out', ok: ok);
     }

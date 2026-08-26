@@ -1126,6 +1126,11 @@ class NotificationService {
       body =
           'Your merchant account is ready. List your property, manage guest bookings, '
           'handle payments, and grow your stay business — all from this app.';
+    } else if (normalizedRole == 'merchant' && normalizedService == 'food') {
+      title = 'Welcome to Vero food & restaurant, $safeName!';
+      body =
+          'Set up your restaurant, post food, manage orders, and accept payments — '
+          'all from this app.';
     } else if (normalizedRole == 'merchant') {
       title = 'Welcome to Vero360 Merchant Account, $safeName!';
       body =

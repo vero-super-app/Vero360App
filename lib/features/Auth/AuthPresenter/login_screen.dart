@@ -653,6 +653,7 @@ class _LoginScreenState extends State<LoginScreen> {
   // -------------------- Social sign-in via Firebase (no platform lock) --------------------
 
   static String _googleSignInErrorMessage(Object e) {
+    const fallback = 'Google sign-in failed. Please try again.';
     if (e is FirebaseAuthException) {
       switch (e.code) {
         case 'network-request-failed':
@@ -661,10 +662,22 @@ class _LoginScreenState extends State<LoginScreen> {
           return 'This account has been disabled.';
         case 'too-many-requests':
           return 'Too many attempts. Try again later.';
+        case 'google-config':
+        case 'missing-id-token':
+          return 'Google sign-in isn’t available right now. Try again or use email.';
         default:
-          return e.message?.trim().isNotEmpty == true
-              ? e.message!
-              : 'Google sign-in failed. Please try again.';
+          final m = e.message?.trim() ?? '';
+          if (m.isEmpty) return fallback;
+          final lower = m.toLowerCase();
+          if (lower.contains('firebase') ||
+              lower.contains('googleapis') ||
+              lower.contains('apps.googleusercontent') ||
+              lower.contains('firebaseapp') ||
+              lower.contains('@') ||
+              RegExp(r'\d{10,}').hasMatch(m)) {
+            return fallback;
+          }
+          return m.length > 80 ? fallback : m;
       }
     }
     final msg = e.toString();
@@ -679,10 +692,11 @@ class _LoginScreenState extends State<LoginScreen> {
         msg.contains('google-config') ||
         msg.contains('com.vero265.app') ||
         msg.contains('DEVELOPER_ERROR') ||
-        msg.contains('ApiException: 10')) {
-      return 'Google Sign-In is not set up for this app build. Add SHA-1 for com.vero265.app in Firebase Console.';
+        msg.contains('ApiException: 10') ||
+        msg.toLowerCase().contains('firebase')) {
+      return 'Google sign-in isn’t available right now. Try again or use email.';
     }
-    return msg.length > 80 ? 'Google sign-in failed. Please try again.' : msg;
+    return msg.length > 80 ? fallback : msg;
   }
 
   Future<void> _google() async {

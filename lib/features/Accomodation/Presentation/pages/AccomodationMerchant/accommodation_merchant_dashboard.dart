@@ -39,7 +39,9 @@ import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/Accomodation_service.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/mybookingData_service.dart';
+import 'package:vero360_app/features/Accomodation/Presentation/widgets/accommodation_offline_block_sheet.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/widgets/booking_delete_confirm_dialog.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/ride_history_screen.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:intl/intl.dart';
 
@@ -1122,7 +1124,20 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
       final dashboardData =
           await _helper.getMerchantDashboardData(_uid, 'accommodation');
       if (!mounted) return;
-      if (dashboardData.containsKey('error')) return;
+      if (dashboardData.containsKey('error')) {
+        try {
+          final userDoc =
+              await _firestore.collection('users').doc(_uid).get();
+          final fromUser = _businessNameFromFirestoreMap(userDoc.data());
+          if (fromUser != null && fromUser.isNotEmpty) {
+            unawaited(prefs.setString('business_name', fromUser));
+            if (mounted) {
+              setState(() => _businessName = fromUser);
+            }
+          }
+        } catch (_) {}
+        return;
+      }
 
       final merchantMap =
           dashboardData['merchant'] as Map<String, dynamic>?;
@@ -2630,6 +2645,50 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                             ],
                           ),
                         ],
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 20),
+                          child: Divider(
+                            height: 1,
+                            color: Colors.grey.shade200,
+                          ),
+                        ),
+                        _addPropertySheetSectionHeader(
+                          'Calendar & offline bookings',
+                          Icons.event_busy_outlined,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Block dates when guests book you directly (walk-in, phone, WhatsApp) '
+                          'so the same nights cannot be booked on Vero.',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w600,
+                            height: 1.35,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: () => _openOfflineBlockSheet(room),
+                            icon: const Icon(Icons.calendar_month_rounded),
+                            label: const Text(
+                              'Block offline dates',
+                              style: TextStyle(fontWeight: FontWeight.w800),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: _brandOrange,
+                              side: BorderSide(
+                                color: _brandOrange.withValues(alpha: 0.55),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                          ),
+                        ),
                         const SizedBox(height: 24),
                         SizedBox(
                           width: double.infinity,
@@ -3542,9 +3601,9 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                   MaterialPageRoute<bool>(
                     builder: (_) => PostStoryPage(
                       merchantId: uid,
-                      merchantName: _businessName.isNotEmpty
-                          ? _businessName
-                          : (_auth.currentUser?.displayName ?? 'Accommodation'),
+                      merchantName: _businessNameIsPlaceholder
+                          ? _fallbackBusinessLabel
+                          : _businessName,
                       merchantImageUrl: _merchantProfileUrl.isNotEmpty
                           ? _merchantProfileUrl
                           : null,
@@ -4770,6 +4829,12 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         color: Colors.blueGrey,
         onTap: () => _accommodationTabs?.animateTo(3),
       ),
+      _QuickActionTile(
+        title: 'My Vero Ride',
+        icon: Icons.directions_car_filled_rounded,
+        color: Colors.deepOrange,
+        onTap: _openRideHistory,
+      ),
     ];
 
     return Column(
@@ -4782,6 +4847,16 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         const SizedBox(height: 10),
         _twoColumnTiles(height: 74, children: actions),
       ],
+    );
+  }
+
+  void _openRideHistory() {
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            const RideHistoryScreen(mode: RideHistoryMode.passenger),
+      ),
     );
   }
 
@@ -5824,6 +5899,35 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     _toastOk('Booking reference copied');
   }
 
+  Future<void> _openOfflineBlockSheet(Map<String, dynamic> room) async {
+    final apiId = _apiAccommodationId(room);
+    if (apiId == null || apiId <= 0) {
+      ToastHelper.showCustomToast(
+        context,
+        'Sync this listing to Vero first, then you can block offline dates.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    final rawType = (room['accommodationType'] ?? room['type'] ?? 'house')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final capRaw = room['capacity'];
+    final capacity = capRaw is num
+        ? capRaw.toInt()
+        : int.tryParse(capRaw?.toString() ?? '') ?? 1;
+    final name = (room['name'] ?? 'Property').toString().trim();
+    await showAccommodationOfflineBlockSheet(
+      context,
+      propertyName: name.isEmpty ? 'Property' : name,
+      accommodationId: apiId,
+      accommodationType: rawType.isEmpty ? 'house' : rawType,
+      capacity: capacity < 1 ? 1 : capacity,
+    );
+  }
+
   Widget _buildRoomsSection() {
     final displayRooms = _rooms.where((room) {
       final map = room as Map<String, dynamic>;
@@ -6086,6 +6190,35 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                   fontSize: 10,
                                   color: Colors.grey.shade600,
                                   fontStyle: FontStyle.italic,
+                                ),
+                              ),
+                            ],
+                            if (canEditApi) ...[
+                              const SizedBox(height: 10),
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  onPressed: () => _openOfflineBlockSheet(room),
+                                  icon: const Icon(
+                                    Icons.event_busy_outlined,
+                                    size: 18,
+                                  ),
+                                  label: const Text(
+                                    'Block offline dates',
+                                    style: TextStyle(fontWeight: FontWeight.w800),
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: _brandOrange,
+                                    side: BorderSide(
+                                      color: _brandOrange.withValues(alpha: 0.55),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 10,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
                                 ),
                               ),
                             ],

@@ -39,6 +39,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/MarkeplaceMer
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
@@ -47,6 +48,7 @@ import 'package:vero360_app/Home/story_section.dart';
 import 'package:vero360_app/Home/homepage_adverts.dart';
 import 'package:vero360_app/features/Promotions/presentation/promotions_page.dart';
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
+import 'package:vero360_app/features/DigitalServices/digital_service_order_service.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_services_page.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_product_amount_page.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
@@ -3599,6 +3601,30 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
       return;
     }
     if (!_formKey.currentState!.validate()) return;
+
+    final firebaseUser = FirebaseAuth.instance.currentUser;
+    var loggedIn = firebaseUser != null &&
+        !firebaseUser.isAnonymous &&
+        await AuthHandler.isAuthenticated();
+    if (!loggedIn) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'You’re not logged in. Please sign in to continue.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      );
+      if (!mounted) return;
+      final again = FirebaseAuth.instance.currentUser;
+      loggedIn = again != null &&
+          !again.isAnonymous &&
+          await AuthHandler.isAuthenticated();
+      if (!loggedIn) return;
+    }
+
     setState(() => _submitting = true);
     try {
       final name      = _nameCtrl.text.trim();
@@ -3621,6 +3647,17 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
           ? 'Digital: ${widget.product.name} • ${formatMwk(amount)}'
           : 'Digital: ${widget.product.name} • ${formatUsd(widget.selectedUsd)} '
               '(${formatMwk(amount)})';
+
+      final orderId = await DigitalServiceOrderService.createPendingOrder(
+        product: widget.product,
+        amountMwk: amount,
+        txRef: txRef,
+        buyerName: name,
+        buyerEmail: email,
+        buyerPhone: phone,
+        selectedUsd: _isFixedPrice ? null : widget.selectedUsd,
+      );
+
       final response    = await http.post(
         PayChanguConfig.paymentUri,
         headers: PayChanguConfig.authHeaders,
@@ -3654,6 +3691,14 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
               totalAmount:        amount,
               rootContext:        context,
               digitalProductName: widget.product.name,
+              onSuccessNavigate: (_) async {
+                try {
+                  await DigitalServiceOrderService.activateAfterPayment(
+                    orderId: orderId,
+                    txRef: txRef,
+                  );
+                } catch (_) {}
+              },
             ),
           ));
         } else {

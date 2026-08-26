@@ -353,6 +353,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (_businessAddress.text.trim().isNotEmpty) {
         await prefs.setString('business_address', _businessAddress.text.trim());
       }
+      if (merchantService != null &&
+          uid != null &&
+          uid.isNotEmpty &&
+          _selectedMerchantService != null) {
+        try {
+          await _writeChosenMerchantShop(
+            uid: uid,
+            email: user['email']?.toString().trim().isNotEmpty == true
+                ? user['email'].toString().trim()
+                : _identifierEmail,
+            contactName: _name.text.trim().isNotEmpty
+                ? _name.text.trim()
+                : (user['name']?.toString() ?? ''),
+          );
+        } catch (_) {}
+      }
     }
 
     // Marketplace onboarding guide only for marketplace merchants (once per account).
@@ -427,7 +443,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           await _writeChosenMerchantShop(
             uid: user.uid,
             email: emailForProfile,
-            displayName: user.displayName ?? _name.text.trim(),
+            contactName: user.displayName ?? _name.text.trim(),
           );
         }
       } catch (_) {}
@@ -454,7 +470,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           await _writeChosenMerchantShop(
             uid: user.uid,
             email: emailForProfile,
-            displayName: user.displayName ?? _name.text.trim(),
+            contactName: user.displayName ?? _name.text.trim(),
           );
         }
       } catch (_) {}
@@ -494,10 +510,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _writeChosenMerchantShop({
     required String uid,
     required String email,
-    required String displayName,
+    required String contactName,
   }) async {
     final service = _selectedMerchantService?.key;
     if (service == null || service.isEmpty) return;
+    final business = _businessName.text.trim();
+    final contact = contactName.trim();
+    final shopName = business.isNotEmpty ? business : contact;
     final collectionName = service == 'marketplace'
         ? 'marketplace_merchants'
         : '${service}_merchants';
@@ -505,9 +524,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
       {
         'uid': uid,
         'email': email,
-        'name': displayName,
+        'name': shopName,
+        'merchantName': shopName,
         'phone': _identifierPhone,
-        'businessName': _businessName.text.trim(),
+        if (contact.isNotEmpty) 'ownerName': contact,
+        'businessName': business,
         'businessAddress': _businessAddress.text.trim(),
         'merchantService': service,
         'serviceType': service,
@@ -987,6 +1008,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // ---------- Social signup/login via Firebase (no platform lock) ----------
 
   static String _googleSignInErrorMessage(Object e) {
+    const fallback = 'Google sign-in failed. Please try again.';
     if (e is FirebaseAuthException) {
       switch (e.code) {
         case 'network-request-failed':
@@ -995,10 +1017,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
           return 'This account has been disabled.';
         case 'too-many-requests':
           return 'Too many attempts. Try again later.';
+        case 'google-config':
+        case 'missing-id-token':
+          return 'Google sign-in isn’t available right now. Try again or use email.';
         default:
-          return e.message?.trim().isNotEmpty == true
-              ? e.message!
-              : 'Google sign-in failed. Please try again.';
+          final m = e.message?.trim() ?? '';
+          if (m.isEmpty) return fallback;
+          final lower = m.toLowerCase();
+          if (lower.contains('firebase') ||
+              lower.contains('googleapis') ||
+              lower.contains('apps.googleusercontent') ||
+              lower.contains('firebaseapp') ||
+              lower.contains('@') ||
+              RegExp(r'\d{10,}').hasMatch(m)) {
+            return fallback;
+          }
+          return m.length > 80 ? fallback : m;
       }
     }
     final msg = e.toString();
@@ -1013,10 +1047,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
         msg.contains('google-config') ||
         msg.contains('com.vero265.app') ||
         msg.contains('DEVELOPER_ERROR') ||
-        msg.contains('ApiException: 10')) {
-      return 'Google Sign-In is not set up for this app build. Add SHA-1 for com.vero265.app in Firebase Console.';
+        msg.contains('ApiException: 10') ||
+        msg.toLowerCase().contains('firebase')) {
+      return 'Google sign-in isn’t available right now. Try again or use email.';
     }
-    return msg.length > 80 ? 'Google sign-in failed. Please try again.' : msg;
+    return msg.length > 80 ? fallback : msg;
   }
 
   Future<void> _google() async {

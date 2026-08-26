@@ -95,6 +95,8 @@ class BookingItem {
   final String? guestName;
   final String? guestEmail;
   final String? guestPhone;
+  final String? guestUid;
+  final int? guestBackendUserId;
 
   /// PayChangu / customer-facing ref when API sends it separately from numeric [id].
   final String? bookingNumber;
@@ -183,6 +185,8 @@ class BookingItem {
     this.guestName,
     this.guestEmail,
     this.guestPhone,
+    this.guestUid,
+    this.guestBackendUserId,
     this.bookingNumber,
     this.includeInGuestMyBookings = false,
     this.checkOutDate,
@@ -425,6 +429,63 @@ class BookingItem {
       }
     }
 
+    // Merchant `/bookings/merchant/me` sometimes flattens guest contact at root.
+    gName ??= _first<String>(m, ['name', 'fullName', 'displayName']);
+    gEmail ??= _first<String>(m, ['email', 'Email']);
+    gPhone ??= _first<String>(m, ['phone', 'mobile', 'mobileNumber']);
+
+    var gUid = _first<String>(m, [
+      'guestUid',
+      'guest_uid',
+      'customerUid',
+      'customer_uid',
+      'bookerUid',
+      'booker_uid',
+      'userUid',
+      'user_uid',
+      'firebaseUid',
+      'firebase_uid',
+      'buyerUid',
+      'buyer_uid',
+    ]);
+    int? gBackendId;
+    final rawBackend = _first<Object>(m, [
+      'guestUserId',
+      'guest_user_id',
+      'customerUserId',
+      'customer_user_id',
+      'bookerUserId',
+      'booker_user_id',
+      'userId',
+      'user_id',
+      'customerId',
+      'customer_id',
+    ]);
+    if (rawBackend is int) {
+      gBackendId = rawBackend > 0 ? rawBackend : null;
+    } else if (rawBackend != null) {
+      gBackendId = int.tryParse(rawBackend.toString());
+      if (gBackendId != null && gBackendId <= 0) gBackendId = null;
+    }
+    if (person != null) {
+      gUid ??= _first<String>(person, [
+        'uid',
+        'firebaseUid',
+        'firebase_uid',
+        'merchantId',
+        'userUid',
+      ]);
+      if (gBackendId == null) {
+        final pid = person['id'] ?? person['userId'] ?? person['user_id'];
+        if (pid is int && pid > 0) {
+          gBackendId = pid;
+        } else if (pid != null) {
+          gBackendId = int.tryParse(pid.toString());
+          if (gBackendId != null && gBackendId <= 0) gBackendId = null;
+        }
+      }
+    }
+
     final cleanedGuestPhone = _sanitizeGuestPhone(gPhone);
 
     return BookingItem(
@@ -444,6 +505,8 @@ class BookingItem {
       guestName: _nonEmpty(gName),
       guestEmail: _nonEmpty(gEmail),
       guestPhone: _nonEmpty(cleanedGuestPhone),
+      guestUid: _nonEmpty(gUid),
+      guestBackendUserId: gBackendId,
       bookingNumber: bookingNumberStr,
       includeInGuestMyBookings: guestPaidOk,
       checkOutDate: checkOut,

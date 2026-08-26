@@ -125,21 +125,33 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
   static String _foodBusinessNamePrefsKey(String uid) =>
       'food_business_name_v1_$uid';
 
-  /// Sync paint from Auth before prefs/Firestore — avoids blank name/avatar flash.
+  /// Sync paint from Auth before prefs/Firestore — avoids blank avatar flash.
   void _bootstrapIdentityFast() {
     final pinned = (widget.merchantUid ?? '').trim();
     final user = _auth.currentUser;
     _uid = pinned.isNotEmpty ? pinned : (user?.uid ?? '');
-    final authName = (user?.displayName ?? '').trim();
-    if (authName.isNotEmpty) {
-      _businessName = authName;
-    }
     final authPic = (user?.photoURL ?? '').trim();
     if (authPic.isNotEmpty) {
       _profileUrl = authPic;
     }
     final email = (user?.email ?? widget.email).trim();
     if (email.isNotEmpty) _merchantEmail = email;
+  }
+
+  String? _businessNameFromFirestoreMap(Map<String, dynamic>? m) {
+    if (m == null) return null;
+    for (final k in [
+      'businessName',
+      'business_name',
+      'merchantName',
+      'merchant_name',
+      'companyName',
+      'company_name',
+    ]) {
+      final v = m[k]?.toString().trim();
+      if (v != null && v.isNotEmpty) return v;
+    }
+    return null;
   }
 
   Future<void> _warmProfilePhotoCache([String? url]) async {
@@ -286,15 +298,8 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       final restQ = results[2] as QuerySnapshot<Map<String, dynamic>>;
 
       final u = userDoc.data() ?? {};
-      final fsName = (u['businessName'] ??
-              u['merchantName'] ??
-              u['name'] ??
-              u['fullName'] ??
-              u['displayName'] ??
-              '')
-          .toString()
-          .trim();
-      if (fsName.isNotEmpty) _businessName = fsName;
+      final fsName = _businessNameFromFirestoreMap(u);
+      if (fsName != null && fsName.isNotEmpty) _businessName = fsName;
       final fsPhone =
           (u['phone'] ?? u['phoneNumber'] ?? '').toString().trim();
       final fsPic = (u['profilepicture'] ??
@@ -333,8 +338,8 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
 
       if (merchantSnap.exists) {
         final m = merchantSnap.data() ?? {};
-        final mName =
-            (m['businessName'] ?? m['name'] ?? '').toString().trim();
+        final mName = _businessNameFromFirestoreMap(m) ??
+            (m['name'] ?? '').toString().trim();
         final mPhone = (m['phone'] ?? '').toString().trim();
         final mDesc =
             (m['description'] ?? m['businessDescription'] ?? '')
@@ -744,15 +749,6 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
   }
 
   Future<void> _openKycVerification() async {
-    if (!_kyc.verified) {
-      final go = await showModernKycDialog(
-        context,
-        title: 'Verify your restaurant',
-        message:
-            'Complete a quick KYC check to post dishes, receive orders, and unlock wallet payouts.',
-      );
-      if (go != true || !mounted) return;
-    }
     await Navigator.of(context).push<bool>(
       MaterialPageRoute(builder: (_) => const KycVerificationScreen()),
     );
@@ -849,21 +845,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     ]);
   }
 
-  Future<bool> _ensureKycForPosting() {
-    return KycGate.ensureVerified(
-      context,
-      title: 'KYC required for food merchants',
-      message:
-          'Verify your identity before posting dishes. This protects customers '
-          'and lets you receive kitchen payouts.',
-      pendingMessage:
-          'KYC is still pending. You can post dishes once verification is approved.',
-    );
-  }
-
   Future<void> _openPostFood() async {
-    if (!mounted) return;
-    if (!await _ensureKycForPosting()) return;
     if (!mounted) return;
     final added = await Navigator.push<bool>(
       context,
@@ -872,6 +854,123 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       ),
     );
     if (added == true && mounted) await _loadMenuItems();
+  }
+
+  Future<void> _editMenuItem(Map<String, dynamic> item) async {
+    final id = item['id']?.toString().trim() ?? '';
+    if (id.isEmpty) return;
+    if (!mounted) return;
+    final updated = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute<bool>(
+        builder: (_) => FoodMenuPostPage(existingItem: item),
+      ),
+    );
+    if (updated == true && mounted) await _loadMenuItems();
+  }
+
+  Future<void> _deleteMenuItem(Map<String, dynamic> item) async {
+    final id = item['id']?.toString().trim() ?? '';
+    if (id.isEmpty) return;
+    final name = item['name']?.toString().trim() ?? '';
+    final displayName = name.isEmpty ? 'this dish' : name;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete menu item'),
+        content: Text(
+          'Remove "$displayName" from your menu? This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    try {
+      await _firestore.collection('food_menu_items').doc(id).delete();
+      if (!mounted) return;
+      _toastOk('Removed "$displayName"');
+      await _loadMenuItems();
+    } catch (e) {
+      debugPrint('Delete menu item: $e');
+      if (!mounted) return;
+      _toastErr('Could not delete. Try again.');
+    }
+  }
+
+  void _showMenuItemActions(Map<String, dynamic> item) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 14),
+                decoration: BoxDecoration(
+                  color: Colors.black12,
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+              Text(
+                item['name']?.toString() ?? 'Menu item',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                leading: const Icon(Icons.edit_rounded, color: _brandOrange),
+                title: const Text(
+                  'Edit dish',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _editMenuItem(item);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline_rounded,
+                    color: Colors.red),
+                title: const Text(
+                  'Delete from menu',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: Colors.red,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _deleteMenuItem(item);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _showPhotoSheet() {
@@ -1079,6 +1178,12 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
           initialAddress: _businessLocation,
           initialLatitude: _businessLat,
           initialLongitude: _businessLng,
+          title: 'Restaurant location',
+          hint:
+              'Type your address, search for a place, or pin it on the map.',
+          emptyAddressMessage: 'Type your restaurant address first.',
+          mapPinHintSubtitle:
+              'Drop a pin exactly where your kitchen is.',
         ),
       ),
     );
@@ -1374,7 +1479,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                     merchantId: uid,
                     merchantName: _businessName.isNotEmpty
                         ? _businessName
-                        : (_auth.currentUser?.displayName ?? 'Restaurant Merchant'),
+                        : 'Restaurant Merchant',
                     serviceType: 'Restaurant',
                   ),
                 ),
@@ -1777,17 +1882,10 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
               onTap: () => _foodTabs.animateTo(2),
             ),
             _FoodQuickActionTile(
-              title: 'Browse app',
-              icon: Icons.storefront_outlined,
-              color: Colors.orange,
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => Bottomnavbar(email: widget.email),
-                  ),
-                );
-              },
+              title: 'My menu',
+              icon: Icons.restaurant_menu_rounded,
+              color: Colors.green,
+              onTap: () => _foodTabs.animateTo(1),
             ),
             _FoodQuickActionTile(
               title: 'Post story',
@@ -1811,7 +1909,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                       merchantId: uid,
                       merchantName: _businessName.isNotEmpty
                           ? _businessName
-                          : (_auth.currentUser?.displayName ?? 'Food Merchant'),
+                          : 'Food Merchant',
                       serviceType: 'food',
                     ),
                   ),
@@ -2105,36 +2203,271 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     );
   }
 
+  Widget _postFoodStatPill(String value, String label) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.16),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.22)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              value,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+                height: 1,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.88),
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPostFoodHero({required int total, required int available}) {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        gradient: LinearGradient(
+          colors: [
+            _brandOrange,
+            _brandOrange.withValues(alpha: 0.9),
+            const Color(0xFFFFB347),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: _brandOrange.withValues(alpha: 0.28),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.restaurant_menu_rounded,
+                  color: Colors.white,
+                  size: 26,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'My kitchen menu',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.92),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const Text(
+                      'Post food',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.3,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              _postFoodStatPill('$total', total == 1 ? 'Dish' : 'Dishes'),
+              const SizedBox(width: 10),
+              _postFoodStatPill('$available', 'Live now'),
+            ],
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _openPostFood,
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: _brandOrange,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                elevation: 0,
+              ),
+              icon: const Icon(Icons.add_rounded),
+              label: const Text(
+                'Add new dish',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _menuAvailabilityBadge(bool available) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: available
+            ? const Color(0xFFE7F6EC)
+            : const Color(0xFFFFEDEE),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        available ? 'Live' : 'Hidden',
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+          color: available ? Colors.green.shade700 : Colors.red.shade700,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMenuEmptyState() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 36),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: _brandOrange.withValues(alpha: 0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.ramen_dining_rounded,
+              size: 40,
+              color: _brandOrange.withValues(alpha: 0.85),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'No dishes yet',
+            style: TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w900,
+              color: _brandNavy,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Add your first dish with photos, price, and options. Customers will see it on your menu.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              color: Colors.grey.shade600,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 18),
+          FilledButton.icon(
+            onPressed: _openPostFood,
+            style: FilledButton.styleFrom(
+              backgroundColor: _brandOrange,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            icon: const Icon(Icons.add_rounded, size: 20),
+            label: const Text(
+              'Post your first dish',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMenuGrid() {
+    final total = _menuItems.length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             const Text(
-              'My menu',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+              'Your dishes',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+                color: _brandNavy,
+              ),
             ),
-            TextButton.icon(
-              onPressed: _openPostFood,
-              icon: const Icon(Icons.add_circle_outline_rounded, size: 20),
-              label: const Text('Post food'),
-            ),
+            const Spacer(),
+            if (total > 0)
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: _brandOrange.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  '$total ${total == 1 ? 'item' : 'items'}',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: _brandOrange,
+                  ),
+                ),
+              ),
           ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         if (_menuItems.isEmpty)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.black12),
-            ),
-            child: const Center(child: Text('No menu items yet — tap Post food')),
-          )
+          _buildMenuEmptyState()
         else
           GridView.builder(
             shrinkWrap: true,
@@ -2143,44 +2476,138 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
               crossAxisCount: 2,
               crossAxisSpacing: 12,
               mainAxisSpacing: 12,
-              childAspectRatio: 0.78,
+              childAspectRatio: 0.76,
             ),
             itemCount: _menuItems.length,
             itemBuilder: (context, index) {
               final item = _menuItems[index] as Map<String, dynamic>;
+              final available = item['isAvailable'] != false;
+              final category = item['category']?.toString().trim() ?? '';
+              final price = (item['price'] is num)
+                  ? (item['price'] as num)
+                  : num.tryParse('${item['price']}') ?? 0;
               return Material(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
+                color: Colors.transparent,
                 child: InkWell(
-                  borderRadius: BorderRadius.circular(16),
-                  onTap: () {},
-                  child: Container(
+                  borderRadius: BorderRadius.circular(18),
+                  onTap: () => _editMenuItem(item),
+                  onLongPress: () => _showMenuItemActions(item),
+                  child: Ink(
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.black12),
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(18),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.06),
+                          blurRadius: 14,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
-                          child: ClipRRect(
-                            borderRadius: const BorderRadius.vertical(
-                                top: Radius.circular(15)),
-                            child: item['imageUrl'] != null
-                                ? Image.network(
-                                    item['imageUrl'] as String,
-                                    fit: BoxFit.cover,
-                                    width: double.infinity,
-                                  )
-                                : Container(
-                                    color: Colors.grey.shade200,
-                                    child: const Icon(Icons.fastfood_rounded,
-                                        size: 40, color: Colors.grey),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              ClipRRect(
+                                borderRadius: const BorderRadius.vertical(
+                                  top: Radius.circular(18),
+                                ),
+                                child: item['imageUrl'] != null
+                                    ? Image.network(
+                                        item['imageUrl'] as String,
+                                        fit: BoxFit.cover,
+                                        width: double.infinity,
+                                        errorBuilder: (_, __, ___) => Container(
+                                          color: Colors.grey.shade200,
+                                          child: Icon(
+                                            Icons.fastfood_rounded,
+                                            size: 36,
+                                            color: Colors.grey.shade400,
+                                          ),
+                                        ),
+                                      )
+                                    : Container(
+                                        decoration: BoxDecoration(
+                                          gradient: LinearGradient(
+                                            colors: [
+                                              _brandOrange
+                                                  .withValues(alpha: 0.12),
+                                              _brandNavy
+                                                  .withValues(alpha: 0.08),
+                                            ],
+                                            begin: Alignment.topLeft,
+                                            end: Alignment.bottomRight,
+                                          ),
+                                        ),
+                                        child: Icon(
+                                          Icons.fastfood_rounded,
+                                          size: 36,
+                                          color: _brandOrange
+                                              .withValues(alpha: 0.55),
+                                        ),
+                                      ),
+                              ),
+                              Positioned(
+                                top: 8,
+                                left: 8,
+                                child: _menuAvailabilityBadge(available),
+                              ),
+                              Positioned(
+                                top: 6,
+                                right: 6,
+                                child: Material(
+                                  color: Colors.white.withValues(alpha: 0.94),
+                                  shape: const CircleBorder(),
+                                  elevation: 2,
+                                  shadowColor:
+                                      Colors.black.withValues(alpha: 0.12),
+                                  child: InkWell(
+                                    customBorder: const CircleBorder(),
+                                    onTap: () => _showMenuItemActions(item),
+                                    child: const Padding(
+                                      padding: EdgeInsets.all(6),
+                                      child: Icon(
+                                        Icons.more_vert_rounded,
+                                        size: 18,
+                                        color: _brandNavy,
+                                      ),
+                                    ),
                                   ),
+                                ),
+                              ),
+                              Positioned(
+                                left: 8,
+                                right: 8,
+                                bottom: 8,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 5,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withValues(alpha: 0.62),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Text(
+                                    _mwk0(price),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                         Padding(
-                          padding: const EdgeInsets.all(8),
+                          padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -2189,33 +2616,24 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
-                                    fontWeight: FontWeight.w800),
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 14,
+                                  color: _brandNavy,
+                                ),
                               ),
-                              Text(
-                                _mwk0((item['price'] is num)
-                                    ? (item['price'] as num)
-                                    : num.tryParse('${item['price']}') ?? 0),
-                                style: const TextStyle(
-                                    color: Colors.green,
-                                    fontWeight: FontWeight.w700),
-                              ),
-                              Chip(
-                                label: Text(
-                                  item['isAvailable'] == true
-                                      ? 'Available'
-                                      : 'Unavailable',
+                              if (category.isNotEmpty) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  category,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
                                     fontSize: 11,
-                                    color: item['isAvailable'] == true
-                                        ? Colors.green
-                                        : Colors.red,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.grey.shade600,
                                   ),
                                 ),
-                                visualDensity: VisualDensity.compact,
-                                backgroundColor: item['isAvailable'] == true
-                                    ? Colors.green.shade50
-                                    : Colors.red.shade50,
-                              ),
+                              ],
                             ],
                           ),
                         ),
@@ -2303,99 +2721,24 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
   }
 
   Widget _buildPostFoodTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const SizedBox(height: 8),
-          Text(
-            'Food listings',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w900,
-              color: Colors.grey.shade800,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Material(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(18),
-              onTap: _openPostFood,
-              child: Container(
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: Colors.black12),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: _brandOrange.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        Icons.add_photo_alternate_rounded,
-                        color: _brandOrange,
-                        size: 28,
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Post a dish',
-                            style: TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            'Add dishes to your in-app menu. They appear below after you save.',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Colors.grey.shade700,
-                              height: 1.35,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Icon(Icons.chevron_right_rounded,
-                        color: Colors.grey.shade500),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 20),
-          FilledButton.icon(
-            onPressed: _openPostFood,
-            style: FilledButton.styleFrom(
-              backgroundColor: _brandOrange,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-            ),
-            icon: const Icon(Icons.edit_note_rounded),
-            label: const Text(
-              'Post food',
-              style: TextStyle(fontWeight: FontWeight.w900),
-            ),
-          ),
-          const SizedBox(height: 20),
-          _buildMenuGrid(),
-        ],
+    final total = _menuItems.length;
+    final available =
+        _menuItems.where((i) => (i as Map)['isAvailable'] != false).length;
+
+    return RefreshIndicator(
+      color: _brandOrange,
+      onRefresh: _loadMerchantData,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildPostFoodHero(total: total, available: available),
+            const SizedBox(height: 20),
+            _buildMenuGrid(),
+          ],
+        ),
       ),
     );
   }

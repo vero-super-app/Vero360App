@@ -47,8 +47,8 @@ class KycStatusCard extends StatelessWidget {
     } else {
       title = 'Verify your identity';
       subtitle =
-          'Complete KYC to post dishes, receive orders, and unlock payouts.';
-      badge = 'Required';
+          'Complete KYC to unlock wallet withdrawals and receive payouts.';
+      badge = 'For payouts';
       icon = Icons.badge_outlined;
       accent = const Color(0xFFFF8A00);
       wash = const Color(0xFFFFFBF7);

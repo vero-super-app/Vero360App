@@ -28,6 +28,8 @@ import 'package:vero360_app/features/ride_share/presentation/providers/driver_pr
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
 import 'package:vero360_app/utils/session_local_cache.dart';
+import 'package:vero360_app/app_nav_key.dart';
+import 'package:vero360_app/app_shell_coordinator.dart';
 
 // Merchant dashboards
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
@@ -79,7 +81,8 @@ class _BottomnavbarState extends State<Bottomnavbar>
     super.initState();
     _selectedIndex = widget.initialIndex.clamp(0, 4);
     // Optimistic: avoid flashing “Sign in required” before async refresh.
-    _isLoggedIn = FirebaseAuth.instance.currentUser != null;
+    final bootUser = FirebaseAuth.instance.currentUser;
+    _isLoggedIn = bootUser != null && !bootUser.isAnonymous;
     // Paint the shell immediately — no second splash after role redirect.
     _pages = _defaultPages();
     _pagesReady = true;
@@ -191,7 +194,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
     if (loggedIn) {
       unawaited(BlockedMerchantService.reload());
     }
-    if (!_isLoggedIn && _tabIsProtected(_selectedIndex)) {
+    if (!loggedIn && _selectedIndex != 0) {
       setState(() => _selectedIndex = 0);
     }
     if (uidChanged) {
@@ -282,6 +285,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
     // Keep the current tab. Only rebuild page widgets when role flags change,
     // account (uid) changes, or on first setup — rebuilding every auth/role
     // refresh remounts Market and feels like a jump back to Home.
+    final wasMerchant = _isMerchant;
     final roleChanged = !_pagesReady ||
         _isMerchant != nextMerchant ||
         _isDriver != nextDriver ||
@@ -289,6 +293,9 @@ class _BottomnavbarState extends State<Bottomnavbar>
     _isMerchant = nextMerchant;
     _isDriver = nextDriver;
     _merchantService = nextService;
+    if (wasMerchant && !nextMerchant && _selectedIndex == 4) {
+      _selectedIndex = 0;
+    }
     if (!roleChanged && !forcePagesRebuild) {
       // Still resolve missing vertical in background.
       if (_isMerchant &&
@@ -650,15 +657,26 @@ double veroFloatingNavClearance(BuildContext context, {double extra = 16}) {
 
 /// Opens the main app shell ([Bottomnavbar]) on a given tab (0–4).
 void openVeroMainShell(BuildContext context, {required String email, int tabIndex = 0}) {
-  Navigator.of(context).pushAndRemoveUntil(
-    MaterialPageRoute(
-      builder: (_) => Bottomnavbar(
-        email: email,
-        initialIndex: tabIndex.clamp(0, 4),
+  ScaffoldMessenger.maybeOf(context)?.clearSnackBars();
+  final clampedTab = tabIndex.clamp(0, 4);
+  final guestHome = email.trim().isEmpty && clampedTab == 0;
+
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (guestHome) {
+      AppShellCoordinator.markGuestHome();
+    }
+    final nav = appNavKey.currentState;
+    if (nav == null) return;
+    nav.pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) => Bottomnavbar(
+          email: email,
+          initialIndex: clampedTab,
+        ),
       ),
-    ),
-    (route) => false,
-  );
+      (route) => false,
+    );
+  });
 }
 
 // ─────────────────────────────────────────────

@@ -13,6 +13,8 @@ class UserFacingError {
       'That took too long. Please try again.';
   static const String unauthorized =
       'Please sign in again to continue.';
+  static const String notLoggedIn =
+      'You’re not logged in. Please sign in to continue.';
   static const String forbidden =
       'You don’t have permission to do that.';
   static const String notFound =
@@ -78,6 +80,7 @@ class UserFacingError {
 
     if (_isNetworkish(lower)) return offline;
     if (_isTimeout(lower)) return timeout;
+    if (_isNotLoggedIn(lower)) return notLoggedIn;
     if (_isAuth(lower)) return unauthorized;
     if (_isForbidden(lower)) return forbidden;
     if (_isNotFound(lower)) return notFound;
@@ -134,6 +137,16 @@ class UserFacingError {
       s.contains('token expired') ||
       s.contains('please sign in') ||
       s.contains('requires login');
+
+  /// Firestore permission-denied for guests usually means “not logged in”.
+  static bool _isNotLoggedIn(String s) =>
+      s.contains('not logged in') ||
+      s.contains('you’re not logged in') ||
+      s.contains("you're not logged in") ||
+      s.contains('please log in') ||
+      s.contains('caller does not have permission') ||
+      (s.contains('permission-denied') &&
+          (s.contains('caller') || s.contains('execute')));
 
   static bool _isForbidden(String s) =>
       s.contains('permission-denied') ||

@@ -97,7 +97,8 @@ class AuthHandler {
   ///   while Home/cart still worked).
   /// - Else any non-empty SharedPreferences API token (same keys as [getTokenForApi]).
   static Future<bool> isAuthenticated() async {
-    if (_firebaseAuth.currentUser != null) return true;
+    final user = _firebaseAuth.currentUser;
+    if (user != null && !user.isAnonymous) return true;
 
     final sp = await SharedPreferences.getInstance();
     for (final k in _spTokenKeys) {

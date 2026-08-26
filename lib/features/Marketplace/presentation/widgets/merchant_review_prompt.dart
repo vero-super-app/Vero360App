@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_id_resolver.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_service.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
@@ -24,6 +25,69 @@ class MerchantReviewPrompt {
   static String _prefsKey(String contextKey) =>
       'merchant_review_prompted_v1_${contextKey.trim()}';
 
+  static String _merchantDoneKey(int merchantId) =>
+      'merchant_review_done_v1_$merchantId';
+
+  static Future<({int merchantId, int customerId})?> _resolveReviewIds({
+    String? merchantRef,
+    String? serviceProviderId,
+    String? sellerUserId,
+    int? merchantBackendId,
+  }) async {
+    try {
+      final resolvedMerchantId = await MerchantReviewIdResolver.resolveMerchantId(
+        merchantRef: (merchantRef ?? '').trim().isEmpty
+            ? '${merchantBackendId ?? ''}'
+            : merchantRef!.trim(),
+        serviceProviderId: serviceProviderId,
+        sellerUserId: sellerUserId,
+        preResolvedBackendId: merchantBackendId,
+      );
+      final customerId = await MerchantReviewIdResolver.resolveCustomerId();
+      return (merchantId: resolvedMerchantId, customerId: customerId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<bool> _customerAlreadyReviewedMerchant({
+    required int merchantId,
+    required int customerId,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_merchantDoneKey(merchantId)) == true) return true;
+
+    bool mine(List<MerchantReview> reviews) =>
+        reviews.any((r) => r.isMine(customerId));
+
+    final cached = MerchantReviewService.peekCache(merchantId);
+    if (cached != null && mine(cached.reviews)) {
+      await prefs.setBool(_merchantDoneKey(merchantId), true);
+      return true;
+    }
+
+    try {
+      final bundle = await _service.loadFast(merchantId);
+      if (mine(bundle.reviews)) {
+        await prefs.setBool(_merchantDoneKey(merchantId), true);
+        return true;
+      }
+    } catch (_) {}
+
+    return false;
+  }
+
+  static Future<void> _markReviewHandled(
+    SharedPreferences prefs, {
+    required String contextKey,
+    int? merchantId,
+  }) async {
+    await prefs.setBool(_prefsKey(contextKey), true);
+    if (merchantId != null && merchantId > 0) {
+      await prefs.setBool(_merchantDoneKey(merchantId), true);
+    }
+  }
+
   /// Returns true if a review was submitted.
   static Future<bool> maybeShow(
     BuildContext context, {
@@ -41,6 +105,25 @@ class MerchantReviewPrompt {
 
     final prefs = await SharedPreferences.getInstance();
     if (prefs.getBool(_prefsKey(key)) == true) return false;
+
+    final ids = await _resolveReviewIds(
+      merchantRef: merchantRef,
+      serviceProviderId: serviceProviderId,
+      sellerUserId: sellerUserId,
+      merchantBackendId: merchantBackendId,
+    );
+    if (ids != null &&
+        await _customerAlreadyReviewedMerchant(
+          merchantId: ids.merchantId,
+          customerId: ids.customerId,
+        )) {
+      await _markReviewHandled(
+        prefs,
+        contextKey: key,
+        merchantId: ids.merchantId,
+      );
+      return false;
+    }
 
     if (!context.mounted) return false;
 
@@ -60,25 +143,34 @@ class MerchantReviewPrompt {
     if (draft == null || !context.mounted) return false;
     if (draft.skipped) return false;
 
+    var resolvedMerchantId = ids?.merchantId;
+    var customerId = ids?.customerId;
+
     try {
-      final resolvedMerchantId = await MerchantReviewIdResolver.resolveMerchantId(
+      resolvedMerchantId ??= (await MerchantReviewIdResolver.resolveMerchantId(
         merchantRef: (merchantRef ?? '').trim().isEmpty
             ? '${merchantBackendId ?? ''}'
             : merchantRef!.trim(),
         serviceProviderId: serviceProviderId,
         sellerUserId: sellerUserId,
         preResolvedBackendId: merchantBackendId,
-      );
+      ));
       await MerchantReviewIdResolver.ensureMerchantEligibleForReview(
         resolvedMerchantId,
       );
-      final customerId = await MerchantReviewIdResolver.resolveCustomerId();
+      customerId ??= await MerchantReviewIdResolver.resolveCustomerId();
 
       await _service.createReview(
         merchantId: resolvedMerchantId,
         customerId: customerId,
         rating: draft.rating,
         comment: draft.comment,
+      );
+
+      await _markReviewHandled(
+        prefs,
+        contextKey: key,
+        merchantId: resolvedMerchantId,
       );
 
       if (!context.mounted) return true;
@@ -90,6 +182,17 @@ class MerchantReviewPrompt {
       if (!context.mounted) return false;
       var msg = e is ApiException ? e.message : 'Could not save rating.';
       final lower = msg.toLowerCase();
+      if (lower.contains('already reviewed')) {
+        await _markReviewHandled(
+          prefs,
+          contextKey: key,
+          merchantId: resolvedMerchantId,
+        );
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('You already rated this seller.')),
+        );
+        return false;
+      }
       if (lower.contains('only be left for merchants')) {
         msg =
             'This seller is not marked as a merchant on the server yet. '
@@ -105,7 +208,7 @@ class MerchantReviewPrompt {
           backgroundColor: Colors.red.shade700,
         ),
       );
-      // Allow retry next time if submit failed.
+      // Allow retry next time if submit failed for a recoverable reason.
       await prefs.remove(_prefsKey(key));
       return false;
     }

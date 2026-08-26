@@ -619,6 +619,36 @@ class _CheckoutPageState extends State<CheckoutPage> {
   // ── Auth + Default address bootstrap (single source: Firebase then SP) ───
   Future<String?> _readAuthToken() async => AuthHandler.getTokenForApi();
 
+  bool get _needsDefaultAddress =>
+      _deliveryType != DeliveryType.pickup &&
+      _loggedIn &&
+      !_loadingAddr &&
+      _defaultAddr == null;
+
+  Future<void> _openAddressSetup() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const AddressPage()),
+    );
+    await _initAuthAndAddress(forceRefresh: true);
+  }
+
+  Future<void> _onPayBarPressed({required bool canPay}) async {
+    if (_submitting) return;
+    if (_needsDefaultAddress) {
+      ToastHelper.showCustomToast(
+        context,
+        'Set a default delivery address before you pay',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      await _openAddressSetup();
+      return;
+    }
+    if (!canPay) return;
+    await _onPayPressed();
+  }
+
   Future<bool> _ensureDefaultAddressIfNeeded() async {
     // For shop pickup we do not require a customer delivery address.
     if (_deliveryType == DeliveryType.pickup) return true;
@@ -1140,14 +1170,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     address: _defaultAddr,
                     pickupSelected: _deliveryType == DeliveryType.pickup,
                     pickupLocation: _pickupLocation,
-                    onManage: () async {
-                      await Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => const AddressPage()),
-                      );
-                      await _initAuthAndAddress(forceRefresh: true);
-                    },
+                    onManage: _openAddressSetup,
                   ),
                   const SizedBox(height: 12),
                   _section(
@@ -1174,18 +1197,21 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 ],
               ),
             ),
-            _stickyPayBar(canPay: canPay),
+            _stickyPayBar(canPay: canPay, needsDefaultAddress: _needsDefaultAddress),
           ],
         ),
       ),
     );
   }
 
-  Widget _stickyPayBar({required bool canPay}) {
+  Widget _stickyPayBar({
+    required bool canPay,
+    required bool needsDefaultAddress,
+  }) {
     return Container(
       padding: EdgeInsets.fromLTRB(
         16,
-        12,
+        needsDefaultAddress ? 10 : 12,
         16,
         12 + MediaQuery.paddingOf(context).bottom,
       ),
@@ -1202,69 +1228,122 @@ class _CheckoutPageState extends State<CheckoutPage> {
           ),
         ],
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Total',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.grey.shade600,
+          if (needsDefaultAddress) ...[
+            Material(
+              color: const Color(0xFFFFF3E8),
+              borderRadius: BorderRadius.circular(12),
+              child: InkWell(
+                onTap: _openAddressSetup,
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
                   ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  _formatMoney(_total),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
-                    color: _brandNavy,
-                    letterSpacing: -0.3,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            flex: 2,
-            child: FilledButton(
-              onPressed: canPay ? _onPayPressed : null,
-              style: FilledButton.styleFrom(
-                backgroundColor: _brandOrange,
-                disabledBackgroundColor: Colors.grey.shade300,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 15),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                elevation: 0,
-              ),
-              child: _submitting
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor:
-                            AlwaysStoppedAnimation<Color>(Colors.white),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.location_on_outlined,
+                        size: 20,
+                        color: _brandOrange.withValues(alpha: 0.95),
                       ),
-                    )
-                  : const Text(
-                      'Pay Now',
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Set a default delivery address above, then continue to Pay Now',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                            height: 1.35,
+                            color: _brandNavy.withValues(alpha: 0.9),
+                          ),
+                        ),
+                      ),
+                      Icon(
+                        Icons.arrow_upward_rounded,
+                        size: 18,
+                        color: _brandOrange.withValues(alpha: 0.9),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Total',
                       style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w900,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.grey.shade600,
                       ),
                     ),
-            ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _formatMoney(_total),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        color: _brandNavy,
+                        letterSpacing: -0.3,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: FilledButton(
+                  onPressed: _submitting
+                      ? null
+                      : () => _onPayBarPressed(canPay: canPay),
+                  style: FilledButton.styleFrom(
+                    backgroundColor:
+                        (canPay || needsDefaultAddress)
+                            ? _brandOrange
+                            : Colors.grey.shade300,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    elevation: 0,
+                  ),
+                  child: _submitting
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        )
+                      : Text(
+                          needsDefaultAddress ? 'Set address' : 'Pay Now',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -1328,13 +1407,22 @@ class _DeliveryAddressCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    const brandOrange = Color(0xFFFF8A00);
+    final needsAttention =
+        !pickupSelected && loggedIn && !loading && address == null;
+
+    Widget card = Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: needsAttention ? const Color(0xFFFFF8F0) : Colors.white,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+        border: Border.all(
+          color: needsAttention
+              ? brandOrange.withValues(alpha: 0.55)
+              : Colors.black.withValues(alpha: 0.06),
+          width: needsAttention ? 1.5 : 1,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1356,18 +1444,50 @@ class _DeliveryAddressCard extends StatelessWidget {
                 TextButton.icon(
                   onPressed: onManage,
                   style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFFFF8A00),
+                    foregroundColor: brandOrange,
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     visualDensity: VisualDensity.compact,
                   ),
                   icon: const Icon(Icons.edit_location_alt_rounded, size: 18),
                   label: Text(
-                    address == null ? 'Set' : 'Change',
+                    address == null ? 'Set default' : 'Change',
                     style: const TextStyle(fontWeight: FontWeight.w800),
                   ),
                 ),
             ],
           ),
+          if (needsAttention) ...[
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: brandOrange.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.touch_app_rounded,
+                    size: 18,
+                    color: brandOrange.withValues(alpha: 0.95),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Tap Set default to add where we should deliver your order',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        height: 1.35,
+                        color: const Color(0xFF16284C).withValues(alpha: 0.88),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 10),
           if (pickupSelected)
             _addrBox(
@@ -1387,7 +1507,7 @@ class _DeliveryAddressCard extends StatelessWidget {
                 'Please log in to select address')
           else if (address == null)
             _addrBox(Icons.location_off_outlined, 'No default address',
-                'Set your default delivery address')
+                'Add an address and mark it as default to continue')
           else
             _addrBox(
               Icons.place_rounded,
@@ -1400,6 +1520,19 @@ class _DeliveryAddressCard extends StatelessWidget {
         ],
       ),
     );
+
+    if (needsAttention) {
+      card = Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onManage,
+          borderRadius: BorderRadius.circular(18),
+          child: card,
+        ),
+      );
+    }
+
+    return card;
   }
 
   static Widget _addrBox(IconData icon, String title, String body) {

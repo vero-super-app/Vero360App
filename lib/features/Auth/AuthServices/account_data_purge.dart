@@ -49,6 +49,11 @@ class AccountDataPurge {
       await Future.wait<void>([
         _deleteBackendUser(token),
         _deleteBackendChats(token),
+        _deleteBackendVerticalListings(
+          token: token,
+          uid: uid,
+          email: email,
+        ),
         _deleteFirestoreBundle(uid: uid, nestId: nestId, email: email),
       ]).timeout(budget);
     } catch (e) {
@@ -61,6 +66,10 @@ class AccountDataPurge {
     unawaited(_deleteStoragePrefix('merchant_stories/$uid'));
     unawaited(_deleteStoragePrefix('profiles/$uid'));
     unawaited(_deleteStoragePrefix('marketplace/$uid'));
+    unawaited(_deleteStoragePrefix('food/$uid'));
+    unawaited(_deleteStoragePrefix('restaurants/$uid'));
+    unawaited(_deleteStoragePrefix('accommodation/$uid'));
+    unawaited(_deleteStoragePrefix('homepage_adverts/$uid'));
 
     if (kDebugMode) debugPrint('[AccountDataPurge] finished for uid=$uid');
   }
@@ -70,6 +79,7 @@ class AccountDataPurge {
     required int? nestId,
     required String email,
   }) async {
+    final accommodationListingIds = await _collectAccommodationListingIds(uid);
     final userRef = _db.collection('users').doc(uid);
     final jobs = <Future<void>>[
       _deleteQueryDocs(
@@ -85,14 +95,6 @@ class AccountDataPurge {
         _db.collection('merchant_stories').where('merchantId', isEqualTo: uid),
       ),
       _deleteQueryDocs(
-        _db.collection('accommodation_rooms').where('merchantId', isEqualTo: uid),
-      ),
-      _deleteQueryDocs(
-        _db
-            .collection('accommodation_reviews')
-            .where('merchantId', isEqualTo: uid),
-      ),
-      _deleteQueryDocs(
         _db.collection('food_menu_items').where('merchantId', isEqualTo: uid),
       ),
       _deleteQueryDocs(
@@ -106,6 +108,8 @@ class AccountDataPurge {
       _deleteQueryDocs(
         _db.collection('wallet_transactions').where('userId', isEqualTo: uid),
       ),
+      _deleteFoodRestaurantFirestore(uid),
+      _deleteAccommodationFirestore(uid, accommodationListingIds),
       _deleteSubcollection(_db.collection('backup_carts').doc(uid), 'items'),
       _deleteDoc(_db.collection('backup_carts').doc(uid)),
       _deleteSubcollection(userRef, 'followed_merchants'),
@@ -135,6 +139,267 @@ class AccountDataPurge {
       ]);
     }
     await Future.wait(jobs);
+  }
+
+  /// Food & restaurant merchant/customer rows in Firestore.
+  static Future<void> _deleteFoodRestaurantFirestore(String uid) async {
+    await Future.wait([
+      _deleteQueryDocs(
+        _db.collection('restaurants').where('ownerUid', isEqualTo: uid),
+      ),
+      _deleteQueryDocs(
+        _db.collection('food_orders').where('merchantId', isEqualTo: uid),
+      ),
+      _deleteQueryDocs(
+        _db.collection('food_orders').where('customerUid', isEqualTo: uid),
+      ),
+      _deleteQueryDocs(
+        _db.collection('food_reviews').where('merchantId', isEqualTo: uid),
+      ),
+      _deleteQueryDocs(
+        _db.collection('food_reviews').where('customerUid', isEqualTo: uid),
+      ),
+      _deleteQueryDocs(
+        _db.collection('order_escrow').where('merchantUid', isEqualTo: uid),
+      ),
+      _deleteQueryDocs(
+        _db.collection('order_party_alerts').where('toUid', isEqualTo: uid),
+      ),
+      _deleteQueryDocs(
+        _db.collection('homepage_adverts').where('userId', isEqualTo: uid),
+      ),
+      _deleteQueryDocs(
+        _db.collection('homepage_adverts').where('merchantId', isEqualTo: uid),
+      ),
+      _deleteSubcollection(
+        _db.collection('merchant_followers').doc(uid),
+        'followers',
+      ),
+      _deleteDoc(_db.collection('merchant_followers').doc(uid)),
+    ]);
+  }
+
+  static Future<Set<int>> _collectAccommodationListingIds(String uid) async {
+    final ids = <int>{};
+    try {
+      final snap = await _db
+          .collection('accommodation_rooms')
+          .where('merchantId', isEqualTo: uid)
+          .limit(200)
+          .get();
+      for (final d in snap.docs) {
+        _takeListingId(ids, d.data()['apiAccommodationId']);
+        final parts = d.id.split('_');
+        if (parts.length >= 2) {
+          _takeListingId(ids, parts.last);
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[AccountDataPurge] accommodation listing ids: $e');
+      }
+    }
+    return ids;
+  }
+
+  static void _takeListingId(Set<int> ids, dynamic raw) {
+    if (raw is num) {
+      final v = raw.toInt();
+      if (v > 0) ids.add(v);
+      return;
+    }
+    final v = int.tryParse(raw?.toString() ?? '');
+    if (v != null && v > 0) ids.add(v);
+  }
+
+  /// Accommodation host listings, bookings, occupancy, and live watchers.
+  static Future<void> _deleteAccommodationFirestore(
+    String uid,
+    Set<int> listingIds,
+  ) async {
+    final jobs = <Future<void>>[
+      _deleteQueryDocs(
+        _db.collection('accommodation_rooms').where('merchantId', isEqualTo: uid),
+      ),
+      _deleteQueryDocs(
+        _db
+            .collection('accommodation_reviews')
+            .where('merchantId', isEqualTo: uid),
+      ),
+      for (final field in [
+        'merchantId',
+        'hostUid',
+        'userId',
+        'customerUid',
+        'ownerUid',
+      ])
+        _deleteQueryDocs(
+          _db.collection('bookings').where(field, isEqualTo: uid),
+        ),
+      for (final id in listingIds) ...[
+        _deleteOccupancyTree(id),
+        _deleteWatchersTree(id),
+      ],
+    ];
+    await Future.wait(jobs);
+  }
+
+  static Future<void> _deleteOccupancyTree(int accommodationId) async {
+    if (accommodationId <= 0) return;
+    final root =
+        _db.collection('accommodation_occupancy').doc('$accommodationId');
+    await _deleteSubcollection(root, 'nights');
+    await _deleteSubcollection(root, 'stays');
+    await _deleteDoc(root);
+  }
+
+  static Future<void> _deleteWatchersTree(int listingId) async {
+    if (listingId <= 0) return;
+    final root = _db.collection('accommodation_watchers').doc('$listingId');
+    await _deleteSubcollection(root, 'viewers');
+    await _deleteDoc(root);
+  }
+
+  /// Nest API listings + bookings for food/accommodation merchants.
+  static Future<void> _deleteBackendVerticalListings({
+    required String? token,
+    required String uid,
+    required String email,
+  }) async {
+    if (token == null || token.isEmpty) return;
+    final headers = {
+      'Authorization': 'Bearer $token',
+      'Accept': 'application/json',
+    };
+    await Future.wait([
+      _deleteBackendAccommodations(headers, uid: uid, email: email),
+      _deleteBackendBookings(headers),
+    ]);
+  }
+
+  static Future<void> _deleteBackendAccommodations(
+    Map<String, String> headers, {
+    required String uid,
+    required String email,
+  }) async {
+    try {
+      final res = await http
+          .get(
+            ApiConfig.endpoint('/accommodations/all'),
+            headers: headers,
+          )
+          .timeout(const Duration(seconds: 5));
+      if (res.statusCode != 200) return;
+
+      for (final item in _extractList(jsonDecode(res.body))) {
+        if (item is! Map) continue;
+        final map = Map<String, dynamic>.from(item);
+        if (!_ownsAccommodation(map, uid: uid, email: email)) continue;
+
+        final rawId = map['id'];
+        final numeric = rawId is num
+            ? rawId.toInt()
+            : int.tryParse(rawId?.toString() ?? '');
+        if (numeric == null || numeric <= 0) continue;
+
+        try {
+          await http
+              .delete(
+                ApiConfig.endpoint('/accommodations/$numeric'),
+                headers: headers,
+              )
+              .timeout(const Duration(seconds: 4));
+        } catch (_) {}
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[AccountDataPurge] backend accommodations: $e');
+      }
+    }
+  }
+
+  static bool _ownsAccommodation(
+    Map<String, dynamic> map, {
+    required String uid,
+    required String email,
+  }) {
+    final emailLower = email.trim().toLowerCase();
+    for (final k in [
+      'hostMerchantUid',
+      'hostUid',
+      'merchantFirebaseUid',
+      'merchantId',
+    ]) {
+      if (map[k]?.toString().trim() == uid) return true;
+    }
+
+    final owner = map['owner'];
+    if (owner is Map) {
+      final ownerMap = Map<String, dynamic>.from(owner);
+      for (final k in ['firebaseUid', 'uid', 'merchantUid', 'userId']) {
+        if (ownerMap[k]?.toString().trim() == uid) return true;
+      }
+      final ownerEmail =
+          ownerMap['email']?.toString().trim().toLowerCase() ?? '';
+      if (emailLower.isNotEmpty && ownerEmail == emailLower) return true;
+    }
+
+    final ownerEmail = map['ownerEmail']?.toString().trim().toLowerCase() ?? '';
+    return emailLower.isNotEmpty && ownerEmail == emailLower;
+  }
+
+  static Future<void> _deleteBackendBookings(
+    Map<String, String> headers,
+  ) async {
+    for (final path in ['/bookings/me', '/bookings/merchant/me']) {
+      try {
+        final res = await http
+            .get(
+              ApiConfig.endpoint(path),
+              headers: headers,
+            )
+            .timeout(const Duration(seconds: 4));
+        if (res.statusCode != 200) continue;
+
+        for (final item in _extractList(jsonDecode(res.body))) {
+          if (item is! Map) continue;
+          final id =
+              (item['id'] ?? item['bookingId'] ?? item['booking_id'] ?? '')
+                  .toString()
+                  .trim();
+          if (id.isEmpty) continue;
+          try {
+            await http
+                .delete(
+                  ApiConfig.endpoint('/bookings/$id'),
+                  headers: headers,
+                )
+                .timeout(const Duration(seconds: 3));
+          } catch (_) {}
+        }
+      } catch (e) {
+        if (kDebugMode) debugPrint('[AccountDataPurge] backend bookings: $e');
+      }
+    }
+  }
+
+  static List<dynamic> _extractList(dynamic decoded) {
+    if (decoded is List) return decoded;
+    if (decoded is Map) {
+      final data = decoded['data'];
+      if (data is List) return data;
+      if (data is Map) {
+        for (final key in ['items', 'results', 'bookings', 'accommodations']) {
+          final v = data[key];
+          if (v is List) return v;
+        }
+      }
+      for (final key in ['items', 'results', 'bookings', 'accommodations']) {
+        final v = decoded[key];
+        if (v is List) return v;
+      }
+    }
+    return const [];
   }
 
   /// Remove chat threads on the API so the same email/phone cannot reopen them.

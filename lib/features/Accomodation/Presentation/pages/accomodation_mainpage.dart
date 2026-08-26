@@ -187,9 +187,6 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
       _authReady = true;
       _isAccommodationMerchantUser = isAccommodationMerchant;
     });
-    if (isAccommodationMerchant && _tabController.index != 0) {
-      _tabController.animateTo(0);
-    }
     if (ok) {
       await _loadGuestPaidStays();
     } else if (mounted) {
@@ -197,7 +194,7 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
     }
   }
 
-  bool get _showMyBookingsTab => !_isAccommodationMerchantUser;
+  bool get _showMyBookingsTab => true;
 
   Future<bool> _detectCurrentUserIsAccommodationMerchant() async {
     final uid = _auth.currentUser?.uid.trim() ?? '';
@@ -305,7 +302,7 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
     try {
       final map = await _occupancy.fetchTodayCounts(
         ids,
-        legacyFallback: false,
+        legacyFallback: true,
       );
       if (!mounted) return;
       setState(() {
@@ -941,6 +938,7 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
           authReady: _authReady,
           isLoggedIn: _isLoggedIn,
           bookedToday: _isBookedTodayForListing(item),
+          roomsBookedTonight: _sharedTonightCounts[item.id] ?? 0,
           watchingCount: _watcherCounts[item.id] ?? 0,
           isOpening: _openingAccommodationId == item.id,
           hostelGender: _hostelGenderByApiId[item.id],
@@ -1004,9 +1002,13 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
                   fontWeight: FontWeight.w800,
                   fontSize: 14,
                 ),
-                tabs: const [
-                  Tab(text: 'Discover'),
-                  Tab(text: 'My bookings'),
+                tabs: [
+                  const Tab(text: 'Discover'),
+                  Tab(
+                    text: _isAccommodationMerchantUser
+                        ? 'Bookings'
+                        : 'My bookings',
+                  ),
                 ],
               )
             : null,
@@ -1020,6 +1022,7 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
                   AccommodationMyBookingsTab(
                     key: _myBookingsTabKey,
                     isDark: isDark,
+                    isAccommodationHost: _isAccommodationMerchantUser,
                   ),
                 ],
               )
@@ -1436,6 +1439,8 @@ class _AccommodationCard extends StatelessWidget {
   /// Paid stay covers **today** for this listing — badge on the photo only.
   /// Guests can still tap Book now and pick another date.
   final bool bookedToday;
+  /// Rooms already booked tonight (app + offline blocks).
+  final int roomsBookedTonight;
   final int watchingCount;
   final bool isOpening;
   final String? hostelGender;
@@ -1450,6 +1455,7 @@ class _AccommodationCard extends StatelessWidget {
     required this.authReady,
     required this.isLoggedIn,
     this.bookedToday = false,
+    this.roomsBookedTonight = 0,
     this.watchingCount = 0,
     this.isOpening = false,
     this.hostelGender,
@@ -1574,6 +1580,8 @@ class _AccommodationCard extends StatelessWidget {
     })();
     final hostelClosedByHost = isHostel && hostelAvailable == false;
     final isHostelBooked = hostelClosedByHost;
+    final usedTonight = roomsBookedTonight.clamp(0, roomCount);
+    final freeTonight = (roomCount - usedTonight).clamp(0, roomCount);
 
     final owner = accommodation.owner;
     final rating = (owner?.averageRating ?? 0).toDouble();
@@ -1740,11 +1748,16 @@ class _AccommodationCard extends StatelessWidget {
                           vertical: 6,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.56),
+                          color: usedTonight > 0
+                              ? Colors.orange.shade800.withValues(alpha: 0.92)
+                              : Colors.black.withValues(alpha: 0.56),
                           borderRadius: BorderRadius.circular(30),
                         ),
                         child: Text(
-                          '$roomCount room${roomCount == 1 ? '' : 's'} available',
+                          AccommodationOccupancyService.roomsFreeLabel(
+                            free: freeTonight,
+                            total: roomCount,
+                          ),
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 11,

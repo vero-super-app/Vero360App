@@ -1634,16 +1634,16 @@ class _SettingsPageState extends State<SettingsPage> {
     if (ok != true) return;
 
     setState(() => _refreshing = true);
+    final rootNav = Navigator.of(context, rootNavigator: true);
     try {
       // AuthService clears tokens + prefs; don't duplicate slow sequential removes here.
       await AuthService().logout(context: context);
     } finally {
-      if (!mounted) return;
-      setState(() => _refreshing = false);
+      if (mounted) setState(() => _refreshing = false);
 
-      // Clear the whole stack so IndexedStack AuthGuards from the previous
-      // session cannot keep prompting over Home after logout.
-      openVeroMainShell(context, email: '', tabIndex: 0);
+      // Always reset the stack on the root navigator — even if Settings unmounted
+      // mid-logout (otherwise Profile stays visible as “Guest User”).
+      openVeroMainShell(rootNav.context, email: '', tabIndex: 0);
     }
   }
 
@@ -2075,12 +2075,16 @@ class _SettingsPageState extends State<SettingsPage> {
         'This permanently deletes your account and all related data:\n'
         '• Profile & login\n'
         '• Marketplace items & shop\n'
+        '• Food menus, restaurants & orders\n'
+        '• Accommodation listings, bookings & calendar blocks\n'
         '• Cart, promos, stories & wallets\n'
         '• Merchant / customer records\n\n'
         'This cannot be undone.',
         'Izi zidzachotsa akaunti yanu ndi zinthu zonse:\n'
         '• Profile ndi login\n'
         '• Zogulitsa pa Marketplace ndi shop\n'
+        '• Menyu ya chakudya, ma restaurant ndi ma order\n'
+        '• Malo ogona, ma booking ndi masiku obisika\n'
         '• Cart, promos, stories ndi wallets\n'
         '• Zolemba za merchant / customer\n\n'
         'Sizingabwererenso.',
@@ -2110,7 +2114,7 @@ class _SettingsPageState extends State<SettingsPage> {
       // Remote wipe while still signed in (capped — do not hang Settings).
       // Purge clears local chats/rides/hive first, then deletes API + Firestore.
       await AccountDataPurge.purgeCurrentUser(
-        budget: const Duration(seconds: 6),
+        budget: const Duration(seconds: 10),
       );
 
       final u = _auth.currentUser;
@@ -2130,9 +2134,12 @@ class _SettingsPageState extends State<SettingsPage> {
 
       ToastHelper.showCustomToast(context, _t('Account deleted', 'Akaunti yachotsedwa'),
           isSuccess: true, errorMessage: '');
-      if (!mounted) return;
 
-      openVeroMainShell(context, email: '', tabIndex: 0);
+      openVeroMainShell(
+        Navigator.of(context, rootNavigator: true).context,
+        email: '',
+        tabIndex: 0,
+      );
     } catch (_) {
       ToastHelper.showCustomToast(context, _t('Delete failed', 'Kuchotsa kwakanika'),
           isSuccess: false, errorMessage: '');

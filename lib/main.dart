@@ -39,6 +39,7 @@ import 'package:vero360_app/GernalServices/merchant_identity.dart';
 import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/app_nav_key.dart';
+import 'package:vero360_app/app_shell_coordinator.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/active_ride_controller.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_request_overlay.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
@@ -636,6 +637,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    AppShellCoordinator.register(
+      onGuestHome: () {
+        if (mounted) _currentShell = 'customer';
+      },
+    );
     // Bootstrap already mounted the right shell — skip remount flash.
     if (widget.onboardingDoneHint && widget.initialShell != null) {
       _currentShell = widget.initialRole == 'merchant'
@@ -1285,10 +1291,8 @@ class AuthFlow {
       await FirebaseAuth.instance.signOut();
     } catch (_) {}
 
-    navKey.currentState?.pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const Bottomnavbar(email: '')),
-      (route) => false,
-    );
+    AppShellCoordinator.markGuestHome();
+    openVeroMainShell(ctx, email: '', tabIndex: 0);
   }
 
   static Future<bool> isLoggedIn() async {

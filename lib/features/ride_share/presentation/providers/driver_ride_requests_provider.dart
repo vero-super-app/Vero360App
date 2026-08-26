@@ -4,6 +4,7 @@ import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:vero360_app/GernalServices/driver_request_service.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_diagnostics.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'dart:async';
@@ -128,6 +129,7 @@ class DriverRideRequestsWebSocketService {
       StreamController<IncomingRideRequest>.broadcast();
   final _connectionStatusController = StreamController<bool>.broadcast();
   bool _isConnected = false;
+  bool _socketCreated = false;
 
   Stream<IncomingRideRequest> get rideRequestsStream =>
       _rideRequestsController.stream;
@@ -136,8 +138,9 @@ class DriverRideRequestsWebSocketService {
 
   Future<void> connect() async {
     try {
-      // Ride-share sockets: Firebase ID token only (no Nest JWT fallback).
-      final token = await AuthHandler.getFirebaseTokenForApi();
+      // Force-refresh: socket handshake caches the token; stale → id-token-expired.
+      final token =
+          await AuthHandler.getFirebaseTokenForApi(forceRefresh: true);
 
       if (token == null || token.isEmpty) {
         if (kDebugMode) {
@@ -149,18 +152,27 @@ class DriverRideRequestsWebSocketService {
       }
 
       if (kDebugMode) {
-        debugPrint('[DriverRideRequests] Connecting WebSocket');
+        debugPrint('[DriverRideRequests] Connecting WebSocket with fresh token');
       }
+
+      try {
+        if (_socketCreated) socket.dispose();
+      } catch (_) {}
 
       socket = IO.io(
         ApiConfig.prod,
         IO.OptionBuilder()
             .setTransports(['websocket'])
             .disableAutoConnect()
-            .setExtraHeaders({'Authorization': 'Bearer $token'})
-            .setQuery({'token': token})
+            .enableForceNew()
+            .setExtraHeaders({
+              'Authorization': 'Bearer $token',
+              ...await AuthDiagnostics.buildHeaders(token: token),
+            })
+            .setQuery(await AuthDiagnostics.buildSocketQuery(token: token))
             .build(),
       );
+      _socketCreated = true;
 
       socket.onConnect((_) {
         if (kDebugMode) {
@@ -251,7 +263,7 @@ class DriverRideRequestsWebSocketService {
   }
 
   void disconnect() {
-    if (socket.connected) {
+    if (_socketCreated && socket.connected) {
       socket.disconnect();
     }
     _isConnected = false;

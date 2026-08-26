@@ -9,6 +9,7 @@ import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/GeneralModels/ride_history_model.dart';
 import 'package:vero360_app/features/ride_share/services/active_ride_storage.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_diagnostics.dart';
 
 /// HTTP-based Ride Share Service. Auth is Firebase ID token only (no Nest JWT).
 class RideShareHttpService {
@@ -71,9 +72,11 @@ class RideShareHttpService {
     bool json = true,
   }) async {
     final token = await _getAuthToken(forceRefresh: forceRefresh);
+    final diag = await AuthDiagnostics.buildHeaders(token: token);
     return {
       if (json) 'Content-Type': 'application/json',
       'Accept': 'application/json',
+      ...diag,
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
     };
   }
@@ -88,6 +91,18 @@ class RideShareHttpService {
       headers = await _authHeaders(forceRefresh: true);
       if (headers['Authorization'] != null) {
         res = await send(headers);
+      }
+      if (res.statusCode == 401 || res.statusCode == 403) {
+        unawaited(
+          AuthDiagnostics.reportFailure(
+            reason: 'ride_share_http_${res.statusCode}',
+            channel: 'http',
+            lastError: res.body.length > 200
+                ? res.body.substring(0, 200)
+                : res.body,
+            idToken: headers['Authorization']?.replaceFirst('Bearer ', ''),
+          ),
+        );
       }
     }
     return res;
@@ -117,6 +132,13 @@ class RideShareHttpService {
     final token = await _getAuthToken(forceRefresh: true);
     if (token == null || token.isEmpty) {
       print('[RideShareHttpService] No Firebase token — skipping socket connect');
+      unawaited(
+        AuthDiagnostics.reportFailure(
+          reason: 'socket_missing_token',
+          channel: 'websocket',
+          lastError: 'No Firebase ID token before socket connect',
+        ),
+      );
       return;
     }
 
@@ -126,14 +148,20 @@ class RideShareHttpService {
       } catch (_) {}
     }
 
+    final query = await AuthDiagnostics.buildSocketQuery(token: token);
+    final diagHeaders = await AuthDiagnostics.buildHeaders(token: token);
+
     socket = IO.io(
       ApiConfig.prod,
       IO.OptionBuilder()
           .setTransports(['websocket'])
           .disableAutoConnect()
           .enableForceNew()
-          .setExtraHeaders({'Authorization': 'Bearer $token'})
-          .setQuery({'token': token})
+          .setExtraHeaders({
+            'Authorization': 'Bearer $token',
+            ...diagHeaders,
+          })
+          .setQuery(query)
           .build(),
     );
     _socketCreated = true;
@@ -177,6 +205,13 @@ class RideShareHttpService {
     _socketAuthRetryInFlight = true;
     try {
       print('[RideShareHttpService] Auth failed on socket — refreshing token');
+      unawaited(
+        AuthDiagnostics.reportFailure(
+          reason: 'socket_auth_retry',
+          channel: 'websocket',
+          lastError: error?.toString(),
+        ),
+      );
       _initializationFuture = null;
       await Future<void>.delayed(const Duration(milliseconds: 400));
       await _initializeSocketNow();

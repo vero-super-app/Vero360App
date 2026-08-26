@@ -4,6 +4,7 @@ import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:vero360_app/GernalServices/driver_request_service.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_diagnostics.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'dart:async';
@@ -164,8 +165,11 @@ class DriverRideRequestsWebSocketService {
             .setTransports(['websocket'])
             .disableAutoConnect()
             .enableForceNew()
-            .setExtraHeaders({'Authorization': 'Bearer $token'})
-            .setQuery({'token': token})
+            .setExtraHeaders({
+              'Authorization': 'Bearer $token',
+              ...await AuthDiagnostics.buildHeaders(token: token),
+            })
+            .setQuery(await AuthDiagnostics.buildSocketQuery(token: token))
             .build(),
       );
       _socketCreated = true;

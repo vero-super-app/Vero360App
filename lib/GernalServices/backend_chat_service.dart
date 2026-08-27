@@ -1168,9 +1168,23 @@ class BackendChatService {
       return;
     }
 
-    _authToken = await user.getIdToken(forceRefresh);
+    try {
+      _authToken = await user.getIdToken(forceRefresh);
+    } catch (e) {
+      // Keep a previously cached token if Google token refresh is unreachable.
+      if (_authToken == null || _authToken!.isEmpty) {
+        throw Exception(
+          'Could not refresh your session token. Check your connection and try again.',
+        );
+      }
+      print(
+        '[BackendChatService] getIdToken failed; using cached token: $e',
+      );
+    }
     if (_authToken == null || _authToken!.isEmpty) {
-      throw Exception('Failed to get Login ID token');
+      throw Exception(
+        'Could not refresh your session token. Check your connection and try again.',
+      );
     }
 
     await sp.setString(_messagingFirebaseUidKey, user.uid);
@@ -1179,10 +1193,42 @@ class BackendChatService {
 
     // Always resolve numeric id from the server for this Firebase user.
     // Trusting a stale SharedPreferences userId is what leaked prior-account chats.
-    final userId = await _fetchNumericUserIdFromMe();
+    late final int? userId;
+    try {
+      userId = await _fetchNumericUserIdFromMe();
+    } on _ChatAuthUnauthorized {
+      // Firebase still has a user — 401 here is usually an unrefreshable token
+      // (offline / DNS), not a true signed-out state.
+      final cachedId = sp.getInt('userId') ?? sp.getInt('user_id');
+      final sameUid = sp.getString(_messagingFirebaseUidKey) == user.uid;
+      if (cachedId != null && cachedId > 0 && sameUid) {
+        userId = cachedId;
+        print(
+          '[BackendChatService]  unauthorized; using cached userId=$cachedId',
+        );
+      } else {
+        throw Exception(
+          'Could not verify your session with the server. Check your connection and try again.',
+        );
+      }
+    } catch (e) {
+      if (e.toString().toLowerCase().contains('could not verify')) rethrow;
+      final cachedId = sp.getInt('userId') ?? sp.getInt('user_id');
+      final sameUid = sp.getString(_messagingFirebaseUidKey) == user.uid;
+      if (cachedId != null && cachedId > 0 && sameUid) {
+        userId = cachedId;
+        print(
+          '[BackendChatService]  failed; using cached userId=$cachedId ($e)',
+        );
+      } else {
+        throw Exception(
+          'Could not reach your account on the server. Check your connection and try again.',
+        );
+      }
+    }
     if (userId == null) {
       throw Exception(
-        'Could not resolve your account on the server. Please log in again.',
+        'Could not load your messaging account. Check your connection and try again.',
       );
     }
 
@@ -1230,7 +1276,14 @@ class BackendChatService {
         ApiConfig.endpoint('/users/me'),
         headers: {'Authorization': _authHeader},
       ).timeout(_lookupTimeout);
-      if (response.statusCode != 200) return null;
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        throw const _ChatAuthUnauthorized();
+      }
+      if (response.statusCode != 200) {
+        throw Exception(
+          'Account lookup failed (${response.statusCode}). Check your connection.',
+        );
+      }
       final json = jsonDecode(response.body);
       if (json is! Map<String, dynamic>) return null;
       final data = json['data'] is Map<String, dynamic>
@@ -1239,9 +1292,11 @@ class BackendChatService {
       final rawId = data['id'] ?? data['userId'];
       if (rawId == null) return null;
       return rawId is int ? rawId : int.tryParse(rawId.toString());
+    } on _ChatAuthUnauthorized {
+      rethrow;
     } catch (e) {
-      print('[BackendChatService] Failed to fetch /users/me: $e');
-      return null;
+      print('[BackendChatService] Failed to fetch users: $e');
+      rethrow;
     }
   }
 
@@ -2493,7 +2548,11 @@ class BackendChatService {
                 ))
             .toList();
       } else if (response.statusCode == 401) {
-        throw Exception('Unauthorized - please log in again');
+        throw Exception(
+          FirebaseAuth.instance.currentUser != null
+              ? 'Could not verify your session with the server. Check your connection and try again.'
+              : 'Unauthorized - please log in again',
+        );
       } else {
         throw Exception('Failed to fetch chats: ${response.statusCode}');
       }
@@ -3311,4 +3370,12 @@ class BackendChatService {
       rethrow;
     }
   }
+}
+
+/// Thrown when `/users/me` rejects the Firebase token (real auth failure).
+class _ChatAuthUnauthorized implements Exception {
+  const _ChatAuthUnauthorized();
+
+  @override
+  String toString() => 'Unauthorized';
 }

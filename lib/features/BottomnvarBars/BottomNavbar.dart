@@ -194,7 +194,8 @@ class _BottomnavbarState extends State<Bottomnavbar>
     if (loggedIn) {
       unawaited(BlockedMerchantService.reload());
     }
-    if (!loggedIn && _selectedIndex != 0) {
+    // Guests may use Home + Marketplace. Only kick off Messages/Cart/Profile.
+    if (!loggedIn && _tabIsProtected(_selectedIndex)) {
       setState(() => _selectedIndex = 0);
     }
     if (uidChanged) {
@@ -264,23 +265,36 @@ class _BottomnavbarState extends State<Bottomnavbar>
 
   Future<void> _checkUserRoleAndSetup({bool forcePagesRebuild = false}) async {
     final prefs = await SharedPreferences.getInstance();
-    final uid = FirebaseAuth.instance.currentUser?.uid ??
-        (prefs.getString('uid') ?? '').trim();
-    final identity = MerchantIdentityStore.readCached(prefs: prefs, uid: uid) ??
-        MerchantIdentity(
-          uid: uid,
-          role: RoleHelper.normalizeAccountRole(
-                prefs.getString('user_role') ?? prefs.getString('role'),
-              ) ??
-              RoleHelper.customer,
-          service: normalizeMerchantServiceKey(prefs.getString('merchant_service')),
-        );
+    final authUser = FirebaseAuth.instance.currentUser;
+    final loggedIn = authUser != null && !authUser.isAnonymous;
+    final uid = authUser?.uid ??
+        (loggedIn ? (prefs.getString('uid') ?? '').trim() : '');
+    // After logout, never keep a merchant shell from stale prefs/identity cache.
+    final identity = !loggedIn
+        ? MerchantIdentity(
+            uid: '',
+            role: RoleHelper.customer,
+            service: null,
+          )
+        : (MerchantIdentityStore.readCached(prefs: prefs, uid: uid) ??
+            MerchantIdentity(
+              uid: uid,
+              role: RoleHelper.normalizeAccountRole(
+                    prefs.getString('user_role') ?? prefs.getString('role'),
+                  ) ??
+                  RoleHelper.customer,
+              service: normalizeMerchantServiceKey(
+                prefs.getString('merchant_service'),
+              ),
+            ));
 
     final raw = identity.role;
-    final nextMerchant = raw == RoleHelper.merchant;
-    final nextDriver = raw == RoleHelper.driver;
-    final nextService = identity.service ??
-        normalizeMerchantServiceKey(prefs.getString('merchant_service'));
+    final nextMerchant = loggedIn && raw == RoleHelper.merchant;
+    final nextDriver = loggedIn && raw == RoleHelper.driver;
+    final nextService = nextMerchant
+        ? (identity.service ??
+            normalizeMerchantServiceKey(prefs.getString('merchant_service')))
+        : null;
 
     // Keep the current tab. Only rebuild page widgets when role flags change,
     // account (uid) changes, or on first setup — rebuilding every auth/role

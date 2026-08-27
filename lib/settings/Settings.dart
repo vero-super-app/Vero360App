@@ -37,6 +37,8 @@ import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/become_driver_page.dart';
+import 'package:vero360_app/Quickservices/customerservice.dart';
+import 'package:vero360_app/Quickservices/help_center_live_chat.dart';
 
 const Color kBrandOrange = Color(0xFFFF8A00); // Vero360 main color
 
@@ -1375,6 +1377,45 @@ class _SettingsPageState extends State<SettingsPage> {
               ],
             ),
             const SizedBox(height: 12),
+            ListTile(
+              leading: _roundIcon(Icons.headset_mic_rounded),
+              title: Text(
+                _t('Live chat (Help Center)', 'Live chat (Help Center)'),
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              subtitle: Text(
+                _t(
+                  'Chat with Vero360 support in the app',
+                  'Chezani ndi support ya Vero360 mu app',
+                ),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const HelpCenterLiveChatPage(),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: _roundIcon(Icons.support_agent_rounded),
+              title: Text(
+                _t('Vero Assist (FAQ bot)', 'Vero Assist (bot)'),
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              subtitle: Text(
+                _t('Quick answers about the app', 'Mayankho ofulumira pa app'),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const CustomerServicePage(),
+                  ),
+                );
+              },
+            ),
             ListTile(
               leading: _roundIcon(Icons.call_outlined),
               title: Text(

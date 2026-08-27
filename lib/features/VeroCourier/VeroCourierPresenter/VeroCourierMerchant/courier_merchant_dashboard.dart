@@ -54,8 +54,9 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
 
   Future<void> _notifySenderOfStatus(
     CourierDelivery d,
-    CourierStatus status,
-  ) async {
+    CourierStatus status, {
+    String? cancelReason,
+  }) async {
     var uid = (d.view.senderUid ?? '').trim();
     if (uid.isEmpty) {
       uid = (await OrderPartyNotificationService.resolveUidByEmail(
@@ -73,13 +74,60 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
       statusValue: status.value,
       pickup: d.pickupLocation,
       dropoff: d.dropoffLocation,
+      cancelReason: cancelReason ?? d.view.cancelReason,
     );
   }
 
+  Future<String?> _askCancelReason() async {
+    final ctrl = TextEditingController();
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reject delivery'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          maxLines: 3,
+          decoration: const InputDecoration(
+            hintText: 'Reason for rejection',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Back'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+            child: const Text('Reject & notify'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (reason == null) return null;
+    if (reason.isEmpty) {
+      _toast('A rejection reason is required.');
+      return null;
+    }
+    return reason;
+  }
+
   Future<void> _setStatus(CourierDelivery d, CourierStatus status) async {
+    String? cancelReason;
+    if (status == CourierStatus.cancelled) {
+      cancelReason = await _askCancelReason();
+      if (cancelReason == null) return;
+    }
+
     setState(() => _busy = true);
     try {
-      final updated = await _service.updateStatus(id: d.courierId, status: status);
+      final updated = await _service.updateStatus(
+        id: d.courierId,
+        status: status,
+        cancelReason: cancelReason,
+      );
       final code = updated.trackingCode.isNotEmpty
           ? updated.trackingCode
           : (d.trackingCode.isNotEmpty ? d.trackingCode : '#${d.courierId}');
@@ -87,7 +135,11 @@ class _CourierMerchantDashboardState extends State<CourierMerchantDashboard> {
       // Prefer API payload; fall back to local row so SenderUid still resolves.
       final forAlert =
           (updated.view.senderUid ?? '').trim().isNotEmpty ? updated : d.copyWithStatus(status);
-      await _notifySenderOfStatus(forAlert, status);
+      await _notifySenderOfStatus(
+        forAlert,
+        status,
+        cancelReason: cancelReason ?? updated.view.cancelReason,
+      );
       await _reload();
     } on ApiException catch (e) {
       _toast(e.message);

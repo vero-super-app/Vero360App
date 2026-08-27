@@ -167,6 +167,10 @@ class CourierDeliveryView {
   final String? recipientPhone;
   final String? recipientAddress;
   final String? notes;
+  final String? cancelReason;
+  final int? estimatedPriceMwk;
+  final double? estimatedDistanceKm;
+  final String? estimateSummary;
 
   const CourierDeliveryView({
     this.senderName,
@@ -177,6 +181,10 @@ class CourierDeliveryView {
     this.recipientPhone,
     this.recipientAddress,
     this.notes,
+    this.cancelReason,
+    this.estimatedPriceMwk,
+    this.estimatedDistanceKm,
+    this.estimateSummary,
   });
 
   factory CourierDeliveryView.fromDelivery(CourierDelivery d) {
@@ -190,6 +198,10 @@ class CourierDeliveryView {
       recipientPhone: parsed.recipientPhone,
       recipientAddress: parsed.recipientAddress,
       notes: parsed.notes,
+      cancelReason: parsed.cancelReason,
+      estimatedPriceMwk: parsed.estimatedPriceMwk,
+      estimatedDistanceKm: parsed.estimatedDistanceKm,
+      estimateSummary: parsed.estimateSummary,
     );
   }
 
@@ -200,6 +212,10 @@ class CourierDeliveryView {
     String? recipientPhone,
     String? recipientAddress,
     String? notes,
+    String? cancelReason,
+    int? estimatedPriceMwk,
+    double? estimatedDistanceKm,
+    String? estimateSummary,
   }) _parseAdditionalInfo(String? raw) {
     if (raw == null || raw.trim().isEmpty) {
       return (
@@ -209,6 +225,10 @@ class CourierDeliveryView {
         recipientPhone: null,
         recipientAddress: null,
         notes: null,
+        cancelReason: null,
+        estimatedPriceMwk: null,
+        estimatedDistanceKm: null,
+        estimateSummary: null,
       );
     }
 
@@ -217,6 +237,10 @@ class CourierDeliveryView {
     String? recipientName;
     String? recipientPhone;
     String? recipientAddress;
+    String? cancelReason;
+    int? estimatedPriceMwk;
+    double? estimatedDistanceKm;
+    String? estimateSummary;
     final noteParts = <String>[];
 
     for (final part in raw.split('|').map((s) => s.trim()).where((s) => s.isNotEmpty)) {
@@ -231,8 +255,33 @@ class CourierDeliveryView {
         recipientAddress = part.substring(part.indexOf(':') + 1).trim();
       } else if (lower.startsWith('recipient:')) {
         recipientName = part.substring(part.indexOf(':') + 1).trim();
+      } else if (lower.startsWith('cancelreason:') ||
+          lower.startsWith('cancel reason:') ||
+          lower.startsWith('rejectionreason:') ||
+          lower.startsWith('rejection reason:')) {
+        cancelReason = part.substring(part.indexOf(':') + 1).trim();
+      } else if (lower.startsWith('estimate:')) {
+        final est = _parseEstimate(part);
+        estimatedPriceMwk = est.price;
+        estimatedDistanceKm = est.km;
+        estimateSummary = est.summary;
+      } else if (lower.startsWith('servicecity:') ||
+          lower.startsWith('intracityonly:')) {
+        // metadata — not shown as free-form notes
       } else {
         noteParts.add(part);
+      }
+    }
+
+    // Fallback if Estimate wasn't a pipe segment
+    if (estimatedPriceMwk == null) {
+      final loose = RegExp(r'estimate\s*:\s*[^|]*', caseSensitive: false)
+          .firstMatch(raw);
+      if (loose != null) {
+        final est = _parseEstimate(loose.group(0)!);
+        estimatedPriceMwk = est.price;
+        estimatedDistanceKm = est.km;
+        estimateSummary = est.summary;
       }
     }
 
@@ -244,6 +293,26 @@ class CourierDeliveryView {
       recipientPhone: recipientPhone,
       recipientAddress: recipientAddress,
       notes: notes,
+      cancelReason: cancelReason,
+      estimatedPriceMwk: estimatedPriceMwk,
+      estimatedDistanceKm: estimatedDistanceKm,
+      estimateSummary: estimateSummary,
+    );
+  }
+
+  static ({int? price, double? km, String? summary}) _parseEstimate(String part) {
+    final summary = part.replaceFirst(RegExp(r'^estimate:\s*', caseSensitive: false), '').trim();
+    final priceMatch = RegExp(r'(?:mwk|mk)\s*([\d,]+(?:\.\d+)?)', caseSensitive: false)
+        .firstMatch(part);
+    final kmMatch = RegExp(r'([\d.]+)\s*km', caseSensitive: false).firstMatch(part);
+    final priceRaw = (priceMatch?.group(1) ?? '').replaceAll(',', '');
+    final price = int.tryParse(priceRaw.split('.').first) ??
+        double.tryParse(priceRaw)?.round();
+    final km = double.tryParse(kmMatch?.group(1) ?? '');
+    return (
+      price: (price != null && price > 0) ? price : null,
+      km: (km != null && km > 0) ? km : null,
+      summary: summary.isEmpty ? null : summary,
     );
   }
 }

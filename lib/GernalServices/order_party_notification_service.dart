@@ -243,19 +243,21 @@ class OrderPartyNotificationService {
     }
   }
 
-  /// Sender: parcel accepted / coming / delivered / rejected (Vero Courier).
+  /// Sender: parcel accepted / coming / delivered / cancelled (Vero Courier).
   static Future<void> publishCourierStatusToSender({
     required String senderUid,
     required String trackingCode,
     required String statusValue,
     String? pickup,
     String? dropoff,
+    String? cancelReason,
   }) async {
     final uid = senderUid.trim();
     if (uid.isEmpty) return;
 
     final code = trackingCode.trim().isEmpty ? 'your parcel' : trackingCode.trim();
     final status = statusValue.trim().toUpperCase();
+    final reason = (cancelReason ?? '').trim();
 
     late final String title;
     late final String body;
@@ -281,7 +283,9 @@ class OrderPartyNotificationService {
       case 'CANCELLED':
       case 'REJECTED':
         title = 'Parcel rejected';
-        body = 'Your parcel $code was rejected. Contact support if you need help.';
+        body = reason.isNotEmpty
+            ? 'Your parcel $code was rejected. Reason: $reason'
+            : 'Your parcel $code was rejected. Contact support if you need help.';
         event = 'rejected';
         break;
       case 'DELIVERED':
@@ -310,6 +314,7 @@ class OrderPartyNotificationService {
           'status': event,
           'trackingNumber': code,
           'courierStatus': status,
+          if (reason.isNotEmpty) 'cancelReason': reason,
         },
         'createdAt': FieldValue.serverTimestamp(),
         'consumed': false,

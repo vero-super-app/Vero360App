@@ -225,10 +225,16 @@ class CourierService {
   Future<CourierDelivery> updateStatus({
     required int id,
     required CourierStatus status,
+    String? cancelReason,
   }) async {
+    final body = <String, dynamic>{'status': status.value};
+    final reason = (cancelReason ?? '').trim();
+    if (status == CourierStatus.cancelled && reason.isNotEmpty) {
+      body['cancelReason'] = reason;
+    }
     final res = await ApiClient.patch(
       '/verocourier/deliveries/$id/status',
-      body: jsonEncode({'status': status.value}),
+      body: jsonEncode(body),
     );
     final data = jsonDecode(res.body) as Map<String, dynamic>;
     return CourierDelivery.fromJson(data);

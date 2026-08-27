@@ -20,6 +20,7 @@ import 'package:vero360_app/features/VeroCourier/Model/courier.models.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/courier_onboarding_page.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/courier_widgets.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierService/courier_city.dart';
+import 'package:vero360_app/features/VeroCourier/VeroCourierService/courier_geocode.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierService/courier_pricing.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierService/vero_courier_service.dart';
 
@@ -93,8 +94,15 @@ class _VerocourierPageState extends State<VerocourierPage> {
   String _liveAreaLabel = '';
   double? _liveLat;
   double? _liveLng;
+  double? _pickupLat;
+  double? _pickupLng;
+  double? _dropoffLat;
+  double? _dropoffLng;
+  String? _pickupPinnedLabel;
+  String? _dropoffPinnedLabel;
   CourierPriceQuote? _priceQuote;
   bool _quoting = false;
+  String? _quoteHint;
   bool _decodingLocation = false;
   bool _pickupFromLive = false;
 
@@ -175,8 +183,20 @@ class _VerocourierPageState extends State<VerocourierPage> {
   void _registerQuoteListeners() {
     void bump() {
       if (_decodingLocation) return;
-      if (_pickupCtrl.text.trim() != _liveAreaLabel.trim()) {
+      final pickup = _pickupCtrl.text.trim();
+      final dropoff = _dropoffCtrl.text.trim();
+      if (pickup != _liveAreaLabel.trim()) {
         _pickupFromLive = false;
+      }
+      if (_pickupPinnedLabel != null && pickup != _pickupPinnedLabel) {
+        _pickupLat = null;
+        _pickupLng = null;
+        _pickupPinnedLabel = null;
+      }
+      if (_dropoffPinnedLabel != null && dropoff != _dropoffPinnedLabel) {
+        _dropoffLat = null;
+        _dropoffLng = null;
+        _dropoffPinnedLabel = null;
       }
       _quoteDebounce?.cancel();
       _quoteDebounce = Timer(const Duration(milliseconds: 700), () {
@@ -188,6 +208,101 @@ class _VerocourierPageState extends State<VerocourierPage> {
     _pickupCtrl.addListener(bump);
     _dropoffCtrl.addListener(bump);
     _descriptionCtrl.addListener(bump);
+  }
+
+  void _pinCoords({
+    required TextEditingController ctrl,
+    required double lat,
+    required double lng,
+  }) {
+    final label = ctrl.text.trim();
+    if (identical(ctrl, _pickupCtrl)) {
+      _pickupLat = lat;
+      _pickupLng = lng;
+      _pickupPinnedLabel = label.isEmpty ? null : label;
+    } else if (identical(ctrl, _dropoffCtrl)) {
+      _dropoffLat = lat;
+      _dropoffLng = lng;
+      _dropoffPinnedLabel = label.isEmpty ? null : label;
+    }
+  }
+
+  bool _samePoint(
+    double lat1,
+    double lng1,
+    double lat2,
+    double lng2, {
+    double meters = 80,
+  }) {
+    return CourierPricing.haversineKm(
+          lat1: lat1,
+          lng1: lng1,
+          lat2: lat2,
+          lng2: lng2,
+        ) *
+        1000 <=
+        meters;
+  }
+
+  Future<(double, double)?> _resolvePoint({
+    required String label,
+    double? pinnedLat,
+    double? pinnedLng,
+    bool preferLive = false,
+    bool forceGeocode = false,
+  }) async {
+    if (!forceGeocode && pinnedLat != null && pinnedLng != null) {
+      return (pinnedLat, pinnedLng);
+    }
+    if (preferLive && _liveLat != null && _liveLng != null) {
+      return (_liveLat!, _liveLng!);
+    }
+
+    final landmark = CourierGeocode.landmarkPoint(label);
+    // Prefer landmarks early on web — Google Geocode is CORS-blocked in browsers.
+    if (kIsWeb && landmark != null) return landmark;
+
+    // On web, skip Google HTTP geocode (CORS) and use Nominatim first.
+    if (kIsWeb) {
+      final osm = await CourierGeocode.nominatim(label);
+      if (osm != null) return osm;
+      if (landmark != null) return landmark;
+      return null;
+    }
+
+    final places = _tryPlaces();
+    if (places != null) {
+      try {
+        final found = await places.geocodeAddress(
+          label.toLowerCase().contains('lilongwe')
+              ? label
+              : '$label, Lilongwe, Malawi',
+        );
+        if (found != null &&
+            found.latitude.abs() > 0.0001 &&
+            found.longitude.abs() > 0.0001) {
+          return (found.latitude, found.longitude);
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('[VeroCourier] Google geocode failed: $e');
+        }
+      }
+    }
+
+    final osm = await CourierGeocode.nominatim(label);
+    if (osm != null) return osm;
+
+    try {
+      final marks = await locationFromAddress('$label, Lilongwe, Malawi')
+          .timeout(const Duration(seconds: 6));
+      if (marks.isNotEmpty) {
+        return (marks.first.latitude, marks.first.longitude);
+      }
+    } catch (_) {}
+
+    if (landmark != null) return landmark;
+    return null;
   }
 
   String _placeStreetLabel(Place place) {
@@ -240,6 +355,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
       final label = _placeStreetLabel(found);
       if (label.isEmpty || GooglePlacesService.isPlusCodeLabel(label)) return;
       await _setDecodedText(ctrl, label);
+      _pinCoords(ctrl: ctrl, lat: found.latitude, lng: found.longitude);
     } catch (e) {
       if (kDebugMode) debugPrint('[VeroCourier] plus-code decode: $e');
     }
@@ -292,6 +408,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
       return;
     }
     await _setDecodedText(ctrl, label);
+    _pinCoords(ctrl: ctrl, lat: pos.latitude, lng: pos.longitude);
     if (identical(ctrl, _pickupCtrl)) _pickupFromLive = true;
     if (mounted) {
       _toast('Using $label');
@@ -725,6 +842,11 @@ class _VerocourierPageState extends State<VerocourierPage> {
         _pickupCtrl.text = liveLine;
         _decodingLocation = false;
         _pickupFromLive = true;
+        if (_liveLat != null && _liveLng != null) {
+          _pickupLat = _liveLat;
+          _pickupLng = _liveLng;
+          _pickupPinnedLabel = liveLine;
+        }
       }
       _citySupported = addressMismatch == null;
       _cityGateMessage = addressMismatch ??
@@ -753,78 +875,148 @@ class _VerocourierPageState extends State<VerocourierPage> {
     );
   }
 
-  Future<void> _refreshPriceQuote() async {
+  Future<void> _refreshPriceQuote({bool forceGeocode = false}) async {
     final pickup = _pickupCtrl.text.trim();
     final dropoff = _dropoffCtrl.text.trim();
     if (pickup.length < 3 || dropoff.length < 3) {
-      if (mounted && _priceQuote != null) setState(() => _priceQuote = null);
+      if (mounted) {
+        setState(() {
+          _priceQuote = null;
+          _quoteHint = null;
+          _quoting = false;
+        });
+      }
       return;
     }
-    if (mounted) setState(() => _quoting = true);
+    if (mounted) {
+      setState(() {
+        _quoting = true;
+        _quoteHint = null;
+      });
+    }
     try {
+      // Prefer pinned GPS / plus-code coords. Re-geocoding street labels often
+      // collapses both ends to the same Lilongwe city point (0.00 km).
+      var from = await _resolvePoint(
+        label: pickup,
+        pinnedLat: _pickupLat,
+        pinnedLng: _pickupLng,
+        preferLive: _pickupFromLive,
+        forceGeocode: forceGeocode && _pickupLat == null,
+      );
+      var to = await _resolvePoint(
+        label: dropoff,
+        pinnedLat: _dropoffLat,
+        pinnedLng: _dropoffLng,
+        forceGeocode: forceGeocode && _dropoffLat == null,
+      );
+
+      // If text changed and we still have stale pins that match each other,
+      // force a fresh geocode of both labels.
+      if (from != null &&
+          to != null &&
+          _samePoint(from.$1, from.$2, to.$1, to.$2) &&
+          pickup.toLowerCase() != dropoff.toLowerCase()) {
+        from = await _resolvePoint(
+          label: pickup,
+          preferLive: _pickupFromLive,
+          forceGeocode: true,
+        );
+        to = await _resolvePoint(
+          label: dropoff,
+          forceGeocode: true,
+        );
+      }
+
+      if (from == null || to == null) {
+        // Browser geocode is often blocked; still show a city-average fare so
+        // goods-type pricing is visible on web.
+        if (kIsWeb &&
+            pickup.toLowerCase() != dropoff.toLowerCase() &&
+            pickup.length >= 3 &&
+            dropoff.length >= 3) {
+          final quote = CourierPricing.estimate(
+            distanceKm: 6,
+            goodsType: _selectedGoodsType,
+            description: _descriptionCtrl.text,
+          );
+          if (!mounted) return;
+          setState(() {
+            _priceQuote = quote;
+            _quoting = false;
+            _quoteHint =
+                'Approximate web fare — enter Area names (e.g. Area 18 / Area 47) or use GPS on mobile for a tighter estimate.';
+          });
+          return;
+        }
+        if (mounted) {
+          setState(() {
+            _quoting = false;
+            _priceQuote = null;
+            _quoteHint =
+                'Could not locate pickup/drop-off. Use the GPS button or a clearer street name.';
+          });
+        }
+        return;
+      }
+
+      _pickupLat = from.$1;
+      _pickupLng = from.$2;
+      _pickupPinnedLabel = pickup;
+      _dropoffLat = to.$1;
+      _dropoffLng = to.$2;
+      _dropoffPinnedLabel = dropoff;
+
+      if (_samePoint(from.$1, from.$2, to.$1, to.$2)) {
+        if (mounted) {
+          setState(() {
+            _quoting = false;
+            _priceQuote = null;
+            _quoteHint =
+                'Pickup and drop-off look like the same place. Set two different locations to estimate fare.';
+          });
+        }
+        return;
+      }
+
       double? dKm;
       int? eta;
-
-      final places = _tryPlaces();
-      final dirs = _tryDirections();
-      if (places != null) {
-        final from = await places.geocodeAddress('$pickup, Lilongwe');
-        final to = await places.geocodeAddress('$dropoff, Lilongwe');
-        if (from != null && to != null) {
-          if (dirs != null) {
-            try {
-              final route = await dirs.getRouteInfo(
-                originLat: from.latitude,
-                originLng: from.longitude,
-                destLat: to.latitude,
-                destLng: to.longitude,
-              );
-              dKm = route.distanceKm;
-              eta = route.durationMinutes;
-            } catch (_) {}
-          }
-          dKm ??= CourierPricing.haversineKm(
-            lat1: from.latitude,
-            lng1: from.longitude,
-            lat2: to.latitude,
-            lng2: to.longitude,
+      // Google Directions JSON API is CORS-blocked on web — use haversine there.
+      final dirs = kIsWeb ? null : _tryDirections();
+      if (dirs != null) {
+        try {
+          final route = await dirs.getRouteInfo(
+            originLat: from.$1,
+            originLng: from.$2,
+            destLat: to.$1,
+            destLng: to.$2,
           );
+          if (route.distanceKm > 0.05) {
+            dKm = route.distanceKm;
+            eta = route.durationMinutes;
+          }
+        } catch (_) {}
+      }
+      dKm ??= CourierPricing.haversineKm(
+        lat1: from.$1,
+        lng1: from.$2,
+        lat2: to.$1,
+        lng2: to.$2,
+      );
+      // Road distance ≈ straight-line × 1.25 when Directions is unavailable.
+      if (eta == null) {
+        dKm = dKm * 1.25;
+      }
+
+      if (dKm <= 0) {
+        if (mounted) {
+          setState(() {
+            _quoting = false;
+            _priceQuote = null;
+            _quoteHint =
+                'Could not measure distance between these locations. Try again.';
+          });
         }
-      }
-
-      if (dKm == null && _liveLat != null && _liveLng != null) {
-        try {
-          final to = places != null
-              ? await places.geocodeAddress('$dropoff, Lilongwe')
-              : null;
-          if (to != null) {
-            dKm = CourierPricing.haversineKm(
-              lat1: _liveLat!,
-              lng1: _liveLng!,
-              lat2: to.latitude,
-              lng2: to.longitude,
-            );
-          }
-        } catch (_) {}
-      }
-
-      if (dKm == null) {
-        try {
-          final a = await locationFromAddress('$pickup, Lilongwe, Malawi');
-          final b = await locationFromAddress('$dropoff, Lilongwe, Malawi');
-          if (a.isNotEmpty && b.isNotEmpty) {
-            dKm = CourierPricing.haversineKm(
-              lat1: a.first.latitude,
-              lng1: a.first.longitude,
-              lat2: b.first.latitude,
-              lng2: b.first.longitude,
-            );
-          }
-        } catch (_) {}
-      }
-
-      if (dKm == null || dKm <= 0) {
-        if (mounted) setState(() => _quoting = false);
         return;
       }
 
@@ -837,10 +1029,16 @@ class _VerocourierPageState extends State<VerocourierPage> {
       if (!mounted) return;
       setState(() {
         _priceQuote = quote;
+        _quoteHint = null;
         _quoting = false;
       });
     } catch (_) {
-      if (mounted) setState(() => _quoting = false);
+      if (mounted) {
+        setState(() {
+          _quoting = false;
+          _quoteHint = 'Price estimate failed. Check your connection and try again.';
+        });
+      }
     }
   }
 
@@ -949,7 +1147,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
       case CourierStatus.delivered:
         return 'Delivered';
       case CourierStatus.cancelled:
-        return 'Cancelled';
+        return 'Rejected';
       case CourierStatus.pending:
         return 'Pending';
     }
@@ -1056,6 +1254,14 @@ class _VerocourierPageState extends State<VerocourierPage> {
       _formKey.currentState?.reset();
       _pickupCtrl.clear();
       _dropoffCtrl.clear();
+      _pickupLat = null;
+      _pickupLng = null;
+      _dropoffLat = null;
+      _dropoffLng = null;
+      _pickupPinnedLabel = null;
+      _dropoffPinnedLabel = null;
+      _priceQuote = null;
+      _quoteHint = null;
       _selectedGoodsType = null;
       _descriptionCtrl.clear();
       _additionalCtrl.clear();
@@ -1851,7 +2057,7 @@ class _VerocourierPageState extends State<VerocourierPage> {
                         required: false,
                         maxLines: 2,
                       ),
-                      if (_quoting || _priceQuote != null) ...[
+                      if (_quoting || _priceQuote != null || _quoteHint != null) ...[
                         const SizedBox(height: 8),
                         Container(
                           width: double.infinity,
@@ -1863,7 +2069,9 @@ class _VerocourierPageState extends State<VerocourierPage> {
                               color: _veroOrange.withValues(alpha: 0.28),
                             ),
                           ),
-                          child: _quoting && _priceQuote == null
+                          child: _quoting &&
+                                  _priceQuote == null &&
+                                  _quoteHint == null
                               ? const Row(
                                   children: [
                                     SizedBox(
@@ -1885,37 +2093,63 @@ class _VerocourierPageState extends State<VerocourierPage> {
                                     ),
                                   ],
                                 )
-                              : Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text(
-                                      'Estimated fare',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 13,
-                                        color: Color(0xFF16284C),
-                                      ),
+                              : (_quoteHint != null && _priceQuote == null)
+                                  ? Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Icon(
+                                          Icons.info_outline_rounded,
+                                          size: 18,
+                                          color: Colors.orange.shade800,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            _quoteHint!,
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: 13,
+                                              color: Colors.orange.shade900,
+                                              height: 1.35,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    )
+                                  : Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'Estimated fare',
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 13,
+                                            color: Color(0xFF16284C),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          _priceQuote?.summary ?? '',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 14,
+                                            color: _veroOrange,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          _quoteHint ??
+                                              'Based on goods (${_selectedGoodsType ?? 'type'}), description, and live route distance in Lilongwe. Final price may be confirmed by the courier.',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            height: 1.35,
+                                            color: Colors.grey.shade700,
+                                          ),
+                                        ),
+                                      ],
                                     ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      _priceQuote?.summary ?? '',
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 14,
-                                        color: _veroOrange,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      'Based on goods (${_selectedGoodsType ?? 'type'}), description, and live route distance in Lilongwe. Final price may be confirmed by the courier.',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        height: 1.35,
-                                        color: Colors.grey.shade700,
-                                      ),
-                                    ),
-                                  ],
-                                ),
                         ),
                       ],
                       const SizedBox(height: 12),

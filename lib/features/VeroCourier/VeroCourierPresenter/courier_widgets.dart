@@ -71,6 +71,8 @@ class CourierDeliveryCard extends StatelessWidget {
     final hasGoods = (delivery.typeOfGoods ?? '').trim().isNotEmpty ||
         (delivery.descriptionOfGoods ?? '').trim().isNotEmpty;
     final hasNotes = (view.notes ?? '').trim().isNotEmpty;
+    final hasCancelReason = (view.cancelReason ?? '').trim().isNotEmpty;
+    final hasEstimate = (view.estimatedPriceMwk ?? 0) > 0;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -93,12 +95,20 @@ class CourierDeliveryCard extends StatelessWidget {
           children: [
             _buildHeader(context),
             const SizedBox(height: 14),
+            if (hasEstimate) ...[
+              _buildEstimateSection(view),
+              const SizedBox(height: 14),
+            ],
             _buildPeopleRow(view),
             const SizedBox(height: 14),
             _buildRouteSection(),
             if (hasGoods) ...[
               const SizedBox(height: 14),
               _buildGoodsSection(),
+            ],
+            if (hasCancelReason) ...[
+              const SizedBox(height: 14),
+              _buildCancelReasonSection(view.cancelReason!),
             ],
             if (hasNotes) ...[
               const SizedBox(height: 14),
@@ -110,6 +120,67 @@ class CourierDeliveryCard extends StatelessWidget {
             ],
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildEstimateSection(CourierDeliveryView view) {
+    final price = view.estimatedPriceMwk ?? 0;
+    final priceLabel = 'MWK ${price.toString().replaceAllMapped(
+          RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
+          (m) => '${m[1]},',
+        )}';
+    final km = view.estimatedDistanceKm;
+    final sub = km != null
+        ? '${km.toStringAsFixed(1)} km route · from app quote'
+        : (view.estimateSummary ?? 'App price estimate');
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFECFDF5),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFA7F3D0)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.payments_outlined, size: 18, color: Color(0xFF047857)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Estimated fare',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF047857),
+                    letterSpacing: 0.3,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  priceLabel,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF065F46),
+                  ),
+                ),
+                Text(
+                  sub,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF047857),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -463,6 +534,52 @@ class CourierDeliveryCard extends StatelessWidget {
                 color: _ink,
                 height: 1.35,
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCancelReasonSection(String reason) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF2F2),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFECACA)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.info_outline,
+                size: 14,
+                color: Color(0xFFB91C1C),
+              ),
+              const SizedBox(width: 6),
+              const Text(
+                  'Rejection reason',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFFB91C1C),
+                  letterSpacing: 0.3,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            reason.trim(),
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF991B1B),
+              height: 1.4,
             ),
           ),
         ],

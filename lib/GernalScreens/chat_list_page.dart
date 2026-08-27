@@ -30,6 +30,8 @@ class _ChatListPageState extends State<ChatListPage> {
   String? _myEmail;
   String? _myName;
   String? _error;
+  String _errorTitle = 'Chats unavailable';
+  IconData _errorIcon = Icons.error_outline_rounded;
   bool _wsConnected = false;
 
   final _searchCtrl = TextEditingController();
@@ -126,11 +128,16 @@ class _ChatListPageState extends State<ChatListPage> {
         _myName = authUser?.displayName ?? _myName;
         _error = null;
         _wsConnected = BackendMessagingSocket.isConnected;
-      });    } catch (e) {
+      });
+    } catch (e) {
       if (!mounted) return;
       if (_myUserId != null) return; // keep cached-id UI if auth is slow/fails
       final ui = _friendlyChatError(e);
-      setState(() => _error = ui.message);
+      setState(() {
+        _errorTitle = ui.title;
+        _errorIcon = ui.icon;
+        _error = ui.message;
+      });
     }
   }
 
@@ -351,8 +358,8 @@ class _ChatListPageState extends State<ChatListPage> {
         backgroundColor: _bg,
         appBar: _appBar(),
         body: _EmptyState(
-          icon: Icons.error_outline_rounded,
-          title: 'Chats unavailable',
+          icon: _errorIcon,
+          title: _errorTitle,
           subtitle: _error!,
           onRetry: _boot,
         ),
@@ -586,24 +593,50 @@ class _ChatListPageState extends State<ChatListPage> {
 
   _ChatUiError _friendlyChatError(Object e) {
     final raw = e.toString().toLowerCase();
+    final firebaseSignedIn = FirebaseAuth.instance.currentUser != null;
 
-    if (raw.contains('unauthorized') || raw.contains('401')) {
+    // Device DNS / offline / Firebase UNAVAILABLE / backend unreachable.
+    // Also: Firebase still signed in but token refresh /users/me failed.
+    if (raw.contains('socketexception') ||
+        raw.contains('clientexception') ||
+        raw.contains('network') ||
+        raw.contains('timed out') ||
+        raw.contains('timeout') ||
+        raw.contains('connection refused') ||
+        raw.contains('failed host lookup') ||
+        raw.contains('unknownhost') ||
+        raw.contains('no address associated') ||
+        raw.contains('unable to resolve') ||
+        raw.contains('failed to resolve') ||
+        raw.contains('unavailable') ||
+        raw.contains('offline') ||
+        raw.contains('connection problem') ||
+        raw.contains('could not reach') ||
+        raw.contains('could not load your messaging') ||
+        raw.contains('could not refresh') ||
+        raw.contains('could not verify') ||
+        raw.contains('account lookup failed') ||
+        raw.contains('check your connection') ||
+        // Signed-in Firebase + 401 from chat API = unreachable token refresh,
+        // not a true logout.
+        (firebaseSignedIn &&
+            (raw.contains('unauthorized') || raw.contains('401')))) {
+      return const _ChatUiError(
+        icon: Icons.wifi_off_rounded,
+        title: 'Connection problem',
+        message:
+            'Cannot reach the server. Check Wi‑Fi/mobile data (or emulator network) and try again.',
+      );
+    }
+
+    if (raw.contains('unauthorized') ||
+        raw.contains('401') ||
+        raw.contains('user not authenticated') ||
+        raw.contains('failed to get login id token')) {
       return const _ChatUiError(
         icon: Icons.lock_outline,
         title: 'Authentication failed',
         message: 'Please log in again to continue.',
-      );
-    }
-
-    if (raw.contains('socketexception') ||
-        raw.contains('network') ||
-        raw.contains('timed out') ||
-        raw.contains('timeout') ||
-        raw.contains('connection refused')) {
-      return const _ChatUiError(
-        icon: Icons.wifi_off_rounded,
-        title: 'Connection problem',
-        message: 'Cannot reach the server. Check your internet and try again.',
       );
     }
 

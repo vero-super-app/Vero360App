@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
+import 'package:vero360_app/Quickservices/help_center_live_chat.dart';
 import 'package:vero360_app/Quickservices/jobs.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
@@ -53,14 +54,14 @@ class _CustomerServicePageState extends State<CustomerServicePage> {
           'Tsata order yanga',
           'Kulipila & wallet',
           'Kukhala merchant',
-          'Lankhulani ndi munthu',
+          'Live chat ndi support',
         ]
       : const [
           'How do I order food?',
           'Track my order',
           'Payment & wallet',
           'Become a merchant',
-          'Talk to a human',
+          'Live chat with support',
         ];
 
   @override
@@ -130,6 +131,19 @@ class _CustomerServicePageState extends State<CustomerServicePage> {
   Future<void> _send(String raw) async {
     final text = raw.trim();
     if (text.isEmpty || _typing || _lang == null) return;
+
+    final lower = text.toLowerCase();
+    final wantsLive = lower.contains('live chat') ||
+        lower.contains('help center') ||
+        lower.contains('chat with support') ||
+        lower.contains('talk to a human') ||
+        lower.contains('lankhulani ndi munthu');
+    if (wantsLive) {
+      _input.clear();
+      await _openLiveChat();
+      return;
+    }
+
     _input.clear();
 
     setState(() {
@@ -234,6 +248,9 @@ class _CustomerServicePageState extends State<CustomerServicePage> {
 
   void _onBotAction(_BotAction action) {
     switch (action) {
+      case _BotAction.liveChat:
+        unawaited(_openLiveChat());
+        return;
       case _BotAction.whatsapp:
         unawaited(_launchWhatsApp());
         return;
@@ -250,6 +267,16 @@ class _CustomerServicePageState extends State<CustomerServicePage> {
     final page = _pageForAction(action);
     if (page == null) return;
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+  }
+
+  Future<void> _openLiveChat({String? preset}) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => HelpCenterLiveChatPage(
+          initialMessage: preset,
+        ),
+      ),
+    );
   }
 
   Widget? _pageForAction(_BotAction action) {
@@ -276,6 +303,7 @@ class _CustomerServicePageState extends State<CustomerServicePage> {
         return const OrdersPage();
       case _BotAction.openInbox:
         return const ChatListPage();
+      case _BotAction.liveChat:
       case _BotAction.whatsapp:
       case _BotAction.call:
       case _BotAction.email:
@@ -347,6 +375,11 @@ class _CustomerServicePageState extends State<CustomerServicePage> {
                 fontSize: 12,
               ),
             ),
+          ),
+          IconButton(
+            tooltip: _t('Live chat', 'Live chat'),
+            onPressed: () => _openLiveChat(),
+            icon: const Icon(Icons.headset_mic_rounded, color: _brand),
           ),
           IconButton(
             tooltip: 'WhatsApp',
@@ -649,6 +682,7 @@ class _LangCard extends StatelessWidget {
 }
 
 enum _BotAction {
+  liveChat,
   whatsapp,
   call,
   email,
@@ -831,14 +865,15 @@ class _VeroSupportBot {
     _Faq(
       keys: [
         'human', 'agent', 'real person', 'talk to someone', 'customer care',
-        'contact support', 'whatsapp support', 'call support',
+        'contact support', 'whatsapp support', 'call support', 'live chat',
+        'help center', 'support chat', 'chat with support',
         'munthu', 'lankhulani ndi munthu', 'thandizo', 'wothandizira',
       ],
       answerEn:
-          'Sure — I can connect you to a person:\n• WhatsApp: ${CustomerServicePage.supportWhatsApp}\n• Call: ${CustomerServicePage.supportPhone}\n• Email: ${CustomerServicePage.supportEmail}\n\nUse the buttons below.',
+          'Sure — chat live with Vero360 Help Center (same team as the website), or use:\n• WhatsApp: ${CustomerServicePage.supportWhatsApp}\n• Call: ${CustomerServicePage.supportPhone}\n• Email: ${CustomerServicePage.supportEmail}',
       answerNy:
-          'Chabwino — nditha kukulumikizani ndi munthu:\n• WhatsApp: ${CustomerServicePage.supportWhatsApp}\n• Imbani: ${CustomerServicePage.supportPhone}\n• Imelo: ${CustomerServicePage.supportEmail}\n\nGwiritsani batani pansipa.',
-      actions: [_BotAction.whatsapp, _BotAction.call, _BotAction.email],
+          'Chabwino — chezani live ndi Vero360 Help Center (gulu lomwelo la website), kapena:\n• WhatsApp: ${CustomerServicePage.supportWhatsApp}\n• Imbani: ${CustomerServicePage.supportPhone}\n• Imelo: ${CustomerServicePage.supportEmail}',
+      actions: [_BotAction.liveChat, _BotAction.whatsapp, _BotAction.call, _BotAction.email],
     ),
   ];
 
@@ -1188,6 +1223,8 @@ class _Bubble extends StatelessWidget {
 
   IconData _icon(_BotAction a) {
     switch (a) {
+      case _BotAction.liveChat:
+        return Icons.headset_mic_rounded;
       case _BotAction.whatsapp:
         return Icons.chat_rounded;
       case _BotAction.call:
@@ -1220,6 +1257,8 @@ class _Bubble extends StatelessWidget {
   String _label(_BotAction a) {
     final ny = lang == 'ny';
     switch (a) {
+      case _BotAction.liveChat:
+        return ny ? 'Live chat' : 'Live chat';
       case _BotAction.whatsapp:
         return 'WhatsApp';
       case _BotAction.call:

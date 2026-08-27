@@ -25,6 +25,15 @@ class CourierPricing {
   static const int perKmMwk = 500;
   static const double minChargeKm = 1.5;
 
+  /// Flat MWK add-on by goods type (on top of base + distance).
+  static const int documentsSurchargeMwk = 1000;
+  static const int electronicsSurchargeMwk = 2000;
+  static const int groceriesSurchargeMwk = 2000;
+  static const int foodSurchargeMwk = 1500;
+  static const int fragileSurchargeMwk = 3500;
+  static const int otherSurchargeMwk = 500;
+  static const int clothesSurchargeMwk = 500;
+
   static CourierPriceQuote estimate({
     required double distanceKm,
     String? goodsType,
@@ -37,8 +46,8 @@ class CourierPricing {
     final desc = (description ?? '').trim();
 
     var amount = baseMwk + (billedKm * perKmMwk);
-    amount *= _goodsMultiplier(type);
-    amount *= _descriptionMultiplier('$type $desc');
+    amount += _goodsSurchargeMwk(type);
+    amount *= _descriptionMultiplier(desc);
 
     final rounded = _roundToFifty(amount.round());
     final eta = etaMinutes ?? math.max(15, (km / 22 * 60).round() + 8);
@@ -53,22 +62,24 @@ class CourierPricing {
     );
   }
 
-  static double _goodsMultiplier(String type) {
-    switch (type.toLowerCase()) {
+  static int _goodsSurchargeMwk(String type) {
+    switch (type.toLowerCase().trim()) {
       case 'documents':
-        return 1.0;
-      case 'clothes':
-        return 1.03;
-      case 'groceries':
-        return 1.08;
-      case 'food':
-        return 1.10;
+        return documentsSurchargeMwk;
       case 'electronics':
-        return 1.15;
+        return electronicsSurchargeMwk;
+      case 'groceries':
+        return groceriesSurchargeMwk;
+      case 'food':
+        return foodSurchargeMwk;
       case 'fragile item':
-        return 1.18;
+      case 'fragile':
+        return fragileSurchargeMwk;
+      case 'clothes':
+        return clothesSurchargeMwk;
+      case 'other':
       default:
-        return 1.05;
+        return otherSurchargeMwk;
     }
   }
 

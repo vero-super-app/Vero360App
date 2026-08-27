@@ -914,6 +914,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
 
     await _handleAuthResult(result);
+
+    // Email/phone signup previously only used delayed retries, so Postgres often
+    // stayed customer (no drivers row) while the app already showed driver UI.
+    // Match social signup: PUT /users/me immediately, then keep retrying.
+    final fbUser = _auth.currentUser;
+    if (fbUser != null &&
+        (_role == UserRole.driver || _role == UserRole.merchant)) {
+      unawaited(
+        _syncProfileToBackend(fbUser).then((_) {
+          _retrySyncRoleToBackend(fbUser);
+        }),
+      );
+    }
   }
 
   Future<void> _registerWithFirebaseOnly() async {

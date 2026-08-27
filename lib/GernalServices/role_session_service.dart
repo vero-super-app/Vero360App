@@ -396,6 +396,40 @@ class RoleSessionService {
     await persistRoleToFirestore(role);
   }
 
+  /// Switch the active session role (Profile / Settings driver mode switch).
+  /// Updates prefs + Firestore, then best-effort PUT `/users/me`.
+  /// Writes role keys directly so sticky signup/sync guards do not block
+  /// an intentional passenger ↔ driver toggle.
+  static Future<bool> setAccountRole(String role) async {
+    final normalized =
+        RoleHelper.normalizeAccountRole(role) ?? RoleHelper.customer;
+    final prefs = await SharedPreferences.getInstance();
+    final fbUid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    await lockIntendedRole(
+      prefs: prefs,
+      role: normalized,
+      uid: fbUid.isNotEmpty ? fbUid : null,
+    );
+    await prefs.setString('user_role', normalized);
+    await prefs.setString('role', normalized);
+    await prefs.setBool('is_merchant', normalized == RoleHelper.merchant);
+    if (normalized != RoleHelper.merchant) {
+      await prefs.remove('merchant_service');
+      await prefs.remove('business_name');
+      await prefs.remove('business_address');
+    }
+    if (fbUid.isNotEmpty) {
+      await MerchantIdentityStore.stamp(
+        uid: fbUid,
+        role: normalized,
+        prefs: prefs,
+        writeFirestore: false,
+      );
+    }
+    await persistRoleToFirestore(normalized);
+    return _putProfileToBackend(role: normalized);
+  }
+
   /// Retries PUT /users/me after signup. Must not depend on a widget being mounted.
   static Future<bool> retryPromoteAccountRole({
     required String role,

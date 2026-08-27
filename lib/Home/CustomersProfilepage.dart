@@ -42,6 +42,10 @@ import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/ride_history_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/driver_profile_hub_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/become_driver_page.dart';
+import 'package:vero360_app/GernalServices/driver_service.dart';
+import 'package:vero360_app/GernalServices/role_helper.dart';
+import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -69,8 +73,11 @@ class _ProfilePageState extends State<ProfilePage> {
 
   bool _loading = false;
   bool _isDriver = false;
+  bool _isMerchant = false;
+  bool _switchingDriverMode = false;
   StreamSubscription<User?>? _authSub;
   int _profileFetchGen = 0;
+  final _driverService = DriverService();
 
   // demo wallet figures – replace with real values if you have them
   double balance = 450;
@@ -108,6 +115,8 @@ class _ProfilePageState extends State<ProfilePage> {
       profileUrl = '';
       _localPhotoPath = null;
       _isDriver = false;
+      _isMerchant = false;
+      _switchingDriverMode = false;
       _loading = false;
     });
   }
@@ -177,7 +186,8 @@ class _ProfilePageState extends State<ProfilePage> {
         this.address = address;
         profileUrl = loadedProfileUrl;
         _localPhotoPath = localPath;
-        _isDriver = role == 'driver';
+        _isDriver = role == RoleHelper.driver;
+        _isMerchant = role == RoleHelper.merchant;
       });
     }
 
@@ -185,6 +195,193 @@ class _ProfilePageState extends State<ProfilePage> {
     if (loadedProfileUrl.isNotEmpty) {
       unawaited(_cacheProfilePhoto(loadedProfileUrl));
     }
+  }
+
+  Future<void> _remountMainShell() async {
+    final prefs = await SharedPreferences.getInstance();
+    final shellEmail = (prefs.getString('email') ?? email).trim();
+    if (!mounted) return;
+    openVeroMainShell(context, email: shellEmail);
+  }
+
+  Future<void> _onDriverModeChanged(bool enableDriver) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || user.isAnonymous) {
+      ToastHelper.showCustomToast(
+        context,
+        'Sign in to switch to driver mode.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    if (_switchingDriverMode) return;
+
+    if (!enableDriver) {
+      final confirmed = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Switch to passenger?'),
+              content: const Text(
+                'You will use the app as a passenger. You can switch back to driver mode anytime.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('Switch'),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      if (!confirmed || !mounted) return;
+
+      setState(() => _switchingDriverMode = true);
+      try {
+        await RoleSessionService.setAccountRole(RoleHelper.customer);
+        if (!mounted) return;
+        setState(() {
+          _isDriver = false;
+          _switchingDriverMode = false;
+        });
+        ToastHelper.showCustomToast(
+          context,
+          'Switched to passenger mode',
+          isSuccess: true,
+          errorMessage: '',
+        );
+        await _remountMainShell();
+      } catch (e) {
+        if (!mounted) return;
+        setState(() => _switchingDriverMode = false);
+        ToastHelper.showCustomToast(
+          context,
+          'Could not switch mode. Try again.',
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+      return;
+    }
+
+    setState(() => _switchingDriverMode = true);
+    try {
+      final hasProfile = await _driverService.hasDriverProfile();
+      if (!mounted) return;
+
+      if (!hasProfile) {
+        setState(() => _switchingDriverMode = false);
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const BecomeDriverPage()),
+        );
+        if (!mounted) return;
+        await _loadUserData();
+        return;
+      }
+
+      await RoleSessionService.setAccountRole(RoleHelper.driver);
+      if (!mounted) return;
+      setState(() {
+        _isDriver = true;
+        _switchingDriverMode = false;
+      });
+      ToastHelper.showCustomToast(
+        context,
+        'Switched to driver mode',
+        isSuccess: true,
+        errorMessage: '',
+      );
+      await _remountMainShell();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _switchingDriverMode = false);
+      ToastHelper.showCustomToast(
+        context,
+        'Could not switch to driver. Try again.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+    }
+  }
+
+  Widget _driverModeSwitchCard() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (_isMerchant || user == null || user.isAnonymous) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(0, 0, 0, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: _cardBg,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: _veroOrange.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(
+              Icons.local_taxi_rounded,
+              color: _veroOrange,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Driver mode',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _isDriver
+                      ? 'You are using the app as a driver'
+                      : 'Switch on to drive with VeroRide',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Colors.black54,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (_switchingDriverMode)
+            const SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(strokeWidth: 2.4),
+            )
+          else
+            Switch.adaptive(
+              value: _isDriver,
+              activeThumbColor: _veroOrange,
+              onChanged: _onDriverModeChanged,
+            ),
+        ],
+      ),
+    );
   }
 
   Future<void> _cacheProfilePhoto(String url) async {
@@ -1585,6 +1782,10 @@ class _ProfilePageState extends State<ProfilePage> {
           children: [
             _topProfileCard(),
             const SizedBox(height: 52), // space under the floating card
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 0),
+              child: _driverModeSwitchCard(),
+            ),
             _ordersQuickActions(),
             _otherDetailsGrid(),
             // 👉 LATEST ARRIVALS (API)

@@ -68,6 +68,35 @@ class DriverService {
     }
   }
 
+  /// True when `/drivers/me` exists (including empty pending shells).
+  Future<bool> hasDriverProfile() async {
+    try {
+      final response = await _dio.get(
+        '/vero/drivers/me',
+        queryParameters: {
+          '_': DateTime.now().millisecondsSinceEpoch.toString(),
+        },
+        options: Options(
+          headers: const {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+          },
+        ),
+      );
+      _unwrapDriverMap(response.data);
+      return true;
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) return false;
+      final msg = _handleError(e).toLowerCase();
+      if (msg.contains('not found')) return false;
+      throw _handleError(e);
+    } catch (e) {
+      final msg = e.toString().toLowerCase();
+      if (msg.contains('not found') || msg.contains('404')) return false;
+      throw _handleError(e);
+    }
+  }
+
   /// Heal verified drivers stuck inactive after legacy logout.
   Future<Map<String, dynamic>> reactivateMySession() async {
     try {

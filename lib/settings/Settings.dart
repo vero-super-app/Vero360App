@@ -33,6 +33,10 @@ import 'package:vero360_app/GeneralPages/address.dart'; // AddressPage
 import 'package:vero360_app/GeneralPages/changepassword.dart'; // ChangePasswordPage
 import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
+import 'package:vero360_app/GernalServices/driver_service.dart';
+import 'package:vero360_app/GernalServices/role_helper.dart';
+import 'package:vero360_app/GernalServices/role_session_service.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/become_driver_page.dart';
 
 const Color kBrandOrange = Color(0xFFFF8A00); // Vero360 main color
 
@@ -63,6 +67,10 @@ class _SettingsPageState extends State<SettingsPage> {
 
   bool _loading = true;
   bool _refreshing = false;
+  bool _isDriver = false;
+  bool _isMerchant = false;
+  bool _switchingDriverMode = false;
+  final _driverService = DriverService();
 
   // cached profile
   String _name = 'Guest User';
@@ -237,13 +245,130 @@ class _SettingsPageState extends State<SettingsPage> {
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
     final phone = _sanitizePhone(prefs.getString('phone') ?? '');
+    final role = RoleHelper.normalizeAccountRole(
+          prefs.getString('user_role') ?? prefs.getString('role'),
+        ) ??
+        RoleHelper.customer;
     setState(() {
       _name = prefs.getString('fullName') ?? prefs.getString('name') ?? _name;
       _email = prefs.getString('email') ?? _email;
       if (phone.isNotEmpty) _phone = phone;
       _address = prefs.getString('address') ?? _address;
       _photoUrl = prefs.getString('profilepicture') ?? '';
+      _isDriver = role == RoleHelper.driver;
+      _isMerchant = role == RoleHelper.merchant;
     });
+  }
+
+  Future<void> _remountMainShell() async {
+    if (!mounted) return;
+    openVeroMainShell(context, email: _email.trim());
+  }
+
+  Future<void> _onDriverModeChanged(bool enableDriver) async {
+    final user = _auth.currentUser;
+    if (user == null || user.isAnonymous) {
+      ToastHelper.showCustomToast(
+        context,
+        _t('Sign in to switch to driver mode.', 'Lowani kuti musinthe ku driver.'),
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    if (_switchingDriverMode || _isMerchant) return;
+
+    if (!enableDriver) {
+      final confirmed = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: Text(_t('Switch to passenger?', 'Musinthe kupita kwa passenger?')),
+              content: Text(
+                _t(
+                  'You will use the app as a passenger. You can switch back to driver mode anytime.',
+                  'Mudzagwiritsa ntchito ngati passenger. Mutha kubwerera ku driver nthawi ina.',
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: Text(_t('Cancel', 'Letsani')),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: Text(_t('Switch', 'Sinthani')),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      if (!confirmed || !mounted) return;
+
+      setState(() => _switchingDriverMode = true);
+      try {
+        await RoleSessionService.setAccountRole(RoleHelper.customer);
+        if (!mounted) return;
+        setState(() {
+          _isDriver = false;
+          _switchingDriverMode = false;
+        });
+        ToastHelper.showCustomToast(
+          context,
+          _t('Switched to passenger mode', 'Mwasintha kupita kwa passenger'),
+          isSuccess: true,
+          errorMessage: '',
+        );
+        await _remountMainShell();
+      } catch (_) {
+        if (!mounted) return;
+        setState(() => _switchingDriverMode = false);
+        ToastHelper.showCustomToast(
+          context,
+          _t('Could not switch mode. Try again.', 'Sizinathe. Yesaninso.'),
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+      return;
+    }
+
+    setState(() => _switchingDriverMode = true);
+    try {
+      final hasProfile = await _driverService.hasDriverProfile();
+      if (!mounted) return;
+      if (!hasProfile) {
+        setState(() => _switchingDriverMode = false);
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const BecomeDriverPage()),
+        );
+        if (!mounted) return;
+        await _loadCachedProfile();
+        return;
+      }
+
+      await RoleSessionService.setAccountRole(RoleHelper.driver);
+      if (!mounted) return;
+      setState(() {
+        _isDriver = true;
+        _switchingDriverMode = false;
+      });
+      ToastHelper.showCustomToast(
+        context,
+        _t('Switched to driver mode', 'Mwasintha kupita ku driver'),
+        isSuccess: true,
+        errorMessage: '',
+      );
+      await _remountMainShell();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _switchingDriverMode = false);
+      ToastHelper.showCustomToast(
+        context,
+        _t('Could not switch to driver. Try again.', 'Sizinathe. Yesaninso.'),
+        isSuccess: false,
+        errorMessage: '',
+      );
+    }
   }
 
   Future<void> _hydrateFromFirebaseAuth() async {
@@ -2228,6 +2353,27 @@ class _SettingsPageState extends State<SettingsPage> {
                   subtitle: _addressCountSubtitle,
                   onTap: _openAddressBottomSheet,
                 ),
+                if (!_isMerchant)
+                  _SettingsTile(
+                    compact: _compactMode,
+                    icon: Icons.local_taxi_rounded,
+                    title: _t('Driver mode', 'Driver mode'),
+                    subtitle: _isDriver
+                        ? _t('On – using app as a driver', 'Yayatsidwa – ngati driver')
+                        : _t('Off – switch on to drive with VeroRide', 'Yazimitsidwa – yatsani kuti muyendetse'),
+                    onTap: () => _onDriverModeChanged(!_isDriver),
+                    trailing: _switchingDriverMode
+                        ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(strokeWidth: 2.2),
+                          )
+                        : Switch.adaptive(
+                            value: _isDriver,
+                            activeThumbColor: kBrandOrange,
+                            onChanged: _onDriverModeChanged,
+                          ),
+                  ),
               ]),
               const SizedBox(height: 14),
               _sectionTitle(_t('Security', 'Chitetezo')),

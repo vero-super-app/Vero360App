@@ -72,18 +72,27 @@ class _ChatListPageState extends State<ChatListPage> {
   }
 
   Future<void> _boot() async {
-    // Fast path: use cached backend user id so the list can render immediately.
+    // Fast path: use cached backend user id or Firestore fallback so the list renders immediately.
     try {
       final prefs = await SharedPreferences.getInstance();
       await BackendChatService.ensureBusinessNameCacheLoaded();
-      final cached = prefs.getInt('userId') ??
+      var cached = prefs.getInt('userId') ??
           prefs.getInt('user_id') ??
           int.tryParse(
             prefs.getString('userId') ??
                 prefs.getString('user_id') ??
                 prefs.getString('id') ??
+                prefs.getString('nestUserId') ??
+                prefs.getString('backendUserId') ??
                 '',
           );
+      final fbUid = FirebaseAuth.instance.currentUser?.uid;
+      if ((cached == null || cached <= 0) && fbUid != null) {
+        cached = await BackendChatService.lookupNumericUserIdFromFirestoreOrPrefs(
+          fbUid,
+          prefs,
+        );
+      }
       if (cached != null && cached > 0 && mounted) {
         await _loadChatListPrefs(cached);
         if (!mounted) return;

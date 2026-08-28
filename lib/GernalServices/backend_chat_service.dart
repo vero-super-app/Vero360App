@@ -10,6 +10,7 @@ import 'package:mime/mime.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
@@ -1083,12 +1084,27 @@ class BackendChatService {
         await BackendMessagingCache.saveThreads(userId, _cachedThreads);
       }
     } catch (e) {
-      if (_cachedThreads.isEmpty) rethrow;
-      if (kDebugMode) {
-        print('[BackendChatService] Thread refresh failed, using cache: $e');
+      if (_cachedThreads.isNotEmpty) {
+        _threadsWatchReady = true;
+        _emitCachedThreads();
+        return;
       }
-      _threadsWatchReady = true;
-      _emitCachedThreads();
+      if (userId != null) {
+        final diskThreads = BackendMessagingCache.peekThreads(userId);
+        if (diskThreads.isNotEmpty) {
+          _cachedThreads = _filterDeletedThreads(diskThreads);
+          _applyMemoToCachedThreads();
+          _threadsWatchReady = true;
+          _emitCachedThreads();
+          return;
+        }
+        // If authenticated but empty/offline, emit empty list so UI is usable
+        _cachedThreads = [];
+        _threadsWatchReady = true;
+        _emitCachedThreads();
+        return;
+      }
+      rethrow;
     }
   }
 
@@ -1128,6 +1144,77 @@ class BackendChatService {
   static Future<String> getAuthToken() async {
     await ensureAuth();
     return _authToken!;
+  }
+
+  static const Duration _lookupTimeout = Duration(seconds: 15);
+
+  static Future<int?> lookupNumericUserIdFromFirestoreOrPrefs(
+    String firebaseUid,
+    SharedPreferences sp,
+  ) async {
+    // 1) SharedPreferences
+    final cachedId = sp.getInt('userId') ?? sp.getInt('user_id');
+    if (cachedId != null && cachedId > 0) return cachedId;
+
+    final strId = sp.getString('userId') ??
+        sp.getString('user_id') ??
+        sp.getString('id') ??
+        sp.getString('nestUserId') ??
+        sp.getString('backendUserId');
+    final parsedStr = int.tryParse(strId ?? '');
+    if (parsedStr != null && parsedStr > 0) return parsedStr;
+
+    // 2) Firestore marketplace_merchants doc
+    try {
+      final mDoc = await FirebaseFirestore.instance
+          .collection('marketplace_merchants')
+          .doc(firebaseUid)
+          .get(const GetOptions(source: Source.serverAndCache));
+      if (mDoc.exists && mDoc.data() != null) {
+        final data = mDoc.data()!;
+        final raw = data['backendUserId'] ??
+            data['userId'] ??
+            data['merchantUserId'] ??
+            data['ownerId'] ??
+            data['nestUserId'] ??
+            data['id'];
+        final n = _parseNumericId(raw);
+        if (n != null && n > 0) return n;
+      }
+    } catch (_) {}
+
+    // 3) Firestore users doc
+    try {
+      final uDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(firebaseUid)
+          .get(const GetOptions(source: Source.serverAndCache));
+      if (uDoc.exists && uDoc.data() != null) {
+        final data = uDoc.data()!;
+        final raw = data['backendUserId'] ??
+            data['userId'] ??
+            data['nestUserId'] ??
+            data['id'];
+        final n = _parseNumericId(raw);
+        if (n != null && n > 0) return n;
+      }
+    } catch (_) {}
+
+    // 4) Firestore restaurants doc
+    try {
+      final rDoc = await FirebaseFirestore.instance
+          .collection('restaurants')
+          .doc(firebaseUid)
+          .get(const GetOptions(source: Source.serverAndCache));
+      if (rDoc.exists && rDoc.data() != null) {
+        final data = rDoc.data()!;
+        final raw = data['backendUserId'] ?? data['userId'] ?? data['ownerId'];
+        final n = _parseNumericId(raw);
+        if (n != null && n > 0) return n;
+      }
+    } catch (_) {}
+
+    return null;
   }
 
   static Future<void> ensureAuth({bool forceRefresh = false}) async {
@@ -1173,13 +1260,13 @@ class BackendChatService {
     } catch (e) {
       // Keep a previously cached token if Google token refresh is unreachable.
       if (_authToken == null || _authToken!.isEmpty) {
-        throw Exception(
-          'Could not refresh your session token. Check your connection and try again.',
+        _authToken = await AuthHandler.getTokenForApi();
+      }
+      if (_authToken == null || _authToken!.isEmpty) {
+        print(
+          '[BackendChatService] getIdToken failed and no token found: $e',
         );
       }
-      print(
-        '[BackendChatService] getIdToken failed; using cached token: $e',
-      );
     }
     if (_authToken == null || _authToken!.isEmpty) {
       throw Exception(
@@ -1192,20 +1279,20 @@ class BackendChatService {
     _tokenFetchedAt = DateTime.now();
 
     // Always resolve numeric id from the server for this Firebase user.
-    // Trusting a stale SharedPreferences userId is what leaked prior-account chats.
     late final int? userId;
     try {
       userId = await _fetchNumericUserIdFromMe();
-    } on _ChatAuthUnauthorized {
-      // Firebase still has a user — 401 here is usually an unrefreshable token
-      // (offline / DNS), not a true signed-out state.
-      final cachedId = sp.getInt('userId') ?? sp.getInt('user_id');
-      final sameUid = sp.getString(_messagingFirebaseUidKey) == user.uid;
-      if (cachedId != null && cachedId > 0 && sameUid) {
-        userId = cachedId;
-        print(
-          '[BackendChatService]  unauthorized; using cached userId=$cachedId',
-        );
+    }     on _ChatAuthUnauthorized {
+      // Token may be stale/expired on server — force refresh once and retry
+      int? resolved;
+      try {
+        _authToken = await user.getIdToken(true);
+        resolved = await _fetchNumericUserIdFromMe();
+      } catch (_) {
+        resolved = await lookupNumericUserIdFromFirestoreOrPrefs(user.uid, sp);
+      }
+      if (resolved != null && resolved > 0) {
+        userId = resolved;
       } else {
         throw Exception(
           'Could not verify your session with the server. Check your connection and try again.',
@@ -1213,12 +1300,12 @@ class BackendChatService {
       }
     } catch (e) {
       if (e.toString().toLowerCase().contains('could not verify')) rethrow;
-      final cachedId = sp.getInt('userId') ?? sp.getInt('user_id');
-      final sameUid = sp.getString(_messagingFirebaseUidKey) == user.uid;
-      if (cachedId != null && cachedId > 0 && sameUid) {
-        userId = cachedId;
+      final fallback =
+          await lookupNumericUserIdFromFirestoreOrPrefs(user.uid, sp);
+      if (fallback != null && fallback > 0) {
+        userId = fallback;
         print(
-          '[BackendChatService]  failed; using cached userId=$cachedId ($e)',
+          '[BackendChatService] /users/me failed; using fallback userId=$fallback ($e)',
         );
       } else {
         throw Exception(
@@ -1299,8 +1386,6 @@ class BackendChatService {
       rethrow;
     }
   }
-
-  static const Duration _lookupTimeout = Duration(seconds: 5);
 
   /// Resolve a marketplace / listing seller to a numeric backend user id.
   static Future<int?> resolvePeerUserId({
@@ -2533,10 +2618,21 @@ class BackendChatService {
     await ensureAuth();
 
     try {
-      final response = await http.get(
+      var response = await http.get(
         Uri.parse('$_baseUrl/chats?page=$page&pageSize=$pageSize'),
         headers: {'Authorization': _authHeader},
       ).timeout(_lookupTimeout);
+
+      if (response.statusCode == 401) {
+        // Token expired on server — force refresh once and retry
+        try {
+          await ensureAuth(forceRefresh: true);
+          response = await http.get(
+            Uri.parse('$_baseUrl/chats?page=$page&pageSize=$pageSize'),
+            headers: {'Authorization': _authHeader},
+          ).timeout(_lookupTimeout);
+        } catch (_) {}
+      }
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body);
@@ -2557,6 +2653,10 @@ class BackendChatService {
         throw Exception('Failed to fetch chats: ${response.statusCode}');
       }
     } catch (e) {
+      if (page == 1 && _userId != null) {
+        final cached = BackendMessagingCache.peekThreads(_userId!);
+        if (cached.isNotEmpty) return cached;
+      }
       print('[BackendChatService] Error fetching threads: $e');
       rethrow;
     }

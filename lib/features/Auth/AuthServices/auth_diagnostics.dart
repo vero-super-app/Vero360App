@@ -13,7 +13,7 @@ class AuthDiagnostics {
   AuthDiagnostics._();
 
   /// Keep in sync with pubspec `version:` (used when package_info is unavailable).
-  static const String appVersion = '1.1.4+10008';
+  static const String appVersion = '1.1.5+10009';
 
   static Map<String, dynamic>? peekJwtClaims(String? token) {
     if (token == null || token.isEmpty) return null;

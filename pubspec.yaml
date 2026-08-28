@@ -2,7 +2,7 @@ name: vero360_app
 description: "A new Flutter project."
 publish_to: 'none'
 
-version: 1.1.4+10008
+version: 1.1.5+10009
 
 environment:
   sdk: ">=3.0.0 <4.0.0"

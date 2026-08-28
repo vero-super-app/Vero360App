@@ -3,6 +3,6 @@
 class AppVersionInfo {
   AppVersionInfo._();
 
-  static const String version = '1.1.1';
-  static const String buildNumber = '10003';
+  static const String version = '1.1.5';
+  static const String buildNumber = '10009';
 }

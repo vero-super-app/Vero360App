@@ -469,8 +469,14 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
     }
   }
 
+  bool get _isFoodMerchant =>
+      widget.serviceType.trim().toLowerCase() == 'food';
+
   Future<void> _onRequestPayoutPressed() async {
-    final ok = await KycGate.ensureVerifiedForWithdraw(context);
+    final ok = await KycGate.ensureVerifiedForWithdraw(
+      context,
+      foodMerchant: _isFoodMerchant,
+    );
     if (!ok || !mounted) return;
     _showPayoutDialog();
   }
@@ -983,7 +989,10 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
     if (!await KycGate.isVerified()) {
       if (mounted) {
         Navigator.of(context).pop(); // close payout dialog
-        await KycGate.ensureVerifiedForWithdraw(context);
+        await KycGate.ensureVerifiedForWithdraw(
+          context,
+          foodMerchant: _isFoodMerchant,
+        );
       }
       return;
     }

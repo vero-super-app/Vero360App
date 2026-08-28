@@ -37,6 +37,9 @@ class KycGate {
 
   /// If KYC is incomplete, show a modern prompt and open verification.
   /// Returns `true` only when the user is verified.
+  ///
+  /// When [mandatory] is true, the dialog has no "Not now" skip — the merchant
+  /// must start verification (or dismiss via system back, which still blocks).
   static Future<bool> ensureVerified(
     BuildContext context, {
     String title = 'Verify your identity',
@@ -44,6 +47,7 @@ class KycGate {
         'Complete a quick KYC check to post dishes, receive orders, and withdraw payouts securely.',
     String pendingMessage =
         'Verification is still pending. You can continue once KYC is approved.',
+    bool mandatory = false,
   }) async {
     if (await isVerified()) return true;
     if (!context.mounted) return false;
@@ -52,6 +56,7 @@ class KycGate {
       context,
       title: title,
       message: message,
+      mandatory: mandatory,
     );
     if (go != true || !context.mounted) return false;
 
@@ -73,9 +78,26 @@ class KycGate {
     return false;
   }
 
-  /// If KYC is incomplete, show a mandatory prompt and open verification.
+  /// If KYC is incomplete, show a prompt and open verification before withdraw.
+  /// Food merchants always get a mandatory prompt (no skip).
   /// Returns `true` only when the user is verified (already or after completing).
-  static Future<bool> ensureVerifiedForWithdraw(BuildContext context) {
+  static Future<bool> ensureVerifiedForWithdraw(
+    BuildContext context, {
+    bool foodMerchant = false,
+  }) {
+    if (foodMerchant) {
+      return ensureVerified(
+        context,
+        title: 'KYC required to withdraw',
+        message:
+            'Food merchants must verify identity before withdrawing kitchen '
+            'payouts. This protects your restaurant account and customers.',
+        pendingMessage:
+            'Verification is still pending. You can withdraw kitchen payouts '
+            'once KYC is approved.',
+        mandatory: true,
+      );
+    }
     return ensureVerified(
       context,
       title: 'Verify before withdrawing',
@@ -95,6 +117,7 @@ Future<bool> showModernKycDialog(
   required String message,
   String cancelLabel = 'Not now',
   String confirmLabel = 'Verify now',
+  bool mandatory = false,
 }) async {
   const brand = Color(0xFFFF8A00);
   final result = await showDialog<bool>(
@@ -159,6 +182,31 @@ Future<bool> showModernKycDialog(
                     color: Colors.grey.shade600,
                   ),
                 ),
+                if (mandatory) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF1F0),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFFECACA)),
+                    ),
+                    child: const Text(
+                      'Required — withdrawals stay locked until KYC is approved.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFFB91C1C),
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 Container(
                   width: double.infinity,
@@ -186,49 +234,84 @@ Future<bool> showModernKycDialog(
                   ),
                 ),
                 const SizedBox(height: 20),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
+                if (mandatory)
+                  Column(
+                    children: [
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton(
+                          onPressed: () => Navigator.pop(ctx, true),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: brand,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            elevation: 0,
+                          ),
+                          child: Text(
+                            confirmLabel,
+                            style: const TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                        ),
+                      ),
+                      TextButton(
                         onPressed: () => Navigator.pop(ctx, false),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                          side: const BorderSide(color: Color(0xFFE5E7EB)),
-                        ),
                         child: Text(
-                          cancelLabel,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            color: Color(0xFF374151),
+                          'Close',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: Colors.grey.shade600,
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      flex: 2,
-                      child: FilledButton(
-                        onPressed: () => Navigator.pop(ctx, true),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: brand,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
+                    ],
+                  )
+                else
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(ctx, false),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            side: const BorderSide(color: Color(0xFFE5E7EB)),
                           ),
-                          elevation: 0,
-                        ),
-                        child: Text(
-                          confirmLabel,
-                          style: const TextStyle(fontWeight: FontWeight.w900),
+                          child: Text(
+                            cancelLabel,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF374151),
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        flex: 2,
+                        child: FilledButton(
+                          onPressed: () => Navigator.pop(ctx, true),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: brand,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            elevation: 0,
+                          ),
+                          child: Text(
+                            confirmLabel,
+                            style: const TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
               ],
             ),
           ),

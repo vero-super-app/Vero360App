@@ -1751,6 +1751,17 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   }
 
   Future<void> _blockMerchant() async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      ToastHelper.showCustomToast(
+        context,
+        'Please log in to block a merchant.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
     final ok = await showDialog<bool>(
       context: context,
       barrierDismissible: true,
@@ -1856,6 +1867,17 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   }
 
   Future<void> _unblockMerchant() async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      ToastHelper.showCustomToast(
+        context,
+        'Please log in to manage blocked merchants.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
     await BlockedMerchantService.unblockMerchant(widget.merchantId);
     if (!mounted) return;
     setState(() => _blockedByViewer = false);
@@ -1865,6 +1887,17 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   }
 
   Future<void> _reportMerchant() async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      ToastHelper.showCustomToast(
+        context,
+        'Please log in to report a merchant.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
     final controller = TextEditingController();
     final picked = <XFile>[];
 
@@ -2158,17 +2191,6 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     });
 
     if (result == null || !mounted) return;
-
-    final user = _auth.currentUser;
-    if (user == null) {
-      ToastHelper.showCustomToast(
-        context,
-        'Please log in to report a merchant.',
-        isSuccess: false,
-        errorMessage: '',
-      );
-      return;
-    }
 
     final message = result.message;
     final pickedFiles = result.picked;

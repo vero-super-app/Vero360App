@@ -2208,6 +2208,11 @@ class _KitchenExplorePageState extends State<_KitchenExplorePage> {
   }
 
   Future<void> _blockRestaurant() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      _toast('Please log in to block a restaurant.', false);
+      return;
+    }
     final mid = _merchantId;
     if (mid.isEmpty) {
       _toast('Cannot block this restaurant yet.', false);

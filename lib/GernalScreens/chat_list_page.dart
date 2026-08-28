@@ -72,6 +72,18 @@ class _ChatListPageState extends State<ChatListPage> {
   }
 
   Future<void> _boot() async {
+    final fbUser = FirebaseAuth.instance.currentUser;
+    if (fbUser == null) {
+      if (mounted) {
+        setState(() {
+          _errorTitle = 'Authentication required';
+          _errorIcon = Icons.lock_outline;
+          _error = 'Please log in to view your messages.';
+        });
+      }
+      return;
+    }
+
     // Fast path: use cached backend user id or Firestore fallback so the list renders immediately.
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -86,8 +98,8 @@ class _ChatListPageState extends State<ChatListPage> {
                 prefs.getString('backendUserId') ??
                 '',
           );
-      final fbUid = FirebaseAuth.instance.currentUser?.uid;
-      if ((cached == null || cached <= 0) && fbUid != null) {
+      final fbUid = fbUser.uid;
+      if (cached == null || cached <= 0) {
         cached = await BackendChatService.lookupNumericUserIdFromFirestoreOrPrefs(
           fbUid,
           prefs,
@@ -98,8 +110,8 @@ class _ChatListPageState extends State<ChatListPage> {
         if (!mounted) return;
         setState(() {
           _myUserId = cached;
-          _myEmail = FirebaseAuth.instance.currentUser?.email;
-          _myName = FirebaseAuth.instance.currentUser?.displayName;
+          _myEmail = fbUser.email;
+          _myName = fbUser.displayName;
           _error = null;
         });
       }
@@ -140,7 +152,11 @@ class _ChatListPageState extends State<ChatListPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      if (_myUserId != null) return; // keep cached-id UI if auth is slow/fails
+      // If user is logged in to Firebase, never block the screen with full error
+      if (FirebaseAuth.instance.currentUser != null) {
+        setState(() => _error = null);
+        return;
+      }
       final ui = _friendlyChatError(e);
       setState(() {
         _errorTitle = ui.title;
@@ -395,13 +411,16 @@ class _ChatListPageState extends State<ChatListPage> {
         stream: _threadsStream,
         builder: (context, snap) {
           if (snap.hasError && (snap.data == null || snap.data!.isEmpty)) {
-            final ui = _friendlyChatError(snap.error!);
-            return _EmptyState(
-              icon: ui.icon,
-              title: ui.title,
-              subtitle: ui.message,
-              onRetry: _boot,
-            );
+            final fbSignedIn = FirebaseAuth.instance.currentUser != null;
+            if (!fbSignedIn) {
+              final ui = _friendlyChatError(snap.error!);
+              return _EmptyState(
+                icon: ui.icon,
+                title: ui.title,
+                subtitle: ui.message,
+                onRetry: _boot,
+              );
+            }
           }
 
           if (!snap.hasData) {

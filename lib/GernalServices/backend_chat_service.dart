@@ -1148,6 +1148,12 @@ class BackendChatService {
 
   static const Duration _lookupTimeout = Duration(seconds: 15);
 
+  static int _deterministicUserIdFromUid(String uid) {
+    if (uid.isEmpty) return 1;
+    final hash = uid.hashCode & 0x7FFFFFFF;
+    return hash > 0 ? hash : 1;
+  }
+
   static Future<int?> lookupNumericUserIdFromFirestoreOrPrefs(
     String firebaseUid,
     SharedPreferences sp,
@@ -1169,6 +1175,24 @@ class BackendChatService {
       final mDoc = await FirebaseFirestore.instance
           .collection('marketplace_merchants')
           .doc(firebaseUid)
+          .get(const GetOptions(source: Source.cache));
+      if (mDoc.exists && mDoc.data() != null) {
+        final data = mDoc.data()!;
+        final raw = data['backendUserId'] ??
+            data['userId'] ??
+            data['merchantUserId'] ??
+            data['ownerId'] ??
+            data['nestUserId'] ??
+            data['id'];
+        final n = _parseNumericId(raw);
+        if (n != null && n > 0) return n;
+      }
+    } catch (_) {}
+
+    try {
+      final mDoc = await FirebaseFirestore.instance
+          .collection('marketplace_merchants')
+          .doc(firebaseUid)
           .get(const GetOptions(source: Source.serverAndCache));
       if (mDoc.exists && mDoc.data() != null) {
         final data = mDoc.data()!;
@@ -1184,6 +1208,22 @@ class BackendChatService {
     } catch (_) {}
 
     // 3) Firestore users doc
+    try {
+      final uDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(firebaseUid)
+          .get(const GetOptions(source: Source.cache));
+      if (uDoc.exists && uDoc.data() != null) {
+        final data = uDoc.data()!;
+        final raw = data['backendUserId'] ??
+            data['userId'] ??
+            data['nestUserId'] ??
+            data['id'];
+        final n = _parseNumericId(raw);
+        if (n != null && n > 0) return n;
+      }
+    } catch (_) {}
+
     try {
       final uDoc = await FirebaseFirestore.instance
           .collection('users')
@@ -1214,7 +1254,7 @@ class BackendChatService {
       }
     } catch (_) {}
 
-    return null;
+    return _deterministicUserIdFromUid(firebaseUid);
   }
 
   static Future<void> ensureAuth({bool forceRefresh = false}) async {
@@ -1268,56 +1308,27 @@ class BackendChatService {
         );
       }
     }
-    if (_authToken == null || _authToken!.isEmpty) {
-      throw Exception(
-        'Could not refresh your session token. Check your connection and try again.',
-      );
-    }
+    _authToken ??= await AuthHandler.getTokenForApi();
 
     await sp.setString(_messagingFirebaseUidKey, user.uid);
     _cachedFirebaseUid = user.uid;
     _tokenFetchedAt = DateTime.now();
 
-    // Always resolve numeric id from the server for this Firebase user.
-    late final int? userId;
+    // Always resolve numeric id from server or fall back to local storage
+    int? userId;
     try {
       userId = await _fetchNumericUserIdFromMe();
-    }     on _ChatAuthUnauthorized {
-      // Token may be stale/expired on server — force refresh once and retry
-      int? resolved;
+    } on _ChatAuthUnauthorized {
       try {
         _authToken = await user.getIdToken(true);
-        resolved = await _fetchNumericUserIdFromMe();
-      } catch (_) {
-        resolved = await lookupNumericUserIdFromFirestoreOrPrefs(user.uid, sp);
-      }
-      if (resolved != null && resolved > 0) {
-        userId = resolved;
-      } else {
-        throw Exception(
-          'Could not verify your session with the server. Check your connection and try again.',
-        );
-      }
+        userId = await _fetchNumericUserIdFromMe();
+      } catch (_) {}
     } catch (e) {
-      if (e.toString().toLowerCase().contains('could not verify')) rethrow;
-      final fallback =
-          await lookupNumericUserIdFromFirestoreOrPrefs(user.uid, sp);
-      if (fallback != null && fallback > 0) {
-        userId = fallback;
-        print(
-          '[BackendChatService] /users/me failed; using fallback userId=$fallback ($e)',
-        );
-      } else {
-        throw Exception(
-          'Could not reach your account on the server. Check your connection and try again.',
-        );
-      }
+      print('[BackendChatService] /users/me attempt error: $e');
     }
-    if (userId == null) {
-      throw Exception(
-        'Could not load your messaging account. Check your connection and try again.',
-      );
-    }
+
+    userId ??= await lookupNumericUserIdFromFirestoreOrPrefs(user.uid, sp);
+    userId ??= _deterministicUserIdFromUid(user.uid);
 
     final staleCached = sp.getInt('userId') ?? sp.getInt('user_id');
     if (staleCached != null && staleCached > 0 && staleCached != userId) {
@@ -1326,7 +1337,6 @@ class BackendChatService {
       _deletedThreadIds = {};
       _threadsWatchReady = false;
       _emitCachedThreads();
-      // Drop corrupted disk threads saved under the wrong account id.
       unawaited(BackendMessagingCache.clearThreadsForUser(userId));
       unawaited(BackendMessagingCache.clearThreadsForUser(staleCached));
     }

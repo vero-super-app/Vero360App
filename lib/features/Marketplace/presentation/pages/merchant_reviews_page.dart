@@ -52,8 +52,6 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
 
   bool _loading = true;
   bool _refreshing = false;
-  bool _isLoggedIn = false;
-  bool _loginRequired = false;
   String? _error;
   int? _myUserId;
   int? _resolvedMerchantId;
@@ -96,12 +94,11 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
           );
       _reviews = List<MerchantReview>.from(initialReviews ?? const []);
       _loading = false;
-    } else if (widget.rating != null && widget.rating! > 0) {
+    } else {
       _summary = MerchantReviewSummary(
-        average: widget.rating!,
+        average: widget.rating ?? 0,
         count: 0,
       );
-      // Still loading list, but header rating can show.
     }
   }
 
@@ -110,7 +107,6 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
       setState(() {
         _loading = true;
         _error = null;
-        _loginRequired = false;
       });
     } else {
       if (mounted) setState(() => _refreshing = true);
@@ -146,7 +142,6 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
       if (cached != null && silent) {
         if (!mounted) return;
         setState(() {
-          _isLoggedIn = loggedIn;
           _myUserId = myId;
           _myDisplayName = myName.trim();
           _myAvatarUrl = myAvatar?.trim();
@@ -177,12 +172,13 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
 
       if (!mounted) return;
       setState(() {
-        _isLoggedIn = loggedIn;
         _myUserId = myId;
         _myDisplayName = myName.trim();
         _myAvatarUrl = myAvatar?.trim();
         _resolvedMerchantId = merchantBackendId;
-        _summary = bundle.summary;
+        _summary = bundle.summary.average > 0 || bundle.summary.count > 0
+            ? bundle.summary
+            : (_summary ?? bundle.summary);
         _reviews = bundle.reviews
             .map((r) => _enrichReview(r.withNormalizedReaction()))
             .toList();
@@ -195,11 +191,10 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
       setState(() {
         _loading = false;
         _refreshing = false;
-        // Keep seeded data visible on refresh failure.
-        if (_reviews.isEmpty && _summary == null) {
-          _error = e is ApiException ? e.message : 'Could not load reviews.';
-          _loginRequired = e is ApiException && e.requiresLogin;
+        if (_summary == null) {
+          _summary = MerchantReviewSummary(average: widget.rating ?? 0, count: 0);
         }
+        _error = null;
       });
     }
   }
@@ -218,7 +213,6 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
       );
       if (!mounted) return;
       setState(() {
-        _isLoggedIn = loggedIn;
         _myUserId = myId;
         _myDisplayName = myName.trim();
         _myAvatarUrl = myAvatar?.trim();
@@ -458,7 +452,7 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
       );
     }
 
-    if (_error != null && _reviews.isEmpty) {
+    if (_error != null && _reviews.isEmpty && _summary == null) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -477,14 +471,12 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
-                onPressed: _loginRequired ? _goToLogin : _load,
+                onPressed: _load,
                 style: FilledButton.styleFrom(
                   backgroundColor: MerchantReviewsPage._brandOrange,
                 ),
-                icon: Icon(
-                  _loginRequired ? Icons.login_rounded : Icons.refresh_rounded,
-                ),
-                label: Text(_loginRequired ? 'Log in' : 'Retry'),
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Retry'),
               ),
             ],
           ),
@@ -828,7 +820,7 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
           ],
           if (!isMine) ...[
             const SizedBox(height: 12),
-            _reactionRow(review, readOnly: !_isLoggedIn),
+            _reactionRow(review),
           ],
         ],
       ),

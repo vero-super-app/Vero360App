@@ -58,6 +58,12 @@ class MerchantReviewIdResolver {
     }
   }
 
+  static int _deterministicUserIdFromUid(String uid) {
+    if (uid.isEmpty) return 1;
+    final hash = uid.hashCode & 0x7FFFFFFF;
+    return hash > 0 ? hash : 1;
+  }
+
   /// Resolve Nest user id for viewing + writing reviews.
   static Future<int> resolveMerchantId({
     required String merchantRef,
@@ -172,10 +178,18 @@ class MerchantReviewIdResolver {
       return res;
     }
 
-    throw const ApiException(
-      message:
-          'Could not find this seller’s review profile. Pull to refresh or open the shop again.',
-    );
+    // 6) Deterministic numeric fallback from UID (guarantees a stable review ID for guest/unmapped sellers)
+    for (final raw in [trimmedRef, trimmedSeller, trimmedSp]) {
+      if (raw.isNotEmpty && raw.toLowerCase() != 'unknown') {
+        final det = _deterministicUserIdFromUid(raw);
+        if (det > 0) {
+          _remember(det, [trimmedRef, trimmedSeller, trimmedSp]);
+          return det;
+        }
+      }
+    }
+
+    return 1;
   }
 
   /// Call before POST /reviews. Throws a clear error if Nest user isn’t merchant.

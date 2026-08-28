@@ -20,7 +20,6 @@ import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/GeneralPages/checkout_page.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
-import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_share_link.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
@@ -57,7 +56,8 @@ class _SellerInfo {
       status,
       description,
       logoUrl,
-      serviceProviderId;
+      serviceProviderId,
+      sellerUserId;
   double? rating;
   int reviewCount;
   int? backendMerchantId;
@@ -71,6 +71,7 @@ class _SellerInfo {
     this.reviewCount = 0,
     this.logoUrl,
     this.serviceProviderId,
+    this.sellerUserId,
     this.backendMerchantId,
     this.recentReviews = const [],
   });
@@ -302,6 +303,7 @@ class _DetailsPageState extends State<DetailsPage> {
       reviewCount: seller.reviewCount,
       logoUrl: seller.logoUrl,
       serviceProviderId: seller.serviceProviderId,
+      sellerUserId: seller.sellerUserId,
       backendMerchantId: seller.backendMerchantId,
       recentReviews: seller.recentReviews,
     );
@@ -325,9 +327,25 @@ class _DetailsPageState extends State<DetailsPage> {
       reviewCount: reviews?.summary.count ?? 0,
       logoUrl: i.sellerLogoUrl,
       serviceProviderId: i.serviceProviderId,
+      sellerUserId: i.sellerUserId,
       backendMerchantId: bid,
       recentReviews: reviews?.reviews.take(3).toList() ?? const [],
     );
+
+    if (bid != null && bid > 0 && reviews == null) {
+      unawaited(const MerchantReviewService().loadFast(bid).then((bundle) {
+        if (!mounted) return;
+        setState(() {
+          if (_seller != null) {
+            if (bundle.summary.average > 0) {
+              _seller!.rating = bundle.summary.average;
+            }
+            _seller!.reviewCount = bundle.summary.count;
+            _seller!.recentReviews = bundle.reviews.take(3).toList();
+          }
+        });
+      }).catchError((_) {}));
+    }
   }
 
   void _seedOpeningHoursFast() {
@@ -467,6 +485,7 @@ class _DetailsPageState extends State<DetailsPage> {
       reviewCount: seller.reviewCount,
       logoUrl: seller.logoUrl,
       serviceProviderId: seller.serviceProviderId,
+      sellerUserId: seller.sellerUserId,
       backendMerchantId: seller.backendMerchantId,
       recentReviews: seller.recentReviews,
     );
@@ -650,7 +669,12 @@ class _DetailsPageState extends State<DetailsPage> {
     String? serviceProviderId,
     String? sellerUserId,
     int? merchantBackendId,
+    int reviewCount = 0,
+    List<MerchantReview> recentReviews = const [],
   }) {
+    final effectiveBackendId = merchantBackendId ??
+        _seller?.backendMerchantId ??
+        widget.item.merchantBackendId;
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -659,9 +683,20 @@ class _DetailsPageState extends State<DetailsPage> {
           merchantName: merchantName,
           logoUrl: logoUrl,
           rating: rating,
-          serviceProviderId: serviceProviderId,
-          sellerUserId: sellerUserId,
-          merchantBackendId: merchantBackendId,
+          serviceProviderId: serviceProviderId ??
+              widget.item.serviceProviderId ??
+              _seller?.serviceProviderId,
+          sellerUserId: sellerUserId ??
+              widget.item.sellerUserId ??
+              _seller?.sellerUserId,
+          merchantBackendId: effectiveBackendId,
+          initialSummary: (rating != null && rating > 0) || reviewCount > 0
+              ? MerchantReviewSummary(
+                  average: rating ?? 0,
+                  count: reviewCount,
+                )
+              : null,
+          initialReviews: recentReviews.isNotEmpty ? recentReviews : null,
         ),
       ),
     );
@@ -856,9 +891,11 @@ class _DetailsPageState extends State<DetailsPage> {
                           merchantName: merchantDisplayName,
                           logoUrl: logo ?? item.sellerLogoUrl,
                           rating: rating,
-                          serviceProviderId: item.serviceProviderId,
-                          sellerUserId: item.sellerUserId,
-                          merchantBackendId: merchantBackendId,
+                          serviceProviderId: item.serviceProviderId ?? _seller?.serviceProviderId,
+                          sellerUserId: item.sellerUserId ?? _seller?.sellerUserId,
+                          merchantBackendId: merchantBackendId ?? _seller?.backendMerchantId ?? item.merchantBackendId,
+                          reviewCount: reviewCount,
+                          recentReviews: recentReviews,
                         )
                     : null,
                 child: Container(
@@ -1827,7 +1864,7 @@ class _DetailsPageState extends State<DetailsPage> {
             recentReviews: recentReviews,
             businessDesc: businessDesc,
             logo: logo,
-            merchantBackendId: s?.backendMerchantId,
+            merchantBackendId: s?.backendMerchantId ?? item.merchantBackendId,
           ),
           if (hasMerchant && merchantId.trim().isNotEmpty) ...[
             const SizedBox(height: 12),

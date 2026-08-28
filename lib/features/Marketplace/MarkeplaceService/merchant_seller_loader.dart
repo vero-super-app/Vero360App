@@ -467,34 +467,6 @@ class MerchantSellerLoader {
     }
   }
 
-  static void _applyMarketplaceItemData(
-    MerchantSellerInfo info,
-    Map<String, dynamic> item,
-  ) {
-    info.businessName ??= _shopNameFromMap(item);
-    _setShopName(
-      info,
-      item['sellerBusinessName'] ?? item['businessName'],
-      strong: true,
-    );
-    info.description ??= _trimmed(item['sellerBusinessDescription']);
-    info.status ??= _trimmed(item['sellerStatus']);
-    info.openingHours ??= _trimmed(item['sellerOpeningHours']);
-    info.logoUrl ??= _trimmed(item['sellerLogoUrl'] ?? item['merchantLogoUrl']);
-    info.serviceProviderId ??= _trimmed(item['serviceProviderId']);
-
-    final mid = _trimmed(item['merchantId']);
-    if (mid != null && _looksLikeFirebaseUid(mid)) {
-      info.merchantRef = mid;
-      info.sellerUserId ??= _trimmed(item['sellerUserId']) ?? mid;
-    }
-
-    final rating = item['sellerRating'];
-    if (info.rating == null && rating is num) {
-      info.rating = rating.toDouble();
-    }
-  }
-
   static void _applyBackendUserProfile(
     MerchantSellerInfo info,
     Map<String, dynamic> user,
@@ -546,7 +518,7 @@ class MerchantSellerLoader {
 
     _setShopName(
       info,
-      m['businessName'] ?? m['shopName'] ?? m['storeName'] ?? m['companyName'],
+      _shopNameFromMap(m) ?? m['businessName'] ?? m['shopName'] ?? m['storeName'] ?? m['companyName'],
       strong: true,
     );
     if (_isWeakSellerName(info.businessName)) {
@@ -677,15 +649,20 @@ class MerchantSellerLoader {
 
       if (reviewsMerchantId <= 0) {
         final ref = (merchantRef ?? '').trim();
-        if (ref.isEmpty) return;
+        final sid = (sellerUserId ?? '').trim();
+        final spId = (serviceProviderId ?? '').trim();
+        if (ref.isEmpty && sid.isEmpty && spId.isEmpty && (info.backendMerchantId == null || info.backendMerchantId! <= 0)) {
+          return;
+        }
         backendId = await MerchantReviewIdResolver.resolveMerchantId(
-          merchantRef: ref,
-          serviceProviderId: serviceProviderId,
-          sellerUserId: sellerUserId,
+          merchantRef: ref.isNotEmpty ? ref : (sid.isNotEmpty ? sid : spId),
+          serviceProviderId: spId.isNotEmpty ? spId : null,
+          sellerUserId: sid.isNotEmpty ? sid : null,
           preResolvedBackendId: info.backendMerchantId,
         );
       }
 
+      if (backendId <= 0) return;
       info.backendMerchantId = backendId;
 
       const reviewService = MerchantReviewService();
@@ -867,6 +844,17 @@ class MerchantSellerLoader {
     }();
 
     await Future.wait([reviewsF, extraF]);
+
+    if ((info.reviewCount == 0 && (info.rating == null || info.rating == 0)) ||
+        (info.backendMerchantId != null && info.backendMerchantId! > 0 && reviewsId <= 0)) {
+      await _loadReviews(
+        info,
+        reviewsMerchantId: info.backendMerchantId ?? 0,
+        merchantRef: isUid(info.merchantRef) ? info.merchantRef : merchantRef,
+        serviceProviderId: info.serviceProviderId ?? serviceProviderId,
+        sellerUserId: info.sellerUserId ?? sellerUid,
+      );
+    }
     ping();
 
     if ((info.openingHours ?? '').trim().isNotEmpty) {

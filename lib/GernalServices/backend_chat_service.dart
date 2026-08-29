@@ -1043,7 +1043,9 @@ class BackendChatService {
   static Future<void> _reloadThreadCache() async {
     await BackendMessagingCache.initialize();
     await ensureBusinessNameCacheLoaded();
-    await ensureAuth();
+    try {
+      await ensureAuth();
+    } catch (_) {}
     final userId = _userId;
 
     // Never carry another account's in-memory threads into this session.
@@ -1089,14 +1091,16 @@ class BackendChatService {
         _emitCachedThreads();
         return;
       }
-      if (userId != null) {
-        final diskThreads = BackendMessagingCache.peekThreads(userId);
-        if (diskThreads.isNotEmpty) {
-          _cachedThreads = _filterDeletedThreads(diskThreads);
-          _applyMemoToCachedThreads();
-          _threadsWatchReady = true;
-          _emitCachedThreads();
-          return;
+      if (userId != null || FirebaseAuth.instance.currentUser != null) {
+        if (userId != null) {
+          final diskThreads = BackendMessagingCache.peekThreads(userId);
+          if (diskThreads.isNotEmpty) {
+            _cachedThreads = _filterDeletedThreads(diskThreads);
+            _applyMemoToCachedThreads();
+            _threadsWatchReady = true;
+            _emitCachedThreads();
+            return;
+          }
         }
         // If authenticated but empty/offline, emit empty list so UI is usable
         _cachedThreads = [];
@@ -2625,7 +2629,9 @@ class BackendChatService {
     int page = 1,
     int pageSize = 50,
   }) async {
-    await ensureAuth();
+    try {
+      await ensureAuth();
+    } catch (_) {}
 
     try {
       var response = await http.get(
@@ -2636,7 +2642,12 @@ class BackendChatService {
       if (response.statusCode == 401) {
         // Token expired on server — force refresh once and retry
         try {
-          await ensureAuth(forceRefresh: true);
+          final refreshed = await AuthHandler.refreshTokenAfterUnauthorized();
+          if (refreshed != null && refreshed.isNotEmpty) {
+            _authToken = refreshed;
+          } else {
+            await ensureAuth(forceRefresh: true);
+          }
           response = await http.get(
             Uri.parse('$_baseUrl/chats?page=$page&pageSize=$pageSize'),
             headers: {'Authorization': _authHeader},
@@ -2667,6 +2678,13 @@ class BackendChatService {
         final cached = BackendMessagingCache.peekThreads(_userId!);
         if (cached.isNotEmpty) return cached;
       }
+      if (FirebaseAuth.instance.currentUser != null) {
+        if (_userId != null) {
+          final cached = BackendMessagingCache.peekThreads(_userId!);
+          return cached;
+        }
+        return const <BackendChatThread>[];
+      }
       print('[BackendChatService] Error fetching threads: $e');
       rethrow;
     }
@@ -2682,13 +2700,25 @@ class BackendChatService {
           multi.add(_filterDeletedThreads(_cachedThreads));
         }
       } catch (e, st) {
-        if (!multi.isClosed) multi.addError(e, st);
-        return;
+        if (!multi.isClosed) {
+          if (FirebaseAuth.instance.currentUser != null) {
+            multi.add(_filterDeletedThreads(_cachedThreads));
+          } else {
+            multi.addError(e, st);
+            return;
+          }
+        }
       }
 
       final sub = _threadsLiveController.stream.listen(
         multi.add,
-        onError: multi.addError,
+        onError: (err, st) {
+          if (FirebaseAuth.instance.currentUser != null) {
+            multi.add(_filterDeletedThreads(_cachedThreads));
+          } else {
+            multi.addError(err, st);
+          }
+        },
       );
       multi.onCancel = () => sub.cancel();
     });

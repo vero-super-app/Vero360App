@@ -424,6 +424,14 @@ class _ChatListPageState extends State<ChatListPage> {
           }
 
           if (!snap.hasData) {
+            final fbSignedIn = FirebaseAuth.instance.currentUser != null;
+            if (snap.hasError && fbSignedIn) {
+              return const _EmptyState(
+                icon: Icons.chat_bubble_outline_rounded,
+                title: 'No chats yet',
+                subtitle: 'When you message someone, the conversation appears here.',
+              );
+            }
             return const ChatListSkeleton();
           }
 

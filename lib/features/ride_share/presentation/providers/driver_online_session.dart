@@ -462,9 +462,13 @@ final driverOnlineSessionProvider =
 /// when leaving driver mode so a later server sync cannot undo the switch.
 Future<bool> applySessionRole(String role) async {
   final prefs = await SharedPreferences.getInstance();
+  if (RoleSessionService.isMerchantAccount(prefs)) return false;
   final previous = RoleSessionService.readCachedRole(prefs);
   final normalized =
       RoleHelper.normalizeAccountRole(role) ?? RoleHelper.customer;
+  if (normalized != RoleHelper.customer && normalized != RoleHelper.driver) {
+    return false;
+  }
   final ok = await RoleSessionService.setAccountRole(normalized);
   await loadDriverStatusFromPrefs();
   if (previous == RoleHelper.driver && normalized != RoleHelper.driver) {

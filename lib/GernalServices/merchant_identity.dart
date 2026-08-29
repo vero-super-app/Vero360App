@@ -116,10 +116,9 @@ class MerchantIdentityStore {
         normalizeMerchantServiceKey(prefs.getString(prefsServiceKeyForUid(id))) ??
         normalizeMerchantServiceKey(prefs.getString('merchant_service'));
 
-    final effectiveRole =
-        (isKnownMerchantServiceKey(service) && role == RoleHelper.customer)
-            ? RoleHelper.merchant
-            : role;
+    final effectiveRole = isKnownMerchantServiceKey(service)
+        ? RoleHelper.merchant
+        : role;
 
     final identity = MerchantIdentity(
       uid: id,
@@ -248,8 +247,9 @@ class MerchantIdentityStore {
           data['merchantService']?.toString() ??
               data['merchant_service']?.toString(),
         );
-        if (isKnownMerchantServiceKey(fromService)) {
+      if (isKnownMerchantServiceKey(fromService)) {
           service = fromService;
+          role = RoleHelper.merchant;
         }
       }
     } catch (e) {
@@ -305,9 +305,13 @@ class MerchantIdentityStore {
           (forceRefresh
               ? null
               : normalizeMerchantServiceKey(sp.getString('merchant_service')));
-      if (isKnownMerchantServiceKey(service) && role == RoleHelper.customer) {
+      if (isKnownMerchantServiceKey(service) && role != RoleHelper.merchant) {
         role = RoleHelper.merchant;
       }
+    }
+
+    if (isKnownMerchantServiceKey(service)) {
+      role = RoleHelper.merchant;
     }
 
     return stamp(

@@ -53,9 +53,61 @@ class RoleSessionService {
       ) ??
       '';
 
+  /// True when this uid is a merchant shop account. Merchants never become
+  /// drivers or passengers — leftover `session_intended_role=driver` must not
+  /// PUT `/users/me` or overwrite prefs.
+  static bool isMerchantAccount(
+    SharedPreferences prefs, {
+    String? lookupUid,
+    Map<String, dynamic>? user,
+  }) {
+    if (user != null && RoleHelper.isMerchant(user)) return true;
+    final uid = (lookupUid ??
+            FirebaseAuth.instance.currentUser?.uid.trim() ??
+            prefs.getString('uid') ??
+            '')
+        .trim();
+    final existing = RoleHelper.normalizeAccountRole(
+      prefs.getString('user_role') ?? prefs.getString('role'),
+    );
+    final prefsUid = (prefs.getString('uid') ?? '').trim();
+    final sameAccount =
+        uid.isEmpty || prefsUid.isEmpty || prefsUid == uid;
+    if (sameAccount && existing == RoleHelper.merchant) return true;
+
+    final intendedRole = RoleHelper.normalizeAccountRole(
+      prefs.getString(intendedRoleKey),
+    );
+    final intendedUid = (prefs.getString(intendedUidKey) ?? '').trim();
+    if (intendedRole == RoleHelper.merchant &&
+        uid.isNotEmpty &&
+        intendedUid == uid) {
+      return true;
+    }
+    if (uid.isNotEmpty &&
+        isKnownMerchantServiceKey(
+          prefs.getString(MerchantIdentityStore.prefsServiceKeyForUid(uid)),
+        )) {
+      return true;
+    }
+    if (sameAccount &&
+        isKnownMerchantServiceKey(prefs.getString('merchant_service'))) {
+      return true;
+    }
+    final identity = MerchantIdentityStore.peek();
+    if (identity != null &&
+        identity.isMerchant &&
+        (uid.isEmpty || identity.uid == uid)) {
+      return true;
+    }
+    return false;
+  }
+
   /// Driver/merchant role the backend should use when inserting a new user row.
   /// Only the role locked for *this* Firebase uid — never leftover prefs.
   static String? intendedRoleForRequest(SharedPreferences prefs) {
+    // Never advertise driver/customer over a merchant shop account.
+    if (isMerchantAccount(prefs)) return RoleHelper.merchant;
     final intendedUid = (prefs.getString(intendedUidKey) ?? '').trim();
     final fbUid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
     if (intendedUid.isEmpty || fbUid.isEmpty || intendedUid != fbUid) {
@@ -103,6 +155,9 @@ class RoleSessionService {
     String? uid,
   }) async {
     final r = RoleHelper.normalizeAccountRole(role) ?? RoleHelper.customer;
+    if (r != RoleHelper.merchant && isMerchantAccount(prefs)) {
+      return;
+    }
     await prefs.setString(intendedRoleKey, r);
     final service = normalizeMerchantServiceKey(merchantService);
     if (r == RoleHelper.merchant && service != null && service.isNotEmpty) {
@@ -146,12 +201,30 @@ class RoleSessionService {
     final intendedUid = (prefs.getString(intendedUidKey) ?? '').trim();
     // Explicit local choice for *this* uid — including passenger. A Profile
     // toggle must not be undone by a stale /users/me payload or a failed PUT.
+    // Merchants are excluded: they are not a passenger↔driver toggle.
     final intendedMatchesThisUser =
         intendedRole != null &&
+        intendedRole != RoleHelper.merchant &&
         fbUid.isNotEmpty &&
         intendedUid == fbUid;
 
-    if (intendedMatchesThisUser && backendRole != intendedRole) {
+    final merchantLocked = isMerchantAccount(
+      prefs,
+      lookupUid: fbUid,
+      user: user,
+    );
+    if (merchantLocked) {
+      if (backendRole != RoleHelper.merchant) {
+        await _putRoleToBackend(token, RoleHelper.merchant, timeout);
+      }
+      final resolved = Map<String, dynamic>.from(user)..['role'] = RoleHelper.merchant;
+      await persistUserToPrefs(prefs, resolved);
+      return RoleSyncResult.user(resolved);
+    }
+
+    if (intendedMatchesThisUser &&
+        backendRole != intendedRole &&
+        backendRole != RoleHelper.merchant) {
       await _putRoleToBackend(token, intendedRole, timeout);
       if (intendedRole == RoleHelper.merchant) {
         final service = prefs.getString(intendedServiceKey);
@@ -299,13 +372,19 @@ class RoleSessionService {
         lookupUid.isNotEmpty &&
         intendedUid == lookupUid;
 
-    // 1) Explicit toggle / signup lock for this uid always wins (offline too).
-    // 2) Sticky merchant/driver on flaky networks: never demote a known local
+    // 1) Merchant shop accounts are frozen — never driver or passenger.
+    // 2) Explicit passenger↔driver toggle for this uid wins (offline too).
+    // 3) Sticky merchant/driver on flaky networks: never demote a known local
     //    merchant/driver to customer just because /users/me omitted role —
-    //    unless the user intentionally switched to passenger.
+    //    unless the user intentionally switched to passenger (drivers only).
     String role;
-    if (intendedMatchesThisUser) {
-      role = intendedRole ?? RoleHelper.customer;
+    if (isMerchantAccount(prefs, lookupUid: lookupUid, user: user) ||
+        incomingRole == RoleHelper.merchant ||
+        existingRole == RoleHelper.merchant) {
+      role = RoleHelper.merchant;
+    } else if (intendedMatchesThisUser &&
+        intendedRole != RoleHelper.merchant) {
+      role = intendedRole;
     } else if (incomingRole == RoleHelper.customer &&
         sameAccount &&
         (existingRole == RoleHelper.merchant ||
@@ -378,6 +457,10 @@ class RoleSessionService {
 
   static Future<void> persistRoleToFirestore(String role) async {
     try {
+      if (role != RoleHelper.merchant) {
+        final prefs = await SharedPreferences.getInstance();
+        if (isMerchantAccount(prefs)) return;
+      }
       final uid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
       if (uid.isEmpty) return;
       await FirebaseFirestore.instance.collection('users').doc(uid).set(
@@ -393,6 +476,7 @@ class RoleSessionService {
   /// Persist a backend user (e.g. after apply-as-driver) and keep Firestore in sync.
   static Future<void> persistPromotedUser(Map<String, dynamic> user) async {
     final prefs = await SharedPreferences.getInstance();
+    if (isMerchantAccount(prefs, user: user)) return;
     final role = RoleHelper.tryRoleFromUserMap(user) ?? RoleHelper.driver;
     final fbUid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
     await lockIntendedRole(
@@ -413,6 +497,11 @@ class RoleSessionService {
     final normalized =
         RoleHelper.normalizeAccountRole(role) ?? RoleHelper.customer;
     final prefs = await SharedPreferences.getInstance();
+    if (isMerchantAccount(prefs)) return true;
+    if (normalized != RoleHelper.customer &&
+        normalized != RoleHelper.driver) {
+      return false;
+    }
     final fbUid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
     await lockIntendedRole(
       prefs: prefs,

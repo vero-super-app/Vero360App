@@ -348,8 +348,12 @@ class _SettingsPageState extends State<SettingsPage> {
         return;
       }
 
-      await applySessionRole(RoleHelper.driver);
+      final switched = await applySessionRole(RoleHelper.driver);
       if (!mounted) return;
+      if (!switched) {
+        setState(() => _switchingDriverMode = false);
+        return;
+      }
       setState(() {
         _isDriver = true;
         _switchingDriverMode = false;

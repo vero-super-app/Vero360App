@@ -641,6 +641,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       onGuestHome: () {
         if (mounted) _currentShell = 'customer';
       },
+      onShellRole: (role) {
+        if (!mounted) return;
+        _currentShell = role == RoleHelper.merchant
+            ? 'merchant'
+            : (role == RoleHelper.driver ? 'driver' : 'customer');
+      },
     );
     // Bootstrap already mounted the right shell — skip remount flash.
     if (widget.onboardingDoneHint && widget.initialShell != null) {

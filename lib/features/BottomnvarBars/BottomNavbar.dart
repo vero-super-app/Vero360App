@@ -307,6 +307,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
     _isMerchant = nextMerchant;
     _isDriver = nextDriver;
     _merchantService = nextService;
+    unawaited(loadDriverStatusFromPrefs());
     if (wasMerchant && !nextMerchant && _selectedIndex == 4) {
       _selectedIndex = 0;
     }
@@ -675,9 +676,23 @@ void openVeroMainShell(BuildContext context, {required String email, int tabInde
   final clampedTab = tabIndex.clamp(0, 4);
   final guestHome = email.trim().isEmpty && clampedTab == 0;
 
-  WidgetsBinding.instance.addPostFrameCallback((_) {
+  WidgetsBinding.instance.addPostFrameCallback((_) async {
     if (guestHome) {
       AppShellCoordinator.markGuestHome();
+    } else {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final role = RoleSessionService.readCachedRole(prefs);
+        if (role == RoleHelper.driver) {
+          AppShellCoordinator.markShellRole(RoleHelper.driver);
+        } else if (role == RoleHelper.merchant) {
+          AppShellCoordinator.markShellRole(RoleHelper.merchant);
+        } else {
+          AppShellCoordinator.markShellRole(RoleHelper.customer);
+        }
+      } catch (_) {
+        AppShellCoordinator.markShellRole(RoleHelper.customer);
+      }
     }
     final nav = appNavKey.currentState;
     if (nav == null) return;

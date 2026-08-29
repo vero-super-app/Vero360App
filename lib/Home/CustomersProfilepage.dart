@@ -45,7 +45,7 @@ import 'package:vero360_app/features/ride_share/presentation/pages/driver_profil
 import 'package:vero360_app/features/ride_share/presentation/pages/become_driver_page.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
-import 'package:vero360_app/GernalServices/role_session_service.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/driver_online_session.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -242,7 +242,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
       setState(() => _switchingDriverMode = true);
       try {
-        await RoleSessionService.setAccountRole(RoleHelper.customer);
+        await applySessionRole(RoleHelper.customer);
         if (!mounted) return;
         setState(() {
           _isDriver = false;
@@ -283,7 +283,7 @@ class _ProfilePageState extends State<ProfilePage> {
         return;
       }
 
-      await RoleSessionService.setAccountRole(RoleHelper.driver);
+      await applySessionRole(RoleHelper.driver);
       if (!mounted) return;
       setState(() {
         _isDriver = true;

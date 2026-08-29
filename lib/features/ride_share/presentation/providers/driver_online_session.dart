@@ -1,18 +1,25 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/GernalServices/location_permission_helper.dart';
+import 'package:vero360_app/GernalServices/role_helper.dart';
+import 'package:vero360_app/GernalServices/role_session_service.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
 
-/// Driver "Go Online" session that survives leaving [DriverDashboard].
+/// Driver "Go Online" session that survives leaving [DriverDashboard],
+/// backgrounding the app, and process death (restored from prefs).
 ///
-/// The toggle stays on until explicit [goOffline] or logout. Backgrounding,
-/// dashboard reloads, taxi cleanup, and trip-busy availability must not flip it.
+/// The toggle stays on until explicit [goOffline] or logout. Matching GPS
+/// keeps running in the background via a foreground location service — the
+/// same pattern as active-trip tracking.
 class DriverOnlineSessionState {
   final bool isOnline;
   final int? taxiId;
@@ -44,15 +51,22 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
     with WidgetsBindingObserver {
   static DriverOnlineSessionNotifier? _active;
 
+  static const _prefsOnlineKey = 'driver_online_session_active';
+  static const _prefsTaxiIdKey = 'driver_online_session_taxi_id';
+
   /// Used by auth logout (no [Ref] available) to stop broadcasting.
   static Future<void> forceOfflineGlobally() async {
     final session = _active;
-    if (session == null) return;
+    if (session == null) {
+      await _clearPersistedSession();
+      return;
+    }
     await session.goOffline();
   }
 
   Timer? _broadcastTimer;
-  bool _resumeBroadcastAfterForeground = false;
+  StreamSubscription<Position>? _positionSub;
+  int _streamEpoch = 0;
   final DriverService _driverService = DriverService();
 
   @override
@@ -60,29 +74,33 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
     ref.keepAlive();
     _active = this;
     WidgetsBinding.instance.addObserver(this);
+    ref.listen<RideLifecycleState>(rideLifecycleProvider, (prev, next) {
+      if (!state.isOnline) return;
+      if (_tripOwnsGps(next)) {
+        _stopPublishers();
+      } else if (_positionSub == null && _broadcastTimer == null) {
+        _startPublishers();
+      }
+    });
     ref.onDispose(() {
       WidgetsBinding.instance.removeObserver(this);
-      _cancelBroadcastTimer();
+      _stopPublishers();
       if (_active == this) _active = null;
     });
+    unawaited(_restorePersistedSession());
     return const DriverOnlineSessionState();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Do not mark unavailable on pause/detached — drivers must keep receiving
-    // offers while the app is backgrounded. Only pause the local timer.
-    // Note: `state` here is AppLifecycleState; online flags live on `this.state`.
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached) {
-      if (this.state.isOnline) {
-        _resumeBroadcastAfterForeground = true;
-      }
-      _cancelBroadcastTimer();
-    } else if (state == AppLifecycleState.resumed) {
+    // Keep matching GPS while backgrounded. Only heal the publishers if they
+    // died (OEM kill, permission revoke) when we return to the foreground.
+    if (state == AppLifecycleState.resumed) {
       LocationPermissionHelper.onAppResumed();
-      if (_resumeBroadcastAfterForeground && this.state.isOnline) {
-        _resumeBroadcastAfterForeground = false;
+      if (this.state.isOnline &&
+          !_onActiveTrip &&
+          _positionSub == null &&
+          _broadcastTimer == null) {
         unawaited(_reassertOnline());
       }
     }
@@ -114,9 +132,10 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
         await _reassertOnline(taxiId: taxiId);
       } else if (state.taxiId != taxiId) {
         state = state.copyWith(taxiId: taxiId);
+        await _persistSession();
       }
-      if (_broadcastTimer == null) {
-        _startBroadcastTimer();
+      if (!_onActiveTrip && _positionSub == null && _broadcastTimer == null) {
+        _startPublishers();
       }
       return;
     }
@@ -135,32 +154,34 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
   }) async {
     if (state.isOnline &&
         state.taxiId == taxiId &&
-        _broadcastTimer != null &&
+        (_positionSub != null || _broadcastTimer != null) &&
         !setAvailabilityOnBackend) {
       return;
     }
 
     final previous = state;
     state = state.copyWith(isOnline: true, taxiId: taxiId);
+    await _persistSession();
 
     try {
       if (setAvailabilityOnBackend) {
         await _setTaxiAvailability(taxiId, true);
       }
-      _startBroadcastTimer();
+      _startPublishers();
     } catch (e) {
       state = previous;
-      _cancelBroadcastTimer();
+      _stopPublishers();
+      await _persistSession();
       rethrow;
     }
   }
 
-  /// Explicit offline (manual toggle / logout). Does not run on page leave.
+  /// Explicit offline (manual toggle / logout / leaving driver mode).
   Future<void> goOffline({bool syncBackend = true}) async {
-    _resumeBroadcastAfterForeground = false;
-    _cancelBroadcastTimer();
+    _stopPublishers();
     final taxiId = state.taxiId;
     state = state.copyWith(isOnline: false);
+    await _clearPersistedSession();
 
     if (syncBackend && taxiId != null) {
       await _setTaxiAvailability(taxiId, false);
@@ -171,7 +192,7 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
     final id = taxiId ?? state.taxiId;
     if (!state.isOnline || id == null) return;
     if (_onActiveTrip) {
-      if (_broadcastTimer == null) _startBroadcastTimer();
+      _stopPublishers();
       return;
     }
     try {
@@ -180,16 +201,93 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
       if (kDebugMode) {
         print('[DriverOnlineSession] ✗ reassert online: $e');
       }
-      if (_broadcastTimer == null) {
-        _startBroadcastTimer();
+      if (_positionSub == null && _broadcastTimer == null) {
+        _startPublishers();
       }
     }
   }
 
-  bool get _onActiveTrip {
-    final life = ref.read(rideLifecycleProvider);
+  bool get _onActiveTrip => _tripOwnsGps(ref.read(rideLifecycleProvider));
+
+  bool _tripOwnsGps(RideLifecycleState life) {
     return life is RideActive &&
         (life.isAccepted || life.isDriverArrived || life.isInProgress);
+  }
+
+  void _startPublishers() {
+    if (_onActiveTrip) {
+      _stopPublishers();
+      return;
+    }
+    _startLocationStream();
+    _startBroadcastTimer();
+  }
+
+  void _stopPublishers() {
+    _streamEpoch++;
+    _cancelBroadcastTimer();
+    unawaited(_positionSub?.cancel());
+    _positionSub = null;
+  }
+
+  void _startLocationStream() {
+    final epoch = ++_streamEpoch;
+    unawaited(_positionSub?.cancel());
+    _positionSub = null;
+    unawaited(() async {
+      try {
+        final granted = await LocationPermissionHelper.isAccessGranted();
+        if (epoch != _streamEpoch || !granted || !state.isOnline) return;
+        final settings = await _buildLocationSettings();
+        if (epoch != _streamEpoch || !state.isOnline) return;
+        _positionSub = Geolocator.getPositionStream(locationSettings: settings)
+            .listen(
+          (position) {
+            unawaited(_publishPosition(position));
+          },
+          onError: (e) {
+            if (kDebugMode) {
+              print('[DriverOnlineSession] ✗ location stream: $e');
+            }
+          },
+        );
+      } catch (e) {
+        if (kDebugMode) {
+          print('[DriverOnlineSession] ✗ start location stream: $e');
+        }
+      }
+    }());
+  }
+
+  Future<LocationSettings> _buildLocationSettings() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      return AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 20,
+        intervalDuration: const Duration(seconds: 5),
+        foregroundNotificationConfig: const ForegroundNotificationConfig(
+          notificationTitle: 'You are online',
+          notificationText: 'Vero is sharing your location with nearby riders',
+          enableWakeLock: true,
+        ),
+      );
+    }
+    if (!kIsWeb && Platform.isIOS) {
+      final allowBackground =
+          await LocationPermissionHelper.isAlwaysGranted();
+      return AppleSettings(
+        accuracy: LocationAccuracy.high,
+        activityType: ActivityType.automotiveNavigation,
+        distanceFilter: 20,
+        pauseLocationUpdatesAutomatically: false,
+        allowBackgroundLocationUpdates: allowBackground,
+        showBackgroundLocationIndicator: allowBackground,
+      );
+    }
+    return const LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 20,
+    );
   }
 
   void _startBroadcastTimer() {
@@ -207,19 +305,29 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
   }
 
   Future<void> _broadcastOnce() async {
-    if (!state.isOnline) return;
-    final taxiId = state.taxiId;
-    if (taxiId == null) return;
-
+    if (!state.isOnline || _onActiveTrip) return;
     try {
       final position =
           await LocationPermissionHelper.getCurrentPositionIfGranted(
         timeLimit: const Duration(seconds: 5),
       );
       if (position == null) return;
+      await _publishPosition(position);
+    } catch (e) {
+      if (kDebugMode) {
+        print('[DriverOnlineSession] ✗ location broadcast: $e');
+      }
+    }
+  }
 
-      state = state.copyWith(lastPosition: position);
+  Future<void> _publishPosition(Position position) async {
+    if (!state.isOnline) return;
+    final taxiId = state.taxiId;
+    if (taxiId == null) return;
 
+    state = state.copyWith(lastPosition: position);
+
+    try {
       await _driverService.updateTaxiLocation(
         taxiId,
         position.latitude,
@@ -256,6 +364,53 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
 
   void noteLastPosition(Position position) {
     state = state.copyWith(lastPosition: position);
+  }
+
+  Future<void> _restorePersistedSession() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final role = RoleHelper.normalizeAccountRole(
+            prefs.getString('user_role') ?? prefs.getString('role'),
+          ) ??
+          '';
+      final online = prefs.getBool(_prefsOnlineKey) ?? false;
+      final taxiId = prefs.getInt(_prefsTaxiIdKey);
+      if (!online || taxiId == null || role != RoleHelper.driver) {
+        if (role != RoleHelper.driver) {
+          await _clearPersistedSession();
+        }
+        return;
+      }
+      if (_active != this) return;
+      state = state.copyWith(isOnline: true, taxiId: taxiId);
+      _startPublishers();
+      unawaited(_reassertOnline(taxiId: taxiId));
+    } catch (e) {
+      if (kDebugMode) {
+        print('[DriverOnlineSession] ✗ restore session: $e');
+      }
+    }
+  }
+
+  Future<void> _persistSession() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (state.isOnline && state.taxiId != null) {
+        await prefs.setBool(_prefsOnlineKey, true);
+        await prefs.setInt(_prefsTaxiIdKey, state.taxiId!);
+      } else {
+        await prefs.remove(_prefsOnlineKey);
+        await prefs.remove(_prefsTaxiIdKey);
+      }
+    } catch (_) {}
+  }
+
+  static Future<void> _clearPersistedSession() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_prefsOnlineKey);
+      await prefs.remove(_prefsTaxiIdKey);
+    } catch (_) {}
   }
 
   Map<String, dynamic>? _primaryTaxi(
@@ -301,3 +456,19 @@ final driverOnlineSessionProvider =
     NotifierProvider<DriverOnlineSessionNotifier, DriverOnlineSessionState>(
   DriverOnlineSessionNotifier.new,
 );
+
+/// Profile / Settings driver-mode toggle. Persists the role locally first
+/// (works offline), refreshes the session cache, and drops taxi availability
+/// when leaving driver mode so a later server sync cannot undo the switch.
+Future<bool> applySessionRole(String role) async {
+  final prefs = await SharedPreferences.getInstance();
+  final previous = RoleSessionService.readCachedRole(prefs);
+  final normalized =
+      RoleHelper.normalizeAccountRole(role) ?? RoleHelper.customer;
+  final ok = await RoleSessionService.setAccountRole(normalized);
+  await loadDriverStatusFromPrefs();
+  if (previous == RoleHelper.driver && normalized != RoleHelper.driver) {
+    await DriverOnlineSessionNotifier.forceOfflineGlobally();
+  }
+  return ok;
+}

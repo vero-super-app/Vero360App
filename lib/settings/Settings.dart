@@ -35,8 +35,8 @@ import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
-import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/become_driver_page.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/driver_online_session.dart';
 import 'package:vero360_app/Quickservices/customerservice.dart';
 import 'package:vero360_app/Quickservices/help_center_live_chat.dart';
 
@@ -308,7 +308,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
       setState(() => _switchingDriverMode = true);
       try {
-        await RoleSessionService.setAccountRole(RoleHelper.customer);
+        await applySessionRole(RoleHelper.customer);
         if (!mounted) return;
         setState(() {
           _isDriver = false;
@@ -348,7 +348,7 @@ class _SettingsPageState extends State<SettingsPage> {
         return;
       }
 
-      await RoleSessionService.setAccountRole(RoleHelper.driver);
+      await applySessionRole(RoleHelper.driver);
       if (!mounted) return;
       setState(() {
         _isDriver = true;

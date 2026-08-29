@@ -49,6 +49,8 @@ class SessionLocalCache {
     'active_ride_taxi_id',
     'nearby_taxis_cache',
     'has_driver_profile',
+    'driver_online_session_active',
+    'driver_online_session_taxi_id',
     // Routing — never leave previous account's dashboard on this phone.
     'merchant_service',
     'merchant_identity_uid',

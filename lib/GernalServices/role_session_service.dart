@@ -144,15 +144,14 @@ class RoleSessionService {
       prefs.getString(intendedRoleKey),
     );
     final intendedUid = (prefs.getString(intendedUidKey) ?? '').trim();
+    // Explicit local choice for *this* uid — including passenger. A Profile
+    // toggle must not be undone by a stale /users/me payload or a failed PUT.
     final intendedMatchesThisUser =
         intendedRole != null &&
-        intendedRole != RoleHelper.customer &&
         fbUid.isNotEmpty &&
         intendedUid == fbUid;
 
-    // Signup race only: this uid just registered as driver/merchant, API still
-    // returns customer. Retry PUT. Never copy a *previous* account's prefs.
-    if (intendedMatchesThisUser && backendRole == RoleHelper.customer) {
+    if (intendedMatchesThisUser && backendRole != intendedRole) {
       await _putRoleToBackend(token, intendedRole, timeout);
       if (intendedRole == RoleHelper.merchant) {
         final service = prefs.getString(intendedServiceKey);
@@ -174,7 +173,7 @@ class RoleSessionService {
       }
       final refreshed = await _fetchCurrentUser(token, timeout);
       final resolved = Map<String, dynamic>.from(refreshed.user ?? user);
-      if (RoleHelper.roleFromUserMap(resolved) == RoleHelper.customer) {
+      if (RoleHelper.roleFromUserMap(resolved) != intendedRole) {
         resolved['role'] = intendedRole;
       }
       if (intendedRole == RoleHelper.merchant &&
@@ -292,12 +291,22 @@ class RoleSessionService {
     final prefsUid = (prefs.getString('uid') ?? '').trim();
     final sameAccount =
         lookupUid.isEmpty || prefsUid.isEmpty || prefsUid == lookupUid;
+    final intendedRole = RoleHelper.normalizeAccountRole(
+      prefs.getString(intendedRoleKey),
+    );
+    final intendedUid = (prefs.getString(intendedUidKey) ?? '').trim();
+    final intendedMatchesThisUser = intendedRole != null &&
+        lookupUid.isNotEmpty &&
+        intendedUid == lookupUid;
 
-    // Sticky merchant/driver on flaky networks: never demote a known local
-    // merchant/driver to customer just because /users/me omitted role or
-    // briefly returned the default customer payload.
+    // 1) Explicit toggle / signup lock for this uid always wins (offline too).
+    // 2) Sticky merchant/driver on flaky networks: never demote a known local
+    //    merchant/driver to customer just because /users/me omitted role —
+    //    unless the user intentionally switched to passenger.
     String role;
-    if (incomingRole == RoleHelper.customer &&
+    if (intendedMatchesThisUser) {
+      role = intendedRole ?? RoleHelper.customer;
+    } else if (incomingRole == RoleHelper.customer &&
         sameAccount &&
         (existingRole == RoleHelper.merchant ||
             existingRole == RoleHelper.driver)) {

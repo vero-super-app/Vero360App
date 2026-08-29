@@ -10,6 +10,7 @@ import 'package:vero360_app/GeneralModels/ride_history_model.dart';
 import 'package:vero360_app/features/ride_share/services/active_ride_storage.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_diagnostics.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 /// HTTP-based Ride Share Service. Auth is Firebase ID token only (no Nest JWT).
 class RideShareHttpService {
@@ -54,15 +55,18 @@ class RideShareHttpService {
   /// Firebase ID token only — ride-share backend rejects Nest access_token.
   Future<String?> _getAuthToken({bool forceRefresh = false}) async {
     try {
-      final token = await AuthHandler.getFirebaseTokenForApi(
+      var token = await AuthHandler.getFirebaseTokenForApi(
         forceRefresh: forceRefresh,
       );
+      if (token == null || token.isEmpty) {
+        token = await AuthHandler.getTokenForApi(forceRefresh: forceRefresh);
+      }
       if (token == null || token.isEmpty) {
         print('[RideShare] No Firebase ID token (user must be signed in)');
       }
       return token;
     } catch (e) {
-      print('Error reading Firebase auth token');
+      print('Error reading Firebase auth token: $e');
       return null;
     }
   }
@@ -88,9 +92,16 @@ class RideShareHttpService {
     var headers = await _authHeaders();
     var res = await send(headers);
     if (res.statusCode == 401 || res.statusCode == 403) {
-      headers = await _authHeaders(forceRefresh: true);
-      if (headers['Authorization'] != null) {
+      final refreshed = await AuthHandler.refreshTokenAfterUnauthorized();
+      if (refreshed != null && refreshed.isNotEmpty) {
+        headers = await _authHeaders(forceRefresh: true);
+        headers['Authorization'] = 'Bearer $refreshed';
         res = await send(headers);
+      } else {
+        headers = await _authHeaders(forceRefresh: true);
+        if (headers['Authorization'] != null) {
+          res = await send(headers);
+        }
       }
       if (res.statusCode == 401 || res.statusCode == 403) {
         unawaited(
@@ -473,9 +484,43 @@ class RideShareHttpService {
       if (response.statusCode == 200) {
         return _parseRideHistoryResponse(jsonDecode(response.body));
       }
+      if (response.statusCode == 401 ||
+          response.statusCode == 403 ||
+          response.statusCode == 404) {
+        final fbUser = FirebaseAuth.instance.currentUser;
+        if (fbUser != null) {
+          return RideHistoryPage(
+            rides: const [],
+            total: 0,
+            page: page,
+            limit: limit,
+            summary: RideHistorySummary(
+              completedCount: 0,
+              cancelledCount: 0,
+              totalSpent: 0,
+              totalEarnings: 0,
+            ),
+          );
+        }
+      }
       throw Exception('Failed to get rides: ${response.statusCode}');
     } catch (e) {
-      print('Error getting passenger ride history');
+      print('Error getting passenger ride history: $e');
+      final fbUser = FirebaseAuth.instance.currentUser;
+      if (fbUser != null) {
+        return RideHistoryPage(
+          rides: const [],
+          total: 0,
+          page: page,
+          limit: limit,
+          summary: RideHistorySummary(
+            completedCount: 0,
+            cancelledCount: 0,
+            totalSpent: 0,
+            totalEarnings: 0,
+          ),
+        );
+      }
       rethrow;
     }
   }
@@ -536,9 +581,43 @@ class RideShareHttpService {
       if (response.statusCode == 200) {
         return _parseRideHistoryResponse(jsonDecode(response.body));
       }
+      if (response.statusCode == 401 ||
+          response.statusCode == 403 ||
+          response.statusCode == 404) {
+        final fbUser = FirebaseAuth.instance.currentUser;
+        if (fbUser != null) {
+          return RideHistoryPage(
+            rides: const [],
+            total: 0,
+            page: page,
+            limit: limit,
+            summary: RideHistorySummary(
+              completedCount: 0,
+              cancelledCount: 0,
+              totalSpent: 0,
+              totalEarnings: 0,
+            ),
+          );
+        }
+      }
       throw Exception('Failed to get driver rides: ${response.statusCode}');
     } catch (e) {
-      print('Error getting driver ride history');
+      print('Error getting driver ride history: $e');
+      final fbUser = FirebaseAuth.instance.currentUser;
+      if (fbUser != null) {
+        return RideHistoryPage(
+          rides: const [],
+          total: 0,
+          page: page,
+          limit: limit,
+          summary: RideHistorySummary(
+            completedCount: 0,
+            cancelledCount: 0,
+            totalSpent: 0,
+            totalEarnings: 0,
+          ),
+        );
+      }
       rethrow;
     }
   }
@@ -558,11 +637,33 @@ class RideShareHttpService {
           jsonDecode(response.body) as Map<String, dynamic>,
         );
       }
+      if (response.statusCode == 401 ||
+          response.statusCode == 403 ||
+          response.statusCode == 404) {
+        final fbUser = FirebaseAuth.instance.currentUser;
+        if (fbUser != null) {
+          return DriverEarningsSummary(
+            today: EarningsPeriod(trips: 0, earnings: 0),
+            thisWeek: EarningsPeriod(trips: 0, earnings: 0),
+            thisMonth: EarningsPeriod(trips: 0, earnings: 0),
+            allTime: EarningsPeriod(trips: 0, earnings: 0),
+          );
+        }
+      }
       throw Exception(
         'Failed to get driver earnings: ${response.statusCode}',
       );
     } catch (e) {
-      print('Error getting driver earnings summary');
+      print('Error getting driver earnings summary: $e');
+      final fbUser = FirebaseAuth.instance.currentUser;
+      if (fbUser != null) {
+        return DriverEarningsSummary(
+          today: EarningsPeriod(trips: 0, earnings: 0),
+          thisWeek: EarningsPeriod(trips: 0, earnings: 0),
+          thisMonth: EarningsPeriod(trips: 0, earnings: 0),
+          allTime: EarningsPeriod(trips: 0, earnings: 0),
+        );
+      }
       rethrow;
     }
   }

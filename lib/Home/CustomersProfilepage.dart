@@ -593,7 +593,9 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _fetchCurrentUser() async {
-    if (!await AuthHandler.isAuthenticated()) {
+    final fbUser = FirebaseAuth.instance.currentUser;
+    final isAuth = fbUser != null || await AuthHandler.isAuthenticated();
+    if (!isAuth) {
       _resetGuestProfile();
       return;
     }
@@ -644,20 +646,33 @@ class _ProfilePageState extends State<ProfilePage> {
                 ? Map<String, dynamic>.from(decoded['data'])
                 : (decoded is Map ? Map<String, dynamic>.from(decoded) : {});
         await _persistUserToPrefs(payload);
-      } else if (response.statusCode == 401 || response.statusCode == 403) {
-        // Ignore stale responses after logout or anonymous sessions.
-        if (gen != _profileFetchGen || !mounted) return;
-        if (!await AuthHandler.isAuthenticated()) return;
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Session expired. Please log in.')),
-        );
       } else {
-        debugPrint(
-            'Failed to fetch user: ${response.statusCode} ${response.body}');
+        // If HTTP fails or returns 401/403, fallback to Firestore if logged into Firebase
+        if (fbUser != null) {
+          try {
+            final doc = await FirebaseFirestore.instance
+                .collection('users')
+                .doc(fbUser.uid)
+                .get();
+            if (doc.exists && doc.data() != null) {
+              await _persistUserToPrefs(doc.data()!);
+            }
+          } catch (_) {}
+        }
       }
     } catch (e) {
       debugPrint('Error fetching user: $e');
+      if (fbUser != null) {
+        try {
+          final doc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(fbUser.uid)
+              .get();
+          if (doc.exists && doc.data() != null) {
+            await _persistUserToPrefs(doc.data()!);
+          }
+        } catch (_) {}
+      }
     } finally {
       if (mounted && gen == _profileFetchGen) {
         setState(() => _loading = false);

@@ -10,11 +10,12 @@ import 'package:vero360_app/GeneralModels/ride_history_model.dart';
 import 'package:vero360_app/features/ride_share/services/active_ride_storage.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_diagnostics.dart';
+import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 /// HTTP-based Ride Share Service. Auth is Firebase ID token only (no Nest JWT).
 class RideShareHttpService {
-  late IO.Socket socket;
+  IO.Socket? socket;
   late StreamController<String> _connectionStatusController;
   late StreamController<Map<String, dynamic>> _driverLocationController;
   late StreamController<Map<String, dynamic>> _rideStatusController;
@@ -23,18 +24,16 @@ class RideShareHttpService {
   bool _globalSocketListenersRegistered = false;
   bool _socketCreated = false;
   bool _socketAuthRetryInFlight = false;
+  int _socketAuthRetries = 0;
   int? _subscribedRideId;
   ActiveRideRole? _subscribedRole;
 
   RideShareHttpService() {
     _initializeControllers();
-    // Initialize socket asynchronously without blocking constructor
-    _initializationFuture = _initializeSocket().catchError((e) {
-      print('[RideShareHttpService] Error initializing socket in constructor');
-    });
   }
 
-  /// Ensure socket is initialized before using it
+  /// Ensure socket is initialized before using it.
+  /// Waits briefly for Firebase session restore — do not connect tokenless.
   Future<void> _ensureSocketInitialized() async {
     print('[RideShareHttpService] _ensureSocketInitialized called');
     if (!_socketCreated || _initializationFuture == null) {
@@ -42,6 +41,11 @@ class RideShareHttpService {
       _initializationFuture = _initializeSocketNow();
     }
     await _initializationFuture;
+    if (!_socketCreated) {
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      _initializationFuture = _initializeSocketNow();
+      await _initializationFuture;
+    }
     print('[RideShareHttpService] Socket initialization complete');
   }
 
@@ -55,12 +59,9 @@ class RideShareHttpService {
   /// Firebase ID token only — ride-share backend rejects Nest access_token.
   Future<String?> _getAuthToken({bool forceRefresh = false}) async {
     try {
-      var token = await AuthHandler.getFirebaseTokenForApi(
+      final token = await AuthHandler.getFirebaseTokenForApi(
         forceRefresh: forceRefresh,
       );
-      if (token == null || token.isEmpty) {
-        token = await AuthHandler.getTokenForApi(forceRefresh: forceRefresh);
-      }
       if (token == null || token.isEmpty) {
         print('[RideShare] No Firebase ID token (user must be signed in)');
       }
@@ -77,12 +78,34 @@ class RideShareHttpService {
   }) async {
     final token = await _getAuthToken(forceRefresh: forceRefresh);
     final diag = await AuthDiagnostics.buildHeaders(token: token);
-    return {
+    final headers = <String, String>{
       if (json) 'Content-Type': 'application/json',
       'Accept': 'application/json',
       ...diag,
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
     };
+    await RoleSessionService.applyIntendedRoleHeader(headers);
+    return headers;
+  }
+
+  Exception _httpError(String action, http.Response response) {
+    final api = _apiErrorMessage(response.body);
+    if (api != null && api.isNotEmpty) {
+      return Exception(api);
+    }
+    return Exception('Failed to $action: ${response.statusCode}');
+  }
+
+  Future<Ride> _sendRide(
+    String action,
+    Future<http.Response> Function(Map<String, String> headers) send, {
+    int successCode = 200,
+  }) async {
+    final response = await _withFirebaseAuth(send);
+    if (response.statusCode == successCode) {
+      return Ride.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    }
+    throw _httpError(action, response);
   }
 
   /// Run an authorized HTTP call; on 401/403 force-refresh Firebase token once.
@@ -92,6 +115,22 @@ class RideShareHttpService {
     var headers = await _authHeaders();
     var res = await send(headers);
     if (res.statusCode == 401 || res.statusCode == 403) {
+      final body = res.body.toLowerCase();
+      final provisionConflict = body.contains('creation conflict') ||
+          body.contains('user_provision_failed');
+      if (provisionConflict) {
+        unawaited(
+          AuthDiagnostics.reportFailure(
+            reason: 'ride_share_http_${res.statusCode}',
+            channel: 'http',
+            lastError: res.body.length > 200
+                ? res.body.substring(0, 200)
+                : res.body,
+            idToken: headers['Authorization']?.replaceFirst('Bearer ', ''),
+          ),
+        );
+        return res;
+      }
       final refreshed = await AuthHandler.refreshTokenAfterUnauthorized();
       if (refreshed != null && refreshed.isNotEmpty) {
         headers = await _authHeaders(forceRefresh: true);
@@ -143,26 +182,35 @@ class RideShareHttpService {
     final token = await _getAuthToken(forceRefresh: true);
     if (token == null || token.isEmpty) {
       print('[RideShareHttpService] No Firebase token — skipping socket connect');
-      unawaited(
-        AuthDiagnostics.reportFailure(
-          reason: 'socket_missing_token',
-          channel: 'websocket',
-          lastError: 'No Firebase ID token before socket connect',
-        ),
-      );
+      // Only report when Firebase already has a user (token fetch failed),
+      // not when the service is constructed before sign-in.
+      if (FirebaseAuth.instance.currentUser != null) {
+        unawaited(
+          AuthDiagnostics.reportFailure(
+            reason: 'socket_missing_token',
+            channel: 'websocket',
+            lastError: 'No Firebase ID token before socket connect',
+          ),
+        );
+      }
       return;
     }
 
     if (_socketCreated) {
       try {
-        socket.dispose();
+        socket?.dispose();
       } catch (_) {}
     }
 
     final query = await AuthDiagnostics.buildSocketQuery(token: token);
     final diagHeaders = await AuthDiagnostics.buildHeaders(token: token);
+    await RoleSessionService.applyIntendedRoleHeader(diagHeaders);
+    if (diagHeaders.containsKey(RoleSessionService.intendedRoleHeader)) {
+      query[RoleSessionService.intendedRoleHeader] =
+          diagHeaders[RoleSessionService.intendedRoleHeader];
+    }
 
-    socket = IO.io(
+    final sock = IO.io(
       ApiConfig.prod,
       IO.OptionBuilder()
           .setTransports(['websocket'])
@@ -175,45 +223,62 @@ class RideShareHttpService {
           .setQuery(query)
           .build(),
     );
+    socket = sock;
     _socketCreated = true;
 
     _globalSocketListenersRegistered = false;
 
-    socket.onConnect((_) {
+    sock.onConnect((_) {
       print('[RideShareHttpService] Socket connected with fresh token');
+      _socketAuthRetries = 0;
       _connectionStatusController.add('connected');
       _resubscribeIfNeeded();
     });
 
-    socket.onDisconnect((_) {
+    sock.onDisconnect((_) {
       print('[RideShareHttpService] Socket disconnected');
       _connectionStatusController.add('disconnected');
     });
 
-    socket.onError((error) {
+    sock.onError((error) {
       print('[RideShareHttpService] Socket error');
       _connectionStatusController.add('error');
       unawaited(_retrySocketAuthIfNeeded(error));
     });
 
-    socket.on('error', (data) {
+    sock.on('error', (data) {
       unawaited(_retrySocketAuthIfNeeded(data));
     });
 
     _registerGlobalSocketListeners();
-    socket.connect();
+    sock.connect();
+  }
+
+  String _socketErrorBlob(Object? error) {
+    if (error is Map) {
+      return '${error['reason'] ?? ''} ${error['message'] ?? ''} ${error['code'] ?? ''}'
+          .toLowerCase();
+    }
+    return error?.toString().toLowerCase() ?? '';
   }
 
   /// Backend emits auth failures then disconnects; rebuild with a new ID token.
   Future<void> _retrySocketAuthIfNeeded(Object? error) async {
-    final msg = error?.toString().toLowerCase() ?? '';
+    final msg = _socketErrorBlob(error);
+    final provisionFailed = msg.contains('user_provision_failed') ||
+        msg.contains('creation conflict');
     final looksExpired = msg.contains('expired') ||
         msg.contains('id-token') ||
-        msg.contains('authentication') ||
-        msg.contains('unauthorized');
-    if (!looksExpired || _socketAuthRetryInFlight) return;
+        msg.contains('id_token_expired');
+    final looksAuth = looksExpired ||
+        msg.contains('unauthorized') ||
+        msg.contains('authentication required') ||
+        provisionFailed;
+    if (!looksAuth || _socketAuthRetryInFlight) return;
+    if (_socketAuthRetries >= (provisionFailed ? 1 : 3)) return;
 
     _socketAuthRetryInFlight = true;
+    _socketAuthRetries += 1;
     try {
       print('[RideShareHttpService] Auth failed on socket — refreshing token');
       unawaited(
@@ -224,7 +289,10 @@ class RideShareHttpService {
         ),
       );
       _initializationFuture = null;
-      await Future<void>.delayed(const Duration(milliseconds: 400));
+      _socketCreated = false;
+      await Future<void>.delayed(
+        Duration(milliseconds: provisionFailed ? 1200 : 400),
+      );
       await _initializeSocketNow();
     } catch (e) {
       print('[RideShareHttpService] Socket auth retry failed');
@@ -236,20 +304,21 @@ class RideShareHttpService {
   /// Single registration — [subscribeToRideTracking] used to add duplicate
   /// `socket.on` handlers every time, causing spurious lifecycle updates.
   void _registerGlobalSocketListeners() {
-    if (_globalSocketListenersRegistered) return;
+    final sock = socket;
+    if (_globalSocketListenersRegistered || sock == null) return;
     _globalSocketListenersRegistered = true;
 
-    socket.on('driver:location:updated', (data) {
+    sock.on('driver:location:updated', (data) {
       print('[RideShareHttpService] Driver location updated: $data');
       _driverLocationController.add(Map<String, dynamic>.from(data));
     });
 
-    socket.on('ride:driver-location-stale', (data) {
+    sock.on('ride:driver-location-stale', (data) {
       print('[RideShareHttpService] Driver location stale: $data');
       _rideStatusController.add(Map<String, dynamic>.from(data as Map));
     });
 
-    socket.on('ride:status:updated', (data) {
+    sock.on('ride:status:updated', (data) {
       print('[RideShareHttpService] 🎉 Ride status updated received: $data');
       _rideStatusController.add(Map<String, dynamic>.from(data));
       try {
@@ -383,7 +452,7 @@ class RideShareHttpService {
         print(
             '[RideShareHttpService] Ride creation failed: ${response.statusCode}');
         print('[RideShareHttpService] Response: ${response.body}');
-        throw Exception('Failed to request ride: ${response.statusCode}');
+        throw _httpError('request ride', response);
       }
     } catch (e) {
       print('[RideShareHttpService] Error requesting ride');
@@ -393,29 +462,13 @@ class RideShareHttpService {
 
   /// Get ride details
   Future<Ride> getRideDetails(int rideId) async {
-    try {
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-      };
-      final token = await _getAuthToken();
-      if (token != null && token.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $token';
-      }
-
-      final response = await http.get(
+    return _sendRide(
+      'get ride',
+      (headers) => http.get(
         ApiConfig.endpoint('/ride-share/rides/$rideId'),
         headers: headers,
-      );
-
-      if (response.statusCode == 200) {
-        return Ride.fromJson(jsonDecode(response.body));
-      } else {
-        throw Exception('Failed to get ride: ${response.statusCode}');
-      }
-    } catch (e) {
-      print('Error getting ride');
-      rethrow;
-    }
+      ),
+    );
   }
 
   String? _apiErrorMessage(String body) {
@@ -676,238 +729,98 @@ class RideShareHttpService {
 
   /// Accept a ride (driver)
   Future<Ride> acceptRide(int rideId, int vehicleId) async {
-    try {
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-      };
-
-      // Add auth token if available
-      final token = await _getAuthToken();
-      if (token != null && token.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $token';
-      }
-
-      final response = await http.patch(
+    return _sendRide(
+      'accept ride',
+      (headers) => http.patch(
         ApiConfig.endpoint('/ride-share/rides/$rideId/accept'),
         headers: headers,
         body: jsonEncode({'taxiId': vehicleId}),
-      );
-
-      if (response.statusCode == 200) {
-        return Ride.fromJson(jsonDecode(response.body));
-      } else {
-        throw Exception('Failed to accept ride: ${response.statusCode}');
-      }
-    } catch (e) {
-      print('Error accepting ride');
-      rethrow;
-    }
+      ),
+    );
   }
 
   /// Mark driver as arrived at pickup
   Future<Ride> markDriverArrived(int rideId) async {
-    try {
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-      };
-
-      // Add auth token if available
-      final token = await _getAuthToken();
-      if (token != null && token.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $token';
-      }
-
-      final response = await http.patch(
+    return _sendRide(
+      'mark driver arrived',
+      (headers) => http.patch(
         ApiConfig.endpoint('/ride-share/rides/$rideId/driver-arrived'),
         headers: headers,
-      );
-
-      if (response.statusCode == 200) {
-        return Ride.fromJson(jsonDecode(response.body));
-      } else {
-        throw Exception(
-            'Failed to mark driver arrived: ${response.statusCode}');
-      }
-    } catch (e) {
-      print('Error marking driver arrived');
-      rethrow;
-    }
+      ),
+    );
   }
 
   /// Start the ride
   Future<Ride> startRide(int rideId) async {
-    try {
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-      };
-
-      // Add auth token if available
-      final token = await _getAuthToken();
-      if (token != null && token.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $token';
-      }
-
-      final response = await http.patch(
+    return _sendRide(
+      'start ride',
+      (headers) => http.patch(
         ApiConfig.endpoint('/ride-share/rides/$rideId/start'),
         headers: headers,
-      );
-
-      if (response.statusCode == 200) {
-        return Ride.fromJson(jsonDecode(response.body));
-      } else {
-        throw Exception('Failed to start ride: ${response.statusCode}');
-      }
-    } catch (e) {
-      print('Error starting ride');
-      rethrow;
-    }
+      ),
+    );
   }
 
   /// Complete the ride
   Future<Ride> completeRide(int rideId, {double? actualDistance}) async {
-    try {
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-      };
-
-      // Add auth token if available
-      final token = await _getAuthToken();
-      if (token != null && token.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $token';
-      }
-
-      final body = <String, dynamic>{};
-      if (actualDistance != null) {
-        body['actualDistance'] = actualDistance;
-      }
-
-      print('[RideShareHttpService] Completing ride $rideId with body: $body');
-      final response = await http.patch(
+    final body = <String, dynamic>{};
+    if (actualDistance != null) {
+      body['actualDistance'] = actualDistance;
+    }
+    return _sendRide(
+      'complete ride',
+      (headers) => http.patch(
         ApiConfig.endpoint('/ride-share/rides/$rideId/complete'),
         headers: headers,
         body: jsonEncode(body),
-      );
-
-      print(
-          '[RideShareHttpService] Complete ride response: ${response.statusCode}');
-      if (response.statusCode == 200) {
-        return Ride.fromJson(jsonDecode(response.body));
-      } else {
-        print('[RideShareHttpService] Error response: ${response.body}');
-        throw Exception(
-            'Failed to complete ride: ${response.statusCode} - ${response.body}');
-      }
-    } catch (e) {
-      print('Error completing ride');
-      rethrow;
-    }
+      ),
+    );
   }
 
   /// Passenger selects cash for a completed ride.
   Future<Ride> selectCashPayment(int rideId) async {
-    try {
-      final response = await _withFirebaseAuth(
-        (headers) => http.patch(
-          ApiConfig.endpoint('/ride-share/rides/$rideId/payment/cash'),
-          headers: headers,
-        ),
-      );
-
-      if (response.statusCode == 200) {
-        return Ride.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
-      }
-      throw Exception(
-        'Failed to select cash payment: ${response.statusCode} - ${response.body}',
-      );
-    } catch (e) {
-      print('Error selecting cash payment');
-      rethrow;
-    }
+    return _sendRide(
+      'select cash payment',
+      (headers) => http.patch(
+        ApiConfig.endpoint('/ride-share/rides/$rideId/payment/cash'),
+        headers: headers,
+      ),
+    );
   }
 
   /// Driver confirms cash was received.
   Future<Ride> confirmCashPayment(int rideId) async {
-    try {
-      final response = await _withFirebaseAuth(
-        (headers) => http.patch(
-          ApiConfig.endpoint('/ride-share/rides/$rideId/payment/cash/confirm'),
-          headers: headers,
-        ),
-      );
-
-      if (response.statusCode == 200) {
-        return Ride.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
-      }
-      throw Exception(
-        'Failed to confirm cash payment: ${response.statusCode} - ${response.body}',
-      );
-    } catch (e) {
-      print('Error confirming cash payment');
-      rethrow;
-    }
+    return _sendRide(
+      'confirm cash payment',
+      (headers) => http.patch(
+        ApiConfig.endpoint('/ride-share/rides/$rideId/payment/cash/confirm'),
+        headers: headers,
+      ),
+    );
   }
 
   /// Confirm passenger payment for a completed ride
   Future<Ride> confirmRidePayment(int rideId, String txRef) async {
-    try {
-      final response = await _withFirebaseAuth(
-        (headers) => http.patch(
-          ApiConfig.endpoint('/ride-share/rides/$rideId/payment'),
-          headers: headers,
-          body: jsonEncode({'txRef': txRef}),
-        ),
-      );
-
-      if (response.statusCode == 200) {
-        return Ride.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
-      }
-      throw Exception(
-        _apiErrorMessage(response.body) ??
-            'Failed to confirm ride payment (${response.statusCode})',
-      );
-    } catch (e) {
-      print('Error confirming ride payment');
-      rethrow;
-    }
+    return _sendRide(
+      'confirm ride payment',
+      (headers) => http.patch(
+        ApiConfig.endpoint('/ride-share/rides/$rideId/payment'),
+        headers: headers,
+        body: jsonEncode({'txRef': txRef}),
+      ),
+    );
   }
 
   /// Cancel a ride
   Future<Ride> cancelRide(int rideId, {String? reason}) async {
-    try {
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-      };
-
-      // Add auth token if available
-      final token = await _getAuthToken();
-      if (token != null && token.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $token';
-      }
-
-      final response = await http.patch(
+    return _sendRide(
+      'cancel ride',
+      (headers) => http.patch(
         ApiConfig.endpoint('/ride-share/rides/$rideId/cancel'),
         headers: headers,
         body: jsonEncode({'reason': reason}),
-      );
-
-      if (response.statusCode == 200) {
-        try {
-          final rideData = jsonDecode(response.body);
-          print('[RideShareHttpService] Cancel response: $rideData');
-          return Ride.fromJson(rideData);
-        } catch (parseError) {
-          print(
-              '[RideShareHttpService] Error parsing cancel ride response: $parseError');
-          rethrow;
-        }
-      } else {
-        throw Exception(
-            'Failed to cancel ride: ${response.statusCode} - ${response.body}');
-      }
-    } catch (e) {
-      print('Error cancelling ride');
-      rethrow;
-    }
+      ),
+    );
   }
 
   // ============== TAXI MANAGEMENT ==============
@@ -930,12 +843,15 @@ class RideShareHttpService {
   Future<void> _resubscribeIfNeeded() async {
     final rideId = _subscribedRideId;
     final role = _subscribedRole;
-    if (rideId == null || role == null || !socket.connected) return;
+    final sock = socket;
+    if (rideId == null || role == null || sock == null || !sock.connected) {
+      return;
+    }
 
     if (role == ActiveRideRole.driver) {
-      socket.emit('driver:subscribe', {'rideId': rideId});
+      sock.emit('driver:subscribe', {'rideId': rideId});
     } else {
-      socket.emit('passenger:subscribe', {'rideId': rideId});
+      sock.emit('passenger:subscribe', {'rideId': rideId});
     }
     print(
         '[RideShareHttpService] Re-subscribed to ride $rideId as ${role.name}');
@@ -946,70 +862,39 @@ class RideShareHttpService {
     await _resubscribeIfNeeded();
   }
 
+  Future<List<Ride>> _parseRideList(http.Response response, String action) async {
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      if (data is List) {
+        return data
+            .map((r) => Ride.fromJson(r as Map<String, dynamic>))
+            .toList();
+      }
+      return [];
+    }
+    throw _httpError(action, response);
+  }
+
   /// Get active rides for passenger
   Future<List<Ride>> getActiveRidesForPassenger() async {
-    try {
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-      };
-      final token = await _getAuthToken();
-      if (token != null && token.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $token';
-      }
-
-      final response = await http.get(
+    final response = await _withFirebaseAuth(
+      (headers) => http.get(
         ApiConfig.endpoint('/ride-share/passengers/me/active-rides'),
         headers: headers,
-      );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data is List) {
-          return (data)
-              .map((r) => Ride.fromJson(r as Map<String, dynamic>))
-              .toList();
-        }
-        return [];
-      }
-      throw Exception(
-          'Failed to get passenger active rides: ${response.statusCode}');
-    } catch (e) {
-      print('Error getting passenger active rides');
-      rethrow;
-    }
+      ),
+    );
+    return _parseRideList(response, 'get passenger active rides');
   }
 
   /// Get active rides for driver
   Future<List<Ride>> getActiveRidesForDriver(int driverId) async {
-    try {
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-      };
-      final token = await _getAuthToken();
-      if (token != null && token.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $token';
-      }
-
-      final response = await http.get(
+    final response = await _withFirebaseAuth(
+      (headers) => http.get(
         ApiConfig.endpoint('/ride-share/drivers/$driverId/active-rides'),
         headers: headers,
-      );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data is List) {
-          return (data)
-              .map((r) => Ride.fromJson(r as Map<String, dynamic>))
-              .toList();
-        }
-        return [];
-      } else {
-        throw Exception('Failed to get active rides: ${response.statusCode}');
-      }
-    } catch (e) {
-      print('Error getting active rides');
-      rethrow;
-    }
+      ),
+    );
+    return _parseRideList(response, 'get active rides');
   }
 
   // ============== REAL-TIME UPDATES VIA WEBSOCKET ==============
@@ -1019,10 +904,10 @@ class RideShareHttpService {
     print(
         '[RideShareHttpService] subscribeToRideTracking called for ride $rideId');
     await _ensureSocketInitialized();
+    final sock = socket;
     print(
-        '[RideShareHttpService] Socket initialized, connected: ${socket.connected}');
-
-    socket.emit('passenger:subscribe', {'rideId': rideId});
+        '[RideShareHttpService] Socket initialized, connected: ${sock?.connected}');
+    sock?.emit('passenger:subscribe', {'rideId': rideId});
     print(
         '[RideShareHttpService] Emitted passenger:subscribe for ride $rideId (global WS listeners already attached)');
   }
@@ -1031,8 +916,9 @@ class RideShareHttpService {
   Future<void> unsubscribeFromRideTracking() async {
     try {
       await _ensureSocketInitialized();
-      if (socket.connected) {
-        socket.emit('passenger:unsubscribe');
+      final sock = socket;
+      if (sock != null && sock.connected) {
+        sock.emit('passenger:unsubscribe');
       }
     } catch (e) {
       print('[RideShareHttpService] Error unsubscribing from ride');
@@ -1043,7 +929,7 @@ class RideShareHttpService {
   /// Subscribe driver to send location updates
   Future<void> subscribeDriverTracking(int rideId) async {
     await _ensureSocketInitialized();
-    socket.emit('driver:subscribe', {
+    socket?.emit('driver:subscribe', {
       'rideId': rideId,
     });
   }
@@ -1053,7 +939,7 @@ class RideShareHttpService {
       int rideId, double latitude, double longitude) async {
     await _ensureSocketInitialized();
     // Event name must match the backend SubscribeMessage('driver:location') handler
-    socket.emit('driver:location', {
+    socket?.emit('driver:location', {
       'rideId': rideId,
       'latitude': latitude,
       'longitude': longitude,
@@ -1063,7 +949,7 @@ class RideShareHttpService {
   /// Listen to driver location updates
   void onDriverLocationUpdated(Function(Map<String, dynamic>) callback) {
     try {
-      socket.on('driver:location:updated', (data) {
+      socket?.on('driver:location:updated', (data) {
         callback(Map<String, dynamic>.from(data));
       });
     } catch (e) {
@@ -1075,7 +961,7 @@ class RideShareHttpService {
   /// Listen to ride status changes
   void onRideStatusUpdated(Function(Map<String, dynamic>) callback) {
     try {
-      socket.on('ride:status:updated', (data) {
+      socket?.on('ride:status:updated', (data) {
         callback(Map<String, dynamic>.from(data));
       });
     } catch (e) {
@@ -1087,6 +973,7 @@ class RideShareHttpService {
   Future<void> reconnectWebSocket() async {
     try {
       _initializationFuture = null;
+      _socketCreated = false;
       await _initializeSocketNow();
       print('WebSocket reconnected with fresh token');
       await _resubscribeIfNeeded();
@@ -1100,7 +987,7 @@ class RideShareHttpService {
   /// Disconnect socket
   void disconnect() {
     try {
-      socket.disconnect();
+      socket?.disconnect();
     } catch (e) {
       print('[RideShareHttpService] Error disconnecting socket');
     }

@@ -8,7 +8,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -487,6 +487,9 @@ class AuthService {
     return false;
   }
 
+  /// Best-guess Firebase Auth email on device. Full profile lookup runs in
+  /// [resetPasswordAfterOtp] (Admin SDK) because Firestore rules block reads
+  /// while the user is signed out during forgot-password.
   Future<String> _resolveAuthEmailForPasswordReset({
     required String channel,
     String? email,
@@ -496,16 +499,11 @@ class AuthService {
       return email.trim().toLowerCase();
     }
 
-    if (phone == null || phone.trim().isEmpty) {
-      return '';
+    if (phone != null && phone.trim().isNotEmpty) {
+      return syntheticEmailForPhone(phone).toLowerCase();
     }
 
-    final linkedEmail = await _lookupRecoverableEmailByPhone(phone);
-    if (linkedEmail != null && linkedEmail.isNotEmpty) {
-      return linkedEmail.trim().toLowerCase();
-    }
-
-    return syntheticEmailForPhone(phone).toLowerCase();
+    return '';
   }
 
   String _passwordResetApplyErrorMessage(FirebaseAuthException e) {
@@ -524,6 +522,80 @@ class AuthService {
         return e.message?.trim().isNotEmpty == true
             ? e.message!
             : 'Failed to update password. Try again.';
+    }
+  }
+
+  Future<bool> _tryBackendPasswordResetAfterOtp({
+    required String authEmail,
+    required String newPassword,
+    required String verificationTicket,
+    required String identifier,
+    String? channel,
+    String? email,
+    String? phone,
+  }) async {
+    final body = jsonEncode({
+      'authEmail': authEmail,
+      'identifier': identifier,
+      'newPassword': newPassword,
+      'verificationTicket': verificationTicket,
+      if (channel != null) 'channel': channel,
+      if (email != null) 'email': email,
+      if (phone != null) 'phone': phone,
+    });
+
+    for (final path in const [
+      '/auth/password/reset-after-otp',
+      '/auth/password/reset',
+    ]) {
+      try {
+        await ApiClient.post(path, body: body, timeout: _reqTimeoutWarm);
+        return true;
+      } on ApiException catch (e) {
+        if (e.statusCode == 404 || e.statusCode == 405) continue;
+        if (kDebugMode) {
+          debugPrint('[Auth] backend password reset $path failed: ${e.message}');
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('[Auth] backend password reset $path error: $e');
+        }
+      }
+    }
+    return false;
+  }
+
+  Future<void> _callResetPasswordAfterOtp({
+    required String authEmail,
+    required String newPassword,
+    required String verificationTicket,
+    required String identifier,
+    String? channel,
+    String? email,
+    String? phone,
+  }) async {
+    final result = await FirebaseFunctions.instance
+        .httpsCallable(
+          'resetPasswordAfterOtp',
+          options: HttpsCallableOptions(timeout: const Duration(seconds: 30)),
+        )
+        .call({
+      'authEmail': authEmail,
+      'identifier': identifier,
+      'newPassword': newPassword,
+      'verificationTicket': verificationTicket,
+      if (channel != null) 'channel': channel,
+      if (email != null) 'email': email,
+      if (phone != null) 'phone': phone,
+    });
+
+    final data = result.data;
+    if (data == null || data == true) return;
+    if (data is Map) {
+      if (data['success'] == true || data['ok'] == true) return;
+    }
+    if (kDebugMode) {
+      debugPrint('[Auth] resetPasswordAfterOtp response: $data');
     }
   }
 
@@ -550,41 +622,77 @@ class AuthService {
       }
     }
 
-    try {
-      await ApiClient.post(
-        '/auth/password/reset',
-        body: jsonEncode({
-          'verificationTicket': verificationTicket,
-          'newPassword': newPassword,
-          'authEmail': authEmail,
-          if (channel != null) 'channel': channel,
-          if (email != null && email.isNotEmpty)
-            'email': email.trim().toLowerCase(),
-          if (phone != null && phone.isNotEmpty) 'phone': phone,
-        }),
-        timeout: _reqTimeoutWarm,
-      );
+    final identifier = email ?? phone ?? authEmail;
+
+    if (await _tryBackendPasswordResetAfterOtp(
+      authEmail: authEmail,
+      newPassword: newPassword,
+      verificationTicket: verificationTicket,
+      identifier: identifier,
+      channel: channel,
+      email: email,
+      phone: phone,
+    )) {
       return;
-    } on ApiException catch (e) {
-      if (e.statusCode != 404 && e.statusCode != 405) rethrow;
     }
 
     try {
-      final result = await FirebaseFunctions.instance
-          .httpsCallable('resetPasswordAfterOtp')
-          .call({
-        'authEmail': authEmail,
-        'newPassword': newPassword,
-        'verificationTicket': verificationTicket,
-        if (channel != null) 'channel': channel,
-        if (email != null) 'email': email,
-        if (phone != null) 'phone': phone,
-      });
-      final data = result.data;
-      if (data is Map && data['success'] == true) return;
-      if (data == true) return;
+      await _callResetPasswordAfterOtp(
+        authEmail: authEmail,
+        newPassword: newPassword,
+        verificationTicket: verificationTicket,
+        identifier: identifier,
+        channel: channel,
+        email: email,
+        phone: phone,
+      );
+      return;
     } on FirebaseFunctionsException catch (e) {
+      if (kDebugMode) {
+        debugPrint(
+          '[Auth] resetPasswordAfterOtp failed: ${e.code} ${e.message}',
+        );
+      }
       if (e.code == 'not-found') {
+        try {
+          await _firebaseAuth.createUserWithEmailAndPassword(
+            email: authEmail,
+            password: newPassword,
+          );
+          await _firebaseAuth.signOut();
+          return;
+        } on FirebaseAuthException catch (createError) {
+          if (createError.code == 'email-already-in-use') {
+            try {
+              await _callResetPasswordAfterOtp(
+                authEmail: authEmail,
+                newPassword: newPassword,
+                verificationTicket: verificationTicket,
+                identifier: identifier,
+                channel: channel,
+                email: email,
+                phone: phone,
+              );
+              return;
+            } on FirebaseFunctionsException catch (retry) {
+              if (kDebugMode) {
+                debugPrint(
+                  '[Auth] resetPasswordAfterOtp retry failed: '
+                  '${retry.code} ${retry.message}',
+                );
+              }
+            }
+            throw const ApiException(
+              message:
+                  'Could not update your password. If you use Google sign-in, try that instead, or contact support@vero360.app.',
+            );
+          }
+          if (createError.code == 'weak-password') {
+            throw const ApiException(
+              message: 'Password is too weak. Use at least 6 characters.',
+            );
+          }
+        }
         throw const ApiException(
           message:
               'No Vero360 account found. Check your email or phone, or register first.',
@@ -621,7 +729,7 @@ class AuthService {
 
     throw const ApiException(
       message:
-          'Could not update your password. Deploy the resetPasswordAfterOtp cloud function or contact support@vero360.app.',
+          'Could not update your password. Try again.',
     );
   }
 
@@ -733,7 +841,14 @@ class AuthService {
     required PasswordResetVerificationResult verification,
   }) async {
     final trimmed = identifier.trim();
-    if (trimmed.isEmpty || otpCode.trim().length != 6) {
+    if (trimmed.isEmpty) {
+      return const PasswordResetResult(
+        success: false,
+        message: 'Enter the 6-digit verification code',
+        outcome: PasswordResetOutcome.error,
+      );
+    }
+    if (otpCode.trim().isNotEmpty && otpCode.trim().length != 6) {
       return const PasswordResetResult(
         success: false,
         message: 'Enter the 6-digit verification code',

@@ -561,13 +561,108 @@ async function sendMarketplaceAudiencePush(itemId, name) {
   console.log(`Marketplace engagement push sent: ${name || itemId}`);
 }
 
+function phoneLookupVariants(phone) {
+  const trimmed = String(phone || '').trim();
+  const digits = trimmed.replace(/\D/g, '');
+  const variants = new Set([trimmed, digits]);
+  if (digits.length === 10 && digits.startsWith('0')) {
+    variants.add(`+265${digits.substring(1)}`);
+    variants.add(`265${digits.substring(1)}`);
+  } else if (digits.length === 12 && digits.startsWith('265')) {
+    variants.add(`0${digits.substring(3)}`);
+    variants.add(`+${digits}`);
+  }
+  return [...variants].filter(Boolean);
+}
+
+function syntheticEmailForPhone(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  return digits ? `${digits}@phone.vero360.app` : '';
+}
+
+async function collectPasswordResetAuthEmails(data) {
+  const candidates = new Set();
+  const authEmail =
+    typeof data.authEmail === 'string' ? data.authEmail.trim().toLowerCase() : '';
+  const identifier =
+    typeof data.identifier === 'string' ? data.identifier.trim() : '';
+  const phone = typeof data.phone === 'string' ? data.phone.trim() : '';
+  const email =
+    typeof data.email === 'string' ? data.email.trim().toLowerCase() : '';
+  const channel = typeof data.channel === 'string' ? data.channel : '';
+
+  if (authEmail) candidates.add(authEmail);
+  if (email) candidates.add(email);
+  if (identifier.includes('@')) candidates.add(identifier.toLowerCase());
+
+  const phoneForLookup = phone || (channel === 'phone' ? identifier : '');
+  if (phoneForLookup) {
+    const synthetic = syntheticEmailForPhone(phoneForLookup);
+    if (synthetic) candidates.add(synthetic.toLowerCase());
+  }
+
+  const db = admin.firestore();
+  const emailLookups = new Set();
+  if (email) emailLookups.add(email);
+  if (authEmail && authEmail.includes('@')) emailLookups.add(authEmail);
+  if (identifier.includes('@')) emailLookups.add(identifier.toLowerCase());
+
+  for (const value of emailLookups) {
+    for (const field of ['email', 'contactEmail']) {
+      try {
+        const snap = await db
+          .collection('users')
+          .where(field, '==', value)
+          .limit(1)
+          .get();
+        if (!snap.empty) {
+          const profileEmail = snap.docs[0].data().email;
+          if (profileEmail) {
+            candidates.add(String(profileEmail).trim().toLowerCase());
+          }
+        }
+      } catch (err) {
+        console.warn('resetPasswordAfterOtp profile email lookup failed', err);
+      }
+    }
+  }
+
+  if (phoneForLookup) {
+    for (const variant of phoneLookupVariants(phoneForLookup)) {
+      try {
+        const snap = await db
+          .collection('users')
+          .where('phone', '==', variant)
+          .limit(1)
+          .get();
+        if (!snap.empty) {
+          const profileEmail = snap.docs[0].data().email;
+          if (profileEmail) {
+            candidates.add(String(profileEmail).trim().toLowerCase());
+          }
+        }
+      } catch (err) {
+        console.warn('resetPasswordAfterOtp profile phone lookup failed', err);
+      }
+    }
+  }
+
+  return [...candidates].filter(Boolean);
+}
+
 /**
  * Updates a Firebase Auth password after the user verified OTP in the app.
  * Deploy: firebase deploy --only functions:resetPasswordAfterOtp
  */
-exports.resetPasswordAfterOtp = onCall(async (request) => {
+exports.resetPasswordAfterOtp = onCall(
+  {
+    timeoutSeconds: 30,
+    serviceAccount: FUNCTIONS_SERVICE_ACCOUNT,
+  },
+  async (request) => {
   const data = request.data || {};
-  const authEmail = typeof data.authEmail === 'string' ? data.authEmail.trim() : '';
+  const authEmail =
+    typeof data.authEmail === 'string' ? data.authEmail.trim().toLowerCase() : '';
   const newPassword =
     typeof data.newPassword === 'string' ? data.newPassword : '';
   const verificationTicket =
@@ -588,17 +683,61 @@ exports.resetPasswordAfterOtp = onCall(async (request) => {
     throw new HttpsError('invalid-argument', 'Invalid verification.');
   }
 
+  let candidates = await collectPasswordResetAuthEmails(data);
+  if (!candidates.length) {
+    candidates = [authEmail];
+  }
+
+  let resolvedUser = null;
+  for (const candidate of candidates) {
+    try {
+      resolvedUser = await admin.auth().getUserByEmail(candidate);
+      break;
+    } catch (error) {
+      if (error && error.code === 'auth/user-not-found') continue;
+      console.warn(
+        'resetPasswordAfterOtp getUserByEmail failed',
+        candidate,
+        error,
+      );
+    }
+  }
+
+  if (!resolvedUser) {
+    const primaryEmail = candidates[0];
+    try {
+      const created = await admin.auth().createUser({
+        email: primaryEmail,
+        password: newPassword,
+      });
+      return { success: true, created: true, uid: created.uid };
+    } catch (error) {
+      if (error && error.code === 'auth/email-already-exists') {
+        try {
+          resolvedUser = await admin.auth().getUserByEmail(primaryEmail);
+        } catch (lookupError) {
+          console.error('resetPasswordAfterOtp create/lookup failed', lookupError);
+          throw new HttpsError(
+            'not-found',
+            'No account found for this email or phone.',
+          );
+        }
+      } else {
+        console.error('resetPasswordAfterOtp createUser failed', error);
+        throw new HttpsError('internal', 'Failed to reset password.');
+      }
+    }
+  }
+
   try {
-    const user = await admin.auth().getUserByEmail(authEmail);
-    await admin.auth().updateUser(user.uid, { password: newPassword });
+    await admin.auth().updateUser(resolvedUser.uid, { password: newPassword });
     return { success: true };
   } catch (error) {
-    if (error && error.code === 'auth/user-not-found') {
-      throw new HttpsError('not-found', 'No account found for this email.');
-    }
+    console.error('resetPasswordAfterOtp updateUser failed', error);
     throw new HttpsError('internal', 'Failed to reset password.');
   }
-});
+},
+);
 
 /**
  * Frequent keep-alive digest for users subscribed to FCM topic

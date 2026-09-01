@@ -1,8 +1,11 @@
 // lib/Home/notifications_page.dart
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
+import 'package:vero360_app/GernalServices/notification_service.dart';
 
 class NotificationsPage extends StatefulWidget {
   const NotificationsPage({super.key});
@@ -16,6 +19,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
 
   String _profilePictureUrl = '';
   bool _showUnreadOnly = false;
+  bool _handlingNotificationTap = false;
 
   @override
   void initState() {
@@ -64,6 +68,29 @@ class _NotificationsPageState extends State<NotificationsPage> {
     final prefs = await SharedPreferences.getInstance();
     final url = prefs.getString('profilepicture') ?? '';
     if (mounted) setState(() => _profilePictureUrl = url);
+  }
+
+  Future<void> _onNotificationTap(AppNotificationItem n) async {
+    if (_handlingNotificationTap) return;
+    _handlingNotificationTap = true;
+
+    final payload = Map<String, dynamic>.from(n.payload);
+    final badgeRoute = (payload[NotificationStore.kPayloadBadgeRoute] ??
+            payload['badgeRoute'])
+        ?.toString()
+        .trim();
+
+    if (mounted) {
+      NotificationService.navigateFromPayload(context, payload);
+    }
+
+    unawaited(NotificationStore.instance.markAsRead(n.id));
+    if (badgeRoute != null && badgeRoute.isNotEmpty) {
+      unawaited(NotificationStore.instance.markBadgeRouteAsRead(badgeRoute));
+    }
+
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (mounted) _handlingNotificationTap = false;
   }
 
   void _showProfilePictureViewer() {
@@ -244,7 +271,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
                 for (final n in sec.value)
                   InkWell(
                     borderRadius: BorderRadius.circular(14),
-                    onTap: () => NotificationStore.instance.markAsRead(n.id),
+                    onTap: () => _onNotificationTap(n),
                     child: Container(
                       margin: const EdgeInsets.only(bottom: 10),
                       padding: const EdgeInsets.all(12),

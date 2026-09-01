@@ -97,7 +97,7 @@ class Mini {
 const List<Mini> kQuickServices = [
   Mini('taxi',           'Vero Ride', Icons.local_taxi_rounded,          emoji: '🚗'),
   Mini('courier',        'Courier',   Icons.local_shipping_rounded,      emoji: '🚚'),
-  Mini('vero_bike',      'Vero Bike', Icons.pedal_bike_rounded,          emoji: '🚲'),
+  Mini('vero_bike',      'Vero Bike', Icons.two_wheeler,                  emoji: '🏍️'),
   Mini('fx',             'Forex',     Icons.currency_exchange_rounded,   emoji: '💱'),
   Mini('food',           'Food',      Icons.fastfood_rounded,            emoji: '🍔'),
   Mini('jobs',           'Jobs',      Icons.business_center_rounded,     emoji: '💼'),
@@ -2053,10 +2053,20 @@ class DigitalServicesSection extends StatelessWidget {
         _SectionHeader(
           title:    'Digital Services',
           subtitle: 'Subscriptions & top-ups',
-          action: TextButton(
+          action: TextButton.icon(
             onPressed: onSeeAll,
-            child: const Text('See all',
-              style: TextStyle(color: AppColors.brandOrange, fontWeight: FontWeight.w800, fontSize: 13),
+            icon: const Icon(
+              Icons.card_giftcard_rounded,
+              size: 18,
+              color: AppColors.brandOrange,
+            ),
+            label: const Text(
+              'Gift Cards',
+              style: TextStyle(
+                color: AppColors.brandOrange,
+                fontWeight: FontWeight.w800,
+                fontSize: 13,
+              ),
             ),
           ),
         ),
@@ -3165,7 +3175,7 @@ class _GuideCard extends StatelessWidget {
     'taxi':             Icons.local_taxi_rounded,
     'customer_service': Icons.support_agent_rounded,
     'courier':          Icons.local_shipping_rounded,
-    'vero_bike':        Icons.pedal_bike_rounded,
+    'vero_bike':        Icons.two_wheeler,
     'fx':               Icons.currency_exchange_rounded,
     'food':             Icons.fastfood_rounded,
     'jobs':             Icons.business_center_rounded,

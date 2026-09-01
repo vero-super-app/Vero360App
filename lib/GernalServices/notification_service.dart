@@ -16,11 +16,17 @@ import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/chat_notification_service.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/engagement_notification_service.dart';
+import 'package:vero360_app/GeneralPages/Toreceive.dart';
+import 'package:vero360_app/GeneralPages/ToRefund.dart';
+import 'package:vero360_app/GeneralPages/Toship.dart';
+import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/Home/notifications_page.dart';
+import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 import 'package:vero360_app/features/Promotions/presentation/promotions_page.dart';
@@ -31,6 +37,8 @@ import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart'
     as market;
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/LatestArrival_page.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
+import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/driver_incoming_ride_from_notification_page.dart';
 import 'package:vero360_app/features/ride_share/presentation/services/driver_ride_offer_inbox.dart';
@@ -779,10 +787,108 @@ class NotificationService {
   //  Navigation logic (customize based on your needs)
   // ───────────────────────────────────────────────
 
+  /// Routes the user from an in-app or push notification payload.
+  static void navigateFromPayload(
+    BuildContext context,
+    Map<String, dynamic> data,
+  ) {
+    instance._navigateWithNavigator(Navigator.of(context), data);
+  }
+
   void _navigateBasedOnPayload(Map<String, dynamic> data) {
     final navigator = _navKey?.currentState;
     if (navigator == null) return;
+    _navigateWithNavigator(navigator, data);
+  }
 
+  void _openChatThread(
+    NavigatorState navigator,
+    Map<String, dynamic> data,
+    String chatId,
+  ) {
+    final peerName = (data['senderName'] ??
+            data['peerName'] ??
+            data['title'] ??
+            'Chat')
+        .toString()
+        .trim();
+    final avatarRaw =
+        (data['peerAvatarUrl'] ?? data['avatarUrl'] ?? '').toString().trim();
+    final merchantRaw =
+        (data['peerMerchantId'] ?? data['merchantId'] ?? '').toString().trim();
+    final peerUserRaw =
+        (data['peerUserId'] ?? data['senderId'] ?? '').toString().trim();
+
+    BackendChatService.setActiveChatId(chatId);
+    unawaited(BackendMessagingSocket.connect().catchError((_) {}));
+    navigator
+        .push(
+      MaterialPageRoute(
+        builder: (_) => MessagePageBackendApi(
+          peerId: chatId,
+          peerName: peerName.isEmpty ? 'Chat' : peerName,
+          peerAvatarUrl: avatarRaw.isEmpty ? null : avatarRaw,
+          peerMerchantId: merchantRaw.isEmpty ? null : merchantRaw,
+          peerUserId: int.tryParse(peerUserRaw),
+        ),
+      ),
+    )
+        .then((_) {
+      BackendChatService.setActiveChatId(null);
+      BackendChatService.refreshThreads();
+    });
+  }
+
+  bool _tryNavigateFromBadgeRoute(
+    NavigatorState navigator,
+    String? badgeRoute,
+    Map<String, dynamic> data,
+  ) {
+    final route = (badgeRoute ?? '').trim().toLowerCase();
+    if (route.isEmpty) return false;
+
+    switch (route) {
+      case NotificationStore.kBadgeRefund:
+        navigator.push(
+          MaterialPageRoute(builder: (_) => const ToRefundPage()),
+        );
+        return true;
+      case NotificationStore.kBadgeReceived:
+        navigator.push(
+          MaterialPageRoute(builder: (_) => const DeliveredOrdersPage()),
+        );
+        return true;
+      case NotificationStore.kBadgeShipped:
+        navigator.push(
+          MaterialPageRoute(builder: (_) => const ToShipPage()),
+        );
+        return true;
+      case NotificationStore.kBadgeMyOrders:
+        navigator.push(
+          MaterialPageRoute(
+            builder: (_) => OrdersPage(
+              initialOrderId: data['orderId']?.toString(),
+              initialOrderNumber: data['orderNumber']?.toString(),
+              initialStatus: data['status']?.toString(),
+            ),
+          ),
+        );
+        return true;
+      case NotificationStore.kBadgePromotions:
+        unawaited(_openPromotionTarget(navigator, data));
+        return true;
+      case NotificationStore.kBadgePostArrival:
+        unawaited(_openArrivalTarget(navigator, data));
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  void _navigateWithNavigator(
+    NavigatorState navigator,
+    Map<String, dynamic> data,
+  ) {
     final type = (data['type'] as String?)?.toLowerCase();
     final badgeRoute = (data['badgeRoute'] as String?)?.toLowerCase() ??
         (data[NotificationStore.kPayloadBadgeRoute] as String?)?.toLowerCase();
@@ -811,10 +917,39 @@ class NotificationService {
         break;
 
       case 'new_message':
-        if (kDebugMode) debugPrint("→ Open chat");
-        navigator.push(MaterialPageRoute(
-          builder: (_) => const ChatListPage(),
-        ));
+      case 'chat_message':
+        final chatId =
+            (data['chatId'] ?? data['threadId'] ?? '').toString().trim();
+        if (chatId.isNotEmpty) {
+          if (kDebugMode) debugPrint('→ Open chat thread ($chatId)');
+          _openChatThread(navigator, data, chatId);
+        } else {
+          if (kDebugMode) debugPrint('→ Open chat list');
+          navigator.push(
+            MaterialPageRoute(builder: (_) => const ChatListPage()),
+          );
+        }
+        break;
+
+      case 'refund_request':
+      case 'refund_update':
+        if (kDebugMode) debugPrint('→ Open refund');
+        final refundOrderId = data['orderId']?.toString();
+        if (refundOrderId != null && refundOrderId.trim().isNotEmpty) {
+          navigator.push(
+            MaterialPageRoute(
+              builder: (_) => OrdersPage(
+                initialOrderId: refundOrderId,
+                initialOrderNumber: data['orderNumber']?.toString(),
+                initialStatus: data['status']?.toString(),
+              ),
+            ),
+          );
+        } else {
+          navigator.push(
+            MaterialPageRoute(builder: (_) => const ToRefundPage()),
+          );
+        }
         break;
 
       case 'order_update':
@@ -839,10 +974,12 @@ class NotificationService {
         break;
 
       case 'accommodation_booking':
-        if (kDebugMode) debugPrint("→ Open notifications (stay booking)");
-        navigator.push(MaterialPageRoute(
-          builder: (_) => const NotificationsPage(),
-        ));
+        if (kDebugMode) debugPrint('→ Open stay bookings');
+        navigator.push(
+          MaterialPageRoute(
+            builder: (_) => const AccommodationMainPage(initialTabIndex: 1),
+          ),
+        );
         break;
 
       case 'promo_digest':
@@ -880,6 +1017,28 @@ class NotificationService {
         break;
 
       default:
+        if (_tryNavigateFromBadgeRoute(navigator, badgeRoute, data)) {
+          break;
+        }
+        if ((data['orderId']?.toString() ?? '').trim().isNotEmpty ||
+            (data['orderNumber']?.toString() ?? '').trim().isNotEmpty) {
+          navigator.push(
+            MaterialPageRoute(
+              builder: (_) => OrdersPage(
+                initialOrderId: data['orderId']?.toString(),
+                initialOrderNumber: data['orderNumber']?.toString(),
+                initialStatus: data['status']?.toString(),
+              ),
+            ),
+          );
+          break;
+        }
+        final chatId =
+            (data['chatId'] ?? data['threadId'] ?? '').toString().trim();
+        if (chatId.isNotEmpty) {
+          _openChatThread(navigator, data, chatId);
+          break;
+        }
         if ((data['promoId']?.toString() ?? '').trim().isNotEmpty ||
             badgeRoute == NotificationStore.kBadgePromotions) {
           unawaited(_openPromotionTarget(navigator, data));
@@ -890,10 +1049,8 @@ class NotificationService {
             .trim()
             .isNotEmpty) {
           unawaited(_openMarketplaceTarget(navigator, data));
-        } else {
-          navigator.push(MaterialPageRoute(
-            builder: (_) => const NotificationsPage(),
-          ));
+        } else if (kDebugMode) {
+          debugPrint('→ No route for notification type=$type');
         }
     }
   }
@@ -902,32 +1059,32 @@ class NotificationService {
     NavigatorState navigator,
     Map<String, dynamic> data,
   ) async {
-    final rawId = (data['promoId'] ?? data['id'] ?? '').toString().trim();
-    final promoId = int.tryParse(rawId);
-    if (promoId != null && promoId > 0) {
-      try {
-        final promos = await PromoService().fetchActivePromos();
-        PromoModel? match;
-        for (final p in promos) {
-          if (p.id == promoId) {
-            match = p;
-            break;
-          }
-        }
-        if (match != null && navigator.mounted) {
-          navigator.push(MaterialPageRoute(
-            builder: (_) => PromoDetailPage(promo: match!),
-          ));
-          return;
-        }
-      } catch (e) {
-        if (kDebugMode) debugPrint('Open promo target failed: $e');
-      }
-    }
     if (!navigator.mounted) return;
     navigator.push(MaterialPageRoute(
       builder: (_) => const PromotionsPage(),
     ));
+
+    final rawId = (data['promoId'] ?? data['id'] ?? '').toString().trim();
+    final promoId = int.tryParse(rawId);
+    if (promoId == null || promoId <= 0) return;
+
+    try {
+      final promos = await PromoService().fetchActivePromos();
+      PromoModel? match;
+      for (final p in promos) {
+        if (p.id == promoId) {
+          match = p;
+          break;
+        }
+      }
+      if (match != null && navigator.mounted) {
+        navigator.push(MaterialPageRoute(
+          builder: (_) => PromoDetailPage(promo: match!),
+        ));
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('Open promo target failed: $e');
+    }
   }
 
   Future<void> _openArrivalTarget(
@@ -955,32 +1112,47 @@ class NotificationService {
         (data['marketplaceItemId'] ?? data['itemId'] ?? data['id'] ?? '')
             .toString()
             .trim();
-    if (docId.isNotEmpty) {
-      try {
-        final doc = await FirebaseFirestore.instance
-            .collection('marketplace_items')
-            .doc(docId)
-            .get();
-        if (doc.exists && navigator.mounted) {
-          final item = _marketplaceItemFromFirestore(doc);
-          navigator.push(MaterialPageRoute(
-            builder: (_) => DetailsPage(
-              item: item,
-              cartService: CartServiceProvider.getInstance(),
-            ),
-          ));
-          return;
-        }
-      } catch (e) {
-        if (kDebugMode) debugPrint('Open marketplace target failed: $e');
-      }
-    }
+    final cart = CartServiceProvider.getInstance();
     if (!navigator.mounted) return;
+
+    if (docId.isEmpty) {
+      navigator.push(MaterialPageRoute(
+        builder: (_) => MarketPage(cartService: cart),
+      ));
+      return;
+    }
+
     navigator.push(MaterialPageRoute(
-      builder: (_) => MarketPage(
-        cartService: CartServiceProvider.getInstance(),
+      builder: (_) => _MarketplaceNotificationDestination(
+        cartService: cart,
+        resolveFuture: _resolveMarketplaceItem(docId),
       ),
     ));
+  }
+
+  Future<market.MarketplaceDetailModel?> _resolveMarketplaceItem(
+    String docId,
+  ) async {
+    final sqlId = int.tryParse(docId);
+    if (sqlId != null && sqlId > 0) {
+      try {
+        final item = await MarketplaceService().getItemDetails(sqlId);
+        if (item != null) return item;
+      } catch (e) {
+        if (kDebugMode) debugPrint('Resolve marketplace SQL item failed: $e');
+      }
+    }
+
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('marketplace_items')
+          .doc(docId)
+          .get();
+      if (doc.exists) return _marketplaceItemFromFirestore(doc);
+    } catch (e) {
+      if (kDebugMode) debugPrint('Resolve marketplace Firestore item failed: $e');
+    }
+    return null;
   }
 
   market.MarketplaceDetailModel _marketplaceItemFromFirestore(
@@ -1223,5 +1395,36 @@ class NotificationService {
         'Firestore booking alert. Expose host Firebase UID on GET /vero/accommodations.',
       );
     }
+  }
+}
+
+/// Shows a loading screen immediately, then product detail or marketplace home.
+class _MarketplaceNotificationDestination extends StatelessWidget {
+  const _MarketplaceNotificationDestination({
+    required this.cartService,
+    required this.resolveFuture,
+  });
+
+  final CartService cartService;
+  final Future<market.MarketplaceDetailModel?> resolveFuture;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<market.MarketplaceDetailModel?>(
+      future: resolveFuture,
+      builder: (context, snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('Marketplace')),
+            body: const Center(child: CircularProgressIndicator()),
+          );
+        }
+        final item = snap.data;
+        if (item != null) {
+          return DetailsPage(item: item, cartService: cartService);
+        }
+        return MarketPage(cartService: cartService);
+      },
+    );
   }
 }

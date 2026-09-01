@@ -794,6 +794,11 @@ class BackendChatService {
     }
   }
 
+  /// Bump inbox preview immediately after the current user sends a message.
+  static void _applyOutgoingMessageToThreadList(BackendChatMessage message) {
+    notifyRealtimeMessage(message);
+  }
+
   static void _mergeThreadIntoCache(BackendChatThread thread) {
     final id = thread.id.trim();
     if (id.isEmpty) return;
@@ -1075,9 +1080,29 @@ class BackendChatService {
 
     try {
       final fresh = await getThreads();
-      // Server list is source of truth. Merging "extras" from prior memory/disk
-      // previously leaked another account's chats onto new accounts.
-      _cachedThreads = _filterDeletedThreads(fresh);
+      final filteredFresh = _filterDeletedThreads(fresh);
+      // Don't wipe locally updated threads when the server returns empty (401/offline/lag).
+      if (filteredFresh.isEmpty && _cachedThreads.isNotEmpty) {
+        _applyMemoToCachedThreads();
+        _threadsWatchReady = true;
+        _emitCachedThreads();
+        if (userId != null) {
+          unawaited(BackendMessagingCache.saveThreads(userId, _cachedThreads));
+        }
+        return;
+      }
+      if (filteredFresh.isEmpty && prior.isNotEmpty) {
+        _cachedThreads = prior;
+        _applyMemoToCachedThreads();
+        _threadsWatchReady = true;
+        _emitCachedThreads();
+        if (userId != null) {
+          unawaited(BackendMessagingCache.saveThreads(userId, _cachedThreads));
+        }
+        return;
+      }
+      // Server list is source of truth when it returns data.
+      _cachedThreads = filteredFresh;
       _applyMemoToCachedThreads();
       _threadsWatchReady = true;
       _emitCachedThreads();
@@ -2856,7 +2881,7 @@ class BackendChatService {
         if (_userId != null) {
           unawaited(BackendMessagingCache.upsertMessage(_userId!, msg));
         }
-        // Notify all listeners to refresh threads list
+        _applyOutgoingMessageToThreadList(msg);
         refreshThreads();
         return msg;
       } else {
@@ -3021,6 +3046,7 @@ class BackendChatService {
           if (_userId != null) {
             unawaited(BackendMessagingCache.upsertMessage(_userId!, msg));
           }
+          _applyOutgoingMessageToThreadList(msg);
           refreshThreads();
           return msg;
         }
@@ -3117,6 +3143,7 @@ class BackendChatService {
           if (_userId != null) {
             unawaited(BackendMessagingCache.upsertMessage(_userId!, msg));
           }
+          _applyOutgoingMessageToThreadList(msg);
           refreshThreads();
           return msg;
         }
@@ -3414,8 +3441,11 @@ class BackendChatService {
         final thread = BackendChatThread.fromJson(
           Map<String, dynamic>.from(chatData as Map),
         );
-        _cachedThreads.removeWhere((t) => t.id == thread.id);
-        _cachedThreads.insert(0, thread);
+        _mergeThreadIntoCache(thread);
+        final userId = _userId;
+        if (userId != null) {
+          unawaited(BackendMessagingCache.saveThreads(userId, _cachedThreads));
+        }
         return thread;
       } else {
         print('[BackendChatService] Create chat error: ${response.statusCode}');

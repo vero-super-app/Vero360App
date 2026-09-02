@@ -82,6 +82,24 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
 
   double get _total => max(0.0, _subtotal);
 
+  int? get _maxFoodPrepMinutes {
+    if (!_isFoodCheckout) return null;
+    var max = 0;
+    for (final it in _items) {
+      final m = it.prepTimeMinutes;
+      if (m != null && m > max) max = m;
+    }
+    return max > 0 ? max : null;
+  }
+
+  String get _itemsSectionSubtitle {
+    final count =
+        '${_items.length} item${_items.length == 1 ? '' : 's'} in this order';
+    final prep = _maxFoodPrepMinutes;
+    if (prep != null) return '$count · up to $prep min prep';
+    return count;
+  }
+
   bool get _isFoodCheckout =>
       widget.foodCheckoutMode ||
       (_items.isNotEmpty && _items.every((e) => e.isFood));
@@ -381,6 +399,12 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     if (_isFoodCheckout) {
       _deliveryType = DeliveryType.veroCourier;
     }
+    for (var i = 0; i < _items.length; i++) {
+      final it = _items[i];
+      if (it.isFood && it.maxOrderQty > 0 && it.quantity > it.maxOrderQty) {
+        _items[i] = it.copyWith(quantity: it.maxOrderQty);
+      }
+    }
     for (final it in _items) {
       _qtyCtrls[_qtyKey(it)] =
           TextEditingController(text: '${it.quantity}');
@@ -429,7 +453,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       if (showStockToast) {
         ToastHelper.showCustomToast(
           context,
-          'Only $maxQ available',
+          it.isFood ? 'Only $maxQ available for this dish.' : 'Only $maxQ available',
           isSuccess: false,
           errorMessage: '',
         );
@@ -968,10 +992,14 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   @override
   Widget build(BuildContext context) {
     final foodCityOk = !_isFoodCheckout || _foodCourierCity != null;
+    final stockOk = !_items.any(
+      (it) => it.maxOrderQty < 1 || it.quantity > it.maxOrderQty,
+    );
     final canPay = !_paying &&
         _items.isNotEmpty &&
         !_hasMixedCart &&
         foodCityOk &&
+        stockOk &&
         (_deliveryType == DeliveryType.pickup || _defaultAddr != null);
 
     return Scaffold(
@@ -1082,8 +1110,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                 ],
                 _section(
                   title: 'Your items',
-                  subtitle:
-                      '${_items.length} item${_items.length == 1 ? '' : 's'} in this order',
+                  subtitle: _itemsSectionSubtitle,
                   child: ListView.separated(
                     itemCount: _items.length,
                     shrinkWrap: true,
@@ -1134,6 +1161,42 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                                     fontSize: 12.5,
                                   ),
                                 ),
+                                if (it.isFood && it.maxOrderQty < 99999) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    it.maxOrderQty < 1
+                                        ? 'Out of stock'
+                                        : 'Only ${it.maxOrderQty} available',
+                                    style: TextStyle(
+                                      color: it.maxOrderQty < 1
+                                          ? Colors.red.shade700
+                                          : Colors.grey.shade600,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 11.5,
+                                    ),
+                                  ),
+                                ],
+                                if (it.isFood && it.prepTimeLabel != null) ...[
+                                  const SizedBox(height: 4),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.schedule_rounded,
+                                        size: 12,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        it.prepTimeLabel!,
+                                        style: TextStyle(
+                                          color: Colors.grey.shade600,
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 11.5,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
                                 const SizedBox(height: 8),
                                 Row(
                                   children: [

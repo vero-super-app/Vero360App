@@ -8,6 +8,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
+import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/restaurant_model.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
@@ -767,5 +768,62 @@ class FoodService {
     } catch (_) {
       return items;
     }
+  }
+
+  /// Applies merchant-posted stock caps to food cart lines (same rules as food details).
+  Future<List<CartModel>> applyStockCapsToCartLines(List<CartModel> lines) async {
+    if (lines.isEmpty) return lines;
+    if (!lines.any((e) => e.isFood)) return lines;
+
+    List<FoodModel> catalog = const [];
+    try {
+      catalog = await fetchFoodItems();
+    } catch (_) {}
+
+    return lines
+        .map((line) {
+          if (!line.isFood) return line;
+          final match = _matchFoodForCartLine(line, catalog);
+          final stock = match?.quantity ?? line.availableStock;
+          final prep =
+              match?.effectivePrepTimeMinutes ?? line.prepTimeMinutes;
+          return _capCartLineStock(line, stock).copyWith(
+            prepTimeMinutes: prep,
+          );
+        })
+        .toList();
+  }
+
+  FoodModel? _matchFoodForCartLine(CartModel line, List<FoodModel> catalog) {
+    final mid = line.merchantId.trim();
+    final name = line.name.trim().toLowerCase();
+    FoodModel? byId;
+    FoodModel? byName;
+    for (final f in catalog) {
+      if (f.id == line.item) {
+        if (mid.isEmpty || (f.merchantId?.trim() ?? '') == mid) return f;
+        byId ??= f;
+      }
+      if (name.isNotEmpty &&
+          f.FoodName.trim().toLowerCase() == name &&
+          (mid.isEmpty || (f.merchantId?.trim() ?? '') == mid)) {
+        byName ??= f;
+      }
+    }
+    return byId ?? byName;
+  }
+
+  CartModel _capCartLineStock(CartModel line, int? stock) {
+    final maxQ = stock == null ? 99999 : stock.clamp(0, 99999);
+    var qty = line.quantity;
+    if (maxQ <= 0) {
+      qty = 1;
+    } else {
+      qty = qty.clamp(1, maxQ);
+    }
+    return line.copyWith(
+      availableStock: stock,
+      quantity: qty,
+    );
   }
 }

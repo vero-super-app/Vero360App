@@ -25,6 +25,8 @@ class CartModel {
   final List<String> addOns;
   /// Listing / shop city used to offer Vero Courier (Lilongwe only).
   final String? location;
+  /// Kitchen prep time in minutes (food). Set by merchant on the dish.
+  final int? prepTimeMinutes;
 
   CartModel({
     required this.userId,
@@ -44,6 +46,7 @@ class CartModel {
     this.notes,
     this.addOns = const [],
     this.location,
+    this.prepTimeMinutes,
   });
 
   factory CartModel.fromJson(Map<String, dynamic> json) {
@@ -84,6 +87,11 @@ class CartModel {
       notes: optStr(json['notes']),
       addOns: parseAddOnNames(json['addOns'] ?? json['addons']),
       location: optStr(json['location']),
+      prepTimeMinutes: () {
+        if (json['prepTimeMinutes'] == null) return null;
+        final m = safeInt(json['prepTimeMinutes'], def: 0);
+        return m > 0 ? m : null;
+      }(),
     );
   }
 
@@ -115,6 +123,8 @@ class CartModel {
     if (notes != null && notes!.isNotEmpty) 'notes': notes,
     if (addOns.isNotEmpty) 'addOns': addOns,
     if (location != null && location!.trim().isNotEmpty) 'location': location,
+    if (prepTimeMinutes != null && prepTimeMinutes! > 0)
+      'prepTimeMinutes': prepTimeMinutes,
   };
 
   CartModel copyWith({
@@ -135,6 +145,7 @@ class CartModel {
     String? notes,
     List<String>? addOns,
     String? location,
+    int? prepTimeMinutes,
   }) {
     return CartModel(
       userId: userId ?? this.userId,
@@ -154,6 +165,7 @@ class CartModel {
       notes: notes ?? this.notes,
       addOns: addOns ?? this.addOns,
       location: location ?? this.location,
+      prepTimeMinutes: prepTimeMinutes ?? this.prepTimeMinutes,
     );
   }
 
@@ -191,6 +203,13 @@ class CartModel {
 
   int get maxOrderQty =>
       availableStock == null ? 99999 : availableStock!.clamp(0, 99999);
+
+  /// Human-readable prep label for food checkout lines.
+  String? get prepTimeLabel {
+    final m = prepTimeMinutes;
+    if (m == null || m < 1) return null;
+    return '$m min prep';
+  }
 
   double get total => price * quantity;
   

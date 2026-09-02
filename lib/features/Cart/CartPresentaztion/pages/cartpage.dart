@@ -221,6 +221,8 @@ class _CartPageState extends State<CartPage> {
           'serviceType': item.serviceType,
           if (item.availableStock != null) 'availableStock': item.availableStock,
           if (item.availableStock != null) 'stockQuantity': item.availableStock,
+          if (item.prepTimeMinutes != null && item.prepTimeMinutes! > 0)
+            'prepTimeMinutes': item.prepTimeMinutes,
           'updatedAt': FieldValue.serverTimestamp(),
         });
       }
@@ -290,6 +292,12 @@ class _CartPageState extends State<CartPage> {
           location: (data['location'] ?? '').toString().trim().isEmpty
               ? null
               : (data['location'] ?? '').toString().trim(),
+          prepTimeMinutes: () {
+            final raw = data['prepTimeMinutes'];
+            if (raw == null) return null;
+            final m = raw is num ? raw.toInt() : int.tryParse('$raw');
+            return (m != null && m > 0) ? m : null;
+          }(),
         );
       }).toList();
     } catch (_) {
@@ -326,6 +334,8 @@ class _CartPageState extends State<CartPage> {
         if (item.notes != null && item.notes!.trim().isNotEmpty)
           'notes': item.notes,
         if (item.addOns.isNotEmpty) 'addOns': item.addOns,
+        if (item.prepTimeMinutes != null && item.prepTimeMinutes! > 0)
+          'prepTimeMinutes': item.prepTimeMinutes,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } catch (_) {}

@@ -2486,6 +2486,10 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
               final price = (item['price'] is num)
                   ? (item['price'] as num)
                   : num.tryParse('${item['price']}') ?? 0;
+              final prepRaw = item['prepTimeMinutes'];
+              final prepMins = prepRaw is num && prepRaw > 0
+                  ? prepRaw.round()
+                  : null;
               return Material(
                 color: Colors.transparent,
                 child: InkWell(
@@ -2632,6 +2636,27 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                                     fontWeight: FontWeight.w600,
                                     color: Colors.grey.shade600,
                                   ),
+                                ),
+                              ],
+                              if (prepMins != null) ...[
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.schedule_rounded,
+                                      size: 11,
+                                      color: Colors.grey.shade600,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '$prepMins min prep',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ],
                             ],

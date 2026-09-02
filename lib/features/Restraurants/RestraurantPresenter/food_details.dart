@@ -701,6 +701,8 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
         notes: note.isEmpty ? null : note,
         addOns: addOns,
         location: item.listingLocation,
+        availableStock: item.quantity,
+        prepTimeMinutes: item.effectivePrepTimeMinutes,
       );
 
       await cart.addToCart(cartItem);
@@ -778,6 +780,8 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
         notes: note.isEmpty ? null : note,
         addOns: _selectedAddOnNames,
         location: item.listingLocation,
+        availableStock: item.quantity,
+        prepTimeMinutes: item.effectivePrepTimeMinutes,
       );
 
       if (!mounted) return;
@@ -1264,6 +1268,28 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                                 fontSize: 14,
                                 color: Colors.grey.shade500,
                                 fontWeight: FontWeight.w500)),
+
+                        if (item.effectivePrepTimeMinutes != null) ...[
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.schedule_rounded,
+                                size: 16,
+                                color: Colors.grey.shade600,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                '${item.effectivePrepTimeMinutes} min prep',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.grey.shade700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
 
                         if (item.variants.isNotEmpty) ...[
                           const SizedBox(height: 16),

@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 
-/// Flat slide-to-go-live control. Drag or tap.
+/// Full-width Online / Offline control with a sliding thumb and live pulse.
 class DriverOnlineToggle extends StatefulWidget {
   final bool isOnline;
   final VoidCallback onToggle;
@@ -24,136 +24,50 @@ class DriverOnlineToggle extends StatefulWidget {
 
 class _DriverOnlineToggleState extends State<DriverOnlineToggle>
     with TickerProviderStateMixin {
-  static const _height = 52.0;
-  static const _pad = 4.0;
-  static const _thumb = 44.0;
-
   late final AnimationController _pulse;
-  late final AnimationController _shimmer;
-  late final AnimationController _snap;
-
-  double _extent = 0;
-  bool _dragging = false;
-  bool _midHaptic = false;
-  double _dragAccum = 0;
-  VoidCallback? _snapTick;
+  late final AnimationController _press;
+  late final Animation<double> _scale;
 
   @override
   void initState() {
     super.initState();
-    _extent = widget.isOnline ? 1 : 0;
     _pulse = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1600),
     );
-    _shimmer = AnimationController(
+    _press = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1200),
+      duration: const Duration(milliseconds: 90),
     );
-    _snap = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 380),
+    _scale = Tween<double>(begin: 1, end: 0.97).animate(
+      CurvedAnimation(parent: _press, curve: Curves.easeOut),
     );
-    if (widget.isOnline) {
-      _pulse.repeat(reverse: true);
-    } else {
-      _shimmer.repeat();
-    }
+    if (widget.isOnline) _pulse.repeat(reverse: true);
   }
 
   @override
   void didUpdateWidget(DriverOnlineToggle oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.isOnline && !oldWidget.isOnline) {
-      _shimmer.stop();
       _pulse.repeat(reverse: true);
-      if (!_dragging) _animateTo(1);
     } else if (!widget.isOnline && oldWidget.isOnline) {
       _pulse
         ..stop()
         ..value = 0;
-      _shimmer.repeat();
-      if (!_dragging) _animateTo(0);
-    } else if (!widget.busy && oldWidget.busy && !_dragging) {
-      _animateTo(widget.isOnline ? 1 : 0);
     }
   }
 
   @override
   void dispose() {
-    _clearSnap();
     _pulse.dispose();
-    _shimmer.dispose();
-    _snap.dispose();
+    _press.dispose();
     super.dispose();
   }
 
-  void _clearSnap() {
-    if (_snapTick != null) {
-      _snap.removeListener(_snapTick!);
-      _snapTick = null;
-    }
-  }
-
-  void _animateTo(double target) {
-    _clearSnap();
-    final start = _extent.clamp(0.0, 1.0);
-    if ((start - target).abs() < 0.001) {
-      setState(() => _extent = target);
-      return;
-    }
-    final anim = Tween<double>(begin: start, end: target).animate(
-      CurvedAnimation(parent: _snap, curve: Curves.easeOutCubic),
-    );
-    _snapTick = () {
-      if (mounted) setState(() => _extent = anim.value);
-    };
-    _snap
-      ..addListener(_snapTick!)
-      ..forward(from: 0);
-  }
-
-  void _commit(bool online) {
-    if (widget.busy || widget.isOnline == online) {
-      _animateTo(widget.isOnline ? 1 : 0);
-      return;
-    }
+  void _onSelect(bool online) {
+    if (widget.busy || widget.isOnline == online) return;
     HapticFeedback.mediumImpact();
-    _animateTo(online ? 1 : 0);
     widget.onToggle();
-  }
-
-  void _onDragStart(DragStartDetails _) {
-    if (widget.busy) return;
-    _clearSnap();
-    _dragging = true;
-    _dragAccum = 0;
-    _midHaptic = _extent > 0.5;
-  }
-
-  void _onDragUpdate(DragUpdateDetails details, double travel) {
-    if (widget.busy || travel <= 0) return;
-    _dragAccum += details.delta.dx.abs();
-    final next = (_extent + details.delta.dx / travel).clamp(0.0, 1.0);
-    final crossed = (next > 0.5) != _midHaptic;
-    if (crossed) {
-      _midHaptic = next > 0.5;
-      HapticFeedback.selectionClick();
-    }
-    setState(() => _extent = next);
-  }
-
-  void _onDragEnd(DragEndDetails details) {
-    if (!_dragging) return;
-    _dragging = false;
-    final fling = details.velocity.pixelsPerSecond.dx;
-    final tapped = _dragAccum < 10 && fling.abs() < 80;
-    if (tapped) {
-      _commit(!widget.isOnline);
-      return;
-    }
-    final goOnline = fling.abs() > 420 ? fling > 0 : _extent >= 0.5;
-    _commit(goOnline);
   }
 
   @override
@@ -165,181 +79,194 @@ class _DriverOnlineToggleState extends State<DriverOnlineToggle>
       enabled: !widget.busy,
       onTap: widget.busy ? null : widget.onToggle,
       label: online
-          ? 'You are live. Double tap to go offline.'
-          : 'You are offline. Slide or double tap to go live.',
-      child: AnimatedBuilder(
-        animation: Listenable.merge([_pulse, _shimmer]),
-        builder: (context, _) {
-          final heat = _extent.clamp(0.0, 1.0);
-          final track = Color.lerp(
-            RideShareColors.surfaceContainerHigh,
-            RideShareColors.primary,
-            heat,
-          )!;
-          final label = Color.lerp(
-            RideShareColors.onSurfaceVariant,
-            Colors.white,
-            heat,
-          )!;
-          return LayoutBuilder(
-            builder: (context, constraints) {
-              final travel =
-                  (constraints.maxWidth - _pad * 2 - _thumb).clamp(0.0, 400.0);
-              final thumbLeft = _pad + heat * travel;
-              return GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: widget.busy ? null : () => _commit(!online),
-                onHorizontalDragStart: widget.busy ? null : _onDragStart,
-                onHorizontalDragUpdate:
-                    widget.busy ? null : (d) => _onDragUpdate(d, travel),
-                onHorizontalDragEnd: widget.busy ? null : _onDragEnd,
-                onHorizontalDragCancel: () {
-                  _dragging = false;
-                  _animateTo(widget.isOnline ? 1 : 0);
-                },
-                child: Container(
-                  height: _height,
-                  decoration: BoxDecoration(
-                    color: track,
-                    borderRadius: BorderRadius.circular(_height / 2),
+          ? 'You are online. Double tap to go offline.'
+          : 'You are offline. Double tap to go online.',
+      child: Listener(
+        onPointerDown:
+            widget.busy ? null : (_) => _press.forward(),
+        onPointerUp: (_) => _press.reverse(),
+        onPointerCancel: (_) => _press.reverse(),
+        child: AnimatedBuilder(
+          animation: Listenable.merge([_pulse, _scale]),
+          builder: (context, _) {
+            final glow = online ? 0.22 + (_pulse.value * 0.2) : 0.0;
+            return Transform.scale(
+              scale: _scale.value,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 380),
+                curve: Curves.easeOutCubic,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: online
+                      ? const Color(0xFFFFF1E0)
+                      : RideShareColors.surfaceContainer,
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(
+                    color: online
+                        ? RideShareColors.primary.withValues(alpha: 0.55)
+                        : RideShareColors.outlineVariant,
+                    width: 1.2,
                   ),
-                  child: Stack(
-                    children: [
-                      Positioned(
-                        left: _thumb + 8,
-                        right: 16,
-                        top: 0,
-                        bottom: 0,
-                        child: IgnorePointer(
-                          child: Opacity(
-                            opacity: (1 - heat * 1.4).clamp(0.0, 1.0),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.end,
-                              children: [
-                                Text(
-                                  'Go live',
-                                  style: TextStyle(
-                                    color: label,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                  boxShadow: [
+                    if (online)
+                      BoxShadow(
+                        color: RideShareColors.primary.withValues(alpha: glow),
+                        blurRadius: 18 + (_pulse.value * 10),
+                        spreadRadius: 0.5,
+                        offset: const Offset(0, 4),
+                      ),
+                  ],
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final thumbWidth = constraints.maxWidth / 2;
+                      return Stack(
+                        clipBehavior: Clip.hardEdge,
+                        children: [
+                          AnimatedPositioned(
+                            duration: const Duration(milliseconds: 420),
+                            curve: Curves.easeOutCubic,
+                            left: online ? thumbWidth : 0,
+                            top: 0,
+                            bottom: 0,
+                            width: thumbWidth,
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 320),
+                              curve: Curves.easeOutCubic,
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: online
+                                      ? const [
+                                          RideShareColors.primary,
+                                          RideShareColors.primaryDeep,
+                                        ]
+                                      : const [
+                                          Color(0xFF5C5A59),
+                                          Color(0xFF3D3C3C),
+                                        ],
                                 ),
-                                const SizedBox(width: 4),
-                                Opacity(
-                                  opacity: 0.45 +
-                                      0.45 *
-                                          (0.5 -
-                                                  (_shimmer.value - 0.5).abs())
-                                              .clamp(0.0, 1.0) *
-                                          2,
-                                  child: Icon(
-                                    Icons.chevron_right_rounded,
-                                    size: 22,
-                                    color: label,
+                                borderRadius: BorderRadius.circular(24),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: (online
+                                            ? RideShareColors.primaryDeep
+                                            : Colors.black)
+                                        .withValues(alpha: 0.22),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 3),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
-                        ),
-                      ),
-                      Positioned(
-                        left: 18,
-                        right: _thumb + 8,
-                        top: 0,
-                        bottom: 0,
-                        child: IgnorePointer(
-                          child: Opacity(
-                            opacity: ((heat - 0.38) / 0.5).clamp(0.0, 1.0),
-                            child: Row(
-                              children: [
-                                Container(
-                                  width: 7,
-                                  height: 7,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withValues(
-                                      alpha: 0.55 + _pulse.value * 0.45,
-                                    ),
-                                    shape: BoxShape.circle,
-                                  ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _AvailabilitySegment(
+                                  label: 'Offline',
+                                  icon: Icons.pause_rounded,
+                                  selected: !online,
+                                  busy: widget.busy && online,
+                                  onTap: () => _onSelect(false),
                                 ),
-                                const SizedBox(width: 8),
-                                const Text(
-                                  'Live',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                              ),
+                              Expanded(
+                                child: _AvailabilitySegment(
+                                  label: 'Online',
+                                  icon: Icons.bolt_rounded,
+                                  selected: online,
+                                  busy: widget.busy && !online,
+                                  pulse: online ? _pulse.value : 0,
+                                  onTap: () => _onSelect(true),
                                 ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
-                        ),
-                      ),
-                      Positioned(
-                        left: thumbLeft,
-                        top: _pad,
-                        child: _FlatThumb(
-                          heat: heat,
-                          busy: widget.busy,
-                        ),
-                      ),
-                    ],
+                        ],
+                      );
+                    },
                   ),
                 ),
-              );
-            },
-          );
-        },
+              ),
+            );
+          },
+        ),
       ),
     );
   }
 }
 
-class _FlatThumb extends StatelessWidget {
-  final double heat;
+class _AvailabilitySegment extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
   final bool busy;
+  final double pulse;
+  final VoidCallback onTap;
 
-  const _FlatThumb({
-    required this.heat,
-    required this.busy,
+  const _AvailabilitySegment({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+    this.busy = false,
+    this.pulse = 0,
   });
 
   @override
   Widget build(BuildContext context) {
-    final hot = heat > 0.5;
-    final iconColor = Color.lerp(
-      RideShareColors.onSurfaceVariant,
-      RideShareColors.primaryDeep,
-      heat,
-    )!;
-    return Container(
-      width: _DriverOnlineToggleState._thumb,
-      height: _DriverOnlineToggleState._thumb,
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        shape: BoxShape.circle,
-      ),
-      child: Center(
-        child: busy
-            ? SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: iconColor,
-                ),
-              )
-            : AnimatedSwitcher(
-                duration: const Duration(milliseconds: 220),
-                child: Icon(
-                  hot ? Icons.bolt_rounded : Icons.power_settings_new_rounded,
-                  key: ValueKey(hot),
-                  size: 22,
-                  color: iconColor,
-                ),
-              ),
+    final color = selected
+        ? Colors.white
+        : RideShareColors.onSurfaceVariant.withValues(alpha: 0.78);
+    return ExcludeSemantics(
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Center(
+          child: AnimatedDefaultTextStyle(
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeOutCubic,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+              letterSpacing: selected ? 0.2 : 0,
+              color: color,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (busy)
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: color,
+                    ),
+                  )
+                else
+                  AnimatedScale(
+                    scale: selected ? 1 : 0.92,
+                    duration: const Duration(milliseconds: 280),
+                    child: Icon(
+                      icon,
+                      size: 20,
+                      color: color.withValues(
+                        alpha: selected ? 0.95 + (pulse * 0.05) : 0.7,
+                      ),
+                    ),
+                  ),
+                const SizedBox(width: 8),
+                Text(label),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

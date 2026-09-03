@@ -419,7 +419,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
 
   Widget _buildHeader() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+      padding: const EdgeInsets.fromLTRB(8, 6, 12, 12),
       decoration: const BoxDecoration(
         color: RideShareColors.background,
         border: Border(
@@ -428,52 +428,41 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
       ),
       child: Column(
         children: [
-          SizedBox(
-            height: 44,
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 44,
-                  height: 44,
-                  child: IconButton(
-                    onPressed: () {
-                      final nav = Navigator.of(context);
-                      if (nav.canPop()) {
-                        nav.pop();
-                      }
-                    },
-                    padding: EdgeInsets.zero,
-                    icon: const Icon(Icons.arrow_back),
+          Row(
+            children: [
+              IconButton(
+                onPressed: () {
+                  final nav = Navigator.of(context);
+                  if (nav.canPop()) {
+                    nav.pop();
+                  }
+                },
+                icon: const Icon(Icons.arrow_back),
+                color: RideShareColors.titleText,
+                tooltip: 'Back',
+                style: IconButton.styleFrom(
+                  backgroundColor: RideShareColors.surfaceContainerLow,
+                  shape: const CircleBorder(),
+                ),
+              ),
+              const SizedBox(width: 4),
+              const Expanded(
+                child: Text(
+                  'Vero Ride',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
                     color: RideShareColors.titleText,
-                    tooltip: 'Back',
-                    style: IconButton.styleFrom(
-                      backgroundColor: RideShareColors.surfaceContainerLow,
-                      shape: const CircleBorder(),
-                    ),
                   ),
                 ),
-                const Expanded(
-                  child: Text(
-                    'Vero Ride',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                      color: RideShareColors.titleText,
-                    ),
-                  ),
-                ),
-                SizedBox(
-                  width: 44,
-                  height: 44,
-                  child: Center(child: _buildStoryProfileAppBarAction()),
-                ),
-              ],
-            ),
+              ),
+              _buildStoryProfileAppBarAction(),
+              const SizedBox(width: 4),
+            ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 44),
+            padding: const EdgeInsets.fromLTRB(8, 0, 4, 0),
             child: DriverOnlineToggle(
               isOnline: _isOnline,
               busy: _availabilityBusy,

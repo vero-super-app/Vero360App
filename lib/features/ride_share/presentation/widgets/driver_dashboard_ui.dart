@@ -1,75 +1,345 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 
-/// Online / Offline pill toggle for the driver header.
-class DriverOnlineToggle extends StatelessWidget {
+/// Flat slide-to-go-live control. Drag or tap.
+class DriverOnlineToggle extends StatefulWidget {
   final bool isOnline;
   final VoidCallback onToggle;
+  final bool busy;
 
   const DriverOnlineToggle({
     required this.isOnline,
     required this.onToggle,
+    this.busy = false,
     super.key,
   });
 
   @override
+  State<DriverOnlineToggle> createState() => _DriverOnlineToggleState();
+}
+
+class _DriverOnlineToggleState extends State<DriverOnlineToggle>
+    with TickerProviderStateMixin {
+  static const _height = 52.0;
+  static const _pad = 4.0;
+  static const _thumb = 44.0;
+
+  late final AnimationController _pulse;
+  late final AnimationController _shimmer;
+  late final AnimationController _snap;
+
+  double _extent = 0;
+  bool _dragging = false;
+  bool _midHaptic = false;
+  double _dragAccum = 0;
+  VoidCallback? _snapTick;
+
+  @override
+  void initState() {
+    super.initState();
+    _extent = widget.isOnline ? 1 : 0;
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1600),
+    );
+    _shimmer = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    );
+    _snap = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 380),
+    );
+    if (widget.isOnline) {
+      _pulse.repeat(reverse: true);
+    } else {
+      _shimmer.repeat();
+    }
+  }
+
+  @override
+  void didUpdateWidget(DriverOnlineToggle oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isOnline && !oldWidget.isOnline) {
+      _shimmer.stop();
+      _pulse.repeat(reverse: true);
+      if (!_dragging) _animateTo(1);
+    } else if (!widget.isOnline && oldWidget.isOnline) {
+      _pulse
+        ..stop()
+        ..value = 0;
+      _shimmer.repeat();
+      if (!_dragging) _animateTo(0);
+    } else if (!widget.busy && oldWidget.busy && !_dragging) {
+      _animateTo(widget.isOnline ? 1 : 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _clearSnap();
+    _pulse.dispose();
+    _shimmer.dispose();
+    _snap.dispose();
+    super.dispose();
+  }
+
+  void _clearSnap() {
+    if (_snapTick != null) {
+      _snap.removeListener(_snapTick!);
+      _snapTick = null;
+    }
+  }
+
+  void _animateTo(double target) {
+    _clearSnap();
+    final start = _extent.clamp(0.0, 1.0);
+    if ((start - target).abs() < 0.001) {
+      setState(() => _extent = target);
+      return;
+    }
+    final anim = Tween<double>(begin: start, end: target).animate(
+      CurvedAnimation(parent: _snap, curve: Curves.easeOutCubic),
+    );
+    _snapTick = () {
+      if (mounted) setState(() => _extent = anim.value);
+    };
+    _snap
+      ..addListener(_snapTick!)
+      ..forward(from: 0);
+  }
+
+  void _commit(bool online) {
+    if (widget.busy || widget.isOnline == online) {
+      _animateTo(widget.isOnline ? 1 : 0);
+      return;
+    }
+    HapticFeedback.mediumImpact();
+    _animateTo(online ? 1 : 0);
+    widget.onToggle();
+  }
+
+  void _onDragStart(DragStartDetails _) {
+    if (widget.busy) return;
+    _clearSnap();
+    _dragging = true;
+    _dragAccum = 0;
+    _midHaptic = _extent > 0.5;
+  }
+
+  void _onDragUpdate(DragUpdateDetails details, double travel) {
+    if (widget.busy || travel <= 0) return;
+    _dragAccum += details.delta.dx.abs();
+    final next = (_extent + details.delta.dx / travel).clamp(0.0, 1.0);
+    final crossed = (next > 0.5) != _midHaptic;
+    if (crossed) {
+      _midHaptic = next > 0.5;
+      HapticFeedback.selectionClick();
+    }
+    setState(() => _extent = next);
+  }
+
+  void _onDragEnd(DragEndDetails details) {
+    if (!_dragging) return;
+    _dragging = false;
+    final fling = details.velocity.pixelsPerSecond.dx;
+    final tapped = _dragAccum < 10 && fling.abs() < 80;
+    if (tapped) {
+      _commit(!widget.isOnline);
+      return;
+    }
+    final goOnline = fling.abs() > 420 ? fling > 0 : _extent >= 0.5;
+    _commit(goOnline);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onToggle,
-      behavior: HitTestBehavior.opaque,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 280),
-            curve: Curves.easeOutCubic,
-            width: 52,
-            height: 28,
-            padding: const EdgeInsets.all(3),
-            decoration: BoxDecoration(
-              color: isOnline
-                  ? RideShareColors.primary
-                  : RideShareColors.surfaceContainer,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: isOnline
-                    ? RideShareColors.primaryDeep
-                    : RideShareColors.outlineVariant,
-              ),
-            ),
-            alignment: isOnline ? Alignment.centerRight : Alignment.centerLeft,
-            child: Container(
-              width: 20,
-              height: 20,
-              decoration: BoxDecoration(
-                color:
-                    isOnline ? Colors.white : RideShareColors.onSurfaceVariant,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.12),
-                    blurRadius: 4,
-                    offset: const Offset(0, 1),
+    final online = widget.isOnline;
+    return Semantics(
+      button: true,
+      toggled: online,
+      enabled: !widget.busy,
+      onTap: widget.busy ? null : widget.onToggle,
+      label: online
+          ? 'You are live. Double tap to go offline.'
+          : 'You are offline. Slide or double tap to go live.',
+      child: AnimatedBuilder(
+        animation: Listenable.merge([_pulse, _shimmer]),
+        builder: (context, _) {
+          final heat = _extent.clamp(0.0, 1.0);
+          final track = Color.lerp(
+            RideShareColors.surfaceContainerHigh,
+            RideShareColors.primary,
+            heat,
+          )!;
+          final label = Color.lerp(
+            RideShareColors.onSurfaceVariant,
+            Colors.white,
+            heat,
+          )!;
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final travel =
+                  (constraints.maxWidth - _pad * 2 - _thumb).clamp(0.0, 400.0);
+              final thumbLeft = _pad + heat * travel;
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: widget.busy ? null : () => _commit(!online),
+                onHorizontalDragStart: widget.busy ? null : _onDragStart,
+                onHorizontalDragUpdate:
+                    widget.busy ? null : (d) => _onDragUpdate(d, travel),
+                onHorizontalDragEnd: widget.busy ? null : _onDragEnd,
+                onHorizontalDragCancel: () {
+                  _dragging = false;
+                  _animateTo(widget.isOnline ? 1 : 0);
+                },
+                child: Container(
+                  height: _height,
+                  decoration: BoxDecoration(
+                    color: track,
+                    borderRadius: BorderRadius.circular(_height / 2),
                   ),
-                ],
+                  child: Stack(
+                    children: [
+                      Positioned(
+                        left: _thumb + 8,
+                        right: 16,
+                        top: 0,
+                        bottom: 0,
+                        child: IgnorePointer(
+                          child: Opacity(
+                            opacity: (1 - heat * 1.4).clamp(0.0, 1.0),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                Text(
+                                  'Go live',
+                                  style: TextStyle(
+                                    color: label,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                Opacity(
+                                  opacity: 0.45 +
+                                      0.45 *
+                                          (0.5 -
+                                                  (_shimmer.value - 0.5).abs())
+                                              .clamp(0.0, 1.0) *
+                                          2,
+                                  child: Icon(
+                                    Icons.chevron_right_rounded,
+                                    size: 22,
+                                    color: label,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        left: 18,
+                        right: _thumb + 8,
+                        top: 0,
+                        bottom: 0,
+                        child: IgnorePointer(
+                          child: Opacity(
+                            opacity: ((heat - 0.38) / 0.5).clamp(0.0, 1.0),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 7,
+                                  height: 7,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(
+                                      alpha: 0.55 + _pulse.value * 0.45,
+                                    ),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                const Text(
+                                  'Live',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        left: thumbLeft,
+                        top: _pad,
+                        child: _FlatThumb(
+                          heat: heat,
+                          busy: widget.busy,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _FlatThumb extends StatelessWidget {
+  final double heat;
+  final bool busy;
+
+  const _FlatThumb({
+    required this.heat,
+    required this.busy,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hot = heat > 0.5;
+    final iconColor = Color.lerp(
+      RideShareColors.onSurfaceVariant,
+      RideShareColors.primaryDeep,
+      heat,
+    )!;
+    return Container(
+      width: _DriverOnlineToggleState._thumb,
+      height: _DriverOnlineToggleState._thumb,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        shape: BoxShape.circle,
+      ),
+      child: Center(
+        child: busy
+            ? SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: iconColor,
+                ),
+              )
+            : AnimatedSwitcher(
+                duration: const Duration(milliseconds: 220),
+                child: Icon(
+                  hot ? Icons.bolt_rounded : Icons.power_settings_new_rounded,
+                  key: ValueKey(hot),
+                  size: 22,
+                  color: iconColor,
+                ),
               ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            isOnline ? 'Online' : 'Offline',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: isOnline ? FontWeight.w800 : FontWeight.w600,
-              color: isOnline
-                  ? RideShareColors.primaryDeep
-                  : RideShareColors.onSurfaceVariant,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -78,173 +348,105 @@ class DriverOnlineToggle extends StatelessWidget {
 class DriverEarningsSummaryCard extends StatelessWidget {
   final String todayAmountLabel;
   final int todayTrips;
-  final String weekAmountLabel;
-  final int weekTrips;
   final bool loading;
 
   const DriverEarningsSummaryCard({
     required this.todayAmountLabel,
     required this.todayTrips,
-    required this.weekAmountLabel,
-    required this.weekTrips,
     this.loading = false,
     super.key,
   });
 
   @override
   Widget build(BuildContext context) {
+    final tripsLabel = loading
+        ? 'Loading…'
+        : todayTrips == 0
+            ? 'No trips yet'
+            : '$todayTrips trip${todayTrips == 1 ? '' : 's'}';
+
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+      padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
           colors: [
             RideShareColors.primary,
             RideShareColors.primaryDeep,
-            RideShareColors.primaryDark,
           ],
         ),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: RideShareColors.primary.withValues(alpha: 0.28),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
+            color: RideShareColors.primary.withValues(alpha: 0.22),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
-      clipBehavior: Clip.antiAlias,
-      child: Stack(
+      child: Row(
         children: [
-          Positioned(
-            right: -16,
-            bottom: -20,
-            child: Icon(
-              Icons.account_balance_wallet_rounded,
-              size: 110,
-              color: Colors.white.withValues(alpha: 0.08),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "TODAY'S EARNINGS",
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.72),
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.7,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                if (loading)
+                  Container(
+                    height: 26,
+                    width: 112,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.22),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  )
+                else
+                  Text(
+                    todayAmountLabel,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.w900,
+                      height: 1.1,
+                      letterSpacing: -0.4,
+                    ),
+                  ),
+              ],
             ),
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Text(
-                    "TODAY'S EARNINGS",
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.7),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.8,
-                    ),
-                  ),
-                  const Spacer(),
-                  Icon(
-                    Icons.chevron_right_rounded,
-                    color: Colors.white.withValues(alpha: 0.75),
-                    size: 22,
-                  ),
-                ],
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              tripsLabel,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
               ),
-              const SizedBox(height: 6),
-              if (loading)
-                Container(
-                  height: 36,
-                  width: 140,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                )
-              else
-                Text(
-                  todayAmountLabel,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 34,
-                    fontWeight: FontWeight.w900,
-                    height: 1.05,
-                    letterSpacing: -0.5,
-                  ),
-                ),
-              const SizedBox(height: 6),
-              Text(
-                loading
-                    ? 'Loading…'
-                    : todayTrips == 0
-                        ? 'No trips completed today'
-                        : '$todayTrips trip${todayTrips == 1 ? '' : 's'} today',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.85),
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
-                ),
-              ),
-              const SizedBox(height: 14),
-              Container(
-                width: double.infinity,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _miniStat(
-                        'This week',
-                        loading ? '—' : weekAmountLabel,
-                      ),
-                    ),
-                    Container(
-                      width: 1,
-                      height: 28,
-                      color: Colors.white.withValues(alpha: 0.25),
-                    ),
-                    Expanded(
-                      child: _miniStat(
-                        'Week trips',
-                        loading ? '—' : '$weekTrips',
-                        alignEnd: true,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+            ),
+          ),
+          Icon(
+            Icons.chevron_right_rounded,
+            color: Colors.white.withValues(alpha: 0.8),
+            size: 22,
           ),
         ],
       ),
-    );
-  }
-
-  Widget _miniStat(String label, String value, {bool alignEnd = false}) {
-    return Column(
-      crossAxisAlignment:
-          alignEnd ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.65),
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          value,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 15,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-      ],
     );
   }
 }

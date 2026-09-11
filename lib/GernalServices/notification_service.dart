@@ -28,7 +28,9 @@ import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/Home/notifications_page.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
+import 'package:vero360_app/GernalScreens/vero_team_chat_page.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_my_orders_page.dart';
 import 'package:vero360_app/features/Promotions/presentation/promotions_page.dart';
 import 'package:vero360_app/features/Promotions/presentation/promo_detail_page.dart';
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
@@ -244,50 +246,53 @@ class NotificationService {
     }
   }
 
-  /// Listens for [OrderPartyNotificationService] docs so buyers/merchants get
-  /// alerts when the other party ships or confirms escrow (requires Firestore rules
-  /// and a composite index on `toUid` + `consumed`).
+  /// Listens for [OrderPartyNotificationService] docs. Tips appear in the
+  /// Vero360 Team chat; here we only bump the notification badge count
+  /// (no system/local notification banner).
   void _syncOrderPartyAlertListener(User? user) {
     _partyAlertSub?.cancel();
     _partyAlertSub = null;
     if (user == null) return;
 
-    // Single-field query avoids requiring a composite index; filter consumed locally.
+    // Single-field query avoids requiring a composite index; filter counted locally.
     _partyAlertSub = FirebaseFirestore.instance
         .collection(OrderPartyNotificationService.collectionName)
         .where('toUid', isEqualTo: user.uid)
         .snapshots()
         .listen((snap) async {
       for (final change in snap.docChanges) {
-        if (change.type != DocumentChangeType.added &&
-            change.type != DocumentChangeType.modified) {
+        if (change.type != DocumentChangeType.added) {
           continue;
         }
         final d = change.doc.data();
         if (d == null) continue;
-        if (d['consumed'] == true) continue;
-        final title = (d['title'] ?? 'Vero360').toString();
+        if (d['notifCounted'] == true) continue;
+        final title = (d['title'] ?? 'Vero360 Team').toString();
         final body = (d['body'] ?? '').toString();
-        String? payloadStr;
+        Map<String, dynamic> payloadMap = {};
         final rawPayload = d['payload'];
         if (rawPayload is Map) {
           try {
-            final m = Map<String, dynamic>.from(
+            payloadMap = Map<String, dynamic>.from(
               rawPayload.map((k, v) => MapEntry(k.toString(), v)),
             );
-            payloadStr = jsonEncode(m);
           } catch (_) {}
         }
-        await showManualNotification(
+        // Badge / inbox count only — message content stays in Vero360 Team chat.
+        await NotificationStore.instance.addNotification(
+          id: 'party_${change.doc.id}',
           title: title,
-          body: body,
-          payload: payloadStr,
+          body: body.isEmpty ? 'New message from Vero360 Team' : body,
+          payload: {
+            ...payloadMap,
+            'openChat': 'vero360_team',
+          },
         );
         try {
-          await change.doc.reference.update({'consumed': true});
+          await change.doc.reference.update({'notifCounted': true});
         } catch (e) {
           if (kDebugMode) {
-            debugPrint('[NotificationService] party alert consume failed: $e');
+            debugPrint('[NotificationService] party alert count failed: $e');
           }
         }
       }
@@ -889,6 +894,14 @@ class NotificationService {
     NavigatorState navigator,
     Map<String, dynamic> data,
   ) {
+    final openChat = (data['openChat'] ?? '').toString().trim().toLowerCase();
+    if (openChat == 'vero360_team' || openChat == VeroTeamChatPage.threadId) {
+      navigator.push(
+        MaterialPageRoute(builder: (_) => const VeroTeamChatPage()),
+      );
+      return;
+    }
+
     final type = (data['type'] as String?)?.toLowerCase();
     final badgeRoute = (data['badgeRoute'] as String?)?.toLowerCase() ??
         (data[NotificationStore.kPayloadBadgeRoute] as String?)?.toLowerCase();
@@ -966,6 +979,13 @@ class NotificationService {
         ));
         break;
 
+      case 'food_order_placed':
+        if (kDebugMode) debugPrint('→ Open food my orders');
+        navigator.push(
+          MaterialPageRoute(builder: (_) => const FoodMyOrdersPage()),
+        );
+        break;
+
       case 'food_order':
       case 'new_food_order':
         if (kDebugMode) debugPrint("→ Open food merchant dashboard");
@@ -1001,6 +1021,24 @@ class NotificationService {
       case 'new_product':
         if (kDebugMode) debugPrint("→ Open marketplace");
         unawaited(_openMarketplaceTarget(navigator, data));
+        break;
+
+      case 'admin_broadcast':
+      case 'admin':
+        if ((data['promoId']?.toString() ?? '').trim().isNotEmpty ||
+            badgeRoute == NotificationStore.kBadgePromotions) {
+          unawaited(_openPromotionTarget(navigator, data));
+        } else if ((data['arrivalId']?.toString() ?? '').trim().isNotEmpty ||
+            badgeRoute == NotificationStore.kBadgePostArrival) {
+          unawaited(_openArrivalTarget(navigator, data));
+        } else if (badgeRoute == 'marketplace' ||
+            badgeRoute == 'quick_marketplace') {
+          unawaited(_openMarketplaceTarget(navigator, data));
+        } else {
+          navigator.push(
+            MaterialPageRoute(builder: (_) => const NotificationsPage()),
+          );
+        }
         break;
 
       case 'engagement':

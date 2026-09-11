@@ -11,12 +11,15 @@ const {
   findBlockedImageLabels,
   detectCannabisCombo,
 } = require('./moderation_blocklist');
+const facebookPagePost = require('./facebook_page_post');
 
 if (!admin.apps.length) {
   admin.initializeApp();
 }
 
 const ENGAGEMENT_TOPIC = 'vero360_engagement';
+/** All logged-in app users (admin broadcasts). Always subscribed when notifications are on. */
+const ALL_USERS_TOPIC = 'vero360_all';
 const ORDER_PARTY_ALERTS = 'order_party_alerts';
 const MAX_GALLERY_IMAGES = 5;
 const SAFESEARCH_BLOCK = new Set(['LIKELY', 'VERY_LIKELY']);
@@ -297,23 +300,41 @@ async function sendFcmToUser(merchantUid, title, body, dataPayload) {
       return;
     }
 
+    const data = stringifyDataPayload({
+      title,
+      body,
+      ...(dataPayload || {}),
+    });
+
     const invalid = [];
     for (const token of tokens) {
       try {
         await admin.messaging().send({
           token,
+          // notification = OS shows tray when app is backgrounded / killed
           notification: { title, body },
-          data: dataPayload || {},
+          data,
           android: {
             priority: 'high',
             notification: {
               channelId: 'high_importance_channel',
+              sound: 'default',
+              defaultVibrateTimings: true,
+              priority: 'high',
+              visibility: 'public',
             },
           },
           apns: {
+            headers: {
+              'apns-priority': '10',
+              'apns-push-type': 'alert',
+            },
             payload: {
               aps: {
+                alert: { title, body },
                 sound: 'default',
+                badge: 1,
+                contentAvailable: true,
               },
             },
           },
@@ -845,12 +866,35 @@ exports.onMarketplaceItemCreated = onDocumentCreated(
     timeoutSeconds: 120,
     memory: '512MiB',
     serviceAccount: FUNCTIONS_SERVICE_ACCOUNT,
+    secrets: [
+      facebookPagePost.FACEBOOK_PAGE_ACCESS_TOKEN,
+      facebookPagePost.FACEBOOK_PAGE_ID,
+    ],
   },
   async (event) => {
     const snap = event.data;
     if (!snap) return;
     try {
-      await moderateMarketplaceListing(snap);
+      const result = await moderateMarketplaceListing(snap);
+      if (result && result.outcome === 'approved') {
+        const freshSnap = await snap.ref.get();
+        const after = freshSnap.data() || {};
+        try {
+          await facebookPagePost.tryPostFromEvent({
+            before: { reviewStatus: 'pending', isActive: false },
+            after,
+            afterSnap: freshSnap,
+            docId: String(snap.id || '').trim(),
+            kind: 'marketplace',
+            isCreate: false,
+          });
+        } catch (fbErr) {
+          console.error(
+            'Marketplace Facebook post after create-moderation failed',
+            fbErr,
+          );
+        }
+      }
     } catch (err) {
       console.error('onMarketplaceItemCreated moderation failed', err);
       try {
@@ -873,7 +917,7 @@ exports.onMarketplaceItemCreated = onDocumentCreated(
 );
 
 /**
- * When a listing becomes approved + live → audience engagement push.
+ * When a listing becomes approved + live → audience engagement push + Facebook Page post.
  * When reviewStatus returns to pending (merchant resubmit) → re-moderate.
  */
 exports.onMarketplaceItemUpdated = onDocumentUpdated(
@@ -882,6 +926,10 @@ exports.onMarketplaceItemUpdated = onDocumentUpdated(
     timeoutSeconds: 120,
     memory: '512MiB',
     serviceAccount: FUNCTIONS_SERVICE_ACCOUNT,
+    secrets: [
+      facebookPagePost.FACEBOOK_PAGE_ACCESS_TOKEN,
+      facebookPagePost.FACEBOOK_PAGE_ID,
+    ],
   },
   async (event) => {
     const before = event.data?.before?.data() || {};
@@ -899,7 +947,26 @@ exports.onMarketplaceItemUpdated = onDocumentUpdated(
     // Re-moderate only when status transitions into pending (resubmit).
     if (afterStatus === 'pending' && beforeStatus !== 'pending') {
       try {
-        await moderateMarketplaceListing(afterSnap);
+        const result = await moderateMarketplaceListing(afterSnap);
+        if (result && result.outcome === 'approved') {
+          const freshSnap = await afterSnap.ref.get();
+          const fresh = freshSnap.data() || {};
+          try {
+            await facebookPagePost.tryPostFromEvent({
+              before: after,
+              after: fresh,
+              afterSnap: freshSnap,
+              docId: String(event.params.id || '').trim(),
+              kind: 'marketplace',
+              isCreate: false,
+            });
+          } catch (fbErr) {
+            console.error(
+              'Marketplace Facebook post after re-moderation failed',
+              fbErr,
+            );
+          }
+        }
       } catch (err) {
         console.error('onMarketplaceItemUpdated re-moderation failed', err);
       }
@@ -920,14 +987,30 @@ exports.onMarketplaceItemUpdated = onDocumentUpdated(
     } catch (err) {
       console.error('Marketplace audience push failed', err);
     }
+
+    try {
+      await facebookPagePost.tryPostFromEvent({
+        before,
+        after,
+        afterSnap,
+        docId: itemId,
+        kind: 'marketplace',
+        isCreate: false,
+      });
+    } catch (err) {
+      console.error('Marketplace Facebook post failed', err);
+    }
   },
 );
 
 /**
- * Manual / admin / app broadcast for a promo, arrival, or campaign.
+ * Manual / admin / app broadcast for a promo, arrival, campaign, or admin push.
  * Write a doc to Firestore `engagement_broadcasts` with:
- *   { title, body, type?: 'promo_digest'|'arrivals_digest'|'marketplace_digest'|'engagement',
- *     badgeRoute?: 'quick_promotions'|'quick_post_arrival' }
+ *   { title, body, type?: 'admin_broadcast'|'promo_digest'|...,
+ *     badgeRoute?: 'quick_promotions'|'quick_post_arrival'|'notifications' }
+ *
+ * Admin broadcasts (`type: admin_broadcast` or `target: all`) go to topic
+ * `vero360_all` (everyone) and also `vero360_engagement` for older installs.
  *
  * Deploy: firebase deploy --only functions:onEngagementBroadcast
  */
@@ -940,6 +1023,12 @@ exports.onEngagementBroadcast = onDocumentCreated(
       String(data.body || 'Something new is waiting for you on Vero360.').trim();
     const type = String(data.type || 'engagement').trim() || 'engagement';
     const badgeRoute = String(data.badgeRoute || '').trim();
+    const target = String(data.target || '').trim().toLowerCase();
+    const isAdminBroadcast =
+      type === 'admin_broadcast' ||
+      type === 'admin' ||
+      target === 'all' ||
+      target === 'everyone';
 
     const payload = {
       type,
@@ -948,34 +1037,76 @@ exports.onEngagementBroadcast = onDocumentCreated(
     };
     if (badgeRoute) payload.badgeRoute = badgeRoute;
     // Deep-link ids (all FCM data values must be strings).
-    for (const key of ['promoId', 'arrivalId', 'marketplaceItemId', 'itemId', 'id']) {
+    for (const key of [
+      'promoId',
+      'arrivalId',
+      'marketplaceItemId',
+      'itemId',
+      'id',
+      'screen',
+      'url',
+    ]) {
       const v = data[key];
       if (v !== undefined && v !== null && String(v).trim()) {
         payload[key] = String(v).trim();
       }
     }
 
-    await admin.messaging().send({
-      topic: ENGAGEMENT_TOPIC,
+    const messageBase = {
       notification: { title, body },
       data: payload,
       android: {
-        priority: 'normal',
+        priority: isAdminBroadcast ? 'high' : 'normal',
         notification: {
           channelId: 'high_importance_channel',
+          sound: 'default',
+          priority: isAdminBroadcast ? 'high' : 'default',
         },
       },
-    });
+      apns: {
+        headers: {
+          'apns-priority': isAdminBroadcast ? '10' : '5',
+          'apns-push-type': 'alert',
+        },
+        payload: {
+          aps: {
+            alert: { title, body },
+            sound: 'default',
+            contentAvailable: true,
+          },
+        },
+      },
+    };
+
+    const topics = isAdminBroadcast
+      ? [ALL_USERS_TOPIC, ENGAGEMENT_TOPIC]
+      : [ENGAGEMENT_TOPIC];
+
+    const results = [];
+    for (const topic of topics) {
+      try {
+        const id = await admin.messaging().send({ ...messageBase, topic });
+        results.push({ topic, id });
+      } catch (err) {
+        console.error(`Engagement broadcast failed for topic ${topic}`, err);
+        results.push({
+          topic,
+          error: String(err && err.message ? err.message : err),
+        });
+      }
+    }
 
     await event.data.ref.set(
       {
         sentAt: admin.firestore.FieldValue.serverTimestamp(),
         sent: true,
+        topics,
+        fcmResults: results,
       },
       { merge: true },
     );
 
-    console.log(`Engagement broadcast sent: ${title}`);
+    console.log(`Engagement broadcast sent: ${title}`, topics);
   },
 );
 
@@ -1636,9 +1767,9 @@ exports.onEscrowReleased = onDocumentUpdated(
 );
 
 /**
- * When the app queues an order_party_alerts doc (courier accept/reject/delivered,
- * escrow, etc.), also send a real FCM push so background/killed devices get it.
- * Marketplace moderation already calls sendFcmToUser itself — skip those to avoid doubles.
+ * When the app queues an order_party_alerts doc, also send a real FCM push so
+ * background/killed devices get a system tray notification.
+ * Skip types that already call sendFcmToUser themselves (avoid doubles).
  */
 exports.onOrderPartyAlertCreated = onDocumentCreated(
   {
@@ -1654,9 +1785,14 @@ exports.onOrderPartyAlertCreated = onDocumentCreated(
       data.payload && typeof data.payload === 'object' ? data.payload : {};
     const type = String(payload.type || data.type || '').trim().toLowerCase();
 
-    // Only courier accept/reject/delivered (app-queued). Other alert types already
-    // have their own FCM paths and would double-notify.
-    if (type !== 'courier_status') return;
+    // Already pushed via notifyMerchant / dedicated food/escrow handlers.
+    const alreadyPushed = new Set([
+      'marketplace_moderation',
+      'food_order',
+      'food_order_created',
+      'escrow_released',
+    ]);
+    if (alreadyPushed.has(type)) return;
 
     const title = String(data.title || 'Vero360').trim() || 'Vero360';
     const body = String(data.body || '').trim();
@@ -1670,9 +1806,44 @@ exports.onOrderPartyAlertCreated = onDocumentCreated(
 
     try {
       await sendFcmToUser(toUid, title, body, dataPayload);
-      console.log(`onOrderPartyAlertCreated FCM sent courier_status to ${toUid}`);
+      console.log(`onOrderPartyAlertCreated FCM sent ${type || 'alert'} to ${toUid}`);
     } catch (err) {
       console.error(`onOrderPartyAlertCreated FCM failed for ${toUid}`, err);
+    }
+  },
+);
+
+/**
+ * Chat alerts are written client-side when the recipient may be backgrounded.
+ * Mirror them to FCM so iOS/Android show a tray notification while the app is closed.
+ */
+exports.onChatMessageAlertCreated = onDocumentCreated(
+  {
+    document: 'chat_message_alerts/{alertId}',
+    serviceAccount: FUNCTIONS_SERVICE_ACCOUNT,
+  },
+  async (event) => {
+    const data = event.data?.data() || {};
+    const toUid = String(data.toUid || '').trim();
+    if (!toUid) return;
+
+    const title = String(data.title || 'New message').trim() || 'New message';
+    const body = String(data.body || 'Sent you a message').trim();
+    const payload =
+      data.payload && typeof data.payload === 'object' ? data.payload : {};
+
+    const dataPayload = stringifyDataPayload({
+      type: 'new_message',
+      title,
+      body,
+      ...payload,
+    });
+
+    try {
+      await sendFcmToUser(toUid, title, body, dataPayload);
+      console.log(`onChatMessageAlertCreated FCM sent to ${toUid}`);
+    } catch (err) {
+      console.error(`onChatMessageAlertCreated FCM failed for ${toUid}`, err);
     }
   },
 );
@@ -1866,3 +2037,12 @@ exports.createDiditSession = onCall(
 /** Didit destination webhook — see ./didit_webhook.js */
 const { diditWebhook } = require('./didit_webhook');
 exports.diditWebhook = diditWebhook;
+
+/** Facebook Page link posts when listings go live — see ./facebook_page_post.js */
+exports.onMarketplaceItemFacebookPost =
+  facebookPagePost.onMarketplaceItemFacebookPost;
+exports.onFoodMenuItemFacebookPost = facebookPagePost.onFoodMenuItemFacebookPost;
+exports.onAccommodationFacebookPost =
+  facebookPagePost.onAccommodationFacebookPost;
+exports.onAccommodationRoomFacebookPost =
+  facebookPagePost.onAccommodationRoomFacebookPost;

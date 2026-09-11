@@ -11,7 +11,9 @@ import 'package:vero360_app/GernalServices/google_directions_service.dart';
 import 'package:vero360_app/GernalServices/google_places_service.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
+import 'package:vero360_app/GernalServices/vero_rewards_service.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
+import 'package:vero360_app/widgets/vero_spin_reward_prompt.dart';
 import 'package:vero360_app/utils/merchant_contact_display.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
@@ -1248,6 +1250,12 @@ class _VerocourierPageState extends State<VerocourierPage> {
             statusValue: CourierStatus.pending.value,
             pickup: created.pickupLocation,
             dropoff: created.dropoffLocation,
+          ),
+        );
+        unawaited(
+          VeroSpinRewardPrompt.grantAndPrompt(
+            source: VeroRewardsService.sourceCourier,
+            reference: 'courier_${created.courierId}',
           ),
         );
       }

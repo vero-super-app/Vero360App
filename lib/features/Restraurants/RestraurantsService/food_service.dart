@@ -20,6 +20,7 @@ class FoodService {
     double? latitude,
     double? longitude,
     double radiusKm = 30,
+    bool attachPrep = true,
   }) async {
     try {
       // Kick API + both Firestore sources in parallel so images can paint sooner.
@@ -42,7 +43,9 @@ class FoodService {
         results[2],
       );
 
-      final withPrep = await _attachRestaurantPrep(merged);
+      final withPrep = attachPrep
+          ? await _attachRestaurantPrep(merged)
+          : merged;
 
       return prioritizeNearUser(
         withPrep,
@@ -358,6 +361,7 @@ class FoodService {
     double? latitude,
     double? longitude,
     double radiusKm = 30,
+    bool attachPrep = true,
   }) async {
     final q = query.trim().toLowerCase();
 
@@ -367,6 +371,7 @@ class FoodService {
         latitude: latitude,
         longitude: longitude,
         radiusKm: radiusKm,
+        attachPrep: attachPrep,
       );
     }
 
@@ -374,6 +379,7 @@ class FoodService {
       latitude: latitude,
       longitude: longitude,
       radiusKm: radiusKm,
+      attachPrep: attachPrep,
     );
 
     final filtered = all.where((f) {

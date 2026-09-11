@@ -8,15 +8,30 @@ import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_
 class DriverOnlineToggle extends StatelessWidget {
   final bool isOnline;
   final VoidCallback onToggle;
+  /// When true, label/track use light colors for navy banners.
+  final bool onDark;
 
   const DriverOnlineToggle({
     required this.isOnline,
     required this.onToggle,
+    this.onDark = false,
     super.key,
   });
 
   @override
   Widget build(BuildContext context) {
+    final offlineTrack = onDark
+        ? Colors.white.withValues(alpha: 0.18)
+        : RideShareColors.surfaceContainer;
+    final offlineBorder = onDark
+        ? Colors.white.withValues(alpha: 0.28)
+        : RideShareColors.outlineVariant;
+    final labelColor = onDark
+        ? (isOnline ? Colors.white : Colors.white.withValues(alpha: 0.75))
+        : (isOnline
+            ? RideShareColors.primaryDeep
+            : RideShareColors.onSurfaceVariant);
+
     return GestureDetector(
       onTap: onToggle,
       behavior: HitTestBehavior.opaque,
@@ -30,14 +45,12 @@ class DriverOnlineToggle extends StatelessWidget {
             height: 28,
             padding: const EdgeInsets.all(3),
             decoration: BoxDecoration(
-              color: isOnline
-                  ? RideShareColors.primary
-                  : RideShareColors.surfaceContainer,
+              color: isOnline ? RideShareColors.primary : offlineTrack,
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
                 color: isOnline
                     ? RideShareColors.primaryDeep
-                    : RideShareColors.outlineVariant,
+                    : offlineBorder,
               ),
             ),
             alignment: isOnline ? Alignment.centerRight : Alignment.centerLeft,
@@ -64,9 +77,7 @@ class DriverOnlineToggle extends StatelessWidget {
             style: TextStyle(
               fontSize: 13,
               fontWeight: isOnline ? FontWeight.w800 : FontWeight.w600,
-              color: isOnline
-                  ? RideShareColors.primaryDeep
-                  : RideShareColors.onSurfaceVariant,
+              color: labelColor,
             ),
           ),
         ],

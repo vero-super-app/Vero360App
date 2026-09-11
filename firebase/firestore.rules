@@ -91,6 +91,23 @@ service cloud.firestore {
         && resource.data.userId == request.auth.uid;
     }
 
+    // Vero Coin / Points — owner only.
+    match /vero_rewards/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Digital services USD rate + subscription/gift-card prices (admin writes via Admin SDK).
+    match /app_config/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Home search-bar crawl ticker (admin writes via Admin SDK / web panel).
+    match /homepage_crawls/{crawlId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     // Other app collections (chat, notifications, etc.) — signed-in users only.
     match /{document=**} {
       allow read, write: if isSignedIn();

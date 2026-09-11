@@ -23,6 +23,9 @@ import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/utils/kyc_gate.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/kyc_status_card.dart';
+import 'package:vero360_app/widgets/vero_coin_icon_button.dart';
+import 'package:vero360_app/features/Restraurants/Models/food_order_model.dart';
+import 'package:vero360_app/features/Restraurants/Models/food_order_number.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GernalServices/profile_photo_cache.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_courier_dispatch.dart';
@@ -552,7 +555,8 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       final o = orders.first;
       final customer = (o['customerName'] ?? 'A customer').toString().trim();
       final who = customer.isEmpty ? 'A customer' : customer;
-      summary = 'New order from $who';
+      final items = _orderItemsSummary(o);
+      summary = '$who has ordered $items';
     } else {
       summary = '$n new food orders';
     }
@@ -1458,6 +1462,12 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       backgroundColor: _brandOrange,
       foregroundColor: Colors.white,
       actions: [
+        const VeroCoinIconButton(
+          size: 36,
+          iconSize: 18,
+          badgeBackground: Colors.white,
+          badgeTextColor: Color(0xFFD94F00),
+        ),
         Padding(
           padding: const EdgeInsets.only(right: 6),
           child: GestureDetector(
@@ -2079,6 +2089,16 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     return extra > 0 ? '${names.join(', ')} +$extra more' : names.join(', ');
   }
 
+  String _orderNumberLabel(Map<String, dynamic> order) {
+    final raw = (order['orderNumber'] ??
+            order['orderId'] ??
+            order['id'] ??
+            '')
+        .toString()
+        .trim();
+    return formatVeroFoodOrderNumber(raw);
+  }
+
   String _orderWhenLabel(Map<String, dynamic> order) {
     final raw = order['createdAt'];
     DateTime? at;
@@ -2089,13 +2109,14 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
   }
 
   Widget _orderDetailCard(Map<String, dynamic> orderMap) {
-    final oid = orderMap['orderId']?.toString() ?? orderMap['id']?.toString() ?? '';
-    final shortId =
-        oid.length > 8 ? oid.substring(0, 8) : (oid.isEmpty ? 'N/A' : oid);
+    final orderNo = _orderNumberLabel(orderMap);
     final amount = orderMap['totalAmount'] ?? orderMap['totalMwk'] ?? orderMap['total'];
     final amountNum =
         amount is num ? amount.toDouble() : double.tryParse('$amount') ?? 0;
     final customer = (orderMap['customerName'] ?? 'Customer').toString().trim();
+    final phone = (orderMap['customerPhone'] ?? orderMap['phone'] ?? '')
+        .toString()
+        .trim();
     final address = (orderMap['deliveryAddress'] ??
             orderMap['dropoffAddress'] ??
             orderMap['address'] ??
@@ -2105,98 +2126,374 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     final track = '${orderMap['courierTrackingNumber'] ?? ''}'.trim();
     final when = _orderWhenLabel(orderMap);
     final itemsLine = _orderItemsSummary(orderMap);
+    final status = '${orderMap['status'] ?? 'pending'}';
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.black12),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: _brandOrange.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(Icons.receipt_long_rounded, color: _brandOrange),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => _showMerchantOrderDetail(orderMap),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: _brandOrange.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.receipt_long_rounded, color: _brandOrange),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Text(
-                        'Order #$shortId',
-                        style: const TextStyle(fontWeight: FontWeight.w900),
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            orderNo.isEmpty ? 'Food order' : orderNo,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                        Chip(
+                          label: Text(
+                            status,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          backgroundColor: _getStatusColor(status),
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          padding: EdgeInsets.zero,
+                        ),
+                      ],
                     ),
-                    Chip(
-                      label: Text(
-                        '${orderMap['status'] ?? 'pending'}',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
+                    if (when.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        when,
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey.shade600,
                         ),
                       ),
-                      backgroundColor: _getStatusColor(orderMap['status']),
-                      visualDensity: VisualDensity.compact,
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      padding: EdgeInsets.zero,
+                    ],
+                    const SizedBox(height: 6),
+                    Text(
+                      itemsLine,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade800,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      customer.isEmpty ? 'Customer' : customer,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                        color: _brandNavy,
+                      ),
+                    ),
+                    if (phone.isNotEmpty)
+                      Text(
+                        phone,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade700,
+                        ),
+                      ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _mwk0(amountNum),
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.green,
+                      ),
+                    ),
+                    if (address.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.location_on_outlined,
+                              size: 14, color: Colors.grey.shade600),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              address,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 4),
+                    Text(
+                      track.isEmpty
+                          ? 'Vero Courier'
+                          : 'Vero Courier · $track',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: _brandOrange.withValues(alpha: 0.9),
+                      ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  itemsLine,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade800,
+              ),
+              IconButton(
+                icon: const Icon(Icons.more_vert_rounded),
+                onPressed: () => _showOrderActions(orderMap),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showMerchantOrderDetail(Map<String, dynamic> orderMap) {
+    final order = FoodOrder.fromJson(orderMap);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.78,
+        minChildSize: 0.45,
+        maxChildSize: 0.94,
+        builder: (_, scroll) {
+          return ListView(
+            controller: scroll,
+            padding: const EdgeInsets.fromLTRB(20, 10, 20, 28),
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.black12,
+                    borderRadius: BorderRadius.circular(99),
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  'Customer: ${customer.isEmpty ? 'N/A' : customer}',
-                  style: TextStyle(fontSize: 12.5, color: Colors.grey.shade700),
+              ),
+              Text(
+                order.displayOrderNumber,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                  color: _brandNavy,
                 ),
-                Text(
-                  'Amount: ${_mwk0(amountNum)}',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.green,
+              ),
+              const SizedBox(height: 4),
+              Chip(
+                label: Text(
+                  order.status,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                backgroundColor: _getStatusColor(order.status),
+              ),
+              const SizedBox(height: 16),
+              _merchantDetailSection('Customer', [
+                _merchantDetailRow('Name', order.customerName),
+                _merchantDetailRow('Phone', order.customerPhone),
+                _merchantDetailRow('Email', order.customerEmail),
+              ]),
+              _merchantDetailSection('Order', [
+                _merchantDetailRow(
+                  'Placed',
+                  order.createdAt == null
+                      ? '—'
+                      : DateFormat('EEE, d MMM yyyy · HH:mm')
+                          .format(order.createdAt!.toLocal()),
+                ),
+                _merchantDetailRow('Payment', order.paymentStatus),
+                _merchantDetailRow('Ref', order.paymentTxRef),
+                _merchantDetailRow('Total', _mwk0(order.totalMwk)),
+              ]),
+              _merchantDetailSection('Delivery', [
+                _merchantDetailRow('Courier', order.deliveryMethod),
+                _merchantDetailRow(
+                  'Tracking',
+                  order.courierTrackingNumber.trim().isEmpty
+                      ? 'Pending dispatch'
+                      : order.courierTrackingNumber.trim(),
+                ),
+                _merchantDetailRow('Drop-off', order.deliveryAddress),
+                if (order.pickupAddress.trim().isNotEmpty)
+                  _merchantDetailRow('Pickup', order.pickupAddress),
+              ]),
+              const SizedBox(height: 8),
+              const Text(
+                'Items',
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 15,
+                  color: _brandNavy,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ...order.lineItems.map((line) {
+                final title = line.variant == null || line.variant!.isEmpty
+                    ? line.name
+                    : '${line.name} (${line.variant})';
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${line.quantity}×',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                          color: _brandOrange,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(title,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w700)),
+                            if (line.notes != null &&
+                                line.notes!.trim().isNotEmpty)
+                              Text(line.notes!.trim(),
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey.shade600)),
+                          ],
+                        ),
+                      ),
+                      Text(_mwk0(line.lineTotalMwk),
+                          style: const TextStyle(fontWeight: FontWeight.w800)),
+                    ],
+                  ),
+                );
+              }),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _showOrderActions(orderMap);
+                },
+                style: FilledButton.styleFrom(
+                  backgroundColor: _brandOrange,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
                   ),
                 ),
-                if (address.isNotEmpty)
-                  Text(
-                    'Deliver to: $address',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                  ),
-                Text(
-                  track.isEmpty
-                      ? 'Vero Courier${when.isEmpty ? '' : ' · $when'}'
-                      : 'Vero Courier · $track${when.isEmpty ? '' : ' · $when'}',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                child: const Text(
+                  'Update status',
+                  style: TextStyle(fontWeight: FontWeight.w800),
                 ),
-              ],
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _merchantDetailSection(String title, List<Widget> rows) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontWeight: FontWeight.w900,
+              fontSize: 14,
+              color: _brandNavy,
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.more_vert_rounded),
-            onPressed: () => _showOrderActions(orderMap),
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF7F8FA),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+            ),
+            child: Column(children: rows),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _merchantDetailRow(String label, String value) {
+    final v = value.trim();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 88,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              v.isEmpty ? '—' : v,
+              style: const TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+              ),
+            ),
           ),
         ],
       ),
@@ -3151,7 +3448,10 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
               ListTile(
                 leading: const Icon(Icons.visibility_rounded),
                 title: const Text('View details'),
-                onTap: () => Navigator.pop(context),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showMerchantOrderDetail(order);
+                },
               ),
               ListTile(
                 leading: const Icon(Icons.check_circle_outline_rounded),

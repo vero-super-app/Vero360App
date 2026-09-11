@@ -90,10 +90,21 @@ class _ExchangeRateScreenState extends State<ExchangeRateScreen> {
   String baseCurrency = 'USD';
   double inputAmount = 0.0;
 
-  final List<String> currencies = ['MWK', 'GBP', 'USD', 'CNY', 'ZAR', 'TZS'];
+  final List<String> currencies = [
+    'MWK',
+    'ZMW',
+    'MZN',
+    'GBP',
+    'USD',
+    'CNY',
+    'ZAR',
+    'TZS',
+  ];
 
   static const _currencyNames = {
     'MWK': 'Malawian Kwacha',
+    'ZMW': 'Zambian Kwacha',
+    'MZN': 'Mozambican Metical',
     'GBP': 'British Pound',
     'USD': 'US Dollar',
     'CNY': 'Chinese Yuan',
@@ -289,6 +300,8 @@ class _ExchangeRateScreenState extends State<ExchangeRateScreen> {
   String _getFlag(String currency) {
     const flagMap = {
       'MWK': '🇲🇼',
+      'ZMW': '🇿🇲',
+      'MZN': '🇲🇿',
       'GBP': '🇬🇧',
       'USD': '🇺🇸',
       'CNY': '🇨🇳',

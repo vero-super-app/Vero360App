@@ -25,6 +25,8 @@ class EngagementNotificationService {
       EngagementNotificationService._();
 
   static const String fcmTopic = 'vero360_engagement';
+  /// Everyone with the app (admin broadcast pushes).
+  static const String allUsersTopic = 'vero360_all';
   static const String prefEnabled = 'pref_notifications_engagement';
   static const String _prefLastDigestMs = 'engagement_last_digest_ms';
   static const String _prefDigestCountDay = 'engagement_digest_count_day';
@@ -53,6 +55,13 @@ class EngagementNotificationService {
           enabledOverride ?? (prefs.getBool(prefEnabled) ?? true);
       final user = FirebaseAuth.instance.currentUser;
       final messaging = FirebaseMessaging.instance;
+
+      if (user != null && masterOn) {
+        // Admin / everyone broadcasts — stay subscribed whenever pushes are on.
+        await messaging.subscribeToTopic(allUsersTopic);
+      } else {
+        await messaging.unsubscribeFromTopic(allUsersTopic);
+      }
 
       if (user != null && masterOn && engagementOn) {
         await messaging.subscribeToTopic(fcmTopic);

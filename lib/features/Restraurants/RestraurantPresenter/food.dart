@@ -23,6 +23,7 @@ import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/GernalServices/location_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_details.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_my_orders_page.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_categories.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_engagement_service.dart';
@@ -1386,6 +1387,37 @@ class _FoodPageState extends State<FoodPage> {
             ),
           ),
           const Spacer(),
+          TextButton(
+            onPressed: () {
+              final signedIn = FirebaseAuth.instance.currentUser != null;
+              if (!signedIn) {
+                ToastHelper.showCustomToast(
+                  context,
+                  'Sign in to view your food orders.',
+                  isSuccess: false,
+                  errorMessage: '',
+                );
+                return;
+              }
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const FoodMyOrdersPage()),
+              );
+            },
+            style: TextButton.styleFrom(
+              foregroundColor: _veroOrange,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text(
+              'My food orders',
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 13,
+              ),
+            ),
+          ),
           IconButton(
             tooltip: 'Notifications',
             onPressed: () {

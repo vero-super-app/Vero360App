@@ -15,6 +15,7 @@ import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/delivery_proof_service.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
+import 'package:vero360_app/GernalServices/order_shipping_reminder_service.dart';
 import 'package:vero360_app/GernalServices/merchant_phone_resolver.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
@@ -421,6 +422,55 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     }
   }
 
+  Future<void> _remindMerchantToShip(OrderItem o, OrderEscrowSnapshot esc) async {
+    final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    if (!_buyerMatchesEscrow(o, esc, myUid)) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Only the buyer can remind the merchant.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    if (!esc.isAwaitingShipment) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'This parcel was already marked as shipped.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(color: Color(0xFFFF8A00)),
+      ),
+    );
+
+    final mid = esc.merchantUid.trim().isNotEmpty
+        ? esc.merchantUid.trim()
+        : (o.merchantUid ?? '').trim();
+    final result = await OrderShippingReminderService.remindMerchant(
+      order: o,
+      merchantUid: mid,
+    );
+
+    if (!mounted) return;
+    Navigator.of(context).pop(); // loading
+    ToastHelper.showCustomToast(
+      context,
+      result.message,
+      isSuccess: result.ok,
+      errorMessage: '',
+    );
+  }
+
   Future<void> _confirmParcelReceived(OrderItem o) async {
     await OrderEscrowService.repairBuyerUidIfNeeded(o);
     final esc = await OrderEscrowService.fetchEscrow(o.id);
@@ -549,19 +599,37 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
             ),
           ),
           const SizedBox(height: 6),
-          if (waitingMerchant)
+          if (waitingMerchant) ...[
             Text(
               isMerchantParty
                   ? 'Payment is held until you send shipment proof (To ship). The buyer confirms receipt after delivery.'
                   : 'Payment is held until the merchant sends shipment proof. '
-                      'Then you can confirm receipt here to release funds to their wallet.',
+                      'Vero360 Team tip: you can remind the merchant to ship once per day.',
               style: const TextStyle(
                 fontSize: 13,
                 color: Color(0xFF6B778C),
                 height: 1.35,
               ),
-            )
-          else if (isBuyer) ...[
+            ),
+            if (isBuyer) ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _brand,
+                    side: BorderSide(color: _brand.withValues(alpha: 0.55)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  onPressed: () => _remindMerchantToShip(o, esc),
+                  icon: const Icon(Icons.notifications_active_outlined, size: 18),
+                  label: const Text('Remind merchant to ship'),
+                ),
+              ),
+            ],
+          ] else if (isBuyer) ...[
             Text(
               [
                 if (esc.releaseDueAt != null)

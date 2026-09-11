@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
-/// Fixed USD → MWK rate for gift-card style products (amount picker).
+/// Fallback USD → MWK rate when Firestore config is unavailable.
 const double kUsdToMwkRate = 4700;
+
+/// Live rate (updated by [DigitalServicesCatalog] from admin panel).
+double digitalServicesUsdToMwkRate = kUsdToMwkRate;
 
 final NumberFormat _usdFmt =
     NumberFormat.currency(locale: 'en_US', symbol: '\$', decimalDigits: 0);
@@ -11,7 +14,7 @@ final NumberFormat _mwkFmt =
 
 String formatUsd(num usd) => _usdFmt.format(usd);
 String formatMwk(num mwk) => _mwkFmt.format(mwk.round());
-double usdToMwk(num usd) => usd * kUsdToMwkRate;
+double usdToMwk(num usd) => usd * digitalServicesUsdToMwkRate;
 
 class DigitalProduct {
   final String key;
@@ -30,6 +33,9 @@ class DigitalProduct {
   /// When set: skip amount picker and charge this MWK amount via PayChangu.
   final double? fixedMwkPrice;
 
+  /// When false, product is hidden (admin disabled).
+  final bool active;
+
   const DigitalProduct({
     required this.key,
     required this.name,
@@ -41,6 +47,7 @@ class DigitalProduct {
     this.fixedMwkPrice,
     this.icon,
     this.logoAsset,
+    this.active = true,
   });
 
   bool get usesAmountPicker => fixedMwkPrice == null;
@@ -52,6 +59,31 @@ class DigitalProduct {
     if (fixedMwkPrice != null) return formatMwk(fixedMwkPrice!);
     if (usdAmounts.isEmpty) return '';
     return 'From ${formatUsd(startingUsd)}';
+  }
+
+  DigitalProduct copyWith({
+    String? name,
+    String? subtitle,
+    String? brandTag,
+    List<double>? usdAmounts,
+    double? fixedMwkPrice,
+    bool clearFixedMwkPrice = false,
+    bool? active,
+  }) {
+    return DigitalProduct(
+      key: key,
+      name: name ?? this.name,
+      subtitle: subtitle ?? this.subtitle,
+      category: category,
+      accent: accent,
+      brandTag: brandTag ?? this.brandTag,
+      usdAmounts: usdAmounts ?? this.usdAmounts,
+      fixedMwkPrice:
+          clearFixedMwkPrice ? null : (fixedMwkPrice ?? this.fixedMwkPrice),
+      icon: icon,
+      logoAsset: logoAsset,
+      active: active ?? this.active,
+    );
   }
 }
 

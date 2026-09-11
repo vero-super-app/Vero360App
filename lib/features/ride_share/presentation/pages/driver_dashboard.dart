@@ -416,14 +416,27 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     );
   }
 
+  static const Color _brandNavy = Color(0xFF16284C);
+
   Widget _buildHeader() {
+    // Navy banner — matches merchant / customer profile headers.
     return Container(
-      padding: const EdgeInsets.fromLTRB(8, 6, 12, 10),
-      decoration: const BoxDecoration(
-        color: RideShareColors.background,
-        border: Border(
-          bottom: BorderSide(color: RideShareColors.outlineVariant, width: 0.6),
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      padding: const EdgeInsets.fromLTRB(8, 10, 12, 12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        gradient: LinearGradient(
+          colors: [_brandNavy, _brandNavy.withValues(alpha: 0.86)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
       ),
       child: Row(
         children: [
@@ -435,27 +448,42 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
               }
             },
             icon: const Icon(Icons.arrow_back),
-            color: RideShareColors.titleText,
+            color: Colors.white,
             tooltip: 'Back',
             style: IconButton.styleFrom(
-              backgroundColor: RideShareColors.surfaceContainerLow,
+              backgroundColor: Colors.white.withValues(alpha: 0.14),
               shape: const CircleBorder(),
             ),
           ),
           const SizedBox(width: 4),
           const Expanded(
-            child: Text(
-              'Vero Ride',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-                color: RideShareColors.titleText,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Vero Ride',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white,
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  'Driver dashboard',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xD9FFFFFF),
+                  ),
+                ),
+              ],
             ),
           ),
           DriverOnlineToggle(
             isOnline: _isOnline,
             onToggle: _handleOnlineToggle,
+            onDark: true,
           ),
           const SizedBox(width: 10),
           _buildStoryProfileAppBarAction(),

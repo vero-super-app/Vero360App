@@ -703,6 +703,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
         location: item.listingLocation,
         availableStock: item.quantity,
         prepTimeMinutes: item.effectivePrepTimeMinutes,
+        listingDocId: item.firestoreListingId,
       );
 
       await cart.addToCart(cartItem);
@@ -782,6 +783,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
         location: item.listingLocation,
         availableStock: item.quantity,
         prepTimeMinutes: item.effectivePrepTimeMinutes,
+        listingDocId: item.firestoreListingId,
       );
 
       if (!mounted) return;

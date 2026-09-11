@@ -46,8 +46,14 @@ import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/Home/notifications_page.dart';
 import 'package:vero360_app/Home/story_section.dart';
 import 'package:vero360_app/Home/homepage_adverts.dart';
+import 'package:vero360_app/Home/homepage_crawl_ticker.dart';
+import 'package:vero360_app/Home/vero_coin_page.dart';
+import 'package:vero360_app/GernalServices/vero_rewards_service.dart';
 import 'package:vero360_app/features/Promotions/presentation/promotions_page.dart';
+import 'package:vero360_app/features/Promotions/presentation/promo_detail_page.dart';
+import 'package:vero360_app/features/Promotions/promotion_service.dart';
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
+import 'package:vero360_app/features/DigitalServices/digital_services_catalog.dart';
 import 'package:vero360_app/features/DigitalServices/digital_service_order_service.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_services_page.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_product_amount_page.dart';
@@ -236,6 +242,10 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       }
     });
     _maybeShowServicesHint();
+    // Retention reward: count this homepage open toward daily Vero Points.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(VeroRewardsService.recordAppOpen());
+    });
   }
 
   @override
@@ -404,6 +414,9 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                     onNotifTap: () => Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => const NotificationsPage()),
                     ),
+                    onCoinTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const VeroCoinPage()),
+                    ),
                     onSearchTap: _onSearchTap,
                   ),
                   actions: const [],
@@ -468,7 +481,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                 /* ── Promo banner ────────────────────────── */
                 const SliverToBoxAdapter(
                   child: Padding(
-                    padding: EdgeInsets.fromLTRB(16, 20, 16, 0),
+                    padding: EdgeInsets.only(top: 20),
                     child: _PromoBanner(),
                   ),
                 ),
@@ -727,6 +740,7 @@ class _HeroHeader extends StatelessWidget {
   final Animation<Offset> heroSlide;
   final VoidCallback      onSearchTap;
   final VoidCallback      onNotifTap;
+  final VoidCallback      onCoinTap;
 
   const _HeroHeader({
     required this.greeting,
@@ -735,6 +749,7 @@ class _HeroHeader extends StatelessWidget {
     required this.heroSlide,
     required this.onSearchTap,
     required this.onNotifTap,
+    required this.onCoinTap,
   });
 
   @override
@@ -794,7 +809,7 @@ class _HeroHeader extends StatelessWidget {
           SafeArea(
             child: SingleChildScrollView(
               physics: const NeverScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 22),
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -836,6 +851,8 @@ class _HeroHeader extends StatelessWidget {
                         ),
                       ),
                       const Spacer(),
+                      _VeroCoinHeroButton(onTap: onCoinTap),
+                      const SizedBox(width: 8),
                       ListenableBuilder(
                         listenable: NotificationStore.instance,
                         builder: (_, __) {
@@ -961,6 +978,20 @@ class _HeroHeader extends StatelessWidget {
               ),
             ),
           ),
+
+          /* text crawl — bottom strip of orange hero (no banner) */
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 6,
+            child: IgnorePointer(
+              ignoring: greetingOpacity < 0.08,
+              child: Opacity(
+                opacity: greetingOpacity,
+                child: const HomepageCrawlTicker(),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -976,6 +1007,7 @@ class _HeroFlexibleSpace extends StatelessWidget {
   final Animation<Offset> heroSlide;
   final VoidCallback onSearchTap;
   final VoidCallback onNotifTap;
+  final VoidCallback onCoinTap;
 
   const _HeroFlexibleSpace({
     required this.greeting,
@@ -984,6 +1016,7 @@ class _HeroFlexibleSpace extends StatelessWidget {
     required this.heroSlide,
     required this.onSearchTap,
     required this.onNotifTap,
+    required this.onCoinTap,
   });
 
   @override
@@ -1011,6 +1044,7 @@ class _HeroFlexibleSpace extends StatelessWidget {
           heroFade: heroFade,
           heroSlide: heroSlide,
           onNotifTap: onNotifTap,
+          onCoinTap: onCoinTap,
           onSearchTap: onSearchTap,
         ),
         Positioned(
@@ -1036,6 +1070,7 @@ class _HeroFlexibleSpace extends StatelessWidget {
               child: _CollapsedBar(
                 onSearchTap: onSearchTap,
                 onNotifTap: onNotifTap,
+                onCoinTap: onCoinTap,
               ),
             ),
           ),
@@ -1049,7 +1084,12 @@ class _HeroFlexibleSpace extends StatelessWidget {
 class _CollapsedBar extends StatelessWidget {
   final VoidCallback onSearchTap;
   final VoidCallback onNotifTap;
-  const _CollapsedBar({required this.onSearchTap, required this.onNotifTap});
+  final VoidCallback onCoinTap;
+  const _CollapsedBar({
+    required this.onSearchTap,
+    required this.onNotifTap,
+    required this.onCoinTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1111,6 +1151,8 @@ class _CollapsedBar extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 10),
+            _VeroCoinHeroButton(onTap: onCoinTap, compact: true),
+            const SizedBox(width: 8),
             GestureDetector(
               onTap: onNotifTap,
               child: Container(
@@ -1126,6 +1168,60 @@ class _CollapsedBar extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Coin chip next to notifications — shows balance; opens Vero Coin instructions.
+class _VeroCoinHeroButton extends StatelessWidget {
+  final VoidCallback onTap;
+  final bool compact;
+
+  const _VeroCoinHeroButton({
+    required this.onTap,
+    this.compact = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final size = compact ? 34.0 : 40.0;
+    final iconSize = compact ? 16.0 : 18.0;
+
+    Widget icon = Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: Colors.white.withOpacity(0.18),
+        border: Border.all(color: Colors.white.withOpacity(0.30)),
+      ),
+      child: Icon(Icons.monetization_on_rounded, color: Colors.white, size: iconSize),
+    );
+
+    if (uid == null) {
+      return GestureDetector(onTap: onTap, child: icon);
+    }
+
+    return StreamBuilder<VeroRewardsBalance>(
+      stream: VeroRewardsService.watchBalance(uid),
+      builder: (context, snap) {
+        final coins = snap.data?.coins ?? 0;
+        return GestureDetector(
+          onTap: onTap,
+          child: Badge(
+            isLabelVisible: coins > 0,
+            backgroundColor: Colors.white,
+            textColor: AppColors.brandOrangeDeep,
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+            label: Text(
+              coins > 99 ? '99+' : '$coins',
+              style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w800),
+            ),
+            child: icon,
+          ),
+        );
+      },
     );
   }
 }
@@ -1882,22 +1978,246 @@ class _ProviderCard extends StatelessWidget {
 }
 
 /* ═══════════════════════════════════════════════════
-   PROMO BANNER
+   PROMO BANNER — sliding carousel (mirrors homepage ads)
 ═══════════════════════════════════════════════════ */
-class _PromoBanner extends StatelessWidget {
+class _PromoBanner extends StatefulWidget {
   const _PromoBanner();
 
-  void _openPromotions(BuildContext context) {
+  @override
+  State<_PromoBanner> createState() => _PromoBannerState();
+}
+
+class _PromoBannerState extends State<_PromoBanner> {
+  final _svc = PromoService();
+  List<PromoModel> _promos = const [];
+  bool _loading = true;
+  int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final data = await _svc.fetchActivePromos();
+      if (!mounted) return;
+      setState(() {
+        _promos = data;
+        _loading = false;
+        _index = 0;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _promos = const [];
+        _loading = false;
+      });
+    }
+  }
+
+  void _openPromotions() {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const PromotionsPage()),
     );
   }
 
+  void _openPromo(PromoModel promo) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => PromoDetailPage(promo: promo)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Last slide is always the "See all" CTA (same pattern as homepage ads).
+    final count = _promos.length + 1;
+    final pageIndex = _index.clamp(0, count - 1);
+
+    if (_loading) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Container(
+          height: 104,
+          decoration: BoxDecoration(
+            color: AppColors.brandOrangeSoft,
+            borderRadius: BorderRadius.circular(20),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: CarouselSlider.builder(
+            itemCount: count,
+            options: CarouselOptions(
+              height: 104,
+              viewportFraction: 1,
+              enableInfiniteScroll: count > 1,
+              autoPlay: count > 1,
+              autoPlayInterval: const Duration(seconds: 2),
+              autoPlayAnimationDuration: const Duration(milliseconds: 650),
+              enlargeCenterPage: false,
+              padEnds: false,
+              onPageChanged: (i, _) => setState(() => _index = i),
+            ),
+            itemBuilder: (_, i, __) {
+              if (i == _promos.length) {
+                return _PromoCtaSlide(onTap: _openPromotions);
+              }
+              return _PromoSlide(
+                promo: _promos[i],
+                onTap: () => _openPromo(_promos[i]),
+              );
+            },
+          ),
+        ),
+        if (count > 1) ...[
+          const SizedBox(height: 8),
+          _Dots(count: count, index: pageIndex),
+        ],
+      ],
+    );
+  }
+}
+
+class _PromoSlide extends StatelessWidget {
+  final PromoModel promo;
+  final VoidCallback onTap;
+  const _PromoSlide({required this.promo, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final imageUrl = promo.resolvedImageUrl;
+    final subtitle = promo.description?.trim().isNotEmpty == true
+        ? promo.description!.trim()
+        : (promo.isFree ? 'Special offer' : promo.formattedPrice);
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.brandOrange.withOpacity(0.40),
+              blurRadius: 20,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (imageUrl != null)
+              ResilientCachedNetworkImage(
+                url: imageUrl,
+                fit: BoxFit.cover,
+              )
+            else
+              const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [AppColors.brandOrangeDeep, AppColors.brandOrange],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+              ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    Colors.black.withOpacity(0.72),
+                    Colors.black.withOpacity(0.35),
+                    Colors.black.withOpacity(0.15),
+                  ],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 16, 14),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 9,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.18),
+                            borderRadius: BorderRadius.circular(99),
+                          ),
+                          child: const Text(
+                            'Promotion',
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w800,
+                              color: Colors.white,
+                              letterSpacing: 1.2,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          promo.title.isEmpty ? 'Vero360 promotion' : promo.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Colors.white,
+                            height: 1.2,
+                            letterSpacing: -0.3,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white.withOpacity(0.80),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PromoCtaSlide extends StatelessWidget {
+  final VoidCallback onTap;
+  const _PromoCtaSlide({required this.onTap});
+
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => _openPromotions(context),
+      onTap: onTap,
       child: Container(
+        width: double.infinity,
         decoration: BoxDecoration(
           gradient: const LinearGradient(
             colors: [AppColors.brandOrangeDeep, AppColors.brandOrange],
@@ -1942,12 +2262,13 @@ class _PromoBanner extends StatelessWidget {
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+                padding: const EdgeInsets.fromLTRB(20, 14, 16, 14),
                 child: Row(
                   children: [
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Container(
                             padding: const EdgeInsets.symmetric(
@@ -1968,20 +2289,24 @@ class _PromoBanner extends StatelessWidget {
                               ),
                             ),
                           ),
-                          const SizedBox(height: 7),
+                          const SizedBox(height: 6),
                           const Text(
                             'Promotions with Vero360',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 17,
+                              fontSize: 16,
                               fontWeight: FontWeight.w900,
                               color: Colors.white,
-                              height: 1.25,
+                              height: 1.2,
                               letterSpacing: -0.3,
                             ),
                           ),
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 3),
                           Text(
-                            'special promotions for you',
+                            'Special promotions for you',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
@@ -1995,7 +2320,7 @@ class _PromoBanner extends StatelessWidget {
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(12),
                       child: InkWell(
-                        onTap: () => _openPromotions(context),
+                        onTap: onTap,
                         borderRadius: BorderRadius.circular(12),
                         child: Container(
                           padding: const EdgeInsets.symmetric(
@@ -2036,7 +2361,7 @@ class _PromoBanner extends StatelessWidget {
 /* ═══════════════════════════════════════════════════
    DIGITAL SERVICES SECTION
 ═══════════════════════════════════════════════════ */
-class DigitalServicesSection extends StatelessWidget {
+class DigitalServicesSection extends StatefulWidget {
   final void Function(DigitalProduct) onBuy;
   final VoidCallback onSeeAll;
   const DigitalServicesSection({
@@ -2046,7 +2371,32 @@ class DigitalServicesSection extends StatelessWidget {
   });
 
   @override
+  State<DigitalServicesSection> createState() => _DigitalServicesSectionState();
+}
+
+class _DigitalServicesSectionState extends State<DigitalServicesSection> {
+  final _catalog = DigitalServicesCatalog.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    _catalog.addListener(_onCatalog);
+    unawaited(_catalog.ensureStarted());
+  }
+
+  @override
+  void dispose() {
+    _catalog.removeListener(_onCatalog);
+    super.dispose();
+  }
+
+  void _onCatalog() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final products = _catalog.homepageProducts;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2054,7 +2404,7 @@ class DigitalServicesSection extends StatelessWidget {
           title:    'Digital Services',
           subtitle: 'Subscriptions & top-ups',
           action: TextButton.icon(
-            onPressed: onSeeAll,
+            onPressed: widget.onSeeAll,
             icon: const Icon(
               Icons.card_giftcard_rounded,
               size: 18,
@@ -2078,7 +2428,7 @@ class DigitalServicesSection extends StatelessWidget {
               shrinkWrap: true,
               physics:    const NeverScrollableScrollPhysics(),
               padding:    EdgeInsets.zero,
-              itemCount:  kDigitalProducts.length,
+              itemCount:  products.length,
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount:   4,
                 crossAxisSpacing: narrow ? 6 : 10,
@@ -2086,11 +2436,11 @@ class DigitalServicesSection extends StatelessWidget {
                 childAspectRatio: narrow ? 0.68 : 0.78,
               ),
               itemBuilder: (_, i) {
-                final p = kDigitalProducts[i];
+                final p = products[i];
                 return _DigitalTile(
                   p: p,
                   compact: narrow,
-                  onTap: () => onBuy(p),
+                  onTap: () => widget.onBuy(p),
                 );
               },
             );
@@ -3802,7 +4152,7 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                           if (!_isFixedPrice) ...[
                             const SizedBox(height: 2),
                             Text(
-                              'Rate: 1 USD = ${kUsdToMwkRate.toStringAsFixed(0)} MWK',
+                              'Rate: 1 USD = ${digitalServicesUsdToMwkRate.toStringAsFixed(0)} MWK',
                               style: const TextStyle(
                                 fontSize: 11,
                                 color: AppColors.body,

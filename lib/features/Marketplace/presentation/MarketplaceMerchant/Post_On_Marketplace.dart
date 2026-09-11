@@ -827,6 +827,9 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         successMsg,
         isSuccess: true,
         errorMessage: 'Submitted',
+        showFacebook: true,
+        facebookMessage:
+            'Once approved, we’ll also share this on the Vero360 Facebook Page.',
       );
 
       _resetAfterCreate();
@@ -1707,6 +1710,11 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                 ),
                 const SizedBox(height: 12),
 
+                const FacebookShareHint(
+                  message:
+                      'Once approved, we can also share this listing on the Vero360 Facebook Page to help grow your customers.',
+                ),
+                const SizedBox(height: 10),
                 FilledButton.icon(
                   style: _filledBtnStyle(),
                   onPressed: canCreate ? _create : null,

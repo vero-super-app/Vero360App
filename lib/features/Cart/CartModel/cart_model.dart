@@ -25,6 +25,8 @@ class CartModel {
   final List<String> addOns;
   /// Listing / shop city used to offer Vero Courier (Lilongwe only).
   final String? location;
+  /// Firestore `food_menu_items` doc id when known (food lines).
+  final String? listingDocId;
   /// Kitchen prep time in minutes (food). Set by merchant on the dish.
   final int? prepTimeMinutes;
 
@@ -47,6 +49,7 @@ class CartModel {
     this.addOns = const [],
     this.location,
     this.prepTimeMinutes,
+    this.listingDocId,
   });
 
   factory CartModel.fromJson(Map<String, dynamic> json) {
@@ -92,6 +95,7 @@ class CartModel {
         final m = safeInt(json['prepTimeMinutes'], def: 0);
         return m > 0 ? m : null;
       }(),
+      listingDocId: optStr(json['listingDocId'] ?? json['firestoreListingId']),
     );
   }
 
@@ -125,6 +129,8 @@ class CartModel {
     if (location != null && location!.trim().isNotEmpty) 'location': location,
     if (prepTimeMinutes != null && prepTimeMinutes! > 0)
       'prepTimeMinutes': prepTimeMinutes,
+    if (listingDocId != null && listingDocId!.trim().isNotEmpty)
+      'listingDocId': listingDocId!.trim(),
   };
 
   CartModel copyWith({
@@ -146,6 +152,7 @@ class CartModel {
     List<String>? addOns,
     String? location,
     int? prepTimeMinutes,
+    String? listingDocId,
   }) {
     return CartModel(
       userId: userId ?? this.userId,
@@ -166,6 +173,7 @@ class CartModel {
       addOns: addOns ?? this.addOns,
       location: location ?? this.location,
       prepTimeMinutes: prepTimeMinutes ?? this.prepTimeMinutes,
+      listingDocId: listingDocId ?? this.listingDocId,
     );
   }
 

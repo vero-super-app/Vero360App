@@ -18,6 +18,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_tim
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart'
     as marketplaceModel;
 import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
+import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_followers_page.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_reviews_page.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_id_resolver.dart';
@@ -1293,6 +1294,49 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     return hash & 0x7FFFFFFF;
   }
 
+  int _detailIdFor(MarketplaceDetailModel item) {
+    if (item.hasValidSqlItemId) return item.sqlItemId!;
+    return _fnv1a32('mp:${item.id}:${item.name}');
+  }
+
+  void _openProductDetails(MarketplaceDetailModel it) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DetailsPage(
+          item: marketplaceModel.MarketplaceDetailModel(
+            id: _detailIdFor(it),
+            backendItemId: it.hasValidSqlItemId ? it.sqlItemId : null,
+            name: it.name,
+            image: it.image,
+            price: it.price,
+            description: it.description ?? '',
+            location: it.location ?? '',
+            comment: null,
+            category: it.category,
+            gallery: it.gallery,
+            videos: it.videos,
+            sellerBusinessName: null,
+            sellerOpeningHours: null,
+            sellerStatus: null,
+            sellerBusinessDescription: null,
+            sellerRating: null,
+            sellerLogoUrl: null,
+            serviceProviderId: null,
+            sellerUserId: null,
+            merchantId: widget.merchantId,
+            merchantName: _shopDisplayName,
+            firestoreDocId: it.id,
+            serviceType: 'marketplace',
+            createdAt: it.createdAt,
+            stockQuantity: it.stockQuantity,
+          ),
+          cartService: _cartService,
+        ),
+      ),
+    );
+  }
+
   Future<String?> _resolveImageUrl(MarketplaceDetailModel item) async {
     final raw = item.image.trim();
     if (raw.isEmpty) return null;
@@ -1459,6 +1503,10 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         await followerRef.set({
           'uid': user.uid,
           'email': user.email,
+          'displayName': (user.displayName ?? '').trim().isNotEmpty
+              ? user.displayName!.trim()
+              : (user.email ?? 'Vero360 member'),
+          'photoUrl': user.photoURL,
           'followedAt': FieldValue.serverTimestamp(),
         });
         await _firestore
@@ -2825,6 +2873,21 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     );
   }
 
+  void _openMerchantFollowers() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MerchantFollowersPage(
+          merchantId: widget.merchantId,
+          merchantName: _shopDisplayName,
+          merchantLogoUrl: _merchantProfileUrl,
+          merchantBackendId: _merchantBackendId,
+          initialFollowerCount: _followerCount,
+        ),
+      ),
+    );
+  }
+
   void _openMerchantReviews() {
     final backendId = _merchantBackendId;
     final cached =
@@ -3130,48 +3193,11 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                                 imageBuilder: (item) => _ProductImageCarousel(
                                   item: item,
                                   buildImageForSource: buildImageForSource,
+                                  onOpen: () => _openProductDetails(it),
                                 ),
                                 onAddToCart: () => _addToCart(it),
                                 onBuyNow: () => _buyNow(it),
-                                onOpen: () {
-                                  if (!it.hasValidSqlItemId) return;
-
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => DetailsPage(
-                                        item: marketplaceModel
-                                            .MarketplaceDetailModel(
-                                          id: it.sqlItemId!,
-                                          backendItemId: it.sqlItemId,
-                                          name: it.name,
-                                          image: it.image,
-                                          price: it.price,
-                                          description: it.description ?? '',
-                                          location: it.location ?? '',
-                                          comment: null,
-                                          category: it.category,
-                                          gallery: it.gallery,
-                                          videos: it.videos,
-                                          sellerBusinessName: null,
-                                          sellerOpeningHours: null,
-                                          sellerStatus: null,
-                                          sellerBusinessDescription: null,
-                                          sellerRating: null,
-                                          sellerLogoUrl: null,
-                                          serviceProviderId: null,
-                                          sellerUserId: null,
-                                          merchantId: widget.merchantId,
-                                          merchantName: _shopDisplayName,
-                                          serviceType: 'marketplace',
-                                          createdAt: it.createdAt,
-                                          stockQuantity: it.stockQuantity,
-                                        ),
-                                        cartService: _cartService,
-                                      ),
-                                    ),
-                                  );
-                                },
+                                onOpen: () => _openProductDetails(it),
                               );
                             },
                           );
@@ -3319,6 +3345,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             onReport: _reportMerchant,
             onViewProfile: _showMerchantProfileViewer,
             onOpenReviews: _openMerchantReviews,
+            onOpenFollowers: _openMerchantFollowers,
           ),
           _buildRecentReviewsSection(),
           Expanded(
@@ -3727,6 +3754,7 @@ class _MerchantProfileCard extends StatelessWidget {
   final VoidCallback onReport;
   final VoidCallback onViewProfile;
   final VoidCallback onOpenReviews;
+  final VoidCallback onOpenFollowers;
 
   const _MerchantProfileCard({
     required this.merchantId,
@@ -3745,6 +3773,7 @@ class _MerchantProfileCard extends StatelessWidget {
     required this.onReport,
     required this.onViewProfile,
     required this.onOpenReviews,
+    required this.onOpenFollowers,
   });
 
   ImageProvider? _profileImageProvider() {
@@ -3907,20 +3936,32 @@ class _MerchantProfileCard extends StatelessWidget {
                             ),
                           ),
                         ),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.people_alt_outlined, size: 14),
-                            const SizedBox(width: 4),
-                            Text(
-                              followersLabel,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                              ),
-                              overflow: TextOverflow.ellipsis,
+                        InkWell(
+                          onTap: onOpenFollowers,
+                          borderRadius: BorderRadius.circular(999),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 4,
+                              vertical: 2,
                             ),
-                          ],
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.people_alt_outlined, size: 14),
+                                const SizedBox(width: 4),
+                                Text(
+                                  followersLabel,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    decoration: TextDecoration.underline,
+                                    decorationColor: Color(0xFF9CA3AF),
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       ],
                     ),
@@ -4075,10 +4116,12 @@ class _MerchantProfileCard extends StatelessWidget {
 class _ProductImageCarousel extends StatefulWidget {
   final MarketplaceDetailModel item;
   final Widget Function(String source) buildImageForSource;
+  final VoidCallback? onOpen;
 
   const _ProductImageCarousel({
     required this.item,
     required this.buildImageForSource,
+    this.onOpen,
   });
 
   @override
@@ -4115,6 +4158,25 @@ class _ProductImageCarouselState extends State<_ProductImageCarousel> {
     return c;
   }
 
+  void _pauseAutoSlide() {
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  Widget _tappable(Widget child) {
+    final onOpen = widget.onOpen;
+    if (onOpen == null) return child;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        _pauseAutoSlide();
+        onOpen();
+      },
+      onTapDown: (_) => _pauseAutoSlide(),
+      child: child,
+    );
+  }
+
   @override
   void dispose() {
     _timer?.cancel();
@@ -4130,23 +4192,29 @@ class _ProductImageCarouselState extends State<_ProductImageCarousel> {
       ...item.gallery.map((e) => e.toString().trim()).where((s) => s.isNotEmpty),
     ];
     if (images.isEmpty) {
-      return Container(
-        color: const Color(0xFFEDEDED),
-        child: const Center(
-          child: Icon(Icons.image_not_supported_rounded, color: Colors.black38),
+      return _tappable(
+        Container(
+          color: const Color(0xFFEDEDED),
+          child: const Center(
+            child: Icon(Icons.image_not_supported_rounded, color: Colors.black38),
+          ),
         ),
       );
     }
     if (images.length == 1) {
-      if (item.imageBytes != null && item.image.trim().isNotEmpty && item.image.trim() == images.first) {
-        return Image.memory(
-          item.imageBytes!,
-          fit: BoxFit.cover,
-          width: double.infinity,
-          height: double.infinity,
+      if (item.imageBytes != null &&
+          item.image.trim().isNotEmpty &&
+          item.image.trim() == images.first) {
+        return _tappable(
+          Image.memory(
+            item.imageBytes!,
+            fit: BoxFit.cover,
+            width: double.infinity,
+            height: double.infinity,
+          ),
         );
       }
-      return widget.buildImageForSource(images.first);
+      return _tappable(widget.buildImageForSource(images.first));
     }
     return PageView.builder(
       controller: _pc,
@@ -4154,16 +4222,17 @@ class _ProductImageCarouselState extends State<_ProductImageCarousel> {
       onPageChanged: (i) => setState(() => _page = i),
       itemBuilder: (context, i) {
         final src = images[i];
-        final useBytes = i == 0 && item.imageBytes != null && item.image.trim() == src;
-        if (useBytes) {
-          return Image.memory(
-            item.imageBytes!,
-            fit: BoxFit.cover,
-            width: double.infinity,
-            height: double.infinity,
-          );
-        }
-        return widget.buildImageForSource(src);
+        final useBytes =
+            i == 0 && item.imageBytes != null && item.image.trim() == src;
+        final image = useBytes
+            ? Image.memory(
+                item.imageBytes!,
+                fit: BoxFit.cover,
+                width: double.infinity,
+                height: double.infinity,
+              )
+            : widget.buildImageForSource(src);
+        return _tappable(image);
       },
     );
   }

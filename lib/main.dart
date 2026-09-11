@@ -3,7 +3,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart'
-    show kIsWeb, kReleaseMode, defaultTargetPlatform, TargetPlatform;
+    show kIsWeb, kReleaseMode, kDebugMode, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -24,7 +24,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 // Pages
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
-import 'package:vero360_app/features/onboarding/presentation/widgets/onboarding_gate.dart';
+import 'package:vero360_app/features/Marketplace/presentation/widgets/widgets/onboarding_gate.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/cartpage.dart';
 import 'package:vero360_app/GeneralPages/profile_from_link_page.dart';
 import 'package:vero360_app/Home/CustomersProfilepage.dart';
@@ -34,7 +34,9 @@ import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_share_link.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_share_link.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/food_share_navigation.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_share_navigation.dart';
+import 'package:vero360_app/features/Restraurants/Models/food_share_link.dart';
 import 'package:vero360_app/GernalServices/merchant_identity.dart';
 import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
@@ -54,6 +56,7 @@ import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
 import 'package:vero360_app/GernalServices/engagement_notification_service.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
+import 'package:vero360_app/GernalServices/vero_rewards_service.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
@@ -340,11 +343,13 @@ class _AppBootstrapState extends State<AppBootstrap> {
 
     unawaited(GoogleMapsConfig.initialize());
 
-    // Stagger notification init so 2GB phones finish first paint without LMK.
+    // Register FCM background handler as soon as Firebase is usable.
+    // Must happen before process can receive background messages.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(() async {
-        await Future<void>.delayed(const Duration(milliseconds: 2400));
         try {
+          await _ensureFirebaseHealthy(quiet: true);
+          // Warm push path quickly (token + channels) — don't wait 2.4s.
           await NotificationService.instance.initialize();
           NotificationService.setNavigatorKey(navKey);
         } catch (_) {}
@@ -675,58 +680,177 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           await OrderEscrowService.processDueAutoReleasesForSignedInUser();
         } catch (_) {}
       }());
+      // Vero Coin visits for customers + merchants + drivers.
+      unawaited(VeroRewardsService.recordAppOpen());
     });
   }
 
   Future<void> _initDeepLinks() async {
     _appLinks = AppLinks();
+
+    final prefs = await SharedPreferences.getInstance();
+    final bootAt = DateTime.now().millisecondsSinceEpoch;
+    final prevBoot = prefs.getInt(_dlBootAtKey) ?? 0;
+    // Hot restart re-runs Dart in the same Android Activity (gap is seconds).
+    final hotRestart =
+        prevBoot > 0 && (bootAt - prevBoot) < _dlHotRestartWindowMs;
+    await prefs.setInt(_dlBootAtKey, bootAt);
+
+    Uri? initial;
+    try {
+      initial = await _appLinks.getInitialLink();
+    } catch (_) {}
+
+    if (kDebugMode) {
+      debugPrint(
+        '[DeepLink] boot hotRestart=$hotRestart initial=$initial',
+      );
+    }
+
+    await _sub?.cancel();
     _sub = _appLinks.uriLinkStream.listen((uri) {
-      if (_isPasswordResetDeepLink(uri)) {
-        _openPasswordResetFromDeepLink(uri);
-      } else if (uri.scheme == 'vero360' &&
-          uri.host == 'users' &&
-          uri.path == '/me') {
-        navKey.currentState?.push(
-          MaterialPageRoute(builder: (_) => const ProfileFromLinkPage()),
-        );
-      } else if (uri.scheme == 'vero360' && uri.host == 'payment-complete') {
-        // PayChangu redirects here after payment – go to My Orders; keep root so back stays in app
-        navKey.currentState?.pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const OrdersPage()),
-          (route) => route.isFirst,
-        );
-      } else if (isAccommodationShareUri(uri)) {
-        _openAccommodationFromShare(uri);
-      } else if (isMarketplaceProductShareUri(uri) ||
-          isMarketplaceShopShareUri(uri)) {
-        unawaited(
-          MarketplaceShareNavigation.openFromUri(
-            uri,
-            CartServiceProvider.getInstance(),
-          ),
-        );
-      }
+      unawaited(_onDeepLinkStreamEvent(
+        uri: uri,
+        initial: initial,
+        hotRestart: hotRestart,
+        bootAt: bootAt,
+      ));
     }, onError: (_) {});
 
-    try {
-      final initial = await _appLinks.getInitialLink();
-      if (initial != null) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_isPasswordResetDeepLink(initial)) {
-            _openPasswordResetFromDeepLink(initial);
-          } else if (isAccommodationShareUri(initial)) {
-            _openAccommodationFromShare(initial);
-          } else if (isMarketplaceProductShareUri(initial) ||
-              isMarketplaceShopShareUri(initial)) {
-            unawaited(
-              MarketplaceShareNavigation.openFromUri(
-                initial,
-                CartServiceProvider.getInstance(),
-              ),
-            );
-          }
-        });
+    if (initial == null) return;
+
+    if (_isContentShareDeepLink(initial)) {
+      if (hotRestart || await _wasContentDeepLinkRecentlyOpened(initial)) {
+        if (kDebugMode) {
+          debugPrint(
+            '[DeepLink] skip sticky content initial: $initial',
+          );
+        }
+        return;
       }
+      await _markInitialDeepLinkHandled(initial);
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _dispatchDeepLink(initial!);
+    });
+  }
+
+  Future<void> _onDeepLinkStreamEvent({
+    required Uri uri,
+    required Uri? initial,
+    required bool hotRestart,
+    required int bootAt,
+  }) async {
+    if (_isContentShareDeepLink(uri)) {
+      if (hotRestart) {
+        if (kDebugMode) {
+          debugPrint('[DeepLink] skip content on hot restart: $uri');
+        }
+        return;
+      }
+
+      final ageMs = DateTime.now().millisecondsSinceEpoch - bootAt;
+      // app_links re-sends getInitialLink into the stream on listen — ignore that
+      // echo; getInitialLink handler already opened it on a real cold start.
+      if (ageMs < 8000 &&
+          initial != null &&
+          _sameContentDeepLink(uri, initial)) {
+        if (kDebugMode) {
+          debugPrint('[DeepLink] skip stream boot echo: $uri');
+        }
+        return;
+      }
+    }
+
+    await _markInitialDeepLinkHandled(uri);
+    _dispatchDeepLink(uri);
+  }
+
+  void _dispatchDeepLink(Uri uri) {
+    if (_isPasswordResetDeepLink(uri)) {
+      _openPasswordResetFromDeepLink(uri);
+      return;
+    }
+    if (uri.scheme == 'vero360' &&
+        uri.host == 'users' &&
+        uri.path == '/me') {
+      navKey.currentState?.push(
+        MaterialPageRoute(builder: (_) => const ProfileFromLinkPage()),
+      );
+      return;
+    }
+    if (uri.scheme == 'vero360' && uri.host == 'payment-complete') {
+      navKey.currentState?.pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const OrdersPage()),
+        (route) => route.isFirst,
+      );
+      return;
+    }
+    if (isAccommodationShareUri(uri)) {
+      _openAccommodationFromShare(uri);
+      return;
+    }
+    if (isFoodShareUri(uri)) {
+      unawaited(FoodShareNavigation.openFromUri(uri));
+      return;
+    }
+    if (isMarketplaceProductShareUri(uri) || isMarketplaceShopShareUri(uri)) {
+      unawaited(
+        MarketplaceShareNavigation.openFromUri(
+          uri,
+          CartServiceProvider.getInstance(),
+        ),
+      );
+    }
+  }
+
+  static const _dlHandledUriKey = 'deeplink_initial_handled_uri';
+  static const _dlHandledAtKey = 'deeplink_initial_handled_at';
+  static const _dlBootAtKey = 'deeplink_init_boot_at';
+  static const _dlHotRestartWindowMs = 2 * 60 * 1000;
+  static const _dlStickySuppressMs = 30 * 60 * 1000;
+
+  bool _isContentShareDeepLink(Uri uri) =>
+      isAccommodationShareUri(uri) ||
+      isFoodShareUri(uri) ||
+      isMarketplaceProductShareUri(uri) ||
+      isMarketplaceShopShareUri(uri);
+
+  bool _sameContentDeepLink(Uri a, Uri b) {
+    final shopA = marketplaceShopIdFromShareUri(a);
+    final shopB = marketplaceShopIdFromShareUri(b);
+    if (shopA != null && shopB != null) return shopA == shopB;
+    final prodA = marketplaceProductIdFromShareUri(a);
+    final prodB = marketplaceProductIdFromShareUri(b);
+    if (prodA != null && prodB != null) return prodA == prodB;
+    return a.scheme == b.scheme &&
+        a.host.toLowerCase() == b.host.toLowerCase() &&
+        a.path == b.path;
+  }
+
+  Future<bool> _wasContentDeepLinkRecentlyOpened(Uri uri) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final lastUri = prefs.getString(_dlHandledUriKey);
+      if (lastUri == null || lastUri.isEmpty) return false;
+      if (!_sameContentDeepLink(Uri.parse(lastUri), uri)) return false;
+      final lastAt = prefs.getInt(_dlHandledAtKey) ?? 0;
+      final age = DateTime.now().millisecondsSinceEpoch - lastAt;
+      return age >= 0 && age < _dlStickySuppressMs;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _markInitialDeepLinkHandled(Uri uri) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_dlHandledUriKey, uri.toString());
+      await prefs.setInt(
+        _dlHandledAtKey,
+        DateTime.now().millisecondsSinceEpoch,
+      );
     } catch (_) {}
   }
 

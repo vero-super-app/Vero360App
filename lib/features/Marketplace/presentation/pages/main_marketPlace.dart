@@ -56,6 +56,11 @@ import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:vero360_app/widgets/messaging_skeleton_loaders.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_share_link.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_feed_item.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_hub_loader.dart';
+import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
+import 'package:vero360_app/features/Accomodation/Presentation/pages/accommodation_booking_page.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_details.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart'
     show veroFloatingNavClearance;
 
@@ -514,9 +519,10 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   late final NumberFormat _mwkFmt = NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
   String _mwk(num v) => _mwkFmt.format(v);
 
-  /// Food listings use the Food flow only — not shown in general marketplace.
+  /// Food listings use the Food flow only — not shown under Products vertical.
   static const List<String> _kCategories = ['drinks', 'electronics', 'clothes', 'shoes', 'other'];
   String? _selectedCategory;
+  MarketplaceHubVertical _hubVertical = MarketplaceHubVertical.all;
 
   Timer? _debounce;
   Timer? _suggestionTimer;
@@ -527,7 +533,16 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   /// True while photo search runs — keep the current grid visible.
   bool _photoSearching = false;
   /// Last non-empty grid so photo search can run without blanking the feed.
-  List<MarketplaceDetailModel> _lastGridItems = const [];
+  List<MarketplaceFeedItem> _lastGridItems = const [];
+  List<MarketplaceFeedItem> _lastShopHits = const [];
+  /// In-memory product catalog for fast search / shop-name lookup.
+  List<MarketplaceDetailModel> _productCache = const [];
+  DateTime? _productCacheAt;
+  static const Duration _kProductCacheTtl = Duration(minutes: 3);
+  /// Cap first hub paint so Firestore payload stays small.
+  static const int _kHubProductLimit = 100;
+  int _searchGen = 0;
+  int _loadGen = 0;
   bool _comfortableView = false;
   bool _forYouMode = true;
   int _suggestionIndex = 0;
@@ -539,12 +554,13 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   static const List<String> _searchSuggestions = [
     'iphone 13 near me', 'nike shoes size 42', 'ps5 controller',
     'laptop under 500k', 'kitchen blender', 'office chair',
+    'shop near me', 'pizza', 'lodge lilongwe',
   ];
 
-  List<String> _activeSearchSuggestions = const [];
+  List<String> _activeSearchSuggestions = List<String>.from(_searchSuggestions);
   bool _aiSearchMode = false;
   bool _veroAiLoading = false;
-  late Future<List<MarketplaceDetailModel>> _future;
+  late Future<MarketplaceHubSnapshot> _future;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _itemsSub;
 
   Set<String> _followedMerchantIdsCache = {};
@@ -825,15 +841,56 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   }
 
   Future<List<MarketplaceDetailModel>> _finishFeed(
-    List<MarketplaceDetailModel> items,
-  ) async {
-    var list = _forYouMode
-        ? await _rankByPersonalization(items)
-        : await _sortByNewest(items);
+    List<MarketplaceDetailModel> items, {
+    bool attachSocial = true,
+    bool fast = false,
+  }) async {
+    List<MarketplaceDetailModel> list;
+    if (fast) {
+      // Sync-ish newest sort — skip prefs / follows / social for first paint.
+      list = List<MarketplaceDetailModel>.from(items);
+      list.sort((a, b) {
+        final db = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final da = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return db.compareTo(da);
+      });
+    } else if (_forYouMode) {
+      list = await _rankByPersonalization(items);
+    } else {
+      list = await _sortByNewest(items);
+    }
     list = _prioritizeByLocation(list);
-    list = await _attachSocialCounts(list);
-    _setSuggestionsFromItems(list);
+    if (!fast && attachSocial) {
+      list = await _attachSocialCounts(list);
+    }
+    if (!fast) _setSuggestionsFromItems(list);
     return list;
+  }
+
+  bool get _productCacheFresh =>
+      _productCache.isNotEmpty &&
+      _productCacheAt != null &&
+      DateTime.now().difference(_productCacheAt!) < _kProductCacheTtl;
+
+  void _storeProductCache(List<MarketplaceDetailModel> items) {
+    _productCache = List<MarketplaceDetailModel>.unmodifiable(items);
+    _productCacheAt = DateTime.now();
+  }
+
+  List<MarketplaceDetailModel> _filterCachedProducts(String? category) {
+    if (category == null || category.isEmpty) return _productCache;
+    final c = category.toLowerCase();
+    return _productCache
+        .where((item) => item.category.toLowerCase() == c)
+        .toList();
+  }
+
+  Query<Map<String, dynamic>> _marketplaceItemsQuery({bool limited = true}) {
+    Query<Map<String, dynamic>> q = _firestore
+        .collection('marketplace_items')
+        .orderBy('createdAt', descending: true);
+    if (limited) q = q.limit(_kHubProductLimit);
+    return q;
   }
 
   Future<void> _initBrowseLocation() async {
@@ -865,13 +922,47 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
           nearMe: true,
         );
       }
-      // Re-rank current feed with location once GPS/city is ready.
-      if (_lastQuery.trim().isEmpty) {
-        setState(() {
-          _future = _loadAll(category: _selectedCategory);
-        });
+      // Soft re-rank only — never restart a full network load after GPS.
+      if (_lastQuery.trim().isEmpty && _productCache.isNotEmpty) {
+        unawaited(_rerankVisibleProducts());
       }
     } catch (_) {}
+  }
+
+  Future<void> _rerankVisibleProducts() async {
+    if (!mounted) return;
+    if (_hubVertical == MarketplaceHubVertical.food ||
+        _hubVertical == MarketplaceHubVertical.stays) {
+      return;
+    }
+    final gen = _loadGen;
+    final ranked = await _finishFeed(
+      _filterCachedProducts(_selectedCategory),
+      attachSocial: false,
+    );
+    if (!mounted || gen != _loadGen) return;
+    final productItems = ranked.map(_feedFromProduct).toList();
+    if (_hubVertical == MarketplaceHubVertical.products) {
+      setState(() {
+        _future = Future.value(MarketplaceHubSnapshot(items: productItems));
+        _lastGridItems = productItems;
+      });
+      return;
+    }
+    // Keep non-product cards already on screen; re-mix with updated products.
+    final existingOther = _lastGridItems
+        .where((e) => e.kind != MarketplaceFeedKind.product)
+        .toList();
+    final merged = MarketplaceHubLoader.mergeMixed([
+      productItems,
+      existingOther,
+    ]);
+    setState(() {
+      _future = Future.value(
+        MarketplaceHubSnapshot(items: merged, shops: _lastShopHits),
+      );
+      _lastGridItems = merged;
+    });
   }
 
   Future<void> _openLocationPicker() async {
@@ -1051,18 +1142,44 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
 
   void _startItemsListener() {
     _itemsSub?.cancel();
-    _itemsSub = _firestore
-        .collection('marketplace_items')
-        .orderBy('createdAt', descending: true)
+    _itemsSub = _marketplaceItemsQuery()
         .snapshots()
         .listen((snap) async {
       if (!mounted) return;
       if (_lastQuery.trim().isNotEmpty || _photoMode) return;
-      final result =
-          await _itemsFromDocs(snap.docs, category: _selectedCategory);
-      if (!mounted) return;
+      if (_hubVertical == MarketplaceHubVertical.food ||
+          _hubVertical == MarketplaceHubVertical.stays) {
+        return;
+      }
+      final gen = _loadGen;
+      // Products only — never re-fetch food/stays on every Firestore tick.
+      final result = await _hubFromProductDocs(
+        snap.docs,
+        category: _selectedCategory,
+        mergeVerticals: false,
+        attachSocial: false,
+        fast: true,
+        scheduleEnrich: false,
+        loadGen: gen,
+      );
+      if (!mounted || gen != _loadGen) return;
+      var items = result.items;
+      if (_hubVertical == MarketplaceHubVertical.all) {
+        final other = _lastGridItems
+            .where((e) => e.kind != MarketplaceFeedKind.product)
+            .toList();
+        if (other.isNotEmpty) {
+          items = MarketplaceHubLoader.mergeMixed([items, other]);
+        }
+      }
       setState(() {
-        _future = Future.value(result);
+        _future = Future.value(
+          MarketplaceHubSnapshot(items: items, shops: result.shops),
+        );
+        if (items.isNotEmpty) {
+          _lastGridItems = items;
+          _lastShopHits = result.shops;
+        }
       });
     });
   }
@@ -1170,19 +1287,41 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     return hash;
   }
 
-  /// Food is sold via the Food service; keep marketplace catalog non-food only.
+  /// Food is sold via the Food vertical; keep Products catalog non-food only.
   List<MarketplaceDetailModel> _excludeFood(List<MarketplaceDetailModel> items) {
     return items
         .where((e) => e.category.trim().toLowerCase() != 'food')
         .toList();
   }
 
-  Future<List<MarketplaceDetailModel>> _itemsFromDocs(
-    Iterable<QueryDocumentSnapshot<Map<String, dynamic>>> docs, {
-    String? category,
-  }) async {
+  MarketplaceFeedItem _feedFromProduct(MarketplaceDetailModel p) {
+    final merchant = (p.merchantName ?? p.sellerBusinessName ?? '').trim();
+    return MarketplaceFeedItem(
+      kind: MarketplaceFeedKind.product,
+      id: p.id,
+      title: p.name,
+      image: p.image,
+      price: p.price,
+      subtitle: merchant.isNotEmpty
+          ? merchant
+          : (p.location ?? p.category).trim(),
+      createdAt: p.createdAt,
+      gallery: p.gallery,
+      product: p,
+      merchantId: p.merchantId,
+      merchantName: merchant.isEmpty ? null : merchant,
+      sellerLogoUrl: p.sellerLogoUrl,
+      category: p.category,
+      isActive: p.isActive,
+      isOutOfStock: p.isOutOfStock,
+    );
+  }
+
+  Future<List<MarketplaceDetailModel>> _parseProductDocs(
+    Iterable<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) async {
     final blocked = await BlockedMerchantService.blockedIds();
-    final all = _excludeFood(
+    return _excludeFood(
       docs
           .map((doc) => MarketplaceDetailModel.fromFirestore(doc))
           .where((item) => item.isActive)
@@ -1196,44 +1335,250 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
           )
           .toList(),
     );
+  }
+
+  Future<List<MarketplaceDetailModel>> _productsFromDocs(
+    Iterable<QueryDocumentSnapshot<Map<String, dynamic>>> docs, {
+    String? category,
+    bool attachSocial = true,
+    bool fast = false,
+  }) async {
+    final all = await _parseProductDocs(docs);
+    _storeProductCache(all);
     if (category == null || category.isEmpty) {
-      return _finishFeed(all);
+      return _finishFeed(all, attachSocial: attachSocial, fast: fast);
     }
     final c = category.toLowerCase();
     final filtered =
         all.where((item) => item.category.toLowerCase() == c).toList();
-    return _finishFeed(filtered);
+    return _finishFeed(filtered, attachSocial: attachSocial, fast: fast);
   }
 
-  Future<List<MarketplaceDetailModel>> _loadAll({String? category}) async {
-    setState(() { _loading = true; _photoMode = false; _selectedCategory = category; });
+  /// Products-only snapshot; food/stays are merged later via [_enrichHubInBackground].
+  Future<MarketplaceHubSnapshot> _hubFromProductDocs(
+    Iterable<QueryDocumentSnapshot<Map<String, dynamic>>> docs, {
+    String? category,
+    bool mergeVerticals = false,
+    String query = '',
+    bool attachSocial = true,
+    bool fast = false,
+    bool scheduleEnrich = true,
+    int? loadGen,
+    Future<(List<MarketplaceFeedItem>, List<MarketplaceFeedItem>)>?
+        verticalsFuture,
+  }) async {
+    final products = await _productsFromDocs(
+      docs,
+      category: category,
+      attachSocial: attachSocial,
+      fast: fast,
+    );
+    final productItems = products.map(_feedFromProduct).toList();
+    final shops = MarketplaceHubLoader.shopsFromProducts(
+      (_productCache.isEmpty ? products : _productCache).map(_feedFromProduct),
+      query,
+    );
+
+    final snap = MarketplaceHubSnapshot(items: productItems, shops: shops);
+
+    if (scheduleEnrich && mergeVerticals) {
+      unawaited(_enrichHubInBackground(
+        productRaw: _filterCachedProducts(category),
+        shops: shops,
+        query: query,
+        mergeVerticals: true,
+        loadGen: loadGen ?? _loadGen,
+        verticalsFuture: verticalsFuture,
+        needRerank: fast || !attachSocial,
+      ));
+    } else if (scheduleEnrich && (fast || !attachSocial)) {
+      unawaited(_enrichHubInBackground(
+        productRaw: _filterCachedProducts(category),
+        shops: shops,
+        query: query,
+        mergeVerticals: false,
+        loadGen: loadGen ?? _loadGen,
+        verticalsFuture: null,
+        needRerank: true,
+      ));
+    }
+
+    return snap;
+  }
+
+  Future<void> _enrichHubInBackground({
+    required List<MarketplaceDetailModel> productRaw,
+    required List<MarketplaceFeedItem> shops,
+    required String query,
+    required bool mergeVerticals,
+    required int loadGen,
+    Future<(List<MarketplaceFeedItem>, List<MarketplaceFeedItem>)>?
+        verticalsFuture,
+    bool needRerank = true,
+  }) async {
     try {
+      List<MarketplaceFeedItem> productItems;
+      if (needRerank && productRaw.isNotEmpty) {
+        final ranked = await _finishFeed(productRaw, attachSocial: true);
+        if (!mounted || loadGen != _loadGen) return;
+        productItems = ranked.map(_feedFromProduct).toList();
+      } else {
+        productItems = productRaw.map(_feedFromProduct).toList();
+      }
+
+      var food = const <MarketplaceFeedItem>[];
+      var stays = const <MarketplaceFeedItem>[];
+      if (mergeVerticals) {
+        final fut = verticalsFuture ??
+            MarketplaceHubLoader.loadFoodAndStays(
+              query: query,
+              latitude: _userLat,
+              longitude: _userLng,
+            );
+        final pair = await fut;
+        food = pair.$1;
+        stays = pair.$2;
+      }
+      if (!mounted || loadGen != _loadGen) return;
+      if (_lastQuery.trim().isNotEmpty && query != _lastQuery.trim()) return;
+
+      final items = mergeVerticals
+          ? MarketplaceHubLoader.mergeMixed([productItems, food, stays])
+          : productItems;
+      setState(() {
+        _future = Future.value(
+          MarketplaceHubSnapshot(items: items, shops: shops),
+        );
+        _lastGridItems = items;
+        _lastShopHits = shops;
+      });
+    } catch (_) {}
+  }
+
+  Future<MarketplaceHubSnapshot> _loadAll({String? category}) async {
+    final gen = ++_loadGen;
+    setState(() {
+      _loading = true;
+      _photoMode = false;
+      _selectedCategory = category;
+    });
+    try {
+      switch (_hubVertical) {
+        case MarketplaceHubVertical.food:
+          final food = await MarketplaceHubLoader.loadFood(
+            latitude: _userLat,
+            longitude: _userLng,
+          );
+          return MarketplaceHubSnapshot(items: food);
+        case MarketplaceHubVertical.stays:
+          final stays = await MarketplaceHubLoader.loadStays();
+          return MarketplaceHubSnapshot(items: stays);
+        case MarketplaceHubVertical.products:
+        case MarketplaceHubVertical.all:
+          break;
+      }
+
+      final mergeVerticals = _hubVertical == MarketplaceHubVertical.all;
+
+      // Start food/stays immediately so they finish while products paint.
+      final verticalsFuture = mergeVerticals
+          ? MarketplaceHubLoader.loadFoodAndStays(
+              latitude: _userLat,
+              longitude: _userLng,
+            )
+          : null;
+
+      // 1) Memory cache — instant paint
+      if (_productCacheFresh) {
+        final ranked = await _finishFeed(
+          _filterCachedProducts(category),
+          fast: true,
+        );
+        final productItems = ranked.map(_feedFromProduct).toList();
+        final quick = MarketplaceHubSnapshot(items: productItems);
+        if (mounted && gen == _loadGen) {
+          setState(() {
+            _future = Future.value(quick);
+            _lastGridItems = productItems;
+            _loading = false;
+          });
+        }
+        unawaited(_enrichHubInBackground(
+          productRaw: _filterCachedProducts(category),
+          shops: const [],
+          query: '',
+          mergeVerticals: mergeVerticals,
+          loadGen: gen,
+          verticalsFuture: verticalsFuture,
+          needRerank: true,
+        ));
+        // Soft server refresh in background (does not block UI).
+        unawaited(_refreshHubFromServer(
+          category: category,
+          mergeVerticals: mergeVerticals,
+          loadGen: gen,
+        ));
+        return quick;
+      }
+
+      // 2) Firestore disk cache — usually fast
       try {
-        final snapshot = await _firestore
-            .collection('marketplace_items')
-            .orderBy('createdAt', descending: true)
-            .get(const GetOptions(source: Source.server));
-        return await _itemsFromDocs(snapshot.docs, category: category);
-      } catch (serverError) {
-        try {
-          final cached = await _firestore
-              .collection('marketplace_items')
-              .orderBy('createdAt', descending: true)
-              .get(const GetOptions(source: Source.cache));
-          if (cached.docs.isNotEmpty) {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: const Text('You are offline. Showing cached items.'),
-                backgroundColor: _kAmber,
-                behavior: SnackBarBehavior.floating,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-              ));
-            }
-            return await _itemsFromDocs(cached.docs, category: category);
+        final cached = await _marketplaceItemsQuery()
+            .get(const GetOptions(source: Source.cache));
+        if (cached.docs.isNotEmpty && gen == _loadGen) {
+          final quick = await _hubFromProductDocs(
+            cached.docs,
+            category: category,
+            mergeVerticals: mergeVerticals,
+            attachSocial: false,
+            fast: true,
+            loadGen: gen,
+            verticalsFuture: verticalsFuture,
+          );
+          if (mounted && gen == _loadGen) {
+            setState(() {
+              _future = Future.value(quick);
+              if (quick.items.isNotEmpty) {
+                _lastGridItems = quick.items;
+                _lastShopHits = quick.shops;
+              }
+              _loading = false;
+            });
           }
-        } catch (_) {}
+          unawaited(_refreshHubFromServer(
+            category: category,
+            mergeVerticals: mergeVerticals,
+            loadGen: gen,
+            verticalsFuture: verticalsFuture,
+          ));
+          return quick;
+        }
+      } catch (_) {}
+
+      // 3) Server (first install / empty cache)
+      try {
+        final snapshot = await _marketplaceItemsQuery()
+            .get(const GetOptions(source: Source.server));
+        final quick = await _hubFromProductDocs(
+          snapshot.docs,
+          category: category,
+          mergeVerticals: mergeVerticals,
+          attachSocial: false,
+          fast: true,
+          loadGen: gen,
+          verticalsFuture: verticalsFuture,
+        );
+        if (mounted && gen == _loadGen) {
+          setState(() {
+            _future = Future.value(quick);
+            if (quick.items.isNotEmpty) {
+              _lastGridItems = quick.items;
+              _lastShopHits = quick.shops;
+            }
+          });
+        }
+        return quick;
+      } catch (serverError) {
         final err = serverError.toString().toLowerCase();
         if ((err.contains('unavailable') ||
                 err.contains('network') ||
@@ -1248,32 +1593,240 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
             ),
           ));
         }
-        return [];
+        if (_hubVertical == MarketplaceHubVertical.all) {
+          final fut = verticalsFuture ??
+              MarketplaceHubLoader.loadFoodAndStays(
+                latitude: _userLat,
+                longitude: _userLng,
+              );
+          final (food, stays) = await fut;
+          return MarketplaceHubSnapshot(
+            items: MarketplaceHubLoader.mergeMixed([food, stays]),
+          );
+        }
+        return MarketplaceHubSnapshot.empty;
       }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<List<MarketplaceDetailModel>> _searchByName(String raw) async {
-    final q = raw.trim();
-    unawaited(_trackSearchInterest(q));
-    if (q.isEmpty || q.length < 2) { _aiSummary = ''; return _loadAll(category: _selectedCategory); }
-    setState(() { _loading = true; _photoMode = false; });
+  Future<void> _refreshHubFromServer({
+    required String? category,
+    required bool mergeVerticals,
+    required int loadGen,
+    Future<(List<MarketplaceFeedItem>, List<MarketplaceFeedItem>)>?
+        verticalsFuture,
+  }) async {
     try {
-      final all = await _loadAll(category: _selectedCategory);
+      final snapshot = await _marketplaceItemsQuery()
+          .get(const GetOptions(source: Source.server));
+      if (!mounted || loadGen != _loadGen) return;
+      final products = await _productsFromDocs(
+        snapshot.docs,
+        category: category,
+        attachSocial: true,
+        fast: false,
+      );
+      if (!mounted || loadGen != _loadGen || _lastQuery.trim().isNotEmpty) {
+        return;
+      }
+      final productItems = products.map(_feedFromProduct).toList();
+      final existingOther = _lastGridItems
+          .where((e) => e.kind != MarketplaceFeedKind.product)
+          .toList();
+      final items = mergeVerticals && existingOther.isNotEmpty
+          ? MarketplaceHubLoader.mergeMixed([productItems, existingOther])
+          : productItems;
+      setState(() {
+        _future = Future.value(
+          MarketplaceHubSnapshot(items: items, shops: _lastShopHits),
+        );
+        _lastGridItems = items;
+      });
+      // If All feed and food/stays not in yet, keep enrichment going.
+      if (mergeVerticals && existingOther.isEmpty) {
+        unawaited(_enrichHubInBackground(
+          productRaw: _filterCachedProducts(category),
+          shops: _lastShopHits,
+          query: '',
+          mergeVerticals: true,
+          loadGen: loadGen,
+          verticalsFuture: verticalsFuture,
+          needRerank: false,
+        ));
+      }
+    } catch (_) {}
+  }
+
+  String _productSearchHaystack(MarketplaceDetailModel item) {
+    return '${item.name} ${item.description ?? ''} ${item.category} '
+            '${item.location ?? ''} ${item.merchantName ?? ''} '
+            '${item.sellerBusinessName ?? ''}'
+        .toLowerCase();
+  }
+
+  Future<MarketplaceHubSnapshot> _searchByName(String raw) async {
+    final q = raw.trim();
+    final gen = ++_searchGen;
+    unawaited(_trackSearchInterest(q));
+    if (q.isEmpty || q.length < 2) {
+      _aiSummary = '';
+      return _loadAll(category: _selectedCategory);
+    }
+    setState(() {
+      _loading = true;
+      _photoMode = false;
+    });
+    try {
+      switch (_hubVertical) {
+        case MarketplaceHubVertical.food:
+          final food = await MarketplaceHubLoader.loadFood(
+            query: q,
+            latitude: _userLat,
+            longitude: _userLng,
+          );
+          if (gen != _searchGen) return MarketplaceHubSnapshot.empty;
+          return MarketplaceHubSnapshot(items: food);
+        case MarketplaceHubVertical.stays:
+          final stays = await MarketplaceHubLoader.loadStays(query: q);
+          if (gen != _searchGen) return MarketplaceHubSnapshot.empty;
+          return MarketplaceHubSnapshot(items: stays);
+        case MarketplaceHubVertical.products:
+        case MarketplaceHubVertical.all:
+          break;
+      }
+
+      final productSnap =
+          await _loadProductsOnly(category: _selectedCategory);
+      if (gen != _searchGen) return MarketplaceHubSnapshot.empty;
+
       final lower = q.toLowerCase();
-      final words = lower.split(RegExp(r'\s+')).where((w) => w.length >= 2).toList();
+      final words =
+          lower.split(RegExp(r'\s+')).where((w) => w.length >= 2).toList();
+
+      // Shop hits from the full catalog immediately (before ranking).
+      final shops = MarketplaceHubLoader.shopsFromProducts(
+        productSnap.map(_feedFromProduct),
+        q,
+      );
+
       List<MarketplaceDetailModel> matches;
       if (_aiSearchMode && words.length > 1) {
-        matches = all.where((item) { final searchable = '${item.name} ${item.description ?? ''} ${item.category} ${item.location ?? ''}'.toLowerCase(); return words.every((w) => searchable.contains(w)); }).toList();
+        matches = productSnap.where((item) {
+          final searchable = _productSearchHaystack(item);
+          return words.every((w) => searchable.contains(w));
+        }).toList();
       } else {
-        matches = all.where((item) { final searchable = '${item.name} ${item.description ?? ''} ${item.category} ${item.location ?? ''}'.toLowerCase(); return searchable.contains(lower); }).toList();
+        matches = productSnap.where((item) {
+          return _productSearchHaystack(item).contains(lower);
+        }).toList();
       }
-      if (_aiSearchMode && matches.isNotEmpty) _aiSummary = _buildAiSummary(q, matches);
-      else _aiSummary = '';
-      return _finishFeed(matches);
-    } finally { if (mounted) setState(() => _loading = false); }
+      // Skip social enrichment on search — keeps shop/name results snappy.
+      final ranked = await _finishFeed(matches, attachSocial: false, fast: true);
+      if (gen != _searchGen) return MarketplaceHubSnapshot.empty;
+      final productItems = ranked.map(_feedFromProduct).toList();
+
+      if (_hubVertical == MarketplaceHubVertical.products) {
+        if (_aiSearchMode && productItems.isNotEmpty) {
+          _aiSummary = _buildAiSummary(q, ranked);
+        } else {
+          _aiSummary = '';
+        }
+        return MarketplaceHubSnapshot(items: productItems, shops: shops);
+      }
+
+      // Paint product/shop hits immediately; merge food/stays in background.
+      final quick = MarketplaceHubSnapshot(items: productItems, shops: shops);
+      if (mounted && gen == _searchGen) {
+        setState(() {
+          _future = Future.value(quick);
+          _lastGridItems = productItems;
+          _lastShopHits = shops;
+          _loading = false;
+        });
+      }
+
+      final searchLoadGen = _loadGen;
+      unawaited(() async {
+        final (food, stays) = await MarketplaceHubLoader.loadFoodAndStays(
+          query: q,
+          latitude: _userLat,
+          longitude: _userLng,
+        );
+        if (!mounted || gen != _searchGen || searchLoadGen != _loadGen) return;
+        final merged = MarketplaceHubLoader.mergeMixed([
+          productItems,
+          food,
+          stays,
+        ]);
+        if (_aiSearchMode && merged.isNotEmpty) {
+          _aiSummary = _buildAiSummary(q, ranked);
+        } else {
+          _aiSummary = '';
+        }
+        setState(() {
+          _future = Future.value(
+            MarketplaceHubSnapshot(items: merged, shops: shops),
+          );
+          _lastGridItems = merged;
+          _lastShopHits = shops;
+        });
+      }());
+
+      return quick;
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Products-only load without toggling hub loading flags again.
+  Future<List<MarketplaceDetailModel>> _loadProductsOnly({
+    String? category,
+    bool forceRefresh = false,
+  }) async {
+    if (!forceRefresh && _productCacheFresh) {
+      return _filterCachedProducts(category);
+    }
+    try {
+      // Prefer disk cache first for snappy search typing.
+      try {
+        final cached = await _marketplaceItemsQuery()
+            .get(const GetOptions(source: Source.cache));
+        if (cached.docs.isNotEmpty) {
+          final all = await _parseProductDocs(cached.docs);
+          _storeProductCache(all);
+          // Refresh server quietly.
+          unawaited(() async {
+            try {
+              final server = await _marketplaceItemsQuery()
+                  .get(const GetOptions(source: Source.server));
+              final parsed = await _parseProductDocs(server.docs);
+              _storeProductCache(parsed);
+            } catch (_) {}
+          }());
+          return _filterCachedProducts(category);
+        }
+      } catch (_) {}
+
+      final snapshot = await _marketplaceItemsQuery()
+          .get(const GetOptions(source: Source.server));
+      final all = await _parseProductDocs(snapshot.docs);
+      _storeProductCache(all);
+      return _filterCachedProducts(category);
+    } catch (_) {
+      try {
+        final cached = await _marketplaceItemsQuery()
+            .get(const GetOptions(source: Source.cache));
+        if (cached.docs.isNotEmpty) {
+          final all = await _parseProductDocs(cached.docs);
+          _storeProductCache(all);
+          return _filterCachedProducts(category);
+        }
+      } catch (_) {}
+      if (_productCache.isNotEmpty) return _filterCachedProducts(category);
+      return const [];
+    }
   }
 
   String _buildAiSummary(String query, List<MarketplaceDetailModel> items) {
@@ -1307,11 +1860,67 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     Navigator.push(context, MaterialPageRoute(builder: (_) => DetailsPage(item: _toCoreDetailModel(item), cartService: widget.cartService)));
   }
 
+  void _openFeedItem(MarketplaceFeedItem item) {
+    switch (item.kind) {
+      case MarketplaceFeedKind.product:
+        final p = item.product;
+        if (p is MarketplaceDetailModel) _openDetailsPage(p);
+        break;
+      case MarketplaceFeedKind.food:
+        final f = item.food;
+        if (f != null) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => FoodDetailsPage(foodItem: f)),
+          );
+        }
+        break;
+      case MarketplaceFeedKind.stay:
+        final a = item.stay;
+        if (a != null) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => AccommodationBookingPage.fromAccommodation(a),
+            ),
+          );
+        }
+        break;
+      case MarketplaceFeedKind.shop:
+        final mid = (item.merchantId ?? '').trim();
+        if (mid.isEmpty) return;
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => MerchantProductsPage(
+              merchantId: mid,
+              merchantName: item.merchantName ?? item.title,
+            ),
+          ),
+        );
+        break;
+    }
+  }
+
+  void _setHubVertical(MarketplaceHubVertical v) {
+    _searchCtrl.clear();
+    _lastQuery = '';
+    _aiSummary = '';
+    _photoMode = false;
+    setState(() {
+      _hubVertical = v;
+      if (v != MarketplaceHubVertical.products) {
+        _selectedCategory = null;
+      }
+      _future = _loadAll(category: _selectedCategory);
+    });
+  }
+
   MarketplaceDetailModel _fromCoreMarketplace(core.MarketplaceDetailModel c) {
     return MarketplaceDetailModel(id: c.id.toString(), sqlItemId: c.id, name: c.name, category: (c.category ?? '').toLowerCase(), price: c.price, image: c.image, imageBytes: null, description: c.description.isEmpty ? null : c.description, location: c.location.isEmpty ? null : c.location, isActive: true, createdAt: c.createdAt, gallery: c.gallery, sellerBusinessName: c.sellerBusinessName, sellerOpeningHours: c.sellerOpeningHours, sellerStatus: c.sellerStatus, sellerBusinessDescription: c.sellerBusinessDescription, sellerRating: c.sellerRating, sellerLogoUrl: c.sellerLogoUrl, serviceProviderId: c.serviceProviderId, sellerUserId: c.sellerUserId, merchantId: c.merchantId, merchantName: c.merchantName, serviceType: c.serviceType ?? 'marketplace', stockQuantity: c.stockQuantity);
   }
 
-  Future<List<MarketplaceDetailModel>> _searchByPhoto(dynamic imageSource) async {
+  Future<MarketplaceHubSnapshot> _searchByPhoto(dynamic imageSource) async {
     try {
       final Uint8List bytes; final String filename;
       if (imageSource is XFile) { bytes = await imageSource.readAsBytes(); final path = imageSource.path.toLowerCase(); filename = path.endsWith('.png') ? 'photo.png' : path.endsWith('.webp') ? 'photo.webp' : 'photo.jpg'; }
@@ -1320,7 +1929,8 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       final service = MarketplaceService();
       final firebaseResults = await service.searchByPhotoBytes(bytes, filename: filename);
       final converted = _excludeFood(firebaseResults.map(_fromCoreMarketplace).toList());
-      if (!mounted) return converted;
+      final items = converted.map(_feedFromProduct).toList();
+      if (!mounted) return MarketplaceHubSnapshot(items: items);
       if (converted.isNotEmpty) {
         _setSuggestionsFromItems(converted);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -1337,7 +1947,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         ));
       }
-      return converted;
+      return MarketplaceHubSnapshot(items: items);
     } catch (e, st) {
       if (kDebugMode) debugPrint('Photo search error: $e\n$st');
       if (mounted) {
@@ -1347,7 +1957,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
           duration: const Duration(seconds: 5),
         ));
       }
-      return const <MarketplaceDetailModel>[];
+      return MarketplaceHubSnapshot.empty;
     }
   }
 
@@ -1358,6 +1968,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       _photoSearching = true;
       _photoMode = true;
       _selectedCategory = null;
+      _hubVertical = MarketplaceHubVertical.products;
       _aiSummary = '';
     });
     try {
@@ -1365,7 +1976,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       if (!mounted) return;
       setState(() {
         _future = Future.value(results);
-        if (results.isNotEmpty) _lastGridItems = results;
+        if (results.items.isNotEmpty) _lastGridItems = results.items;
       });
     } finally {
       if (mounted) setState(() => _photoSearching = false);
@@ -1664,7 +2275,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     final typingNow = _searchCtrl.text.trim().isNotEmpty;
     if (typingNow) { _stopSuggestionTimer(); setState(() {}); }
     else { if (!_aiSearchMode && _suggestionTimer == null) _startSuggestionTimer(); }
-    _debounce = Timer(const Duration(milliseconds: 350), () {
+    _debounce = Timer(const Duration(milliseconds: 550), () {
       final txt = _searchCtrl.text;
       if (txt == _lastQuery) return;
       _lastQuery = txt;
@@ -1677,12 +2288,16 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   void _setCategory(String? cat) {
     unawaited(_trackCategoryInterest(cat));
     _searchCtrl.clear(); _lastQuery = ''; _aiSummary = '';
-    setState(() => _future = _loadAll(category: cat));
+    setState(() {
+      _hubVertical = MarketplaceHubVertical.products;
+      _future = _loadAll(category: cat);
+    });
   }
 
   Future<void> _refresh() async {
     _searchCtrl.clear(); _lastQuery = ''; _aiSummary = '';
     _followedMerchantIdsFetchedAt = DateTime.fromMillisecondsSinceEpoch(0);
+    _productCacheAt = null; // force fresh server catalog
     setState(() => _future = _loadAll(category: _selectedCategory));
     await _future;
   }
@@ -1768,6 +2383,241 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   // ─────────────────────────────────────────────
   // BEAUTIFUL PRODUCT CARD
   // ─────────────────────────────────────────────
+  Widget _buildFeedCard(MarketplaceFeedItem feed) {
+    if (feed.kind == MarketplaceFeedKind.product &&
+        feed.product is MarketplaceDetailModel) {
+      return _buildMarketItem(feed.product as MarketplaceDetailModel);
+    }
+    return _buildHubVerticalCard(feed);
+  }
+
+  Widget _buildHubVerticalCard(MarketplaceFeedItem item) {
+    final kindColor = switch (item.kind) {
+      MarketplaceFeedKind.food => const Color(0xFFE65100),
+      MarketplaceFeedKind.stay => const Color(0xFF1565C0),
+      MarketplaceFeedKind.shop => const Color(0xFF2E7D32),
+      MarketplaceFeedKind.product => _kAmber,
+    };
+    final kindLabel = switch (item.kind) {
+      MarketplaceFeedKind.food => 'Food',
+      MarketplaceFeedKind.stay => 'Stay',
+      MarketplaceFeedKind.shop => 'Shop',
+      MarketplaceFeedKind.product => 'Product',
+    };
+    final kindIcon = switch (item.kind) {
+      MarketplaceFeedKind.food => Icons.restaurant_rounded,
+      MarketplaceFeedKind.stay => Icons.hotel_rounded,
+      MarketplaceFeedKind.shop => Icons.storefront_rounded,
+      MarketplaceFeedKind.product => Icons.shopping_bag_rounded,
+    };
+
+    return _AnimatedProductCard(
+      onTap: () => _openFeedItem(item),
+      child: Container(
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: _kCard,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(color: _kShadow, blurRadius: 20, offset: const Offset(0, 8)),
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              flex: 58,
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: ClipRRect(
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(20),
+                      ),
+                      child: _imageFromAnySource(
+                        item.image,
+                        fit: BoxFit.cover,
+                        width: double.infinity,
+                        height: double.infinity,
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    top: 9,
+                    left: 9,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: kindColor.withOpacity(0.92),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(kindIcon, size: 10, color: Colors.white),
+                          const SizedBox(width: 4),
+                          Text(
+                            kindLabel,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (item.kind != MarketplaceFeedKind.shop)
+                    Positioned(
+                      left: 10,
+                      right: 10,
+                      bottom: 10,
+                      child: Text(
+                        _mwk(item.price),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 14,
+                          shadows: [
+                            Shadow(color: Colors.black54, blurRadius: 8),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Container(
+              decoration: const BoxDecoration(
+                color: _kAmberLight,
+                borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
+              ),
+              padding: const EdgeInsets.fromLTRB(11, 10, 11, 11),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w800,
+                      color: _kInk,
+                    ),
+                  ),
+                  if (item.subtitle.trim().isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      item.subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 10, color: _kInkMid),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: _CardButton(
+                      label: item.kind == MarketplaceFeedKind.shop
+                          ? 'Open shop'
+                          : 'View',
+                      icon: Icons.arrow_forward_rounded,
+                      onPressed: () => _openFeedItem(item),
+                      filled: true,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildShopHitRow(MarketplaceFeedItem shop) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => _openFeedItem(shop),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: SizedBox(
+                    width: 44,
+                    height: 44,
+                    child: (shop.image.isNotEmpty ||
+                            (shop.sellerLogoUrl ?? '').isNotEmpty)
+                        ? _imageFromAnySource(
+                            shop.image.isNotEmpty
+                                ? shop.image
+                                : shop.sellerLogoUrl!,
+                            fit: BoxFit.cover,
+                            width: 44,
+                            height: 44,
+                          )
+                        : Container(
+                            color: _kSuccessBg,
+                            child: const Icon(
+                              Icons.storefront_rounded,
+                              color: _kSuccess,
+                            ),
+                          ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        shop.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 14,
+                          color: _kInk,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        shop.subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 11, color: _kInkLight),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right_rounded, color: _kInkLight),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildMarketItem(MarketplaceDetailModel item) {
     final cat = item.category.trim();
     final merchant = (item.merchantName ?? '').trim();
@@ -2192,8 +3042,13 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     if (!mounted) return;
     setState(() => _veroAiLoading = true);
     try {
-      final items = await _future;
-      final answer = _answerVeroAiQuestion(q, items);
+      final snap = await _future;
+      final products = snap.items
+          .where((e) => e.kind == MarketplaceFeedKind.product)
+          .map((e) => e.product)
+          .whereType<MarketplaceDetailModel>()
+          .toList();
+      final answer = _answerVeroAiQuestion(q, products);
       if (!mounted) return;
       _showVeroAiAnswerSheet(q, answer);
     } finally { if (mounted) setState(() => _veroAiLoading = false); }
@@ -2281,6 +3136,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
             onPhotoTap: _showPhotoPickerSheet,
             onSubmit: _onSubmit,
             onClear: () { _searchCtrl.clear(); _onSubmit(''); },
+            hintText: 'Search products or shops',
           ),
 
           // ── FILTER CHIPS ──
@@ -2291,6 +3147,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
             selectedCategory: _selectedCategory,
             photoMode: _photoMode,
             categories: _kCategories,
+            hubVertical: _hubVertical,
             locationLabel: _nearMeMode
                 ? (_browseCity == null ? 'Near me' : 'Near · $_browseCity')
                 : (_browseCity ?? 'All Malawi'),
@@ -2301,6 +3158,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
             onFeedToggle: () { setState(() { _forYouMode = !_forYouMode; _future = _lastQuery.trim().isNotEmpty ? _searchByName(_lastQuery) : _loadAll(category: _selectedCategory); }); },
             onViewToggle: () => setState(() => _comfortableView = !_comfortableView),
             onCategoryTap: _setCategory,
+            onHubVerticalTap: _setHubVertical,
             titleCase: _titleCase,
           ),
 
@@ -2318,7 +3176,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
               child: RefreshIndicator(
                 onRefresh: _refresh,
                 color: _kAmber,
-                child: FutureBuilder<List<MarketplaceDetailModel>>(
+                child: FutureBuilder<MarketplaceHubSnapshot>(
                   future: _future,
                   builder: (context, snapshot) {
                     final waitingFresh = snapshot.connectionState == ConnectionState.waiting &&
@@ -2351,20 +3209,28 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                         Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(UserFacingError.from(snapshot.error), textAlign: TextAlign.center, style: const TextStyle(color: _kInkLight)))),
                       ]);
                     }
-                    final items = snapshot.hasData
-                        ? (snapshot.data ?? const <MarketplaceDetailModel>[])
-                        : (_photoSearching ? _lastGridItems : const <MarketplaceDetailModel>[]);
+                    final snap = snapshot.hasData
+                        ? (snapshot.data ?? MarketplaceHubSnapshot.empty)
+                        : (_photoSearching
+                            ? MarketplaceHubSnapshot(
+                                items: _lastGridItems,
+                                shops: _lastShopHits,
+                              )
+                            : MarketplaceHubSnapshot.empty);
+                    final items = snap.items;
+                    final shops = snap.shops;
                     if (snapshot.hasData && items.isNotEmpty) {
                       _lastGridItems = items;
+                      _lastShopHits = shops;
                     }
-                    if (items.isEmpty && !_loading && !_photoSearching) {
+                    if (items.isEmpty && shops.isEmpty && !_loading && !_photoSearching) {
                       return ListView(physics: const AlwaysScrollableScrollPhysics(), children: [
                         SizedBox(height: MediaQuery.of(context).size.height * 0.22),
                         Center(child: Column(children: [
                           Container(width: 80, height: 80, decoration: BoxDecoration(color: _kAmberLight, shape: BoxShape.circle), child: const Icon(Icons.search_off_rounded, size: 40, color: _kAmber)),
                           const SizedBox(height: 16),
                           Text(
-                            _photoMode ? 'Item not available' : 'No products found.',
+                            _photoMode ? 'Item not available' : 'No results found.',
                             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: _kInkMid),
                             textAlign: TextAlign.center,
                           ),
@@ -2372,14 +3238,14 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                           Text(
                             _photoMode
                                 ? 'We scanned the photo but found no matching listing'
-                                : 'Try a different search or category',
+                                : 'Try products, shops, food, or stays',
                             style: const TextStyle(fontSize: 13, color: _kInkLight),
                             textAlign: TextAlign.center,
                           ),
                         ])),
                       ]);
                     }
-                    if (items.isEmpty && _photoSearching) {
+                    if (items.isEmpty && shops.isEmpty && _photoSearching) {
                       return ListView(
                         physics: const AlwaysScrollableScrollPhysics(),
                         children: [
@@ -2405,24 +3271,69 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                         slivers: [
                           if (_aiSummary.isNotEmpty)
                             SliverToBoxAdapter(child: _AiSummaryBanner(summary: _aiSummary)),
-                          SliverPadding(
-                            padding: EdgeInsets.fromLTRB(
-                              layout.gridPadH,
-                              6,
-                              layout.gridPadH,
-                              veroFloatingNavClearance(context),
-                            ),
-                            sliver: SliverGrid(
-                              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: layout.crossAxisCount, crossAxisSpacing: layout.gridSpacing, mainAxisSpacing: layout.gridSpacing, childAspectRatio: layout.childAspectRatio),
-                              delegate: SliverChildBuilderDelegate(
-                                (context, i) {
-                                  final item = items[i];
-                                  return _buildMarketItem(item);
-                                },
-                                childCount: items.length,
+                          if (shops.isNotEmpty)
+                            SliverToBoxAdapter(
+                              child: Padding(
+                                padding: EdgeInsets.fromLTRB(
+                                  layout.gridPadH,
+                                  8,
+                                  layout.gridPadH,
+                                  4,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'Shops',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 14,
+                                        color: _kInk,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    ...shops.take(8).map(_buildShopHitRow),
+                                    if (items.isNotEmpty) ...[
+                                      const SizedBox(height: 6),
+                                      const Text(
+                                        'Listings',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w900,
+                                          fontSize: 14,
+                                          color: _kInk,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                    ],
+                                  ],
+                                ),
                               ),
                             ),
-                          ),
+                          if (items.isNotEmpty)
+                            SliverPadding(
+                              padding: EdgeInsets.fromLTRB(
+                                layout.gridPadH,
+                                6,
+                                layout.gridPadH,
+                                veroFloatingNavClearance(context),
+                              ),
+                              sliver: SliverGrid(
+                                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: layout.crossAxisCount, crossAxisSpacing: layout.gridSpacing, mainAxisSpacing: layout.gridSpacing, childAspectRatio: layout.childAspectRatio),
+                                delegate: SliverChildBuilderDelegate(
+                                  (context, i) {
+                                    final item = items[i];
+                                    return _buildFeedCard(item);
+                                  },
+                                  childCount: items.length,
+                                ),
+                              ),
+                            )
+                          else
+                            SliverToBoxAdapter(
+                              child: SizedBox(
+                                height: veroFloatingNavClearance(context) + 24,
+                              ),
+                            ),
                         ],
                       );
                     });
@@ -2531,93 +3442,166 @@ class _SearchSection extends StatelessWidget {
   final VoidCallback onPhotoTap;
   final ValueChanged<String> onSubmit;
   final VoidCallback onClear;
+  final String hintText;
 
   const _SearchSection({
     required this.controller, required this.aiSearchMode,
     required this.suggestionIndex, required this.activeSearchSuggestions,
     required this.onPhotoTap, required this.onSubmit, required this.onClear,
+    this.hintText = 'Search products or shops',
   });
 
   @override
   Widget build(BuildContext context) {
+    final showSuggestions = !aiSearchMode &&
+        controller.text.trim().isEmpty &&
+        activeSearchSuggestions.isNotEmpty;
+    final suggestion = showSuggestions
+        ? activeSearchSuggestions[
+            suggestionIndex % activeSearchSuggestions.length]
+        : null;
+
     return Container(
       color: Colors.white,
       padding: const EdgeInsets.fromLTRB(14, 6, 14, 10),
-      child: Stack(children: [
-        // Search field
-        Container(
-          height: 48,
-          decoration: BoxDecoration(
-            color: _kCream,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: _kAmber.withOpacity(0.3)),
-            boxShadow: [BoxShadow(color: _kAmber.withOpacity(0.08), blurRadius: 12, offset: const Offset(0, 4))],
-          ),
-          child: Row(children: [
-            const SizedBox(width: 14),
-            const Icon(Icons.search_rounded, color: _kAmber, size: 20),
-            const SizedBox(width: 10),
-            Expanded(child: TextField(
+      child: Container(
+        height: 48,
+        decoration: BoxDecoration(
+          color: _kCream,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _kAmber.withOpacity(0.3)),
+          boxShadow: [
+            BoxShadow(
+              color: _kAmber.withOpacity(0.08),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(children: [
+          const SizedBox(width: 14),
+          const Icon(Icons.search_rounded, color: _kAmber, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: TextField(
               controller: controller,
               textInputAction: TextInputAction.search,
               onSubmitted: onSubmit,
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _kInk),
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: _kInk,
+              ),
               decoration: InputDecoration(
                 border: InputBorder.none,
-                hintText: aiSearchMode ? 'Search with AI...' : '',
-                hintStyle: TextStyle(color: _kInkLight, fontSize: 14, fontWeight: FontWeight.w500),
-                isDense: true, contentPadding: EdgeInsets.zero,
-              ),
-            )),
-            if (controller.text.isNotEmpty)
-              GestureDetector(onTap: onClear, child: const Padding(padding: EdgeInsets.all(10), child: Icon(Icons.close_rounded, color: _kInkLight, size: 18))),
-            GestureDetector(
-              onTap: onPhotoTap,
-              child: Container(
-                margin: const EdgeInsets.all(6),
-                width: 36, height: 36,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(colors: [_kAmber, _kAmberDark], begin: Alignment.topLeft, end: Alignment.bottomRight),
-                  borderRadius: BorderRadius.circular(10),
-                  boxShadow: [BoxShadow(color: _kAmber.withOpacity(0.4), blurRadius: 8)],
+                hintText: aiSearchMode ? 'Search with AI...' : hintText,
+                hintStyle: const TextStyle(
+                  color: _kInkLight,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
                 ),
-                child: const Icon(Icons.camera_alt_rounded, size: 17, color: Colors.white),
+                isDense: true,
+                contentPadding: EdgeInsets.zero,
               ),
             ),
-          ]),
-        ),
-        // Sliding suggestion overlay
-        if (!aiSearchMode && controller.text.trim().isEmpty && activeSearchSuggestions.isNotEmpty)
-          Positioned(left: 48, right: 60, top: 0, bottom: 0,
-            child: IgnorePointer(
-              ignoring: false,
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 400),
-                  transitionBuilder: (child, anim) => SlideTransition(
-                    position: Tween<Offset>(begin: const Offset(0, 0.8), end: Offset.zero).chain(CurveTween(curve: Curves.easeOut)).animate(anim),
-                    child: FadeTransition(opacity: anim, child: child),
-                  ),
+          ),
+          // Rotating suggestion chip on the right (never overlays the hint).
+          if (suggestion != null)
+            Flexible(
+              flex: 0,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 4),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 130),
                   child: GestureDetector(
-                    key: ValueKey<String>(activeSearchSuggestions[suggestionIndex % activeSearchSuggestions.length]),
                     onTap: () {
-                      final s = activeSearchSuggestions[suggestionIndex % activeSearchSuggestions.length];
-                      controller.text = s;
-                      controller.selection = TextSelection.fromPosition(TextPosition(offset: s.length));
-                      onSubmit(s);
+                      controller.text = suggestion;
+                      controller.selection = TextSelection.fromPosition(
+                        TextPosition(offset: suggestion.length),
+                      );
+                      onSubmit(suggestion);
                     },
-                    child: Text(
-                      activeSearchSuggestions[suggestionIndex % activeSearchSuggestions.length],
-                      maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: _kInkLight),
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 350),
+                      switchInCurve: Curves.easeOut,
+                      switchOutCurve: Curves.easeIn,
+                      transitionBuilder: (child, anim) {
+                        final offset = Tween<Offset>(
+                          begin: const Offset(0, 0.45),
+                          end: Offset.zero,
+                        ).animate(anim);
+                        return FadeTransition(
+                          opacity: anim,
+                          child: SlideTransition(
+                            position: offset,
+                            child: child,
+                          ),
+                        );
+                      },
+                      child: Container(
+                        key: ValueKey<String>(suggestion),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(99),
+                          border: Border.all(
+                            color: _kAmber.withOpacity(0.28),
+                          ),
+                        ),
+                        child: Text(
+                          suggestion,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700,
+                            color: _kAmber,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
+          if (controller.text.isNotEmpty)
+            GestureDetector(
+              onTap: onClear,
+              child: const Padding(
+                padding: EdgeInsets.all(10),
+                child: Icon(Icons.close_rounded, color: _kInkLight, size: 18),
+              ),
+            ),
+          GestureDetector(
+            onTap: onPhotoTap,
+            child: Container(
+              margin: const EdgeInsets.all(6),
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [_kAmber, _kAmberDark],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(10),
+                boxShadow: [
+                  BoxShadow(color: _kAmber.withOpacity(0.4), blurRadius: 8),
+                ],
+              ),
+              child: const Icon(
+                Icons.camera_alt_rounded,
+                size: 17,
+                color: Colors.white,
+              ),
+            ),
           ),
-      ]),
+        ]),
+      ),
     );
   }
 }
@@ -2626,19 +3610,22 @@ class _FilterRow extends StatelessWidget {
   final bool aiSearchMode, forYouMode, comfortableView, photoMode;
   final String? selectedCategory;
   final List<String> categories;
+  final MarketplaceHubVertical hubVertical;
   final String locationLabel;
   final VoidCallback onLocationTap;
   final ValueChanged<bool> onAiToggle;
   final VoidCallback onFeedToggle, onViewToggle;
   final ValueChanged<String?> onCategoryTap;
+  final ValueChanged<MarketplaceHubVertical> onHubVerticalTap;
   final String Function(String) titleCase;
 
   const _FilterRow({
     required this.aiSearchMode, required this.forYouMode, required this.comfortableView,
     required this.selectedCategory, required this.photoMode, required this.categories,
+    required this.hubVertical,
     required this.locationLabel, required this.onLocationTap,
     required this.onAiToggle, required this.onFeedToggle, required this.onViewToggle,
-    required this.onCategoryTap, required this.titleCase,
+    required this.onCategoryTap, required this.onHubVerticalTap, required this.titleCase,
   });
 
   Widget _chip({required String label, required bool selected, required VoidCallback onTap, IconData? icon, Color? activeColor}) {
@@ -2664,6 +3651,7 @@ class _FilterRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final showProductCats = hubVertical == MarketplaceHubVertical.products;
     return Container(
       color: Colors.white,
       child: Column(children: [
@@ -2680,7 +3668,7 @@ class _FilterRow extends StatelessWidget {
               activeColor: const Color(0xFF2E7D32),
             ),
             const SizedBox(width: 7),
-            _chip(label: 'All', selected: !aiSearchMode, onTap: () => onAiToggle(false), icon: Icons.grid_view_rounded),
+            _chip(label: 'Browse', selected: !aiSearchMode, onTap: () => onAiToggle(false), icon: Icons.grid_view_rounded),
             const SizedBox(width: 7),
             _chip(label: '✦ VeroAI', selected: aiSearchMode, onTap: () => onAiToggle(true), icon: Icons.auto_awesome_rounded, activeColor: _kBlue),
             const SizedBox(width: 7),
@@ -2689,21 +3677,58 @@ class _FilterRow extends StatelessWidget {
             _chip(label: comfortableView ? 'Comfy' : 'Compact', selected: comfortableView, onTap: onViewToggle, icon: comfortableView ? Icons.view_agenda_rounded : Icons.grid_view_rounded),
           ],
         )),
-        // Category chips
+        // Hub verticals: All / Products / Food / Stays
         SizedBox(height: 42, child: ListView(
-          padding: const EdgeInsets.fromLTRB(14, 3, 14, 8),
+          padding: const EdgeInsets.fromLTRB(14, 3, 14, 4),
           scrollDirection: Axis.horizontal,
           children: [
-            _chip(label: 'All Items', selected: selectedCategory == null && !photoMode, onTap: () => onCategoryTap(null)),
-            ...categories.map((c) {
-              final catColor = _kCategoryColors[c] ?? _kAmber;
-              return Padding(
-                padding: const EdgeInsets.only(left: 7),
-                child: _chip(label: titleCase(c), selected: selectedCategory == c, onTap: () => onCategoryTap(c), icon: _kCategoryIcons[c], activeColor: catColor),
-              );
-            }),
+            _chip(
+              label: 'All',
+              selected: hubVertical == MarketplaceHubVertical.all && !photoMode,
+              onTap: () => onHubVerticalTap(MarketplaceHubVertical.all),
+              icon: Icons.apps_rounded,
+            ),
+            const SizedBox(width: 7),
+            _chip(
+              label: 'Products',
+              selected: hubVertical == MarketplaceHubVertical.products,
+              onTap: () => onHubVerticalTap(MarketplaceHubVertical.products),
+              icon: Icons.shopping_bag_rounded,
+            ),
+            const SizedBox(width: 7),
+            _chip(
+              label: 'Food',
+              selected: hubVertical == MarketplaceHubVertical.food,
+              onTap: () => onHubVerticalTap(MarketplaceHubVertical.food),
+              icon: Icons.restaurant_rounded,
+              activeColor: const Color(0xFFE65100),
+            ),
+            const SizedBox(width: 7),
+            _chip(
+              label: 'Stays',
+              selected: hubVertical == MarketplaceHubVertical.stays,
+              onTap: () => onHubVerticalTap(MarketplaceHubVertical.stays),
+              icon: Icons.hotel_rounded,
+              activeColor: const Color(0xFF1565C0),
+            ),
           ],
         )),
+        // Product category chips (Products vertical only)
+        if (showProductCats)
+          SizedBox(height: 42, child: ListView(
+            padding: const EdgeInsets.fromLTRB(14, 3, 14, 8),
+            scrollDirection: Axis.horizontal,
+            children: [
+              _chip(label: 'All Items', selected: selectedCategory == null && !photoMode, onTap: () => onCategoryTap(null)),
+              ...categories.map((c) {
+                final catColor = _kCategoryColors[c] ?? _kAmber;
+                return Padding(
+                  padding: const EdgeInsets.only(left: 7),
+                  child: _chip(label: titleCase(c), selected: selectedCategory == c, onTap: () => onCategoryTap(c), icon: _kCategoryIcons[c], activeColor: catColor),
+                );
+              }),
+            ],
+          )),
         Container(height: 1, color: _kCreamDark),
       ]),
     );

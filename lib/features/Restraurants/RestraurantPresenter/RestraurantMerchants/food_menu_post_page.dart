@@ -337,6 +337,10 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
         _isEdit ? 'Menu item updated.' : 'Dish added to your menu.',
         isSuccess: true,
         errorMessage: 'Saved',
+        showFacebook: !_isEdit,
+        facebookMessage: !_isEdit
+            ? 'We’ll also share this dish on the Vero360 Facebook Page.'
+            : null,
       );
       Navigator.of(context).pop(true);
     } catch (e) {
@@ -510,32 +514,48 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
               ),
             ],
           ),
-          child: FilledButton.icon(
-            style: FilledButton.styleFrom(
-              backgroundColor: _brandOrange,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 15),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-            ),
-            onPressed: _submitting ? null : _submit,
-            icon: _submitting
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (!_isEdit) ...[
+                const FacebookShareHint(
+                  message:
+                      'After you save, we can also share this dish on the Vero360 Facebook Page to help grow your customers.',
+                ),
+                const SizedBox(height: 10),
+              ],
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _brandOrange,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
                     ),
-                  )
-                : Icon(_isEdit ? Icons.save_rounded : Icons.check_rounded),
-            label: Text(
-              _submitting
-                  ? 'Saving…'
-                  : (_isEdit ? 'Save changes' : 'Save to menu'),
-              style: const TextStyle(fontWeight: FontWeight.w900),
-            ),
+                  ),
+                  onPressed: _submitting ? null : _submit,
+                  icon: _submitting
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Icon(_isEdit ? Icons.save_rounded : Icons.check_rounded),
+                  label: Text(
+                    _submitting
+                        ? 'Saving…'
+                        : (_isEdit ? 'Save changes' : 'Save to menu'),
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),

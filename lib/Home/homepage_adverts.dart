@@ -777,7 +777,7 @@ class _HomepageAdvertsSectionState extends State<HomepageAdvertsSection> {
                   viewportFraction: 1,
                   enableInfiniteScroll: count > 1,
                   autoPlay: count > 1,
-                  autoPlayInterval: const Duration(seconds: 5),
+                  autoPlayInterval: const Duration(seconds: 2),
                   autoPlayAnimationDuration:
                       const Duration(milliseconds: 650),
                   enlargeCenterPage: false,

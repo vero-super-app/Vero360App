@@ -6,9 +6,11 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import 'package:image/image.dart' as img;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:vero360_app/utils/profile_open_helper.dart';
+import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_reviews_page.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import 'package:share_plus/share_plus.dart';
@@ -591,7 +593,7 @@ class _DetailsPageState extends State<DetailsPage> {
     final bg = open ? Colors.green.shade50 : Colors.red.shade50;
     return Chip(
       label: Text(
-        open ? 'OPEN' : 'CLOSED',
+        open ? 'We are open' : 'We are closed',
         style: TextStyle(
           color: fg,
           fontWeight: FontWeight.w900,
@@ -722,7 +724,7 @@ class _DetailsPageState extends State<DetailsPage> {
     const border = Color(0xFFECEEF2);
     final days = openingDays.isNotEmpty ? openingDays : _resolvedOpeningDays;
     final shopOpen = _isShopOpenFromHours(openingHours, days);
-    final statusLabel = shopOpen ? 'OPEN' : 'CLOSED';
+    final statusLabel = shopOpen ? 'We are open' : 'We are closed';
     final statusColor =
         shopOpen ? Colors.green.shade700 : Colors.red.shade700;
 
@@ -1243,15 +1245,20 @@ class _DetailsPageState extends State<DetailsPage> {
     }
   }
 
-  /// Navigate to a page that shows all products from this merchant.
-  /// You need to implement `MerchantProductsPage` + fetching by merchantId.
-  void _openMerchantProducts(
-      {required String merchantId,
-      required String merchantName}) {
-    openMerchantOrDriverProfile(
-      context,
-      profileId: merchantId,
-      displayName: merchantName,
+  /// Navigate to all products from this merchant (instant — no driver check).
+  void _openMerchantProducts({
+    required String merchantId,
+    required String merchantName,
+  }) {
+    final id = merchantId.trim();
+    if (id.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MerchantProductsPage(
+          merchantId: id,
+          merchantName: merchantName,
+        ),
+      ),
     );
   }
 
@@ -1470,7 +1477,7 @@ class _DetailsPageState extends State<DetailsPage> {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  shopOpen ? 'OPEN' : 'CLOSED',
+                  shopOpen ? 'We are open' : 'We are closed',
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w900,
@@ -1880,6 +1887,23 @@ class _DetailsPageState extends State<DetailsPage> {
   }
 }
 
+/// JPEG encode off the UI thread (PNG full-res encode is the slow part).
+Uint8List _encodeWatermarkJpg(Map<String, Object> args) {
+  final w = args['w'] as int;
+  final h = args['h'] as int;
+  final rgba = args['rgba'] as Uint8List;
+  final image = img.Image.fromBytes(
+    width: w,
+    height: h,
+    bytes: rgba.buffer,
+    bytesOffset: rgba.offsetInBytes,
+    rowStride: w * 4,
+    order: img.ChannelOrder.rgba,
+    numChannels: 4,
+  );
+  return Uint8List.fromList(img.encodeJpg(image, quality: 90));
+}
+
 /// Fullscreen image viewer with watermark (merchant name + Vero360App) and download.
 class _FullScreenImageViewer extends StatefulWidget {
   const _FullScreenImageViewer({
@@ -1895,7 +1919,58 @@ class _FullScreenImageViewer extends StatefulWidget {
 
 class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
   static const Color _brandOrange = Color(0xFFFF8A00);
+  static Future<ui.Image?>? _logoFuture;
   bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Warm logo decode so first download is faster.
+    _logoImage();
+  }
+
+  static Future<ui.Image?> _logoImage() {
+    return _logoFuture ??= () async {
+      try {
+        final logoBytes = await rootBundle.load('assets/logo_mark.png');
+        final logoCodec = await ui.instantiateImageCodec(
+          logoBytes.buffer.asUint8List(
+            logoBytes.offsetInBytes,
+            logoBytes.lengthInBytes,
+          ),
+        );
+        final logoFrame = await logoCodec.getNextFrame();
+        return logoFrame.image;
+      } catch (_) {
+        return null;
+      }
+    }();
+  }
+
+  Future<Uint8List?> _loadImageBytes(String url) async {
+    // Prefer disk cache from CachedNetworkImage (already on screen).
+    try {
+      final cached = await DefaultCacheManager().getFileFromCache(url);
+      if (cached != null && await cached.file.exists()) {
+        final bytes = await cached.file.readAsBytes();
+        if (bytes.isNotEmpty) return bytes;
+      }
+    } catch (_) {}
+    try {
+      final file = await DefaultCacheManager()
+          .getSingleFile(url)
+          .timeout(const Duration(seconds: 12));
+      final bytes = await file.readAsBytes();
+      if (bytes.isNotEmpty) return bytes;
+    } catch (_) {}
+    try {
+      final res = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 12));
+      if (res.statusCode == 200 && res.bodyBytes.isNotEmpty) {
+        return res.bodyBytes;
+      }
+    } catch (_) {}
+    return null;
+  }
 
   Future<void> _downloadImage() async {
     if (_saving) return;
@@ -1913,8 +1988,9 @@ class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
         }
         return;
       }
-      final res = await http.get(uri).timeout(const Duration(seconds: 15));
-      if (res.statusCode != 200 || res.bodyBytes.isEmpty) {
+
+      final srcBytes = await _loadImageBytes(widget.imageUrl);
+      if (srcBytes == null || srcBytes.isEmpty) {
         if (mounted) {
           ToastHelper.showCustomToast(
             context,
@@ -1925,10 +2001,11 @@ class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
         }
         return;
       }
-      // Decode image, draw watermark on it, then save (watermark only on saved file)
-      Uint8List bytesToSave = res.bodyBytes;
+
+      Uint8List bytesToSave = srcBytes;
+      String extension = 'jpg';
       try {
-        final codec = await ui.instantiateImageCodec(res.bodyBytes);
+        final codec = await ui.instantiateImageCodec(srcBytes);
         final frame = await codec.getNextFrame();
         final image = frame.image;
         final w = image.width.toDouble();
@@ -1938,87 +2015,93 @@ class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
         final src = Rect.fromLTWH(0, 0, w, h);
         canvas.drawImageRect(image, src, src, Paint());
         image.dispose();
-        // Watermark: app logo + merchant name + Vero360App
-        const double fontSize = 32;
-        const double fontSize2 = 24;
-        const double logoHeight = 58;
-        const double leftPad = 24;
-        final maxW = w - 48;
-        final bottomY = h - 24 - fontSize - 6 - fontSize2;
 
-        // 1) App logo (assets/logo_mark.png), expanded a bit
-        try {
-          final logoBytes = await rootBundle.load('assets/logo_mark.png');
-          final logoCodec = await ui.instantiateImageCodec(
-            logoBytes.buffer.asUint8List(logoBytes.offsetInBytes, logoBytes.lengthInBytes),
-          );
-          final logoFrame = await logoCodec.getNextFrame();
-          final logoImage = logoFrame.image;
+        final shortSide = w < h ? w : h;
+        final fontSize = (shortSide * 0.07).clamp(56.0, 160.0).toDouble();
+        final fontSize2 = (fontSize * 0.72).clamp(40.0, 120.0).toDouble();
+        final logoHeight = (fontSize * 1.85).clamp(88.0, 220.0).toDouble();
+        final leftPad = (shortSide * 0.035).clamp(28.0, 72.0).toDouble();
+        final bottomPad = (shortSide * 0.035).clamp(28.0, 72.0).toDouble();
+        final maxW = w - leftPad * 2;
+        final bottomY = h - bottomPad - fontSize - 8 - fontSize2;
+
+        final logoImage = await _logoImage();
+        if (logoImage != null) {
           final lw = logoImage.width.toDouble();
           final lh = logoImage.height.toDouble();
           if (lw > 0 && lh > 0) {
             final scale = logoHeight / lh;
             final scaledW = lw * scale;
-            final logoRect = Rect.fromLTWH(leftPad, bottomY - logoHeight - 4, scaledW, logoHeight);
             canvas.drawImageRect(
               logoImage,
               Rect.fromLTWH(0, 0, lw, lh),
-              logoRect,
-              Paint()..filterQuality = ui.FilterQuality.medium,
+              Rect.fromLTWH(leftPad, bottomY - logoHeight - 10, scaledW, logoHeight),
+              Paint()..filterQuality = FilterQuality.medium,
             );
-            logoImage.dispose();
           }
-        } catch (_) {}
+        }
 
-        // 2) Merchant name + Vero360App text
         final tp1 = TextPainter(
           text: TextSpan(
             text: widget.merchantName,
             style: TextStyle(
               color: Colors.white,
               fontSize: fontSize,
-              fontWeight: FontWeight.w600,
-              shadows: [
-                Shadow(color: Colors.black87, blurRadius: 4, offset: const Offset(1, 1)),
-                Shadow(color: Colors.black54, blurRadius: 2, offset: const Offset(0, 0)),
+              fontWeight: FontWeight.w700,
+              shadows: const [
+                Shadow(color: Colors.black87, blurRadius: 8, offset: Offset(2, 2)),
+                Shadow(color: Colors.black54, blurRadius: 4, offset: Offset(0, 0)),
               ],
             ),
           ),
           textDirection: ui.TextDirection.ltr,
         )..layout(maxWidth: maxW);
         final tp2 = TextPainter(
-          text: const TextSpan(
+          text: TextSpan(
             text: 'Vero360App',
             style: TextStyle(
               color: Colors.white,
               fontSize: fontSize2,
-              fontWeight: FontWeight.w500,
-              shadows: [
-                Shadow(color: Colors.black87, blurRadius: 4, offset: Offset(1, 1)),
-                Shadow(color: Colors.black54, blurRadius: 2, offset: Offset(0, 0)),
+              fontWeight: FontWeight.w600,
+              shadows: const [
+                Shadow(color: Colors.black87, blurRadius: 8, offset: Offset(2, 2)),
+                Shadow(color: Colors.black54, blurRadius: 4, offset: Offset(0, 0)),
               ],
             ),
           ),
           textDirection: ui.TextDirection.ltr,
         )..layout(maxWidth: maxW);
         tp1.paint(canvas, Offset(leftPad, bottomY));
-        tp2.paint(canvas, Offset(leftPad, bottomY + fontSize + 6));
+        tp2.paint(canvas, Offset(leftPad, bottomY + fontSize + 8));
 
         final picture = recorder.endRecording();
-        final outImage = await picture.toImage(w.round(), h.round());
-        final byteData = await outImage.toByteData(format: ui.ImageByteFormat.png);
+        final outW = w.round();
+        final outH = h.round();
+        final outImage = await picture.toImage(outW, outH);
+        final rgba = await outImage.toByteData(format: ui.ImageByteFormat.rawRgba);
         outImage.dispose();
-        if (byteData != null) {
-          bytesToSave = byteData.buffer.asUint8List();
+        if (rgba != null) {
+          bytesToSave = await compute(_encodeWatermarkJpg, <String, Object>{
+            'w': outW,
+            'h': outH,
+            'rgba': rgba.buffer.asUint8List(
+              rgba.offsetInBytes,
+              rgba.lengthInBytes,
+            ),
+          });
+          extension = 'jpg';
         }
       } catch (_) {
-        // If watermarking fails, save original bytes
+        // If watermarking fails, save original bytes (keep original format).
+        extension = 'jpg';
       }
-      final fileName = 'vero360_${DateTime.now().millisecondsSinceEpoch}.png';
+
+      final fileName =
+          'vero360_${DateTime.now().millisecondsSinceEpoch}.$extension';
       final result = await SaverGallery.saveImage(
         bytesToSave,
-        quality: 100,
-        extension: 'png',
+        quality: 90,
+        extension: extension,
         fileName: fileName,
         androidRelativePath: 'Pictures/Vero360',
         skipIfExists: false,

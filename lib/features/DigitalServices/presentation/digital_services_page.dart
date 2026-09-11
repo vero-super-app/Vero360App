@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
+import 'package:vero360_app/features/DigitalServices/digital_services_catalog.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_product_amount_page.dart';
 
 class DigitalServicesPage extends StatefulWidget {
@@ -22,6 +25,7 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
   static const _bg = Color(0xFFFFFBF6);
 
   final _searchCtrl = TextEditingController();
+  final _catalog = DigitalServicesCatalog.instance;
   String _category = 'all';
   String _query = '';
   late final AnimationController _enter;
@@ -29,6 +33,8 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
   @override
   void initState() {
     super.initState();
+    _catalog.addListener(_onCatalog);
+    unawaited(_catalog.ensureStarted());
     _enter = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 700),
@@ -40,15 +46,22 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
     });
   }
 
+  void _onCatalog() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _catalog.removeListener(_onCatalog);
     _searchCtrl.dispose();
     _enter.dispose();
     super.dispose();
   }
 
+  List<DigitalProduct> get _all => _catalog.allProducts;
+
   List<DigitalProduct> get _filtered {
-    return kAllDigitalProducts.where((p) {
+    return _all.where((p) {
       final catOk = _category == 'all' || p.category == _category;
       if (!catOk) return false;
       if (_query.isEmpty) return true;
@@ -90,7 +103,7 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
     );
   }
 
-  List<DigitalProduct> get _featured => kAllDigitalProducts
+  List<DigitalProduct> get _featured => _all
       .where((p) => p.category == 'gift_cards' || p.category == 'gaming')
       .take(6)
       .toList();
@@ -268,7 +281,7 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
                     children: [
                       _HeaderStat(
                         icon: Icons.bolt_rounded,
-                        label: '${kAllDigitalProducts.length}+ codes',
+                        label: '${_all.length}+ codes',
                       ),
                       const _HeaderStat(
                         icon: Icons.lock_rounded,

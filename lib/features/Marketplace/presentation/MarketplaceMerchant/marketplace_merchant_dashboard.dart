@@ -28,6 +28,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' show MediaType;
 import 'package:vero360_app/features/Marketplace/presentation/widgets/PostlatestArrival.dart';
+import 'package:vero360_app/widgets/vero_coin_icon_button.dart';
 import 'package:vero360_app/features/Promotions/presentation/Postpromotion.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
@@ -35,6 +36,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.s
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_moderation.dart';
 
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
+import 'package:vero360_app/GernalServices/marketplace_stock_reminder_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_seller_loader.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_id_resolver.dart';
 import 'package:vero360_app/GernalServices/profile_photo_cache.dart';
@@ -867,6 +869,15 @@ class _MarketplaceMerchantDashboardState
       _initialLoadComplete = true;
       if (_items.isNotEmpty) _loadingItems = false;
     });
+
+    final mid = (_auth.currentUser?.uid ?? _uid).trim();
+    if (mid.isNotEmpty) {
+      unawaited(
+        MarketplaceStockReminderService.nudgeActiveOutOfStockListings(
+          merchantUid: mid,
+        ),
+      );
+    }
   }
 
   void _hydrateItemsFromLocalCache() {
@@ -3936,6 +3947,12 @@ class _MarketplaceMerchantDashboardState
       ),
       backgroundColor: _brandOrange,
       actions: [
+        const VeroCoinIconButton(
+          size: 36,
+          iconSize: 18,
+          badgeBackground: Colors.white,
+          badgeTextColor: Color(0xFFD94F00),
+        ),
         Padding(
           padding: const EdgeInsets.only(right: 8),
           child: Stack(
@@ -4942,7 +4959,7 @@ class _MarketplaceMerchantDashboardState
                           borderRadius: BorderRadius.circular(999),
                         ),
                         child: Text(
-                          _isShopOpenNow ? 'OPEN' : 'CLOSED',
+                          _isShopOpenNow ? 'We are open' : 'We are closed',
                           style: TextStyle(
                             fontWeight: FontWeight.w900,
                             fontSize: 12,

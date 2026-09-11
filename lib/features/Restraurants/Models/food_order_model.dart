@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'package:vero360_app/features/Restraurants/Models/food_order_number.dart';
+
 class FoodOrderLineItem {
   final String menuItemId;
   final String name;
@@ -9,6 +11,7 @@ class FoodOrderLineItem {
   final String? notes;
   /// Selected add-on names (e.g. "Extra cheese"). Empty on legacy lines.
   final List<String> addOns;
+  final String? imageUrl;
 
   const FoodOrderLineItem({
     required this.menuItemId,
@@ -18,6 +21,7 @@ class FoodOrderLineItem {
     this.variant,
     this.notes,
     this.addOns = const [],
+    this.imageUrl,
   });
 
   factory FoodOrderLineItem.fromJson(Map<String, dynamic> json) {
@@ -62,6 +66,14 @@ class FoodOrderLineItem {
       variant: optStr(json['variant']),
       notes: optStr(json['notes']),
       addOns: addOns,
+      imageUrl: optStr(
+        json['imageUrl'] ??
+            json['image'] ??
+            json['FoodImage'] ??
+            json['photo'] ??
+            json['coverImage'] ??
+            json['coverImageUrl'],
+      ),
     );
   }
 
@@ -73,6 +85,8 @@ class FoodOrderLineItem {
         if (variant != null) 'variant': variant,
         if (notes != null) 'notes': notes,
         if (addOns.isNotEmpty) 'addOns': addOns,
+        if (imageUrl != null && imageUrl!.trim().isNotEmpty)
+          'imageUrl': imageUrl!.trim(),
       };
 
   double get lineTotalMwk => unitPriceMwk * quantity;
@@ -88,6 +102,8 @@ class FoodOrder {
   };
 
   final String id;
+  /// Public reference shown to buyer and merchant (VeroF…).
+  final String orderNumber;
   final String restaurantId;
   final String merchantId;
   final String customerUid;
@@ -113,11 +129,14 @@ class FoodOrder {
   final String courierTrackingNumber;
   final int? courierDeliveryId;
   final String pickupAddress;
+  /// Denormalized cover photo for order lists (first dish image).
+  final String? coverImageUrl;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
   const FoodOrder({
     required this.id,
+    this.orderNumber = '',
     required this.restaurantId,
     required this.merchantId,
     required this.customerUid,
@@ -141,6 +160,7 @@ class FoodOrder {
     this.courierTrackingNumber = '',
     this.courierDeliveryId,
     this.pickupAddress = '',
+    this.coverImageUrl,
     this.createdAt,
     this.updatedAt,
   });
@@ -205,9 +225,15 @@ class FoodOrder {
         }
       }
     }
+    _backfillLineImages(items, json['items']);
 
     return FoodOrder(
       id: optStr(json['id']) ?? '',
+      orderNumber: formatVeroFoodOrderNumber(
+        optStr(json['orderNumber']) ??
+            optStr(json['orderId']) ??
+            optStr(json['id']),
+      ),
       restaurantId: optStr(json['restaurantId']) ?? '',
       merchantId: optStr(json['merchantId']) ?? '',
       customerUid: optStr(json['customerUid']) ??
@@ -248,6 +274,12 @@ class FoodOrder {
       ).trim(),
       courierDeliveryId: courierId,
       pickupAddress: str(json['pickupAddress']),
+      coverImageUrl: optStr(
+        json['foodImageUrl'] ??
+            json['coverImageUrl'] ??
+            json['foodImage'] ??
+            json['coverImage'],
+      ),
       createdAt: asDate(json['createdAt']),
       updatedAt: asDate(json['updatedAt']),
     );
@@ -260,6 +292,7 @@ class FoodOrder {
 
   Map<String, dynamic> toJson() => {
         'id': id,
+        if (orderNumber.trim().isNotEmpty) 'orderNumber': orderNumber.trim(),
         'restaurantId': restaurantId,
         'merchantId': merchantId,
         'customerUid': customerUid,
@@ -289,7 +322,76 @@ class FoodOrder {
           'courierTrackingNumber': courierTrackingNumber.trim(),
         if (courierDeliveryId != null) 'courierDeliveryId': courierDeliveryId,
         if (pickupAddress.trim().isNotEmpty) 'pickupAddress': pickupAddress.trim(),
+        if (coverImageUrl != null && coverImageUrl!.trim().isNotEmpty)
+          'foodImageUrl': coverImageUrl!.trim(),
+        if (coverImageUrl != null && coverImageUrl!.trim().isNotEmpty)
+          'coverImageUrl': coverImageUrl!.trim(),
         if (createdAt != null) 'createdAt': createdAt!.toIso8601String(),
         if (updatedAt != null) 'updatedAt': updatedAt!.toIso8601String(),
       };
+
+  /// Order ref for UI — prefers [orderNumber], falls back to document id.
+  String get displayOrderNumber {
+    final n = orderNumber.trim();
+    if (n.isNotEmpty) return n;
+    return formatVeroFoodOrderNumber(id);
+  }
+
+  FoodOrderLineItem? get primaryLineItem =>
+      lineItems.isNotEmpty ? lineItems.first : null;
+
+  String get headerFoodTitle {
+    if (lineItems.isEmpty) return 'Food order';
+    if (lineItems.length == 1) {
+      final line = lineItems.first;
+      final v = line.variant?.trim() ?? '';
+      if (v.isNotEmpty) return '${line.name} ($v)';
+      return line.name;
+    }
+    return '${lineItems.length} dishes';
+  }
+
+  String? get headerFoodImageUrl {
+    final cover = coverImageUrl?.trim() ?? '';
+    if (cover.isNotEmpty) return cover;
+    for (final line in lineItems) {
+      final img = line.imageUrl?.trim() ?? '';
+      if (img.isNotEmpty) return img;
+    }
+    return null;
+  }
+}
+
+void _backfillLineImages(
+  List<FoodOrderLineItem> items,
+  dynamic legacyItems,
+) {
+  if (items.isEmpty || legacyItems is! List) return;
+  for (var i = 0; i < items.length; i++) {
+    if ((items[i].imageUrl ?? '').trim().isNotEmpty) continue;
+    if (i >= legacyItems.length) break;
+    final raw = legacyItems[i];
+    if (raw is! Map) continue;
+    final map = Map<String, dynamic>.from(raw);
+    String? url;
+    for (final key in ['imageUrl', 'image', 'FoodImage', 'photo', 'coverImage']) {
+      final v = map[key]?.toString().trim() ?? '';
+      if (v.isNotEmpty) {
+        url = v;
+        break;
+      }
+    }
+    if (url == null) continue;
+    final line = items[i];
+    items[i] = FoodOrderLineItem(
+      menuItemId: line.menuItemId,
+      name: line.name,
+      unitPriceMwk: line.unitPriceMwk,
+      quantity: line.quantity,
+      variant: line.variant,
+      notes: line.notes,
+      addOns: line.addOns,
+      imageUrl: url,
+    );
+  }
 }

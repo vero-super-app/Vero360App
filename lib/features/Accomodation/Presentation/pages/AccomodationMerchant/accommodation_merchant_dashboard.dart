@@ -34,6 +34,7 @@ import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/utils/app_logger.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/vero_coin_icon_button.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_amenities.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
@@ -723,6 +724,11 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                     ),
                   ],
                   const SizedBox(height: 24),
+                  const FacebookShareHint(
+                    message:
+                        'After you publish, we can also share this stay on the Vero360 Facebook Page to help grow your guests.',
+                  ),
+                  const SizedBox(height: 10),
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton(
@@ -1927,6 +1933,9 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         'Property added successfully',
         isSuccess: true,
         errorMessage: '',
+        showFacebook: true,
+        facebookMessage:
+            'We’ll also share this stay on the Vero360 Facebook Page.',
       );
     });
   }
@@ -3585,6 +3594,12 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
       ),
       backgroundColor: _brandOrange,
       actions: [
+        const VeroCoinIconButton(
+          size: 36,
+          iconSize: 18,
+          badgeBackground: Colors.white,
+          badgeTextColor: Color(0xFFD94F00),
+        ),
         Padding(
           padding: const EdgeInsets.only(right: 8),
           child: Tooltip(

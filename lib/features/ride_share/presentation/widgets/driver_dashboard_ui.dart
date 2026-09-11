@@ -1,39 +1,28 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 
-/// Online / Offline pill toggle for the driver header.
+/// Compact Online / Offline switch with a sliding thumb.
 class DriverOnlineToggle extends StatelessWidget {
   final bool isOnline;
   final VoidCallback onToggle;
-  /// When true, label/track use light colors for navy banners.
-  final bool onDark;
 
   const DriverOnlineToggle({
     required this.isOnline,
     required this.onToggle,
-    this.onDark = false,
     super.key,
   });
 
   @override
   Widget build(BuildContext context) {
-    final offlineTrack = onDark
-        ? Colors.white.withValues(alpha: 0.18)
-        : RideShareColors.surfaceContainer;
-    final offlineBorder = onDark
-        ? Colors.white.withValues(alpha: 0.28)
-        : RideShareColors.outlineVariant;
-    final labelColor = onDark
-        ? (isOnline ? Colors.white : Colors.white.withValues(alpha: 0.75))
-        : (isOnline
-            ? RideShareColors.primaryDeep
-            : RideShareColors.onSurfaceVariant);
-
     return GestureDetector(
-      onTap: onToggle,
+      onTap: () {
+        HapticFeedback.mediumImpact();
+        onToggle();
+      },
       behavior: HitTestBehavior.opaque,
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -45,12 +34,14 @@ class DriverOnlineToggle extends StatelessWidget {
             height: 28,
             padding: const EdgeInsets.all(3),
             decoration: BoxDecoration(
-              color: isOnline ? RideShareColors.primary : offlineTrack,
+              color: isOnline
+                  ? RideShareColors.primary
+                  : RideShareColors.surfaceContainer,
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
                 color: isOnline
                     ? RideShareColors.primaryDeep
-                    : offlineBorder,
+                    : RideShareColors.outlineVariant,
               ),
             ),
             alignment: isOnline ? Alignment.centerRight : Alignment.centerLeft,
@@ -77,7 +68,9 @@ class DriverOnlineToggle extends StatelessWidget {
             style: TextStyle(
               fontSize: 13,
               fontWeight: isOnline ? FontWeight.w800 : FontWeight.w600,
-              color: labelColor,
+              color: isOnline
+                  ? RideShareColors.primaryDeep
+                  : RideShareColors.onSurfaceVariant,
             ),
           ),
         ],
@@ -89,173 +82,105 @@ class DriverOnlineToggle extends StatelessWidget {
 class DriverEarningsSummaryCard extends StatelessWidget {
   final String todayAmountLabel;
   final int todayTrips;
-  final String weekAmountLabel;
-  final int weekTrips;
   final bool loading;
 
   const DriverEarningsSummaryCard({
     required this.todayAmountLabel,
     required this.todayTrips,
-    required this.weekAmountLabel,
-    required this.weekTrips,
     this.loading = false,
     super.key,
   });
 
   @override
   Widget build(BuildContext context) {
+    final tripsLabel = loading
+        ? 'Loading…'
+        : todayTrips == 0
+            ? 'No trips yet'
+            : '$todayTrips trip${todayTrips == 1 ? '' : 's'}';
+
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+      padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
           colors: [
             RideShareColors.primary,
             RideShareColors.primaryDeep,
-            RideShareColors.primaryDark,
           ],
         ),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: RideShareColors.primary.withValues(alpha: 0.28),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
+            color: RideShareColors.primary.withValues(alpha: 0.22),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
-      clipBehavior: Clip.antiAlias,
-      child: Stack(
+      child: Row(
         children: [
-          Positioned(
-            right: -16,
-            bottom: -20,
-            child: Icon(
-              Icons.account_balance_wallet_rounded,
-              size: 110,
-              color: Colors.white.withValues(alpha: 0.08),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "TODAY'S EARNINGS",
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.72),
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.7,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                if (loading)
+                  Container(
+                    height: 26,
+                    width: 112,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.22),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  )
+                else
+                  Text(
+                    todayAmountLabel,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.w900,
+                      height: 1.1,
+                      letterSpacing: -0.4,
+                    ),
+                  ),
+              ],
             ),
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Text(
-                    "TODAY'S EARNINGS",
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.7),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.8,
-                    ),
-                  ),
-                  const Spacer(),
-                  Icon(
-                    Icons.chevron_right_rounded,
-                    color: Colors.white.withValues(alpha: 0.75),
-                    size: 22,
-                  ),
-                ],
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              tripsLabel,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 12,
               ),
-              const SizedBox(height: 6),
-              if (loading)
-                Container(
-                  height: 36,
-                  width: 140,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                )
-              else
-                Text(
-                  todayAmountLabel,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 34,
-                    fontWeight: FontWeight.w900,
-                    height: 1.05,
-                    letterSpacing: -0.5,
-                  ),
-                ),
-              const SizedBox(height: 6),
-              Text(
-                loading
-                    ? 'Loading…'
-                    : todayTrips == 0
-                        ? 'No trips completed today'
-                        : '$todayTrips trip${todayTrips == 1 ? '' : 's'} today',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.85),
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
-                ),
-              ),
-              const SizedBox(height: 14),
-              Container(
-                width: double.infinity,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _miniStat(
-                        'This week',
-                        loading ? '—' : weekAmountLabel,
-                      ),
-                    ),
-                    Container(
-                      width: 1,
-                      height: 28,
-                      color: Colors.white.withValues(alpha: 0.25),
-                    ),
-                    Expanded(
-                      child: _miniStat(
-                        'Week trips',
-                        loading ? '—' : '$weekTrips',
-                        alignEnd: true,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+            ),
+          ),
+          Icon(
+            Icons.chevron_right_rounded,
+            color: Colors.white.withValues(alpha: 0.8),
+            size: 22,
           ),
         ],
       ),
-    );
-  }
-
-  Widget _miniStat(String label, String value, {bool alignEnd = false}) {
-    return Column(
-      crossAxisAlignment:
-          alignEnd ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.65),
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          value,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 15,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-      ],
     );
   }
 }

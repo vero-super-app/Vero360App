@@ -49,6 +49,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
   Future<List<Ride>>? _recentRidesFuture;
   Position? _detectedPosition;
   bool _locatingDriver = false;
+  bool _availabilityBusy = false;
 
   bool get _isOnline => ref.watch(driverOnlineSessionProvider).isOnline;
 
@@ -421,22 +422,12 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
   Widget _buildHeader() {
     // Navy banner — matches merchant / customer profile headers.
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-      padding: const EdgeInsets.fromLTRB(8, 10, 12, 12),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(22),
-        gradient: LinearGradient(
-          colors: [_brandNavy, _brandNavy.withValues(alpha: 0.86)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+      padding: const EdgeInsets.fromLTRB(8, 6, 12, 10),
+      decoration: const BoxDecoration(
+        color: RideShareColors.background,
+        border: Border(
+          bottom: BorderSide(color: RideShareColors.outlineVariant, width: 0.6),
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 16,
-            offset: const Offset(0, 8),
-          ),
-        ],
       ),
       child: Row(
         children: [
@@ -448,42 +439,27 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
               }
             },
             icon: const Icon(Icons.arrow_back),
-            color: Colors.white,
+            color: RideShareColors.titleText,
             tooltip: 'Back',
             style: IconButton.styleFrom(
-              backgroundColor: Colors.white.withValues(alpha: 0.14),
+              backgroundColor: RideShareColors.surfaceContainerLow,
               shape: const CircleBorder(),
             ),
           ),
           const SizedBox(width: 4),
           const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Vero Ride',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.white,
-                  ),
-                ),
-                SizedBox(height: 2),
-                Text(
-                  'Driver dashboard',
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xD9FFFFFF),
-                  ),
-                ),
-              ],
+            child: Text(
+              'Vero Ride',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+                color: RideShareColors.titleText,
+              ),
             ),
           ),
           DriverOnlineToggle(
             isOnline: _isOnline,
             onToggle: _handleOnlineToggle,
-            onDark: true,
           ),
           const SizedBox(width: 10),
           _buildStoryProfileAppBarAction(),
@@ -493,6 +469,16 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
   }
 
   Future<void> _handleOnlineToggle() async {
+    if (_availabilityBusy) return;
+    setState(() => _availabilityBusy = true);
+    try {
+      await _performOnlineToggle();
+    } finally {
+      if (mounted) setState(() => _availabilityBusy = false);
+    }
+  }
+
+  Future<void> _performOnlineToggle() async {
     final session = ref.read(driverOnlineSessionProvider);
     if (session.isOnline) {
       try {
@@ -625,11 +611,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
         final loading = snap.connectionState == ConnectionState.waiting &&
             !snap.hasData;
         final today = snap.data?.today;
-        final week = snap.data?.thisWeek;
         final todayEarnings = today?.earnings ?? 0;
         final todayTrips = today?.trips ?? 0;
-        final weekEarnings = week?.earnings ?? 0;
-        final weekTrips = week?.trips ?? 0;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -648,8 +631,6 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
               child: DriverEarningsSummaryCard(
                 todayAmountLabel: formatRideMoney(todayEarnings, _money),
                 todayTrips: todayTrips,
-                weekAmountLabel: formatRideMoney(weekEarnings, _money),
-                weekTrips: weekTrips,
                 loading: loading,
               ),
             ),

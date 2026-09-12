@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
 
 /// Loads admin-editable USD→MWK rate + product prices from
@@ -16,6 +17,7 @@ class DigitalServicesCatalog extends ChangeNotifier {
   List<DigitalProduct> _homepage = List<DigitalProduct>.from(kDigitalProducts);
   List<DigitalProduct> _all = List<DigitalProduct>.from(kAllDigitalProducts);
   bool _loaded = false;
+  bool _hasRemoteConfig = false;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _sub;
 
   double get usdToMwkRate => _usdToMwkRate;
@@ -29,16 +31,15 @@ class DigitalServicesCatalog extends ChangeNotifier {
   Future<void> ensureStarted() async {
     if (_sub != null) return;
     try {
-      final ref =
-          FirebaseFirestore.instance.doc(configPath);
+      final ref = FirebaseFirestore.instance.doc(configPath);
       // One-shot first so UI gets prices quickly.
       final snap = await ref.get();
-      _applySnapshot(snap.data());
+      _applySnapshot(snap.data(), docExists: snap.exists);
       _loaded = true;
       notifyListeners();
 
       _sub = ref.snapshots().listen((doc) {
-        _applySnapshot(doc.data());
+        _applySnapshot(doc.data(), docExists: doc.exists);
         _loaded = true;
         notifyListeners();
       }, onError: (e) {
@@ -55,14 +56,68 @@ class DigitalServicesCatalog extends ChangeNotifier {
     }
   }
 
-  void _applySnapshot(Map<String, dynamic>? data) {
-    if (data == null || data.isEmpty) {
+  static bool _asActive(dynamic value) {
+    if (value == null) return true;
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    final s = '$value'.trim().toLowerCase();
+    if (s.isEmpty) return true;
+    if (s == 'false' || s == '0' || s == 'no' || s == 'off' || s == 'inactive') {
+      return false;
+    }
+    if (s == 'true' || s == '1' || s == 'yes' || s == 'on' || s == 'active') {
+      return true;
+    }
+    return true;
+  }
+
+  static Map<String, Map<String, dynamic>> _parseProducts(dynamic rawProducts) {
+    final byKey = <String, Map<String, dynamic>>{};
+    Iterable<dynamic> items = const [];
+    if (rawProducts is List) {
+      items = rawProducts;
+    } else if (rawProducts is Map) {
+      items = rawProducts.values;
+    }
+    for (final item in items) {
+      if (item is! Map) continue;
+      final m = Map<String, dynamic>.from(
+        item.map((k, v) => MapEntry(k.toString(), v)),
+      );
+      final key = (m['key'] ?? '').toString().trim();
+      if (key.isEmpty) continue;
+      byKey[key] = m;
+    }
+    return byKey;
+  }
+
+  static Set<String> _parseDisabledKeys(dynamic raw, Map<String, Map<String, dynamic>> byKey) {
+    final disabled = <String>{};
+    if (raw is List) {
+      for (final e in raw) {
+        final k = '$e'.trim();
+        if (k.isNotEmpty) disabled.add(k);
+      }
+    }
+    for (final entry in byKey.entries) {
+      if (!_asActive(entry.value['active'])) {
+        disabled.add(entry.key);
+      }
+    }
+    return disabled;
+  }
+
+  void _applySnapshot(Map<String, dynamic>? data, {required bool docExists}) {
+    if (!docExists || data == null || data.isEmpty) {
+      _hasRemoteConfig = false;
       _usdToMwkRate = kUsdToMwkRate;
       digitalServicesUsdToMwkRate = kUsdToMwkRate;
       _homepage = List<DigitalProduct>.from(kDigitalProducts);
       _all = List<DigitalProduct>.from(kAllDigitalProducts);
       return;
     }
+
+    _hasRemoteConfig = true;
 
     final rateRaw = data['usdToMwkRate'];
     final rate = rateRaw is num
@@ -71,33 +126,26 @@ class DigitalServicesCatalog extends ChangeNotifier {
     _usdToMwkRate = rate.clamp(100, 100000);
     digitalServicesUsdToMwkRate = _usdToMwkRate;
 
-    final byKey = <String, Map<String, dynamic>>{};
-    final rawProducts = data['products'];
-    if (rawProducts is List) {
-      for (final item in rawProducts) {
-        if (item is! Map) continue;
-        final m = Map<String, dynamic>.from(
-          item.map((k, v) => MapEntry(k.toString(), v)),
-        );
-        final key = (m['key'] ?? '').toString().trim();
-        if (key.isEmpty) continue;
-        byKey[key] = m;
-      }
-    }
+    final byKey = _parseProducts(data['products']);
+    final disabledKeys = _parseDisabledKeys(data['disabledProductKeys'], byKey);
 
     DigitalProduct merge(DigitalProduct base) {
       final cfg = byKey[base.key];
-      if (cfg == null) return base;
+      final active = !disabledKeys.contains(base.key) &&
+          (cfg == null || _asActive(cfg['active']));
 
-      final active = cfg['active'] != false;
       if (!active) {
-        // Keep in merge map as inactive — filtered below.
         return base.copyWith(active: false);
+      }
+      if (cfg == null) {
+        return base.copyWith(active: true);
       }
 
       final name = (cfg['name'] ?? '').toString().trim();
       final subtitle = (cfg['subtitle'] ?? '').toString().trim();
       final brandTag = (cfg['brandTag'] ?? '').toString().trim();
+      final imageUrl = (cfg['imageUrl'] ?? '').toString().trim();
+      final unitLabel = (cfg['unitLabel'] ?? '').toString().trim();
 
       double? fixed;
       final fixedRaw = cfg['fixedMwkPrice'];
@@ -106,6 +154,15 @@ class DigitalServicesCatalog extends ChangeNotifier {
             ? fixedRaw.toDouble()
             : double.tryParse('$fixedRaw');
         if (n != null && n > 0) fixed = n;
+      }
+
+      double? mwkPerUnit;
+      final rateRawUnit = cfg['mwkPerUnit'];
+      if (rateRawUnit != null && '$rateRawUnit'.trim().isNotEmpty) {
+        final n = rateRawUnit is num
+            ? rateRawUnit.toDouble()
+            : double.tryParse('$rateRawUnit');
+        if (n != null && n > 0) mwkPerUnit = n;
       }
 
       List<double>? amounts;
@@ -134,25 +191,108 @@ class DigitalServicesCatalog extends ChangeNotifier {
         usdAmounts: !isSub && amounts != null && amounts.isNotEmpty
             ? amounts
             : null,
+        mwkPerUnit: !isSub ? (mwkPerUnit ?? base.mwkPerUnit) : base.mwkPerUnit,
+        unitLabel: unitLabel.isNotEmpty ? unitLabel : null,
+        imageUrl: imageUrl.isNotEmpty ? imageUrl : null,
         active: true,
       );
     }
 
-    bool isActive(DigitalProduct p) {
-      final cfg = byKey[p.key];
-      if (cfg == null) return true;
-      return cfg['active'] != false;
+    DigitalProduct fromRemoteOnly(String key, Map<String, dynamic> cfg) {
+      final name = (cfg['name'] ?? key).toString().trim();
+      final subtitle = (cfg['subtitle'] ?? '').toString().trim();
+      final brandTag = (cfg['brandTag'] ?? '').toString().trim();
+      final category = (cfg['category'] ?? 'crypto').toString().trim();
+      final imageUrl = (cfg['imageUrl'] ?? '').toString().trim();
+      final unitLabel = (cfg['unitLabel'] ?? '').toString().trim();
+
+      double? fixed;
+      final fixedRaw = cfg['fixedMwkPrice'];
+      if (fixedRaw != null && '$fixedRaw'.trim().isNotEmpty) {
+        final n = fixedRaw is num
+            ? fixedRaw.toDouble()
+            : double.tryParse('$fixedRaw');
+        if (n != null && n > 0) fixed = n;
+      }
+
+      double? mwkPerUnit;
+      final rateRawUnit = cfg['mwkPerUnit'];
+      if (rateRawUnit != null && '$rateRawUnit'.trim().isNotEmpty) {
+        final n = rateRawUnit is num
+            ? rateRawUnit.toDouble()
+            : double.tryParse('$rateRawUnit');
+        if (n != null && n > 0) mwkPerUnit = n;
+      }
+
+      List<double> amounts = const [];
+      final amountsRaw = cfg['usdAmounts'];
+      if (amountsRaw is List) {
+        amounts = amountsRaw
+            .map((e) => e is num ? e.toDouble() : double.tryParse('$e') ?? 0)
+            .where((e) => e > 0)
+            .toList();
+      }
+
+      final isSub = category == 'streaming' || category == 'subscription';
+      return DigitalProduct(
+        key: key,
+        name: name.isNotEmpty ? name : key,
+        subtitle: subtitle.isNotEmpty
+            ? subtitle
+            : (unitLabel.isNotEmpty ? '$unitLabel digital card' : 'Digital card'),
+        category: category.isNotEmpty ? category : 'crypto',
+        accent: const Color(0xFF0F766E),
+        brandTag: brandTag.isNotEmpty
+            ? brandTag
+            : (unitLabel.isNotEmpty ? unitLabel : name),
+        usdAmounts: isSub ? const [] : amounts,
+        fixedMwkPrice: isSub ? fixed : null,
+        mwkPerUnit: isSub ? null : mwkPerUnit,
+        unitLabel: unitLabel.isNotEmpty ? unitLabel : null,
+        imageUrl: imageUrl.isNotEmpty ? imageUrl : null,
+        icon: Icons.currency_exchange_rounded,
+        active: true,
+      );
     }
 
-    _homepage = kDigitalProducts.map(merge).where(isActive).toList();
-    _all = kAllDigitalProducts.map(merge).where(isActive).toList();
+    // Always hide disabled / out-of-stock products. Never restore the full
+    // local catalog when remote config exists — that was re-showing Spotify etc.
+    final localKeys = {
+      ...kDigitalProducts.map((p) => p.key),
+      ...kAllDigitalProducts.map((p) => p.key),
+    };
 
-    // Ensure homepage streaming list stays non-empty.
-    if (_homepage.isEmpty) {
-      _homepage = List<DigitalProduct>.from(kDigitalProducts);
+    _homepage = kDigitalProducts
+        .map(merge)
+        .where((p) => p.active && !disabledKeys.contains(p.key))
+        .toList();
+    _all = kAllDigitalProducts
+        .map(merge)
+        .where((p) => p.active && !disabledKeys.contains(p.key))
+        .toList();
+
+    // Append admin-created cards (USDT, Yuan, BNB, …) that are not in the
+    // baked-in Flutter catalog.
+    for (final entry in byKey.entries) {
+      final key = entry.key;
+      if (localKeys.contains(key)) continue;
+      if (disabledKeys.contains(key)) continue;
+      if (!_asActive(entry.value['active'])) continue;
+      final remote = fromRemoteOnly(key, entry.value);
+      if (!_all.any((p) => p.key == key)) {
+        _all = [..._all, remote];
+      }
+      // Show crypto cards on homepage digital strip too.
+      if (!_homepage.any((p) => p.key == key)) {
+        _homepage = [..._homepage, remote];
+      }
     }
-    if (_all.isEmpty) {
-      _all = List<DigitalProduct>.from(kAllDigitalProducts);
+
+    if (kDebugMode && disabledKeys.isNotEmpty) {
+      debugPrint(
+        '[DigitalServicesCatalog] hidden (out of stock): ${disabledKeys.join(', ')} '
+        '(remote=$_hasRemoteConfig homepage=${_homepage.length} all=${_all.length})',
+      );
     }
   }
 

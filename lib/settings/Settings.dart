@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/painting.dart';
 
@@ -1667,8 +1668,12 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _shareApp() async {
     _maybeHaptic();
     try {
-      const storeUrl =
-          'https://play.google.com/store/apps/details?id=com.vero265.app';
+      final check = await AppUpdateChecker.check();
+      final storeUrl = check.storeUrl.trim().isNotEmpty
+          ? check.storeUrl.trim()
+          : (defaultTargetPlatform == TargetPlatform.iOS
+              ? AppUpdateChecker.appStoreSearchUrl()
+              : AppUpdateChecker.playStoreUrl(AppUpdateChecker.playStoreId));
       final text = _t(
         'Try Vero360 – one app for VeroRide,marketplace, food, transport,accomodation and more. $storeUrl',
         'Yesani Vero360 – pulogalamu imodzi ya msika, chakudya, mayendedwe, ndi zina. $storeUrl',

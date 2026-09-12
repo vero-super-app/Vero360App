@@ -173,12 +173,83 @@ async function postLinkToFacebookPage({ link, message, pageId, token }) {
   const res = await fetch(url.toString(), { method: 'POST' });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    console.error('Facebook Graph post failed', res.status, body);
+    console.error('Facebook Graph link post failed', res.status, body);
     throw new Error(
       `Facebook Graph error ${res.status}: ${JSON.stringify(body)}`,
     );
   }
   return body && body.id ? String(body.id) : null;
+}
+
+/**
+ * Prefer a photo post (shows the product image on the Page) with caption + link.
+ * Falls back to a plain link post when no public image URL is available.
+ */
+async function postPhotoToFacebookPage({
+  imageUrl,
+  caption,
+  pageId,
+  token,
+}) {
+  const pid = String(pageId || DEFAULT_PAGE_ID).trim() || DEFAULT_PAGE_ID;
+  const access = String(token || '').trim();
+  const img = String(imageUrl || '').trim();
+  if (!access || !img || !/^https?:\/\//i.test(img)) return null;
+
+  const url = new URL(
+    `https://graph.facebook.com/${GRAPH_VERSION}/${encodeURIComponent(pid)}/photos`,
+  );
+  url.searchParams.set('access_token', access);
+  url.searchParams.set('url', img);
+  url.searchParams.set('caption', caption);
+  url.searchParams.set('published', 'true');
+
+  const res = await fetch(url.toString(), { method: 'POST' });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    console.warn('Facebook Graph photo post failed', res.status, body);
+    return null;
+  }
+  // Photo posts return { id: "<photo_id>", post_id: "<pageId_postId>" }
+  if (body && body.post_id) return String(body.post_id);
+  if (body && body.id) return String(body.id);
+  return null;
+}
+
+async function claimFacebookPostSlot(ref) {
+  return admin.firestore().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return false;
+    const data = snap.data() || {};
+    if (data.facebookPostId || data.facebookPostedAt) return false;
+    // Soft claim so concurrent CF triggers don't double-post.
+    if (data.facebookPostClaimAt) {
+      const claimed = data.facebookPostClaimAt;
+      const ms =
+        claimed && typeof claimed.toMillis === 'function'
+          ? claimed.toMillis()
+          : Number(claimed) || 0;
+      // Allow retry if claim is older than 3 minutes (failed previous attempt).
+      if (ms > 0 && Date.now() - ms < 3 * 60 * 1000) return false;
+    }
+    tx.set(
+      ref,
+      {
+        facebookPostClaimAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    return true;
+  });
+}
+
+async function clearFacebookPostClaim(ref) {
+  try {
+    await ref.set(
+      { facebookPostClaimAt: admin.firestore.FieldValue.delete() },
+      { merge: true },
+    );
+  } catch (_) {}
 }
 
 async function markPosted(ref, postId) {
@@ -188,6 +259,7 @@ async function markPosted(ref, postId) {
     {
       facebookPostId: id,
       facebookPostedAt: admin.firestore.FieldValue.serverTimestamp(),
+      facebookPostClaimAt: admin.firestore.FieldValue.delete(),
     },
     { merge: true },
   );
@@ -216,7 +288,9 @@ async function handleFacebookPost({
         !after.facebookPostedAt
       : becameLiveMarketplace(before, after);
     link = marketplaceShareUrl(docId, after);
-    message = `New on Vero360 Marketplace: ${listingTitle(after)}\n${link}`;
+    const price =
+      after.price != null ? ` — MWK ${Number(after.price).toLocaleString('en-US')}` : '';
+    message = `New on Vero360 Marketplace: ${listingTitle(after)}${price}\n${link}`;
   } else if (kind === 'food') {
     shouldPost = isCreate
       ? isPublicFood(after) && !after.facebookPostId && !after.facebookPostedAt
@@ -235,25 +309,49 @@ async function handleFacebookPost({
 
   if (!shouldPost) return;
 
-  const postId = await postLinkToFacebookPage({
-    link,
-    message,
-    pageId,
-    token,
-  });
-  // Never stamp facebookPostedAt without a real Graph post id — that permanently
-  // blocks retries after auto-moderation when the token was missing or Graph
-  // returned an empty body.
-  if (!postId) {
-    console.warn(
-      `Facebook Page post skipped / no id (${kind})`,
-      docId,
-      '— not marking as posted',
-    );
+  const claimed = await claimFacebookPostSlot(afterSnap.ref);
+  if (!claimed) {
+    console.log(`Facebook Page post skipped (already claimed/posted) (${kind})`, docId);
     return;
   }
-  await markPosted(afterSnap.ref, postId);
-  console.log(`Facebook Page post ok (${kind})`, docId, postId);
+
+  try {
+    const imageUrl = firstHttpImage(after);
+    let postId = null;
+    if (imageUrl) {
+      postId = await postPhotoToFacebookPage({
+        imageUrl,
+        caption: message,
+        pageId,
+        token,
+      });
+    }
+    if (!postId) {
+      postId = await postLinkToFacebookPage({
+        link,
+        message,
+        pageId,
+        token,
+      });
+    }
+    // Never stamp facebookPostedAt without a real Graph post id — that permanently
+    // blocks retries after auto-moderation when the token was missing or Graph
+    // returned an empty body.
+    if (!postId) {
+      console.warn(
+        `Facebook Page post skipped / no id (${kind})`,
+        docId,
+        '— not marking as posted',
+      );
+      await clearFacebookPostClaim(afterSnap.ref);
+      return;
+    }
+    await markPosted(afterSnap.ref, postId);
+    console.log(`Facebook Page post ok (${kind})`, docId, postId);
+  } catch (err) {
+    await clearFacebookPostClaim(afterSnap.ref);
+    throw err;
+  }
 }
 
 /**

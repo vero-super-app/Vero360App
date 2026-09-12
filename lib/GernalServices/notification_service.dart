@@ -39,6 +39,7 @@ import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart'
     as market;
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/LatestArrival_page.dart';
+import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
@@ -576,6 +577,22 @@ class NotificationService {
     }
 
     final id = message.messageId ?? 'fcm_${message.hashCode}_${DateTime.now().millisecondsSinceEpoch}';
+    // Chat alerts are also ingested via WebSocket + Firestore listeners — use the
+    // shared chat helper so store + tray ids collapse instead of duplicating.
+    if (type == 'new_message') {
+      final chatId = (data['chatId'] ?? data['chat_id'] ?? '').toString().trim();
+      try {
+        await showNewChatMessageNotification(
+          senderName: title,
+          body: body,
+          chatId: chatId.isEmpty ? id : chatId,
+        );
+      } catch (e) {
+        if (kDebugMode) debugPrint('Chat FCM notify failed: $e');
+      }
+      return;
+    }
+
     try {
       NotificationStore.instance.addNotification(
         id: id,
@@ -632,12 +649,27 @@ class NotificationService {
   void _addToStoreIfNeeded(RemoteMessage message) {
     if (!_payloadBelongsToCurrentUser(message.data)) return;
     final n = message.notification;
+    final data = message.data;
+    final type = (data['type'] as String?)?.toLowerCase() ?? '';
+    final title = n?.title ?? data['title'] as String? ?? 'Notification';
+    final body = n?.body ?? data['body'] as String? ?? '';
+    if (type == 'new_message') {
+      final chatId = (data['chatId'] ?? data['chat_id'] ?? '').toString().trim();
+      unawaited(showNewChatMessageNotification(
+        senderName: title,
+        body: body.isEmpty ? 'Sent you a message' : body,
+        chatId: chatId.isEmpty
+            ? (message.messageId ?? 'chat')
+            : chatId,
+      ));
+      return;
+    }
     final id = message.messageId ?? 'fcm_${message.hashCode}_${DateTime.now().millisecondsSinceEpoch}';
     NotificationStore.instance.addNotification(
       id: id,
-      title: n?.title ?? 'Notification',
-      body: n?.body ?? '',
-      payload: message.data,
+      title: title,
+      body: body,
+      payload: data,
     );
   }
 
@@ -993,6 +1025,26 @@ class NotificationService {
         openVeroMainShell(navigator.context, email: email, tabIndex: 4);
         break;
 
+      case 'marketplace_moderation':
+        if (kDebugMode) debugPrint('→ Open marketplace listing (moderation)');
+        final modStatus =
+            (data['status'] ?? '').toString().trim().toLowerCase();
+        if (modStatus == 'rejected') {
+          final email = FirebaseAuth.instance.currentUser?.email ?? '';
+          navigator.push(
+            MaterialPageRoute(
+              builder: (_) => MarketplaceMerchantDashboard(
+                email: email,
+                merchantUid: FirebaseAuth.instance.currentUser?.uid,
+                onBackToHomeTab: () {},
+              ),
+            ),
+          );
+        } else {
+          unawaited(_openMarketplaceTarget(navigator, data));
+        }
+        break;
+
       case 'accommodation_booking':
         if (kDebugMode) debugPrint('→ Open stay bookings');
         navigator.push(
@@ -1248,29 +1300,33 @@ class NotificationService {
   /// `quick_my_orders`, `quick_shipped`, `quick_received`, `quick_refund`, `quick_promotions`,
   /// `quick_post_arrival` (see [NotificationStore] constants).
 
-  /// Push / in-app alert when a new chat message arrives (WebSocket path).
+  /// Push / in-app alert when a new chat message arrives (WebSocket / Firestore / FCM).
   Future<void> showNewChatMessageNotification({
     required String senderName,
     required String body,
     required String chatId,
   }) async {
     if (FirebaseAuth.instance.currentUser == null) return;
-    final payload = jsonEncode({
+    final safeChatId = chatId.trim().isEmpty ? 'chat' : chatId.trim();
+    final payloadMap = <String, dynamic>{
       'type': 'new_message',
-      'chatId': chatId,
-    });
-    final id = 'chat_${chatId}_${DateTime.now().millisecondsSinceEpoch}';
-    await NotificationStore.instance.addNotification(
+      'chatId': safeChatId,
+      'badgeRoute': 'messages',
+    };
+    final payload = jsonEncode(payloadMap);
+    // Stable-enough id so rapid WS+Firestore+FCM copies collapse in the store.
+    final id =
+        'chat_${safeChatId}_${senderName.trim().hashCode}_${body.trim().hashCode}';
+    final added = await NotificationStore.instance.addNotification(
       id: id,
       title: senderName,
       body: body,
-      payload: {
-        'type': 'new_message',
-        'chatId': chatId,
-      },
+      payload: payloadMap,
     );
+    // Skip second tray banner when WS/Firestore/FCM all fire for the same message.
+    if (!added) return;
     await _showLocalNotification(
-      id: chatId.hashCode.abs(),
+      id: safeChatId.hashCode.abs(),
       title: senderName,
       body: body,
       payload: payload,

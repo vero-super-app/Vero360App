@@ -34,7 +34,13 @@ import 'package:vero360_app/config/paychangu_config.dart';
 
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/Latest_model.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketPlace.dart';
+import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/MarkeplaceMerchantServices/latest_Services.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_seller_loader.dart';
+import 'package:vero360_app/Home/MessagePageBackendApi.dart';
+import 'package:vero360_app/GeneralModels/chat_product_context.dart';
+import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
@@ -2713,6 +2719,80 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
     }
   }
 
+  Future<LatestArrivalModels> _enrichSeller(LatestArrivalModels it) async {
+    if ((it.resolvedMerchantRef ?? '').isNotEmpty &&
+        (it.merchantName ?? '').trim().isNotEmpty) {
+      return it;
+    }
+    final id = it.id.trim();
+    if (id.isEmpty) return it;
+    try {
+      for (final col in const ['latestarrivals', 'latest_arrivals']) {
+        final doc = await FirebaseFirestore.instance
+            .collection(col)
+            .doc(id)
+            .get(const GetOptions(source: Source.serverAndCache));
+        if (!doc.exists) continue;
+        final d = doc.data() ?? {};
+        final merchantId = (d['merchantId'] ??
+                d['firebaseUid'] ??
+                d['sellerUserId'] ??
+                d['uid'] ??
+                '')
+            .toString()
+            .trim();
+        final merchantName = (d['merchantName'] ??
+                d['businessName'] ??
+                d['sellerBusinessName'] ??
+                d['shopName'] ??
+                '')
+            .toString()
+            .trim();
+        final sp = (d['serviceProviderId'] ?? '').toString().trim();
+        final sellerUid = (d['sellerUserId'] ?? '').toString().trim();
+        final backendRaw = d['merchantBackendId'] ?? d['userId'] ?? d['ownerId'];
+        final backendId = backendRaw is num
+            ? backendRaw.toInt()
+            : int.tryParse(backendRaw?.toString() ?? '');
+
+        var enriched = it.copyWith(
+          merchantId: merchantId.isNotEmpty ? merchantId : it.merchantId,
+          merchantName:
+              merchantName.isNotEmpty ? merchantName : it.merchantName,
+          sellerUserId: sellerUid.isNotEmpty ? sellerUid : it.sellerUserId,
+          serviceProviderId: sp.isNotEmpty ? sp : it.serviceProviderId,
+          merchantBackendId: backendId ?? it.merchantBackendId,
+        );
+
+        final ref = enriched.resolvedMerchantRef;
+        if ((enriched.merchantName ?? '').trim().isEmpty &&
+            ref != null &&
+            ref.isNotEmpty) {
+          try {
+            final seller = await MerchantSellerLoader.load(
+              merchantId: ref,
+              serviceProviderId: enriched.serviceProviderId,
+              backendUserIdHint: enriched.merchantBackendId,
+            );
+            enriched = enriched.copyWith(
+              merchantName: seller.displayName,
+              merchantId: seller.merchantRef.isNotEmpty
+                  ? seller.merchantRef
+                  : enriched.merchantId,
+              sellerUserId: seller.sellerUserId ?? enriched.sellerUserId,
+              serviceProviderId:
+                  seller.serviceProviderId ?? enriched.serviceProviderId,
+              merchantBackendId:
+                  seller.backendMerchantId ?? enriched.merchantBackendId,
+            );
+          } catch (_) {}
+        }
+        return enriched;
+      }
+    } catch (_) {}
+    return it;
+  }
+
   Future<String?> _imgFuture(LatestArrivalModels it) {
     final key = it.id.isNotEmpty ? it.id : '${it.name}_${it.price}';
     return _imgCache.putIfAbsent(key, () => _resolveImage(it));
@@ -2736,6 +2816,7 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
     final parsed = int.tryParse(it.id.trim());
     final itemId = parsed ?? _fnv1a32('latest:${it.id}:${it.name}');
     final userKey = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final merchantRef = it.resolvedMerchantRef ?? 'marketplace';
     return CartModel(
       userId: userKey,
       item: itemId,
@@ -2745,32 +2826,10 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
       price: it.price.toDouble(),
       description: '',
       comment: null,
-      merchantId: 'marketplace',
-      merchantName: 'Marketplace',
+      merchantId: merchantRef,
+      merchantName: it.sellerDisplayName,
       serviceType: 'marketplace',
     );
-  }
-
-  Future<void> _addToCart(LatestArrivalModels it,
-      {required int qty, required BuildContext sheetCtx}) async {
-    if (qty <= 0) return;
-    if (FirebaseAuth.instance.currentUser == null) {
-      ToastHelper.showCustomToast(sheetCtx, 'Please log in to add items.',
-          isSuccess: false, errorMessage: '');
-      return;
-    }
-    try {
-      final img = (await _resolveImage(it)) ?? it.imageUrl;
-      await _cart.addToCart(_makeCartModel(it, img, qty: qty));
-      if (!mounted) return;
-      ToastHelper.showCustomToast(sheetCtx, '${it.name} added to cart',
-          isSuccess: true, errorMessage: '');
-    } catch (e) {
-      if (!mounted) return;
-      ToastHelper.showCustomToast(
-          sheetCtx, 'Failed to add to cart — please log in',
-          isSuccess: false, errorMessage: UserFacingError.from(e));
-    }
   }
 
   Future<void> _buyNow(LatestArrivalModels it,
@@ -2795,7 +2854,146 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
     );
   }
 
-  void _openDetails(LatestArrivalModels it) {
+  Future<void> _messageSeller(
+    LatestArrivalModels it, {
+    required BuildContext sheetCtx,
+  }) async {
+    if (FirebaseAuth.instance.currentUser == null) {
+      ToastHelper.showCustomToast(sheetCtx, 'Please log in to message the seller.',
+          isSuccess: false, errorMessage: '');
+      return;
+    }
+
+    final merchantRef = it.resolvedMerchantRef;
+    if (merchantRef == null || merchantRef.isEmpty) {
+      ToastHelper.showCustomToast(
+        sheetCtx,
+        'Seller info is not available for this item yet.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+
+    try {
+      unawaited(BackendChatService.warmForMarketplaceChat().catchError((_) {}));
+      unawaited(BackendMessagingSocket.connect().catchError((_) {}));
+
+      final ownerId = it.merchantBackendId;
+      final myId = BackendChatService.peekUserId();
+      if (myId != null &&
+          BackendChatService.isOwnMarketplaceListingSync(
+            myBackendId: myId,
+            ownerId: ownerId,
+            sellerUserId: it.sellerUserId,
+            merchantId: merchantRef,
+          )) {
+        ToastHelper.showCustomToast(
+          sheetCtx,
+          'This is your own listing — you cannot chat with yourself.',
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return;
+      }
+
+      String peerId = '';
+      int? peerUserId = (ownerId != null && ownerId > 0) ? ownerId : null;
+      if (peerUserId != null) {
+        final cached =
+            BackendChatService.findCachedDirectChatWithPeer(peerUserId);
+        if (cached != null) peerId = cached.id;
+      }
+
+      Future<MerchantChatResult>? pendingChat;
+      if (peerId.isEmpty) {
+        pendingChat = BackendChatService.startMerchantChat(
+          sqlItemId: int.tryParse(it.id),
+          ownerId: ownerId,
+          sellerUserId: it.sellerUserId,
+          serviceProviderId: it.serviceProviderId,
+          merchantId: merchantRef,
+          firestoreItemDocId: it.id,
+        );
+        try {
+          final quick =
+              await pendingChat.timeout(const Duration(milliseconds: 550));
+          peerId = quick.chat.id;
+          peerUserId = quick.sellerId;
+          pendingChat = null;
+        } on TimeoutException {
+          // Continue into chat; page awaits the same future.
+        }
+      }
+
+      final img = (await _resolveImage(it)) ?? it.imageUrl;
+      if (!mounted) return;
+      if (Navigator.of(sheetCtx).canPop()) Navigator.of(sheetCtx).pop();
+      if (!mounted) return;
+
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => MessagePageBackendApi(
+            peerId: peerId,
+            peerName: it.sellerDisplayName,
+            peerAvatarUrl: '',
+            productContext: ChatProductContext(
+              productId: it.id,
+              name: it.name,
+              image: img,
+              price: it.price.toDouble(),
+              description: 'Latest arrival',
+              merchantId: merchantRef,
+            ),
+            peerMerchantId: merchantRef,
+            peerUserId: peerUserId,
+            sendProductEnquiry: true,
+            resolveSqlItemId: int.tryParse(it.id),
+            resolveOwnerId: ownerId,
+            resolveSellerUserId: it.sellerUserId,
+            resolveServiceProviderId: it.serviceProviderId,
+            resolveMerchantId: merchantRef,
+            resolveFirestoreItemDocId: it.id,
+            pendingMerchantChat: pendingChat,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        sheetCtx,
+        UserFacingError.from(e, fallback: 'Could not open chat'),
+        isSuccess: false,
+        errorMessage: '',
+      );
+    }
+  }
+
+  void _viewShop(LatestArrivalModels it, {required BuildContext sheetCtx}) {
+    final merchantRef = it.resolvedMerchantRef;
+    if (merchantRef == null || merchantRef.isEmpty) {
+      ToastHelper.showCustomToast(
+        sheetCtx,
+        'Shop is not available for this seller yet.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    if (Navigator.of(sheetCtx).canPop()) Navigator.of(sheetCtx).pop();
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MerchantProductsPage(
+          merchantId: merchantRef,
+          merchantName: it.sellerDisplayName,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openDetails(LatestArrivalModels it) async {
+    final enriched = await _enrichSeller(it);
+    if (!mounted) return;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -2803,14 +3001,15 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (sheetCtx) => _LatestDetailsSheet(
-        item: it,
-        imageFuture: _imgFuture(it),
-        immediateImageUrl: _immediateImageUrl(it),
+        item: enriched,
+        imageFuture: _imgFuture(enriched),
+        immediateImageUrl: _immediateImageUrl(enriched),
         fmtPrice: (n) => 'MWK ${_fmtKwacha(n)}',
         tryDecodeBase64: _tryDecodeBase64,
-        onAddToCart: (qty) async =>
-            _addToCart(it, qty: qty, sheetCtx: sheetCtx),
-        onBuyNow: (qty) async => _buyNow(it, qty: qty, sheetCtx: sheetCtx),
+        onBuyNow: (qty) async =>
+            _buyNow(enriched, qty: qty, sheetCtx: sheetCtx),
+        onMessageSeller: () => _messageSeller(enriched, sheetCtx: sheetCtx),
+        onViewShop: () => _viewShop(enriched, sheetCtx: sheetCtx),
         onViewImage: (url, bytes) => _openImageViewer(url, bytes: bytes),
       ),
     );
@@ -3040,8 +3239,9 @@ class _LatestDetailsSheet extends StatefulWidget {
   final String? immediateImageUrl;
   final String Function(int) fmtPrice;
   final Uint8List? Function(String) tryDecodeBase64;
-  final Future<void> Function(int) onAddToCart;
   final Future<void> Function(int) onBuyNow;
+  final Future<void> Function() onMessageSeller;
+  final VoidCallback onViewShop;
   final void Function(String url, Uint8List? bytes) onViewImage;
 
   const _LatestDetailsSheet({
@@ -3050,8 +3250,9 @@ class _LatestDetailsSheet extends StatefulWidget {
     required this.immediateImageUrl,
     required this.fmtPrice,
     required this.tryDecodeBase64,
-    required this.onAddToCart,
     required this.onBuyNow,
+    required this.onMessageSeller,
+    required this.onViewShop,
     required this.onViewImage,
   });
 
@@ -3061,6 +3262,7 @@ class _LatestDetailsSheet extends StatefulWidget {
 
 class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
   int qty = 1;
+  bool _messaging = false;
 
   Widget _heroImage(String v) {
     Widget img;
@@ -3118,105 +3320,154 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
     final it = widget.item;
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(height: 10),
-          Container(
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-                color: Colors.black12, borderRadius: BorderRadius.circular(99)),
-          ),
-          const SizedBox(height: 12),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (widget.immediateImageUrl != null &&
-                    widget.immediateImageUrl!.trim().isNotEmpty)
-                  _heroImage(widget.immediateImageUrl!.trim())
-                else
-                  FutureBuilder<String?>(
-                    future: widget.imageFuture,
-                    builder: (_, snap) {
-                      final v = (snap.data ?? it.imageUrl).trim();
-                      return _heroImage(v);
-                    },
-                  ),
-                const SizedBox(height: 12),
-                Text(it.name,
-                    style: const TextStyle(
-                        fontSize: 18, fontWeight: FontWeight.w900)),
-                const SizedBox(height: 6),
-                Text(widget.fmtPrice(it.price),
-                    style: const TextStyle(
-                        color: Colors.green,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 16)),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    const Text('Quantity',
-                        style: TextStyle(fontWeight: FontWeight.w800)),
-                    const Spacer(),
-                    IconButton(
-                      onPressed:
-                          qty <= 1 ? null : () => setState(() => qty--),
-                      icon: const Icon(Icons.remove_circle_outline),
-                    ),
-                    Text('$qty',
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w900, fontSize: 16)),
-                    IconButton(
-                      onPressed:
-                          qty >= 99 ? null : () => setState(() => qty++),
-                      icon: const Icon(Icons.add_circle_outline),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () => widget.onAddToCart(qty),
-                        icon: const Icon(Icons.shopping_cart_outlined),
-                        label: const Text('Add to Cart',
-                            style: TextStyle(fontWeight: FontWeight.w900)),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.brandOrange,
-                          side: const BorderSide(
-                              color: AppColors.brandOrange),
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () => widget.onBuyNow(qty),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.brandOrange,
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                        ),
-                        child: const Text('Buy Now',
-                            style: TextStyle(fontWeight: FontWeight.w900)),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                  color: Colors.black12, borderRadius: BorderRadius.circular(99)),
             ),
-          ),
-        ],
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (widget.immediateImageUrl != null &&
+                      widget.immediateImageUrl!.trim().isNotEmpty)
+                    _heroImage(widget.immediateImageUrl!.trim())
+                  else
+                    FutureBuilder<String?>(
+                      future: widget.imageFuture,
+                      builder: (_, snap) {
+                        final v = (snap.data ?? it.imageUrl).trim();
+                        return _heroImage(v);
+                      },
+                    ),
+                  const SizedBox(height: 12),
+                  Text(it.name,
+                      style: const TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 6),
+                  Text(widget.fmtPrice(it.price),
+                      style: const TextStyle(
+                          color: Colors.green,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 16)),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      const Text('Quantity',
+                          style: TextStyle(fontWeight: FontWeight.w800)),
+                      const Spacer(),
+                      IconButton(
+                        onPressed:
+                            qty <= 1 ? null : () => setState(() => qty--),
+                        icon: const Icon(Icons.remove_circle_outline),
+                      ),
+                      Text('$qty',
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w900, fontSize: 16)),
+                      IconButton(
+                        onPressed:
+                            qty >= 99 ? null : () => setState(() => qty++),
+                        icon: const Icon(Icons.add_circle_outline),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () => widget.onBuyNow(qty),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.brandOrange,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                      ),
+                      icon: const Icon(Icons.shopping_bag_outlined),
+                      label: const Text('Buy',
+                          style: TextStyle(fontWeight: FontWeight.w900)),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _messaging
+                              ? null
+                              : () async {
+                                  setState(() => _messaging = true);
+                                  try {
+                                    await widget.onMessageSeller();
+                                  } finally {
+                                    if (mounted) {
+                                      setState(() => _messaging = false);
+                                    }
+                                  }
+                                },
+                          icon: _messaging
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2),
+                                )
+                              : const Icon(Icons.chat_bubble_outline_rounded),
+                          label: Text(
+                            _messaging ? 'Opening…' : 'Message',
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.brandOrange,
+                            side: const BorderSide(
+                                color: AppColors.brandOrange),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: widget.onViewShop,
+                          icon: const Icon(Icons.storefront_outlined),
+                          label: const Text('View shop',
+                              style: TextStyle(fontWeight: FontWeight.w800)),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.title,
+                            side: const BorderSide(color: Color(0xFFDDDDDD)),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Close',
+                          style: TextStyle(fontWeight: FontWeight.w800)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -3914,7 +4165,8 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
   bool get _isFixedPrice => widget.product.fixedMwkPrice != null;
 
   double get _mwkAmount =>
-      widget.product.fixedMwkPrice ?? usdToMwk(widget.selectedUsd);
+      widget.product.fixedMwkPrice ??
+      widget.product.amountToMwk(widget.selectedUsd);
 
   @override
   void initState() {
@@ -4005,7 +4257,7 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
       final txRef       = 'vero-digital-${DateTime.now().millisecondsSinceEpoch}';
       final description = _isFixedPrice
           ? 'Digital: ${widget.product.name} • ${formatMwk(amount)}'
-          : 'Digital: ${widget.product.name} • ${formatUsd(widget.selectedUsd)} '
+          : 'Digital: ${widget.product.name} • ${widget.product.formatAmount(widget.selectedUsd)} '
               '(${formatMwk(amount)})';
 
       final orderId = await DigitalServiceOrderService.createPendingOrder(
@@ -4143,7 +4395,7 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                           Text(
                             _isFixedPrice
                                 ? formatMwk(_mwkAmount)
-                                : '${formatUsd(widget.selectedUsd)}  ·  ${formatMwk(_mwkAmount)}',
+                                : '${widget.product.formatAmount(widget.selectedUsd)}  ·  ${formatMwk(_mwkAmount)}',
                             style: const TextStyle(
                               color: AppColors.brandOrange,
                               fontWeight: FontWeight.w800,
@@ -4152,7 +4404,7 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                           if (!_isFixedPrice) ...[
                             const SizedBox(height: 2),
                             Text(
-                              'Rate: 1 USD = ${digitalServicesUsdToMwkRate.toStringAsFixed(0)} MWK',
+                              'Rate: 1 ${((widget.product.unitLabel ?? '').trim().isNotEmpty) ? widget.product.unitLabel!.trim() : 'USD'} = ${widget.product.effectiveMwkPerUnit.toStringAsFixed(0)} MWK',
                               style: const TextStyle(
                                 fontSize: 11,
                                 color: AppColors.body,

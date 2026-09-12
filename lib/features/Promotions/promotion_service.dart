@@ -427,7 +427,11 @@ class PromoService {
     return const {};
   }
 
-  List<PromoModel> _parsePromoList(dynamic body, {bool publicActiveList = false}) {
+  List<PromoModel> _parsePromoList(
+    dynamic body, {
+    bool publicActiveList = false,
+    bool includeInactive = false,
+  }) {
     final raw = body is List
         ? body
         : (body is Map && body['data'] is List)
@@ -438,7 +442,8 @@ class PromoService {
         .map((e) => PromoModel.fromJson(Map<String, dynamic>.from(e)))
         .where((p) {
           if (p.id <= 0 || p.title.trim().isEmpty) return false;
-          if (publicActiveList) return true;
+          // Merchant manage list needs inactive promos so they can reactivate/delete.
+          if (includeInactive || publicActiveList) return true;
           return p.isActive;
         })
         .toList();
@@ -555,7 +560,7 @@ class PromoService {
     final url = ApiConfig.endpoint('promos/me');
     final r = await http.get(url, headers: _auth(t));
     final body = _decode(r, where: 'GET /promos/me');
-    return _parsePromoList(body);
+    return _parsePromoList(body, includeInactive: true);
   }
 
   Future<PromoModel> createPromo(PromoModel p) async {
@@ -589,6 +594,24 @@ class PromoService {
     final url = ApiConfig.endpoint('promos/$promoId/deactivate');
     final r = await http.patch(url, headers: _auth(t));
     _decode(r, where: 'PATCH /promos/$promoId/deactivate');
+  }
+
+  Future<void> activate(int promoId) async {
+    await ApiConfig.readBase();
+    final t = await _token();
+    // Prefer dedicated activate route; fall back to isActive patch.
+    final activateUrl = ApiConfig.endpoint('promos/$promoId/activate');
+    final activateRes = await http.patch(activateUrl, headers: _auth(t));
+    if (activateRes.statusCode >= 200 && activateRes.statusCode < 300) {
+      return;
+    }
+    final patchUrl = ApiConfig.endpoint('promos/$promoId');
+    final patchRes = await http.patch(
+      patchUrl,
+      headers: _auth(t, extra: {'Content-Type': 'application/json'}),
+      body: jsonEncode({'isActive': true}),
+    );
+    _decode(patchRes, where: 'PATCH /promos/$promoId (activate)');
   }
 
   Future<void> deletePromo(int promoId) async {

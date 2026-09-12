@@ -26,12 +26,21 @@ class DigitalProduct {
   final IconData? icon;
   final String? logoAsset;
 
+  /// Remote picture URL (custom crypto / gift cards from admin).
+  final String? imageUrl;
+
   /// Selectable face values in USD (Giftsy-style). Ignored when [fixedMwkPrice] is set.
   final List<double> usdAmounts;
 
   /// Fixed MWK price for subscription codes (Spotify / Apple Music / Netflix / ChatGPT).
   /// When set: skip amount picker and charge this MWK amount via PayChangu.
   final double? fixedMwkPrice;
+
+  /// Custom MWK per unit (USDT / CNY / BNB). Overrides global USD rate when set.
+  final double? mwkPerUnit;
+
+  /// Unit label for amount picker (e.g. USDT). Empty → treat as USD.
+  final String? unitLabel;
 
   /// When false, product is hidden (admin disabled).
   final bool active;
@@ -45,8 +54,11 @@ class DigitalProduct {
     required this.brandTag,
     this.usdAmounts = const [],
     this.fixedMwkPrice,
+    this.mwkPerUnit,
+    this.unitLabel,
     this.icon,
     this.logoAsset,
+    this.imageUrl,
     this.active = true,
   });
 
@@ -55,33 +67,60 @@ class DigitalProduct {
   double get startingUsd =>
       usdAmounts.isEmpty ? 0 : usdAmounts.reduce((a, b) => a < b ? a : b);
 
+  double get effectiveMwkPerUnit =>
+      (mwkPerUnit != null && mwkPerUnit! > 0)
+          ? mwkPerUnit!
+          : digitalServicesUsdToMwkRate;
+
+  double amountToMwk(num amount) => amount * effectiveMwkPerUnit;
+
+  String formatAmount(num amount) {
+    final unit = (unitLabel ?? '').trim();
+    if (unit.isNotEmpty) {
+      final n = amount == amount.roundToDouble()
+          ? amount.toStringAsFixed(0)
+          : amount.toStringAsFixed(2);
+      return '$n $unit';
+    }
+    return formatUsd(amount);
+  }
+
   String get priceLabel {
     if (fixedMwkPrice != null) return formatMwk(fixedMwkPrice!);
     if (usdAmounts.isEmpty) return '';
-    return 'From ${formatUsd(startingUsd)}';
+    return 'From ${formatAmount(startingUsd)}';
   }
 
   DigitalProduct copyWith({
     String? name,
     String? subtitle,
     String? brandTag,
+    String? category,
+    Color? accent,
     List<double>? usdAmounts,
     double? fixedMwkPrice,
     bool clearFixedMwkPrice = false,
+    double? mwkPerUnit,
+    bool clearMwkPerUnit = false,
+    String? unitLabel,
+    String? imageUrl,
     bool? active,
   }) {
     return DigitalProduct(
       key: key,
       name: name ?? this.name,
       subtitle: subtitle ?? this.subtitle,
-      category: category,
-      accent: accent,
+      category: category ?? this.category,
+      accent: accent ?? this.accent,
       brandTag: brandTag ?? this.brandTag,
       usdAmounts: usdAmounts ?? this.usdAmounts,
       fixedMwkPrice:
           clearFixedMwkPrice ? null : (fixedMwkPrice ?? this.fixedMwkPrice),
+      mwkPerUnit: clearMwkPerUnit ? null : (mwkPerUnit ?? this.mwkPerUnit),
+      unitLabel: unitLabel ?? this.unitLabel,
       icon: icon,
       logoAsset: logoAsset,
+      imageUrl: imageUrl ?? this.imageUrl,
       active: active ?? this.active,
     );
   }
@@ -251,6 +290,7 @@ class DigitalCategory {
 const List<DigitalCategory> kDigitalCategories = [
   DigitalCategory('all', 'All', Icons.apps_rounded),
   DigitalCategory('gift_cards', 'Gift Cards', Icons.card_giftcard_rounded),
+  DigitalCategory('crypto', 'Crypto / FX', Icons.currency_exchange_rounded),
   DigitalCategory('gaming', 'Gaming', Icons.sports_esports_rounded),
   DigitalCategory('streaming', 'Streaming', Icons.live_tv_rounded),
 ];

@@ -6,11 +6,21 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import 'package:vero360_app/GeneralPages/Toreceive.dart';
+import 'package:vero360_app/GeneralPages/ToRefund.dart';
 import 'package:vero360_app/GeneralPages/Toship.dart';
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
+import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
+import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart'
+    as market;
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
+import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
+import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketPlace.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_my_orders_page.dart';
+import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/verocourier.dart';
+import 'package:vero360_app/wallet/merchant_wallet_page.dart';
 
 /// In-app chat thread for Vero360 Team tips (order ship / receive / shelf).
 /// Content lives in Firestore [order_party_alerts]; the notification tray only
@@ -30,6 +40,12 @@ enum _TeamAction {
   receivedParcel,
   foodOrders,
   shelf,
+  marketplaceListing,
+  merchantListings,
+  refunds,
+  accommodation,
+  courier,
+  wallet,
 }
 
 class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
@@ -199,6 +215,14 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
     if (actionHint == 'received_parcel' || actionHint == 'received') {
       return _TeamAction.receivedParcel;
     }
+    if (actionHint == 'view_listing' ||
+        actionHint == 'marketplace' ||
+        actionHint == 'open_listing') {
+      return _TeamAction.marketplaceListing;
+    }
+    if (actionHint == 'manage_shelf' || actionHint == 'shelf') {
+      return _TeamAction.shelf;
+    }
 
     final route = (payload[NotificationStore.kPayloadBadgeRoute] ??
             payload['badgeRoute'] ??
@@ -207,45 +231,115 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
         .trim()
         .toLowerCase();
     final type = (payload['type'] ?? '').toString().trim().toLowerCase();
-    final role = (payload['role'] ?? '').toString().trim().toLowerCase();
+    final status = (payload['status'] ?? '').toString().trim().toLowerCase();
     final text = '${msg.title} ${msg.body}'.toLowerCase();
 
+    // Marketplace listing approved / rejected (Cloud Function notifyMerchant).
+    if (type == 'marketplace_moderation' ||
+        type == 'marketplace_digest' ||
+        type == 'marketplace' ||
+        type == 'new_product') {
+      if (status == 'rejected' ||
+          text.contains('not approved') ||
+          text.contains('rejected')) {
+        return _TeamAction.merchantListings;
+      }
+      return _TeamAction.marketplaceListing;
+    }
+
+    // Text fallback when payload type is missing but copy is clearly listing-live.
+    if (text.contains('listing is live') ||
+        text.contains('is now visible to buyers') ||
+        text.contains('has been approved') ||
+        text.contains('approved and is now') ||
+        text.contains('just listed') ||
+        text.contains('vero marketplace')) {
+      return _TeamAction.marketplaceListing;
+    }
+
     if (type == 'out_of_stock_shelf' ||
-        route == NotificationStore.kBadgePostArrival) {
+        route == NotificationStore.kBadgePostArrival ||
+        text.contains('remove it from your shelf') ||
+        text.contains('out of stock') ||
+        text.contains('sold out')) {
       return _TeamAction.shelf;
     }
-    if (type == 'food_order' || type == 'food_order_placed') {
+
+    if (type == 'food_order' ||
+        type == 'food_order_placed' ||
+        type == 'new_food_order' ||
+        text.contains('food order') ||
+        text.contains('has ordered')) {
       return _TeamAction.foodOrders;
     }
 
-    // Explicit send / ship routes.
+    if (type == 'refund_request' ||
+        type == 'refund_update' ||
+        route == NotificationStore.kBadgeRefund ||
+        text.contains('refund')) {
+      return _TeamAction.refunds;
+    }
+
+    if (type == 'accommodation_booking' ||
+        text.contains('stay booking') ||
+        text.contains('new booking')) {
+      return _TeamAction.accommodation;
+    }
+
+    if (type == 'courier_status' ||
+        text.contains('vero courier') ||
+        text.contains('tracking') ||
+        text.contains('parcel accepted') ||
+        text.contains('courier is coming')) {
+      return _TeamAction.courier;
+    }
+
+    if (type == 'order_escrow_released' ||
+        text.contains('funds have been transferred') ||
+        text.contains('escrow funds released') ||
+        text.contains('buyer confirmed receipt')) {
+      return _TeamAction.wallet;
+    }
+
+    // Explicit send / ship routes (do not use role alone — too broad).
     if (route == NotificationStore.kBadgeShipped ||
         type == 'ship_reminder' ||
-        role == 'merchant' ||
         text.contains('send parcel') ||
         text.contains('to ship') ||
         text.contains('upload courier') ||
         text.contains('pack and ship') ||
         text.contains('reminded you to ship') ||
-        text.contains('please ship')) {
+        text.contains('please ship') ||
+        text.contains('open send parcel')) {
       return _TeamAction.sendParcel;
     }
 
     // Explicit received routes.
     if (route == NotificationStore.kBadgeReceived ||
-        type == 'order_completed' ||
-        type == 'order_escrow_released' ||
         type == 'order_update' ||
-        role == 'buyer' ||
+        type == 'order_completed' ||
+        (type == 'order_team_tip' &&
+            (payload['role']?.toString().toLowerCase() == 'buyer')) ||
         text.contains('received parcel') ||
         text.contains('confirm receipt') ||
         text.contains('has been shipped') ||
-        text.contains('confirm when')) {
+        text.contains('confirm when') ||
+        text.contains('open received parcel')) {
       return _TeamAction.receivedParcel;
     }
 
-    // Safe default for remaining team tips: Received section (buyer track).
-    return _TeamAction.receivedParcel;
+    if (type == 'order_team_tip' &&
+        (payload['role']?.toString().toLowerCase() == 'merchant')) {
+      return _TeamAction.sendParcel;
+    }
+
+    // Unknown tips: stay on received track only for buyer-ish order copy.
+    if (text.contains('order') || text.contains('parcel')) {
+      return _TeamAction.receivedParcel;
+    }
+
+    // Last resort for merchant ops tips without clear copy.
+    return _TeamAction.merchantListings;
   }
 
   String _ctaLabel(_TeamAction action) {
@@ -258,32 +352,24 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
         return 'Open Food Orders';
       case _TeamAction.shelf:
         return 'Manage shelf';
+      case _TeamAction.marketplaceListing:
+        return 'View listing';
+      case _TeamAction.merchantListings:
+        return 'Open my listings';
+      case _TeamAction.refunds:
+        return 'Open refunds';
+      case _TeamAction.accommodation:
+        return 'Open stay bookings';
+      case _TeamAction.courier:
+        return 'Open Vero Courier';
+      case _TeamAction.wallet:
+        return 'Open wallet';
     }
   }
 
   Future<void> _openAction(_TeamMessage msg) async {
     final action = _actionFor(msg);
-    final Widget page;
-    switch (action) {
-      case _TeamAction.sendParcel:
-        page = const ToShipPage();
-        break;
-      case _TeamAction.receivedParcel:
-        page = const DeliveredOrdersPage();
-        break;
-      case _TeamAction.foodOrders:
-        page = const FoodMyOrdersPage();
-        break;
-      case _TeamAction.shelf:
-        final email =
-            (FirebaseAuth.instance.currentUser?.email ?? '').trim();
-        page = MarketplaceMerchantDashboard(
-          email: email,
-          merchantUid: FirebaseAuth.instance.currentUser?.uid,
-          onBackToHomeTab: () {},
-        );
-        break;
-    }
+    final payload = msg.payload ?? const <String, dynamic>{};
 
     // Clear this tip after the user follows it.
     unawaited(_batchUpdate([msg.id], {
@@ -293,9 +379,80 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
     }));
 
     if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => page),
-    );
+
+    switch (action) {
+      case _TeamAction.sendParcel:
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const ToShipPage()),
+        );
+        return;
+      case _TeamAction.receivedParcel:
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const DeliveredOrdersPage()),
+        );
+        return;
+      case _TeamAction.foodOrders:
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const FoodMyOrdersPage()),
+        );
+        return;
+      case _TeamAction.shelf:
+      case _TeamAction.merchantListings:
+        final email =
+            (FirebaseAuth.instance.currentUser?.email ?? '').trim();
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => MarketplaceMerchantDashboard(
+              email: email,
+              merchantUid: FirebaseAuth.instance.currentUser?.uid,
+              onBackToHomeTab: () {},
+            ),
+          ),
+        );
+        return;
+      case _TeamAction.marketplaceListing:
+        final itemId = (payload['marketplaceItemId'] ??
+                payload['itemId'] ??
+                payload['id'] ??
+                '')
+            .toString()
+            .trim();
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => _TeamMarketplaceListingPage(itemId: itemId),
+          ),
+        );
+        return;
+      case _TeamAction.refunds:
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const ToRefundPage()),
+        );
+        return;
+      case _TeamAction.accommodation:
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => const AccommodationMainPage(initialTabIndex: 1),
+          ),
+        );
+        return;
+      case _TeamAction.courier:
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const VerocourierPage()),
+        );
+        return;
+      case _TeamAction.wallet:
+        final user = FirebaseAuth.instance.currentUser;
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => MerchantWalletPage(
+              merchantId: user?.uid ?? '',
+              merchantName: (user?.displayName ?? user?.email ?? 'Merchant')
+                  .trim(),
+            ),
+          ),
+        );
+        return;
+    }
   }
 
   @override
@@ -346,7 +503,7 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
                     ),
                   ),
                   Text(
-                    'Tips · Send & Received parcels',
+                    'Tips · orders, listings & more',
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
@@ -391,19 +548,81 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
                     ),
                   ),
                 )
-              : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(12, 16, 12, 28),
-                  itemCount: _messages.length,
-                  itemBuilder: (_, i) {
-                    final msg = _messages[i];
-                    final action = _actionFor(msg);
-                    return _TeamBubble(
-                      message: msg,
-                      ctaLabel: _ctaLabel(action),
-                      onCta: () => _openAction(msg),
-                    );
-                  },
+              : _VeroTeamMessageList(
+                  messages: _messages,
+                  actionFor: _actionFor,
+                  ctaLabel: _ctaLabel,
+                  onCta: _openAction,
                 ),
+    );
+  }
+}
+
+class _VeroTeamMessageList extends StatefulWidget {
+  const _VeroTeamMessageList({
+    required this.messages,
+    required this.actionFor,
+    required this.ctaLabel,
+    required this.onCta,
+  });
+
+  final List<_TeamMessage> messages;
+  final _TeamAction Function(_TeamMessage) actionFor;
+  final String Function(_TeamAction) ctaLabel;
+  final void Function(_TeamMessage) onCta;
+
+  @override
+  State<_VeroTeamMessageList> createState() => _VeroTeamMessageListState();
+}
+
+class _VeroTeamMessageListState extends State<_VeroTeamMessageList> {
+  final _scroll = ScrollController();
+  bool _didInitialJump = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _jumpBottom());
+  }
+
+  @override
+  void didUpdateWidget(covariant _VeroTeamMessageList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_didInitialJump && widget.messages.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _jumpBottom());
+    }
+  }
+
+  void _jumpBottom() {
+    if (!_scroll.hasClients) return;
+    final max = _scroll.position.maxScrollExtent;
+    if (max > 0) {
+      _scroll.jumpTo(max);
+      _didInitialJump = true;
+    }
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      controller: _scroll,
+      padding: const EdgeInsets.fromLTRB(12, 16, 12, 28),
+      itemCount: widget.messages.length,
+      itemBuilder: (_, i) {
+        final msg = widget.messages[i];
+        final action = widget.actionFor(msg);
+        return _TeamBubble(
+          message: msg,
+          ctaLabel: widget.ctaLabel(action),
+          onCta: () => widget.onCta(msg),
+        );
+      },
     );
   }
 }
@@ -536,6 +755,103 @@ class _TeamBubble extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Resolves a marketplace listing from a Cloud Function / team alert payload.
+class _TeamMarketplaceListingPage extends StatelessWidget {
+  const _TeamMarketplaceListingPage({required this.itemId});
+
+  final String itemId;
+
+  Future<market.MarketplaceDetailModel?> _resolve() async {
+    final id = itemId.trim();
+    if (id.isEmpty) return null;
+
+    final sqlId = int.tryParse(id);
+    if (sqlId != null && sqlId > 0) {
+      try {
+        final item = await MarketplaceService().getItemDetails(sqlId);
+        if (item != null) return item;
+      } catch (_) {}
+    }
+
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('marketplace_items')
+          .doc(id)
+          .get();
+      if (!doc.exists) return null;
+      final data = doc.data() ?? const <String, dynamic>{};
+      int? sql;
+      final rawSql = data['sqlItemId'] ?? data['backendId'] ?? data['itemId'];
+      if (rawSql is int) {
+        sql = rawSql;
+      } else if (rawSql != null) {
+        sql = int.tryParse(rawSql.toString());
+      }
+      double price = 0;
+      final p = data['price'];
+      if (p is num) {
+        price = p.toDouble();
+      } else if (p != null) {
+        price = double.tryParse(p.toString()) ?? 0;
+      }
+      DateTime? created;
+      final createdRaw = data['createdAt'];
+      if (createdRaw is Timestamp) created = createdRaw.toDate();
+      List<String> gallery = const [];
+      final g = data['galleryUrls'] ?? data['gallery'];
+      if (g is List) {
+        gallery = g
+            .map((e) => e.toString().trim())
+            .where((s) => s.isNotEmpty)
+            .toList();
+      }
+      return market.MarketplaceDetailModel(
+        id: sql ?? doc.id.hashCode.abs(),
+        name: (data['name'] ?? data['title'] ?? data['productName'] ?? 'Item')
+            .toString(),
+        image: (data['imageUrl'] ?? data['image'] ?? data['photo'] ?? '')
+            .toString()
+            .trim(),
+        price: price,
+        description: (data['description'] ?? '').toString(),
+        location: (data['location'] ?? '').toString(),
+        category: (data['category'] ?? '').toString(),
+        gallery: gallery,
+        merchantId: (data['merchantId'] ?? '').toString(),
+        merchantName: (data['merchantName'] ?? '').toString(),
+        sellerUserId: (data['sellerUserId'] ?? '').toString(),
+        serviceProviderId: (data['serviceProviderId'] ?? '').toString(),
+        serviceType: (data['serviceType'] ?? 'marketplace').toString(),
+        firestoreDocId: doc.id,
+        createdAt: created,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cart = CartServiceProvider.getInstance();
+    return FutureBuilder<market.MarketplaceDetailModel?>(
+      future: _resolve(),
+      builder: (context, snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('Listing')),
+            body: const Center(child: CircularProgressIndicator()),
+          );
+        }
+        final item = snap.data;
+        if (item != null) {
+          return DetailsPage(item: item, cartService: cart);
+        }
+        return MarketPage(cartService: cart);
+      },
     );
   }
 }

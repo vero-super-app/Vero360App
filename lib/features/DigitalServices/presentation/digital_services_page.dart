@@ -104,7 +104,10 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
   }
 
   List<DigitalProduct> get _featured => _all
-      .where((p) => p.category == 'gift_cards' || p.category == 'gaming')
+      .where((p) =>
+          p.category == 'gift_cards' ||
+          p.category == 'gaming' ||
+          p.category == 'crypto')
       .take(6)
       .toList();
 
@@ -626,11 +629,12 @@ class _GiftCardTileState extends State<_GiftCardTile> {
                         ),
                       ),
                       Center(
-                        child: p.logoAsset != null
+                        child: p.imageUrl != null &&
+                                p.imageUrl!.trim().isNotEmpty
                             ? ClipRRect(
                                 borderRadius: BorderRadius.circular(10),
-                                child: Image.asset(
-                                  p.logoAsset!,
+                                child: Image.network(
+                                  p.imageUrl!,
                                   width: compact ? 36 : 42,
                                   height: compact ? 36 : 42,
                                   fit: BoxFit.cover,
@@ -641,11 +645,26 @@ class _GiftCardTileState extends State<_GiftCardTile> {
                                   ),
                                 ),
                               )
-                            : Icon(
-                                p.icon ?? Icons.card_giftcard_rounded,
-                                color: Colors.white,
-                                size: compact ? 28 : 32,
-                              ),
+                            : p.logoAsset != null
+                                ? ClipRRect(
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: Image.asset(
+                                      p.logoAsset!,
+                                      width: compact ? 36 : 42,
+                                      height: compact ? 36 : 42,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => Icon(
+                                        p.icon ?? Icons.card_giftcard_rounded,
+                                        color: Colors.white,
+                                        size: compact ? 28 : 32,
+                                      ),
+                                    ),
+                                  )
+                                : Icon(
+                                    p.icon ?? Icons.card_giftcard_rounded,
+                                    color: Colors.white,
+                                    size: compact ? 28 : 32,
+                                  ),
                       ),
                     ],
                   ),

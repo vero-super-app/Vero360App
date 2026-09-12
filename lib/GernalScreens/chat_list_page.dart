@@ -976,7 +976,14 @@ class _ChatListPageState extends State<ChatListPage> {
                 await Future<void>.delayed(const Duration(milliseconds: 200));
               },
               child: ListView.separated(
-                padding: const EdgeInsets.fromLTRB(0, 4, 0, 24),
+                padding: EdgeInsets.fromLTRB(
+                  0,
+                  4,
+                  0,
+                  // Clear floating bottom nav when this tab uses extendBody.
+                  MediaQuery.paddingOf(context).bottom + 96,
+                ),
+                physics: const AlwaysScrollableScrollPhysics(),
                 cacheExtent: 480,
                 itemCount: totalCount,
                 separatorBuilder: (_, __) => const Divider(
@@ -1040,7 +1047,8 @@ class _ChatListPageState extends State<ChatListPage> {
                               peerName: tile.peerName,
                               peerAvatarUrl: tile.avatarUrl,
                               productContext: tile.product,
-                              peerMerchantId: tile.product?.merchantId,
+                              peerMerchantId: tile.peerFirebaseUid ??
+                                  tile.product?.merchantId,
                               peerUserId: tile.peerUserId,
                             ),
                           ),
@@ -1218,6 +1226,7 @@ class _ThreadTile {
   final String searchKey;
   final bool isPinned;
   final int? peerUserId;
+  final String? peerFirebaseUid;
 
   const _ThreadTile({
     required this.threadId,
@@ -1234,6 +1243,7 @@ class _ThreadTile {
     required this.searchKey,
     this.isPinned = false,
     this.peerUserId,
+    this.peerFirebaseUid,
   });
 
   factory _ThreadTile.fromThread(
@@ -1348,6 +1358,10 @@ class _ThreadTile {
       peerUserId: otherParticipant != null && otherParticipant.id > 0
           ? otherParticipant.id
           : null,
+      peerFirebaseUid: () {
+        final uid = (otherParticipant?.firebaseUid ?? '').trim();
+        return RegExp(r'^[A-Za-z0-9_-]{20,}$').hasMatch(uid) ? uid : null;
+      }(),
     );
   }
 }

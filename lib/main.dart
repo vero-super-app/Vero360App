@@ -189,6 +189,51 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       } catch (_) {}
     }
   }
+
+  // Chat message: show a tray notification when payload is data-only
+  // (notification+data is already displayed by the OS while killed/backgrounded).
+  final chatType = data['type']?.toString();
+  if ((chatType == 'new_message' || chatType == 'chat_message') &&
+      message.notification == null) {
+    try {
+      final plugin = local_notif.FlutterLocalNotificationsPlugin();
+      const android =
+          local_notif.AndroidInitializationSettings('@mipmap/ic_launcher');
+      await plugin.initialize(
+        const local_notif.InitializationSettings(android: android),
+      );
+      const channel = local_notif.AndroidNotificationChannel(
+        'high_importance_channel',
+        'High Importance Notifications',
+        description: 'Chat and alerts',
+        importance: local_notif.Importance.high,
+      );
+      await plugin
+          .resolvePlatformSpecificImplementation<
+              local_notif.AndroidFlutterLocalNotificationsPlugin>()
+          ?.createNotificationChannel(channel);
+
+      final title = data['title']?.toString() ?? 'New message';
+      final body = data['body']?.toString() ?? 'Sent you a message';
+      final chatId = data['chatId']?.toString() ?? '';
+      await plugin.show(
+        chatId.isNotEmpty ? chatId.hashCode.abs() : title.hashCode.abs(),
+        title,
+        body,
+        local_notif.NotificationDetails(
+          android: local_notif.AndroidNotificationDetails(
+            channel.id,
+            channel.name,
+            channelDescription: channel.description,
+            importance: local_notif.Importance.high,
+            priority: local_notif.Priority.high,
+            icon: '@mipmap/ic_launcher',
+          ),
+        ),
+        payload: jsonEncode(Map<String, dynamic>.from(data)),
+      );
+    } catch (_) {}
+  }
 }
 
 FirebaseOptions get _kFirebaseOptions => kFirebaseOptions;

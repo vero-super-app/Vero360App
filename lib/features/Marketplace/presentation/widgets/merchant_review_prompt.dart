@@ -89,6 +89,9 @@ class MerchantReviewPrompt {
   }
 
   /// Returns true if a review was submitted.
+  ///
+  /// [force] ignores a previous "Not now" dismissal for this chat so buyers can
+  /// still rate from the menu after messaging.
   static Future<bool> maybeShow(
     BuildContext context, {
     required String merchantName,
@@ -98,13 +101,14 @@ class MerchantReviewPrompt {
     String? serviceProviderId,
     String? sellerUserId,
     int? merchantBackendId,
+    bool force = false,
   }) async {
     final key = contextKey.trim();
     if (key.isEmpty) return false;
     final name = merchantName.trim().isEmpty ? 'this seller' : merchantName.trim();
 
     final prefs = await SharedPreferences.getInstance();
-    if (prefs.getBool(_prefsKey(key)) == true) return false;
+    if (!force && prefs.getBool(_prefsKey(key)) == true) return false;
 
     final ids = await _resolveReviewIds(
       merchantRef: merchantRef,
@@ -122,6 +126,11 @@ class MerchantReviewPrompt {
         contextKey: key,
         merchantId: ids.merchantId,
       );
+      if (force && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('You already rated this seller.')),
+        );
+      }
       return false;
     }
 
@@ -138,6 +147,7 @@ class MerchantReviewPrompt {
     );
 
     // Remember we asked (even if skipped) so we don't nag every back press.
+    // Manual "Rate seller" uses force=true and can reopen.
     await prefs.setBool(_prefsKey(key), true);
 
     if (draft == null || !context.mounted) return false;
@@ -197,6 +207,12 @@ class MerchantReviewPrompt {
         msg =
             'This seller is not marked as a merchant on the server yet. '
             'Ask them to open their Merchant dashboard once, then try again.';
+      } else if (lower.contains('merchant not found') ||
+          lower.contains('not found') ||
+          lower.contains('could not find this seller')) {
+        msg =
+            'Could not find this seller’s account for reviews. '
+            'Open their shop from chat, then try Rate seller again.';
       } else if (lower.contains('log in again') ||
           lower.contains('resolve your account')) {
         msg =

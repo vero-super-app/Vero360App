@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
@@ -11,25 +9,61 @@ import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 /// Rules:
 /// - 3 app opens in one day → +1 Vero Point (once per day)
 /// - Visit bonus max 3 times per week (then no show-up earnings until next week)
-/// - 1 Vero Point = 1 Vero Coin = MWK 100
-/// - 5 Vero Coins = MWK 1,000 → user wallet
+/// - 1 Vero Point = 1 Vero Coin = MWK 50
+/// - 10 Vero Coins = MWK 500 → reward wallet (spin/redeem earnings only)
 /// - Earn spins: free daily + after marketplace / food / courier / ride / stay
-/// - Spin max prize MWK 20,000
+/// - Spin max prize MWK 10,000
 class VeroRewardsService {
   VeroRewardsService._();
 
   static final _db = FirebaseFirestore.instance;
 
   static const String collection = 'vero_rewards';
+  static const String configPath = 'app_config/vero_rewards';
+
+  /// Remote kill switches from admin (defaults ON if doc missing).
+  static Future<({bool cashOutEnabled, bool earningEnabled})>
+      getFinanceFlags() async {
+    try {
+      final snap = await _db.doc(configPath).get();
+      if (!snap.exists) {
+        return (cashOutEnabled: true, earningEnabled: true);
+      }
+      final d = snap.data() ?? <String, dynamic>{};
+      return (
+        cashOutEnabled: d['cashOutEnabled'] != false,
+        earningEnabled: d['earningEnabled'] != false,
+      );
+    } catch (e) {
+      if (kDebugMode) debugPrint('[VeroRewards] getFinanceFlags: $e');
+      // Fail open so a config read blip does not freeze rewards.
+      return (cashOutEnabled: true, earningEnabled: true);
+    }
+  }
+
+  static Stream<({bool cashOutEnabled, bool earningEnabled})>
+      watchFinanceFlags() {
+    return _db.doc(configPath).snapshots().map((snap) {
+      if (!snap.exists) {
+        return (cashOutEnabled: true, earningEnabled: true);
+      }
+      final d = snap.data() ?? <String, dynamic>{};
+      return (
+        cashOutEnabled: d['cashOutEnabled'] != false,
+        earningEnabled: d['earningEnabled'] != false,
+      );
+    });
+  }
 
   static const int visitsForPoint = 3;
   static const int coinsPerPoint = 1;
   static const int visitPointsPerWeek = 3;
-  static const int coinsPerRedeem = 5;
-  static const double mwkPerCoin = 100;
-  static const double mwkPerRedeem = coinsPerRedeem * mwkPerCoin; // 1,000
-  static const double maxSpinMwk = 20000;
-  static const int maxSpinCoins = 200; // 20,000 / 100
+  /// Harder cash-out: need 10 coins (not 5 → 1,000).
+  static const int coinsPerRedeem = 10;
+  static const double mwkPerCoin = 50;
+  static const double mwkPerRedeem = coinsPerRedeem * mwkPerCoin; // 500
+  static const double maxSpinMwk = 10000;
+  static const int maxSpinCoins = 200; // 10,000 / 50
 
   static const String sourceDaily = 'daily';
   static const String sourceMarketplace = 'marketplace';
@@ -38,87 +72,75 @@ class VeroRewardsService {
   static const String sourceRide = 'ride';
   static const String sourceAccommodation = 'accommodation';
 
-  /// Wheel segments (visual). Most spins land on try-again; real prizes are rare.
+  static String formatMwk(num amount) {
+    final n = amount.round();
+    final s = n.abs().toString();
+    final buf = StringBuffer(n < 0 ? '-' : '');
+    for (var i = 0; i < s.length; i++) {
+      final fromEnd = s.length - i;
+      buf.write(s[i]);
+      if (fromEnd > 1 && fromEnd % 3 == 1) buf.write(',');
+    }
+    return buf.toString();
+  }
+
+  /// Wheel segments. Biased hard toward try-again; jackpot is tiny.
   static const List<VeroSpinPrize> spinPrizes = [
     VeroSpinPrize(
       id: 'try_again',
       label: 'Try again',
-      valueLabel: '—',
+      valueLabel: 'Try tomorrow',
       colorValue: 0xFF6B7280,
       kind: VeroSpinKind.tryAgain,
-      weight: 920,
+      weight: 955,
     ),
     VeroSpinPrize(
       id: '1_coin',
       label: '1 Coin',
-      valueLabel: 'MWK 100',
+      valueLabel: 'MWK 50',
       colorValue: 0xFFF59E0B,
       kind: VeroSpinKind.coins,
       coins: 1,
-      weight: 45,
+      weight: 28,
     ),
     VeroSpinPrize(
       id: '1_point',
       label: '1 Point',
-      valueLabel: '1 coin · MWK 100',
+      valueLabel: '1 coin · MWK 50',
       colorValue: 0xFFEA580C,
       kind: VeroSpinKind.points,
       points: 1,
       coins: 1,
-      weight: 20,
+      weight: 10,
     ),
     VeroSpinPrize(
       id: '2_points',
       label: '2 Points',
-      valueLabel: '2 coins · MWK 200',
+      valueLabel: '2 coins · MWK 100',
       colorValue: 0xFFD97706,
       kind: VeroSpinKind.points,
       points: 2,
       coins: 2,
-      weight: 8,
+      weight: 5,
     ),
     VeroSpinPrize(
       id: '5_points',
       label: '5 Points',
-      valueLabel: '5 coins · MWK 500',
+      valueLabel: '5 coins · MWK 250',
       colorValue: 0xFFDC2626,
       kind: VeroSpinKind.points,
       points: 5,
       coins: 5,
-      weight: 4,
+      weight: 1,
     ),
     VeroSpinPrize(
       id: 'jackpot',
       label: 'Jackpot',
-      valueLabel: '200 coins · MWK 20,000',
-      colorValue: 0xFF7C3AED,
+      valueLabel: 'MWK 10,000',
+      colorValue: 0xFFB45309,
       kind: VeroSpinKind.coins,
       coins: maxSpinCoins,
       weight: 1,
-    ),
-    VeroSpinPrize(
-      id: 'free_ride',
-      label: 'Free Ride',
-      valueLabel: '≈ MWK 5,000',
-      colorValue: 0xFF2563EB,
-      kind: VeroSpinKind.impossible,
-      weight: 0,
-    ),
-    VeroSpinPrize(
-      id: 'free_meal',
-      label: 'Free Meal',
-      valueLabel: '≈ MWK 8,000',
-      colorValue: 0xFF059669,
-      kind: VeroSpinKind.impossible,
-      weight: 0,
-    ),
-    VeroSpinPrize(
-      id: 'free_stay',
-      label: 'Free Stay',
-      valueLabel: '≈ MWK 20,000',
-      colorValue: 0xFFDB2777,
-      kind: VeroSpinKind.impossible,
-      weight: 0,
     ),
   ];
 
@@ -180,6 +202,11 @@ class VeroRewardsService {
   static Future<VeroVisitResult> recordAppOpen() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || user.isAnonymous) {
+      return const VeroVisitResult(skipped: true);
+    }
+
+    final flags = await getFinanceFlags();
+    if (!flags.earningEnabled) {
       return const VeroVisitResult(skipped: true);
     }
 
@@ -287,6 +314,9 @@ class VeroRewardsService {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || user.isAnonymous) return false;
 
+    final flags = await getFinanceFlags();
+    if (!flags.earningEnabled) return false;
+
     final uid = user.uid;
     final refKey = _spinGrantKey(source: source, reference: reference);
 
@@ -345,12 +375,22 @@ class VeroRewardsService {
     return '${source}_$bucket';
   }
 
-  /// Redeem batches of 5 coins → MWK 2000 from platform wallet to user wallet.
+  /// Redeem batches of [coinsPerRedeem] coins → MWK into reward + user wallet.
   static Future<VeroRedeemResult> redeemCoinsIfEligible() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || user.isAnonymous) {
       return const VeroRedeemResult(ok: false, message: 'Sign in to redeem.');
     }
+
+    final flags = await getFinanceFlags();
+    if (!flags.cashOutEnabled) {
+      return const VeroRedeemResult(
+        ok: false,
+        message:
+            'Cash-outs are temporarily paused. Please try again later.',
+      );
+    }
+
     final uid = user.uid;
 
     final balance = await getBalance(uid);
@@ -358,7 +398,7 @@ class VeroRewardsService {
       return VeroRedeemResult(
         ok: false,
         message:
-            'You need $coinsPerRedeem coins to redeem (you have ${balance.coins}).',
+            'You need $coinsPerRedeem coins to cash out (you have ${balance.coins}). Almost… not quite.',
         coins: balance.coins,
       );
     }
@@ -368,7 +408,7 @@ class VeroRewardsService {
     final mwk = batches * mwkPerRedeem;
 
     try {
-      // Deduct coins first (transaction).
+      // Deduct coins + accumulate spin/reward earnings (transaction).
       await _db.runTransaction((tx) async {
         final ref = _doc(uid);
         final snap = await tx.get(ref);
@@ -377,10 +417,13 @@ class VeroRewardsService {
         if (coins < coinsToSpend) {
           throw Exception('Not enough coins');
         }
+        final prevEarnings =
+            (data['rewardEarningsMwk'] as num?)?.toDouble() ?? 0;
         tx.set(
           ref,
           {
             'coins': coins - coinsToSpend,
+            'rewardEarningsMwk': prevEarnings + mwk,
             'updatedAt': FieldValue.serverTimestamp(),
             'lastRedeemAt': FieldValue.serverTimestamp(),
             'lastRedeemMwk': mwk,
@@ -413,7 +456,7 @@ class VeroRewardsService {
       final fresh = await getBalance(uid);
       return VeroRedeemResult(
         ok: true,
-        message: 'MWK ${mwk.toStringAsFixed(0)} added to your wallet!',
+        message: 'MWK ${formatMwk(mwk)} landed in your reward wallet. Nice.',
         coins: fresh.coins,
         mwkCredited: mwk,
       );
@@ -440,6 +483,15 @@ class VeroRewardsService {
         message: 'Sign in to spin.',
       );
     }
+
+    final flags = await getFinanceFlags();
+    if (!flags.earningEnabled) {
+      return const VeroSpinResult(
+        ok: false,
+        message: 'Spins are temporarily paused. Please try again later.',
+      );
+    }
+
     final uid = user.uid;
     final today = _todayKey();
 
@@ -481,11 +533,11 @@ class VeroRewardsService {
           ok: false,
           alreadySpun: true,
           message:
-              'No spins left. Order, ride, courier, or book a stay to earn a spin — or come back tomorrow for a free one.',
+              'No spins left. Finish an order to earn one — or come back tomorrow for a free spin. Patience is a virtue 🤓.',
           prize: VeroSpinPrize(
             id: 'try_again',
             label: 'Try again',
-            valueLabel: '—',
+            valueLabel: 'Try tomorrow 🤓',
             colorValue: 0xFF6B7280,
             kind: VeroSpinKind.tryAgain,
             weight: 0,
@@ -494,31 +546,17 @@ class VeroRewardsService {
       }
 
       final prize = _pickWeightedPrize();
-      // Rare tease of free ride/meal/stay; most try-again spins show try-again.
-      var display = prize;
-      if (prize.kind == VeroSpinKind.tryAgain) {
-        final teasers =
-            spinPrizes.where((p) => p.kind == VeroSpinKind.impossible).toList();
-        if (teasers.isNotEmpty && math.Random().nextDouble() < 0.12) {
-          display = teasers[math.Random().nextInt(teasers.length)];
-        }
-      }
-
-      final awarded = prize.kind == VeroSpinKind.impossible
-          ? spinPrizes.firstWhere((p) => p.id == 'try_again')
-          : prize;
 
       var awardedCoins = 0;
       var awardedPoints = 0;
-      if (awarded.kind == VeroSpinKind.coins ||
-          awarded.kind == VeroSpinKind.points) {
-        awardedCoins = awarded.coins;
-        awardedPoints = awarded.points;
+      if (prize.kind == VeroSpinKind.coins || prize.kind == VeroSpinKind.points) {
+        awardedCoins = prize.coins;
+        awardedPoints = prize.points;
         await _doc(uid).set(
           {
             'coins': FieldValue.increment(awardedCoins),
             'points': FieldValue.increment(awardedPoints),
-            'lastSpinPrizeId': awarded.id,
+            'lastSpinPrizeId': prize.id,
             'lastSpinAt': FieldValue.serverTimestamp(),
             'updatedAt': FieldValue.serverTimestamp(),
           },
@@ -527,7 +565,7 @@ class VeroRewardsService {
       } else {
         await _doc(uid).set(
           {
-            'lastSpinPrizeId': awarded.id,
+            'lastSpinPrizeId': prize.id,
             'lastSpinAt': FieldValue.serverTimestamp(),
             'updatedAt': FieldValue.serverTimestamp(),
           },
@@ -535,19 +573,24 @@ class VeroRewardsService {
         );
       }
 
-      final message = switch (awarded.kind) {
-        VeroSpinKind.tryAgain => 'Try again!',
-        VeroSpinKind.coins => 'You won ${awarded.coins} Vero Coin(s)!',
-        VeroSpinKind.points =>
-          'You won ${awarded.points} point(s) (${awarded.coins} coins)!',
-        VeroSpinKind.impossible => 'Try again!',
+      final message = switch (prize.kind) {
+        VeroSpinKind.tryAgain =>
+          'Try again — come back tomorrow for another free spin.',
+        VeroSpinKind.coins => prize.id == 'jackpot'
+            ? 'JACKPOT! MWK ${formatMwk(maxSpinMwk)} — go brag (quietly).'
+            : 'You won ${prize.coins} Vero Coin${prize.coins == 1 ? '' : 's'}!',
+        VeroSpinKind.points => prize.points == 5
+            ? 'You won exactly 5 points (5 coins)! Not 6. We counted twice.'
+            : 'You won ${prize.points} point${prize.points == 1 ? '' : 's'} (${prize.coins} coin${prize.coins == 1 ? '' : 's'})!',
+        VeroSpinKind.impossible =>
+          'Try again — come back tomorrow for another free spin.',
       };
 
       return VeroSpinResult(
         ok: true,
         message: message,
-        prize: awarded,
-        displayPrize: display,
+        prize: prize,
+        displayPrize: prize,
         awardedCoins: awardedCoins,
         awardedPoints: awardedPoints,
       );
@@ -628,6 +671,8 @@ class VeroRewardsBalance {
   final int availableSpins;
   final bool dailySpinAvailable;
   final bool spunToday;
+  /// MWK earned from spin cash-outs / rewards only (not marketplace sales).
+  final double rewardEarningsMwk;
 
   const VeroRewardsBalance({
     this.coins = 0,
@@ -640,6 +685,7 @@ class VeroRewardsBalance {
     this.availableSpins = 0,
     this.dailySpinAvailable = false,
     this.spunToday = false,
+    this.rewardEarningsMwk = 0,
   });
 
   bool get canSpin => availableSpins > 0 || dailySpinAvailable;
@@ -669,6 +715,8 @@ class VeroRewardsBalance {
       dailySpinAvailable: dailyFree && spins <= 0,
       // Kept for older UI; prefer [canSpin] / [availableSpins].
       spunToday: spins <= 0 && !dailyFree,
+      rewardEarningsMwk:
+          (data['rewardEarningsMwk'] as num?)?.toDouble() ?? 0,
     );
   }
 

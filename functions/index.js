@@ -322,6 +322,8 @@ async function sendFcmToUser(merchantUid, title, body, dataPayload) {
               defaultVibrateTimings: true,
               priority: 'high',
               visibility: 'public',
+              // Collapse per-chat so spam doesn't flood the tray.
+              tag: String(data.chatId || data.type || 'vero360').slice(0, 64),
             },
           },
           apns: {
@@ -334,7 +336,7 @@ async function sendFcmToUser(merchantUid, title, body, dataPayload) {
                 alert: { title, body },
                 sound: 'default',
                 badge: 1,
-                contentAvailable: true,
+                // Do NOT set content-available alone — that becomes silent on iOS.
               },
             },
           },
@@ -500,6 +502,7 @@ async function moderateMarketplaceListing(snap) {
       {
         type: 'marketplace_moderation',
         status: 'rejected',
+        action: 'manage_shelf',
         marketplaceItemId: snap.id,
       },
     );
@@ -525,6 +528,7 @@ async function moderateMarketplaceListing(snap) {
     {
       type: 'marketplace_moderation',
       status: 'approved',
+      action: 'view_listing',
       marketplaceItemId: snap.id,
     },
   );

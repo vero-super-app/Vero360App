@@ -633,6 +633,9 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
           'storyId': item.storyId,
           'merchantId': merchantId,
           if (caption != null && caption.isNotEmpty) 'storyCaption': caption,
+          if (item.mediaUrl.trim().isNotEmpty)
+            'storyMediaUrl': item.mediaUrl.trim(),
+          'storyMediaType': item.mediaType,
         },
       );
 

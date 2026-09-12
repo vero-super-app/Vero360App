@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_id_resolver.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 
@@ -144,18 +145,46 @@ class MerchantReviewService {
     required int rating,
     required String comment,
   }) async {
-    final res = await ApiClient.post(
-      '/reviews',
-      body: jsonEncode({
-        'merchantId': merchantId,
-        'customerId': customerId,
-        'rating': rating.clamp(1, 5),
-        'comment': comment.trim(),
-      }),
-      timeout: _fastTimeout,
-    );
-    invalidateCache(merchantId);
-    return MerchantReview.fromJson(_unwrapMap(jsonDecode(res.body)));
+    if (merchantId <= 0) {
+      throw const ApiException(message: 'Could not find this seller for reviews.');
+    }
+    if (customerId <= 0) {
+      throw const ApiException(
+        message: 'Please log in to leave a review.',
+        requiresLogin: true,
+      );
+    }
+    if (merchantId == customerId) {
+      throw const ApiException(message: 'You can’t rate your own shop.');
+    }
+
+    try {
+      final res = await ApiClient.post(
+        '/reviews',
+        body: jsonEncode({
+          'merchantId': merchantId,
+          'customerId': customerId,
+          'rating': rating.clamp(1, 5),
+          'comment': comment.trim(),
+        }),
+        timeout: _fastTimeout,
+      );
+      invalidateCache(merchantId);
+      return MerchantReview.fromJson(_unwrapMap(jsonDecode(res.body)));
+    } on ApiException catch (e) {
+      final lower = (e.backendMessage ?? e.message).toLowerCase();
+      if (e.statusCode == 404 || lower.contains('merchant not found')) {
+        MerchantReviewIdResolver.clearCache();
+        throw ApiException(
+          message:
+              'Could not find this seller’s merchant account (id $merchantId). '
+              'Ask them to open Merchant dashboard once, then try again.',
+          statusCode: e.statusCode,
+          backendMessage: e.backendMessage,
+        );
+      }
+      rethrow;
+    }
   }
 
   Future<MerchantReview> updateReview({

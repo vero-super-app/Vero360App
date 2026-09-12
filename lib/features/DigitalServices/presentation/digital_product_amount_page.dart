@@ -83,7 +83,7 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
     });
   }
 
-  double get _mwk => usdToMwk(_selectedUsd);
+  double get _mwk => p.amountToMwk(_selectedUsd);
 
   bool get _amountValid =>
       _selectedUsd >= _minUsd && _selectedUsd <= _maxUsd;
@@ -93,7 +93,7 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Enter an amount between ${formatUsd(_minUsd)} and ${formatUsd(_maxUsd)}',
+            'Enter an amount between ${p.formatAmount(_minUsd)} and ${p.formatAmount(_maxUsd)}',
           ),
         ),
       );
@@ -226,21 +226,41 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
         ],
       ),
       clipBehavior: Clip.antiAlias,
-      child: p.logoAsset != null
-          ? Image.asset(
-              p.logoAsset!,
+      child: p.imageUrl != null && p.imageUrl!.trim().isNotEmpty
+          ? Image.network(
+              p.imageUrl!,
               fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Icon(
-                p.icon ?? Icons.card_giftcard_rounded,
-                color: p.accent,
-                size: size * 0.45,
-              ),
+              errorBuilder: (_, __, ___) => p.logoAsset != null
+                  ? Image.asset(
+                      p.logoAsset!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Icon(
+                        p.icon ?? Icons.card_giftcard_rounded,
+                        color: p.accent,
+                        size: size * 0.45,
+                      ),
+                    )
+                  : Icon(
+                      p.icon ?? Icons.card_giftcard_rounded,
+                      color: p.accent,
+                      size: size * 0.45,
+                    ),
             )
-          : Icon(
-              p.icon ?? Icons.card_giftcard_rounded,
-              color: p.accent,
-              size: size * 0.45,
-            ),
+          : p.logoAsset != null
+              ? Image.asset(
+                  p.logoAsset!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Icon(
+                    p.icon ?? Icons.card_giftcard_rounded,
+                    color: p.accent,
+                    size: size * 0.45,
+                  ),
+                )
+              : Icon(
+                  p.icon ?? Icons.card_giftcard_rounded,
+                  color: p.accent,
+                  size: size * 0.45,
+                ),
     );
   }
 
@@ -294,7 +314,7 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
             runSpacing: 10,
             children: p.usdAmounts.map((usd) {
               final selected = !_usingCustom && usd == _selectedUsd;
-              final mwk = usdToMwk(usd);
+              final mwk = p.amountToMwk(usd);
               return GestureDetector(
                 onTap: () => _selectPreset(usd),
                 child: AnimatedContainer(
@@ -325,7 +345,7 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        formatUsd(usd),
+                        p.formatAmount(usd),
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w900,
@@ -763,7 +783,7 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    formatUsd(_selectedUsd),
+                    p.formatAmount(_selectedUsd),
                     style: const TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w900,

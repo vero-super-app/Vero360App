@@ -14,6 +14,7 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
+import 'package:vero360_app/GernalServices/chat_receipt_service.dart';
 
 /// Backend `@IsUUID('4')` rejects anything else (v5, `order-shipping-…`, etc.).
 final _uuidV4Re = RegExp(
@@ -314,6 +315,20 @@ class BackendChatMessage {
       meta = Map<String, dynamic>.from(rawMeta);
     }
 
+    DateTime? parseDt(dynamic raw) {
+      if (raw == null) return null;
+      if (raw is DateTime) return raw;
+      return DateTime.tryParse(raw.toString());
+    }
+
+    String normalizeStatus(dynamic raw) {
+      final s = (raw ?? 'sent').toString().trim().toLowerCase();
+      if (s == 'seen' || s == 'viewed') return 'read';
+      if (s == 'received') return 'delivered';
+      if (s == 'pending' || s == 'queued') return 'sent';
+      return s.isEmpty ? 'sent' : s;
+    }
+
     return BackendChatMessage(
       id: json['id']?.toString() ?? '',
       chatId: json['chatId']?.toString() ?? '',
@@ -322,13 +337,10 @@ class BackendChatMessage {
           : int.tryParse(json['senderId'].toString()) ?? 0,
       content: json['content'],
       type: json['type'] ?? 'text',
-      status: json['status'] ?? 'sent',
-      createdAt:
-          DateTime.parse(json['createdAt'] ?? DateTime.now().toIso8601String()),
-      readAt: json['readAt'] != null ? DateTime.parse(json['readAt']) : null,
-      deliveredAt: json['deliveredAt'] != null
-          ? DateTime.parse(json['deliveredAt'])
-          : null,
+      status: normalizeStatus(json['status']),
+      createdAt: parseDt(json['createdAt']) ?? DateTime.now(),
+      readAt: parseDt(json['readAt'] ?? json['seenAt']),
+      deliveredAt: parseDt(json['deliveredAt'] ?? json['receivedAt']),
       attachments: json['attachments'] != null
           ? List<Map<String, dynamic>>.from(json['attachments'] as List)
           : json['attachmentUrls'] is List
@@ -910,6 +922,18 @@ class BackendChatService {
         unawaited(BackendMessagingCache.saveThreads(myId, _cachedThreads));
       }
 
+      if (!message.isMine(myId)) {
+        // Device received the message → delivered tick for the sender.
+        // If this chat is open, the page also publishes read.
+        final asRead = message.chatId == _activeChatId;
+        unawaited(ChatReceiptService.publish(
+          chatId: message.chatId,
+          userId: myId,
+          deliveredUpTo: message.createdAt,
+          readUpTo: asRead ? message.createdAt : null,
+        ));
+      }
+
       if (!message.isMine(myId) && message.chatId != _activeChatId) {
         final thread = _cachedThreads.firstWhere(
           (t) => t.id.trim() == chatId,
@@ -1287,12 +1311,22 @@ class BackendChatService {
   }
 
   static Future<void> ensureAuth({bool forceRefresh = false}) async {
-    await ApiConfig.init();
-
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       throw Exception('User not authenticated');
     }
+
+    // Fast path for chat send: warm token skips prefs / deleted-id reload.
+    final cacheValid = !forceRefresh &&
+        _authToken != null &&
+        _authToken!.isNotEmpty &&
+        _userId != null &&
+        _cachedFirebaseUid == user.uid &&
+        _tokenFetchedAt != null &&
+        DateTime.now().difference(_tokenFetchedAt!) < _tokenTtl;
+    if (cacheValid) return;
+
+    await ApiConfig.init();
 
     final sp = await SharedPreferences.getInstance();
     final storedUid = sp.getString(_messagingFirebaseUidKey);
@@ -1307,21 +1341,6 @@ class BackendChatService {
       _deletedThreadIds = {};
       _threadsWatchReady = false;
       _emitCachedThreads();
-    }
-
-    final cacheValid = !forceRefresh &&
-        _authToken != null &&
-        _authToken!.isNotEmpty &&
-        _userId != null &&
-        _cachedFirebaseUid == user.uid &&
-        _tokenFetchedAt != null &&
-        DateTime.now().difference(_tokenFetchedAt!) < _tokenTtl;
-
-    if (cacheValid) {
-      if (_userId != null) {
-        await _loadDeletedThreadIds(_userId!);
-      }
-      return;
     }
 
     try {
@@ -2008,6 +2027,65 @@ class BackendChatService {
         if (participant.id == peerUserId) return thread;
       }
     }
+    return null;
+  }
+
+  static BackendChatThread? findCachedThreadById(String chatId) {
+    final id = chatId.trim();
+    if (id.isEmpty) return null;
+    for (final thread in _cachedThreads) {
+      if (thread.id.trim() == id) return thread;
+    }
+    return null;
+  }
+
+  /// Best-effort Firebase UID for the other person in a direct chat.
+  static Future<String?> resolvePeerFirebaseUid({
+    String? chatId,
+    int? peerUserId,
+    String? hintFirebaseUid,
+  }) async {
+    final myUid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    final hint = (hintFirebaseUid ?? '').trim();
+    if (_looksLikeFirebaseUid(hint) && hint != myUid) return hint;
+
+    final myId = peekUserId() ?? 0;
+    final threadId = (chatId ?? '').trim();
+    if (threadId.isNotEmpty && myId > 0) {
+      final thread = findCachedThreadById(threadId);
+      final other = thread?.otherParticipant(myId);
+      final fromParticipant = (other?.firebaseUid ?? '').trim();
+      if (_looksLikeFirebaseUid(fromParticipant) &&
+          fromParticipant != myUid) {
+        return fromParticipant;
+      }
+      final otherId = other?.id ?? 0;
+      if (otherId > 0) {
+        final uid = await getFirebaseUidByUserId(otherId, quiet: true);
+        if (_looksLikeFirebaseUid(uid ?? '') && uid != myUid) return uid;
+      }
+    }
+
+    final peerId = peerUserId ?? 0;
+    if (peerId > 0) {
+      final uid = await getFirebaseUidByUserId(peerId, quiet: true);
+      if (_looksLikeFirebaseUid(uid ?? '') && uid != myUid) return uid;
+
+      // Firestore fallback when Nest profile omits firebaseUid.
+      try {
+        for (final field in ['userId', 'id', 'backendUserId', 'nestUserId']) {
+          final snap = await FirebaseFirestore.instance
+              .collection('users')
+              .where(field, isEqualTo: peerId)
+              .limit(1)
+              .get();
+          if (snap.docs.isEmpty) continue;
+          final docUid = snap.docs.first.id.trim();
+          if (_looksLikeFirebaseUid(docUid) && docUid != myUid) return docUid;
+        }
+      } catch (_) {}
+    }
+
     return null;
   }
 
@@ -2958,8 +3036,12 @@ class BackendChatService {
   }
 
   static String _normalizeMediaUrl(String url) {
-    final trimmed = url.trim();
-    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    var trimmed = url.trim();
+    if (trimmed.startsWith('http://')) {
+      // Prefer HTTPS so the first image request succeeds (avoids http→https retry lag).
+      trimmed = 'https://${trimmed.substring(7)}';
+    }
+    if (trimmed.startsWith('https://')) {
       return trimmed;
     }
     final root = ApiConfig.prod.replaceAll(RegExp(r'/+$'), '');

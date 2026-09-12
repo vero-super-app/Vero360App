@@ -5,7 +5,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
+import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode, compute;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -18,6 +18,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:crypto/crypto.dart' show sha256;
 
 import 'package:image_picker/image_picker.dart';
+import 'package:image/image.dart' as img;
 import 'package:mime/mime.dart';
 
 import 'package:geolocator/geolocator.dart';
@@ -2908,8 +2909,8 @@ class _MarketplaceMerchantDashboardState
   Future<void> _pickMorePhotos() async {
     try {
       final files = await _picker.pickMultiImage(
-        imageQuality: 88,
-        maxWidth: 2048,
+        imageQuality: 80,
+        maxWidth: 1600,
       );
 
       if (files.isEmpty) return;
@@ -2973,7 +2974,17 @@ class _MarketplaceMerchantDashboardState
     return 'CouldnG??t post your listing. Please try again.';
   }
 
-  // ----------------- CREATE item -----------------
+  // ----------------- CREATE item (fast path) -----------------
+  Future<Uint8List> _compressForMarketplaceUpload(Uint8List raw) async {
+    // Skip CPU work when already small enough for a quick upload.
+    if (raw.lengthInBytes <= 220000) return raw;
+    try {
+      return await compute(_compressMarketplaceBytesIsolate, raw);
+    } catch (_) {
+      return raw;
+    }
+  }
+
   Future<void> _create() async {
     // Sync lock BEFORE any await so one tap cannot post twice on slow networks.
     if (_submitting) return;
@@ -3015,7 +3026,8 @@ class _MarketplaceMerchantDashboardState
         _toastErr('Missing user id G?? sign in and try again.');
         return;
       }
-      final sellerId = await _getNestUserId();
+      // Never block posting on /users/me — use cache/JWT only.
+      final sellerId = await _getNestUserId(allowNetwork: false);
       final merchantDisplay = _displayBusinessName();
       final effectiveSellerId =
           (sellerId != null && sellerId.trim().isNotEmpty)
@@ -3023,53 +3035,65 @@ class _MarketplaceMerchantDashboardState
               : firebaseUid;
 
       final svc = MarketplaceService();
+      final uploadToken = await AuthHandler.getTokenForApi();
+
+      // Shrink photos off the UI isolate, then upload them in parallel.
+      final coverRaw = _cover!.bytes;
+      final galleryRaw = List<LocalMedia>.from(_gallery);
+      final compressedList = await Future.wait<Uint8List>([
+        _compressForMarketplaceUpload(coverRaw),
+        ...galleryRaw.map((m) => _compressForMarketplaceUpload(m.bytes)),
+      ]);
+      final coverBytes = compressedList.first;
+      final galleryBytes = compressedList.length > 1
+          ? compressedList.sublist(1)
+          : <Uint8List>[];
+
       String? coverUrl;
       String? coverBase64;
-      String? coverHash;
       final galleryUrls = <String>[];
       final galleryBase64 = <String>[];
-      final galleryHashes = <String>[];
 
-      // Prefer backend upload URLs; fall back to base64 in Firestore if server is unreachable.
       try {
-        coverUrl = await svc.uploadBytes(
-          _cover!.bytes,
-          filename: _cover!.filename ?? 'cover.jpg',
-          mimeType: _cover!.mime,
-        );
-        coverHash = await svc.computeVisualHash(_cover!.bytes);
-
-        for (final m in _gallery) {
-          final url = await svc.uploadBytes(
-            m.bytes,
-            filename: m.filename.isNotEmpty ? m.filename : 'gallery.jpg',
-            mimeType: m.mime,
-          );
-          galleryUrls.add(url);
-          final gHash = await svc.computeVisualHash(m.bytes);
-          if (gHash != null) galleryHashes.add(gHash);
+        final uploadFutures = <Future<String>>[
+          svc.uploadBytes(
+            coverBytes,
+            filename: _cover!.filename ?? 'cover.jpg',
+            mimeType: 'image/jpeg',
+            token: uploadToken,
+            timeout: const Duration(seconds: 30),
+          ),
+          for (var i = 0; i < galleryRaw.length; i++)
+            svc.uploadBytes(
+              galleryBytes[i],
+              filename: galleryRaw[i].filename.isNotEmpty
+                  ? galleryRaw[i].filename
+                  : 'gallery_$i.jpg',
+              mimeType: 'image/jpeg',
+              token: uploadToken,
+              timeout: const Duration(seconds: 30),
+            ),
+        ];
+        final uploaded = await Future.wait(uploadFutures);
+        coverUrl = uploaded.first;
+        if (galleryRaw.isNotEmpty) {
+          galleryUrls.addAll(uploaded.sublist(1));
         }
       } catch (uploadErr) {
-        debugPrint('Backend upload failed, saving to Firestore as base64: $uploadErr');
-        if (_cover!.bytes.length > 450000) {
+        debugPrint(
+            'Backend upload failed, saving to Firestore as base64: $uploadErr');
+        if (coverBytes.length > 450000) {
           throw StateError(
             'Image upload failed and the photo is too large to save offline. '
             'Check internet and that your backend server is running.',
           );
         }
-        coverBase64 = base64Encode(_cover!.bytes);
-        coverHash = await svc.computeVisualHash(_cover!.bytes);
-        for (final m in _gallery) {
-          galleryBase64.add(base64Encode(m.bytes));
-          final gHash = await svc.computeVisualHash(m.bytes);
-          if (gHash != null) galleryHashes.add(gHash);
+        coverBase64 = base64Encode(coverBytes);
+        for (final bytes in galleryBytes) {
+          if (bytes.length > 200000) continue;
+          galleryBase64.add(base64Encode(bytes));
         }
       }
-
-      final imageHashes = <String>{
-        if (coverHash != null) coverHash,
-        ...galleryHashes,
-      }.toList();
 
       final data = <String, dynamic>{
         'name': _name.text.trim(),
@@ -3078,9 +3102,6 @@ class _MarketplaceMerchantDashboardState
         if (coverBase64 != null) 'image': coverBase64,
         if (galleryUrls.isNotEmpty) 'galleryUrls': galleryUrls,
         if (galleryBase64.isNotEmpty) 'gallery': galleryBase64,
-        if (coverHash != null) 'imageHash': coverHash,
-        if (galleryHashes.isNotEmpty) 'galleryHashes': galleryHashes,
-        if (imageHashes.isNotEmpty) 'imageHashes': imageHashes,
         'description': _desc.text.trim().isEmpty ? null : _desc.text.trim(),
         'location': _location.text.trim(),
         // Always pending until Cloud Function auto-moderation approves.
@@ -3099,8 +3120,33 @@ class _MarketplaceMerchantDashboardState
         'quantity': _stockQty,
       };
 
-      await _firestore.collection('marketplace_items').add(data);
+      final docRef =
+          await _firestore.collection('marketplace_items').add(data);
       debugPrint('Firestore write OK G?? marketplace_items (pending review)');
+
+      // Visual hashes for duplicate detection — never block the submit UX.
+      final hashCover = coverBytes;
+      final hashGallery = List<Uint8List>.from(galleryBytes);
+      unawaited(() async {
+        try {
+          final coverHash = await svc.computeVisualHash(hashCover);
+          final gHashes = <String>[];
+          for (final b in hashGallery) {
+            final h = await svc.computeVisualHash(b);
+            if (h != null) gHashes.add(h);
+          }
+          final imageHashes = <String>{
+            if (coverHash != null) coverHash,
+            ...gHashes,
+          }.toList();
+          if (imageHashes.isEmpty) return;
+          await docRef.set({
+            if (coverHash != null) 'imageHash': coverHash,
+            if (gHashes.isNotEmpty) 'galleryHashes': gHashes,
+            'imageHashes': imageHashes,
+          }, SetOptions(merge: true));
+        } catch (_) {}
+      }());
 
       if (!mounted) return;
       _toastOk('Submitted for review. WeG??ll notify you when itG??s live.');
@@ -3230,8 +3276,8 @@ class _MarketplaceMerchantDashboardState
             Future<void> pickNewCoverFrom(ImageSource src) async {
               final x = await _picker.pickImage(
                 source: src,
-                maxWidth: 1800,
-                imageQuality: 90,
+                maxWidth: 1600,
+                imageQuality: 80,
               );
               if (x == null) return;
 
@@ -5546,44 +5592,46 @@ class _MarketplaceMerchantDashboardState
               ),
               const SizedBox(height: 10),
               if (_gallery.isNotEmpty)
-                GridView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: _gallery.length,
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 4,
-                    crossAxisSpacing: 10,
-                    mainAxisSpacing: 10,
-                  ),
-                  itemBuilder: (_, i) {
-                    final m = _gallery[i];
-                    return Stack(
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: Image.memory(
-                            m.bytes,
-                            width: double.infinity,
-                            height: double.infinity,
-                            fit: BoxFit.cover,
-                          ),
-                        ),
-                        Positioned(
-                          top: 6,
-                          right: 6,
-                          child: InkWell(
-                            onTap: () => _removeGalleryAt(i),
-                            child: const CircleAvatar(
-                              radius: 12,
-                              backgroundColor: Colors.black54,
-                              child: Icon(Icons.close,
-                                  size: 14, color: Colors.white),
+                SizedBox(
+                  height: 96,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _gallery.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 10),
+                    itemBuilder: (_, i) {
+                      final m = _gallery[i];
+                      return SizedBox(
+                        width: 96,
+                        height: 96,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Image.memory(
+                                m.bytes,
+                                fit: BoxFit.cover,
+                                gaplessPlayback: true,
+                              ),
                             ),
-                          ),
+                            Positioned(
+                              top: 4,
+                              right: 4,
+                              child: InkWell(
+                                onTap: () => _removeGalleryAt(i),
+                                child: const CircleAvatar(
+                                  radius: 12,
+                                  backgroundColor: Colors.black54,
+                                  child: Icon(Icons.close,
+                                      size: 14, color: Colors.white),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
 
               const SizedBox(height: 14),
@@ -5705,6 +5753,11 @@ class _MarketplaceMerchantDashboardState
                     height: 1.35,
                   ),
                 ),
+              ),
+              const SizedBox(height: 10),
+              const FacebookShareHint(
+                message:
+                    'Once approved, this listing is also shared on the Vero360 Facebook Page to help more buyers find you.',
               ),
               const SizedBox(height: 12),
               SizedBox(
@@ -5971,8 +6024,8 @@ class _MarketplaceMerchantDashboardState
   Future<void> _pickCover(ImageSource src) async {
     final x = await _picker.pickImage(
       source: src,
-      imageQuality: 90,
-      maxWidth: 2048,
+      imageQuality: 80,
+      maxWidth: 1600,
     );
     if (x == null) return;
     final bytes = await x.readAsBytes();
@@ -6106,8 +6159,8 @@ class _MarketplaceMerchantDashboardState
       }
       final x = await _picker.pickImage(
         source: ImageSource.camera,
-        imageQuality: 88,
-        maxWidth: 2048,
+        imageQuality: 80,
+        maxWidth: 1600,
       );
       if (x == null) return;
       final bytes = await x.readAsBytes();
@@ -7284,5 +7337,36 @@ class _MarketplacePhoneSheetState extends State<_MarketplacePhoneSheet> {
         ),
       ),
     );
+  }
+}
+
+/// Isolate entry for marketplace upload compression (must be top-level).
+Uint8List _compressMarketplaceBytesIsolate(Uint8List raw) {
+  try {
+    final decoded = img.decodeImage(raw);
+    if (decoded == null) return raw;
+    const maxSide = 1280;
+    var im = decoded;
+    if (im.width > maxSide || im.height > maxSide) {
+      if (im.width >= im.height) {
+        im = img.copyResize(
+          im,
+          width: maxSide,
+          interpolation: img.Interpolation.linear,
+        );
+      } else {
+        im = img.copyResize(
+          im,
+          height: maxSide,
+          interpolation: img.Interpolation.linear,
+        );
+      }
+    }
+    final out = Uint8List.fromList(img.encodeJpg(im, quality: 72));
+    return out.lengthInBytes > 0 && out.lengthInBytes < raw.lengthInBytes
+        ? out
+        : raw;
+  } catch (_) {
+    return raw;
   }
 }

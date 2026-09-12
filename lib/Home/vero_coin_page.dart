@@ -1,8 +1,9 @@
+import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 import 'package:vero360_app/GernalServices/vero_rewards_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
@@ -18,33 +19,57 @@ class VeroCoinPage extends StatefulWidget {
 }
 
 class _VeroCoinPageState extends State<VeroCoinPage>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   static const _orange = Color(0xFFFF6B00);
+  static const _ink = Color(0xFF1A120B);
+  static const _muted = Color(0xFF7A6A5C);
+
   bool _redeeming = false;
   bool _spinning = false;
-  double? _walletMwk;
+  bool _cashOutEnabled = true;
+  bool _earningEnabled = true;
   double _wheelTurns = 0;
   String? _lastSpinMessage;
   final _scrollCtrl = ScrollController();
   final _spinKey = GlobalKey();
+  StreamSubscription<({bool cashOutEnabled, bool earningEnabled})>?
+      _financeSub;
 
   late final AnimationController _spinCtrl;
+  late final AnimationController _pulseCtrl;
+  late final AnimationController _enterCtrl;
 
   @override
   void initState() {
     super.initState();
     _spinCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 6800),
+      duration: const Duration(milliseconds: 2200),
     );
-    _loadWallet();
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1600),
+    )..repeat(reverse: true);
+    _enterCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 720),
+    )..forward();
+
+    _financeSub = VeroRewardsService.watchFinanceFlags().listen((flags) {
+      if (!mounted) return;
+      setState(() {
+        _cashOutEnabled = flags.cashOutEnabled;
+        _earningEnabled = flags.earningEnabled;
+      });
+    });
+
     if (widget.celebrateSpin) {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         await Future<void>.delayed(const Duration(milliseconds: 280));
         if (!mounted) return;
         _scrollToSpin();
         setState(() {
-          _lastSpinMessage = 'Your free spin is ready — tap Spin now!';
+          _lastSpinMessage = 'Free spin unlocked — give it a whirl.';
         });
       });
     }
@@ -57,13 +82,13 @@ class _VeroCoinPageState extends State<VeroCoinPage>
         ctx,
         duration: const Duration(milliseconds: 420),
         curve: Curves.easeOutCubic,
-        alignment: 0.15,
+        alignment: 0.12,
       );
       return;
     }
     if (_scrollCtrl.hasClients) {
       _scrollCtrl.animateTo(
-        180,
+        220,
         duration: const Duration(milliseconds: 420),
         curve: Curves.easeOutCubic,
       );
@@ -72,27 +97,16 @@ class _VeroCoinPageState extends State<VeroCoinPage>
 
   @override
   void dispose() {
+    _financeSub?.cancel();
     _spinCtrl.dispose();
+    _pulseCtrl.dispose();
+    _enterCtrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _loadWallet() async {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) return;
-    try {
-      await VeroRewardsService.ensureUserWallet(uid: uid);
-      final w = await FirebaseWalletService.getOrCreateWallet(
-        merchantId: uid,
-        merchantName:
-            FirebaseAuth.instance.currentUser?.displayName ?? 'Vero360 User',
-      );
-      if (mounted) setState(() => _walletMwk = w.balance);
-    } catch (_) {}
-  }
-
   Future<void> _redeem() async {
-    if (_redeeming) return;
+    if (_redeeming || !_cashOutEnabled) return;
     setState(() => _redeeming = true);
     try {
       final res = await VeroRewardsService.redeemCoinsIfEligible();
@@ -103,7 +117,6 @@ class _VeroCoinPageState extends State<VeroCoinPage>
         isSuccess: res.ok,
         errorMessage: '',
       );
-      if (res.ok) await _loadWallet();
     } finally {
       if (mounted) setState(() => _redeeming = false);
     }
@@ -135,11 +148,11 @@ class _VeroCoinPageState extends State<VeroCoinPage>
 
     final prizes = VeroRewardsService.spinPrizes;
     final target = res.displayPrize ?? res.prize ?? prizes.first;
-    final index = prizes.indexWhere((p) => p.id == target.id).clamp(0, prizes.length - 1);
+    final index =
+        prizes.indexWhere((p) => p.id == target.id).clamp(0, prizes.length - 1);
     final segment = 1.0 / prizes.length;
-    // Pointer is at top; rotate so segment center lands under pointer.
     final targetCenter = index * segment + segment / 2;
-    final extraTurns = 8 + math.Random().nextInt(4);
+    final extraTurns = 12 + math.Random().nextInt(5);
     final endTurns = _wheelTurns.floor() + extraTurns + (1 - targetCenter);
 
     final anim = Tween<double>(begin: _wheelTurns, end: endTurns).animate(
@@ -152,7 +165,7 @@ class _VeroCoinPageState extends State<VeroCoinPage>
     anim.addListener(listener);
     _spinCtrl.forward(from: 0);
     await Future<void>.delayed(
-      _spinCtrl.duration ?? const Duration(milliseconds: 6800),
+      _spinCtrl.duration ?? const Duration(milliseconds: 2200),
     );
     anim.removeListener(listener);
 
@@ -173,311 +186,624 @@ class _VeroCoinPageState extends State<VeroCoinPage>
   @override
   Widget build(BuildContext context) {
     final uid = FirebaseAuth.instance.currentUser?.uid;
+    final redeemCoins = VeroRewardsService.coinsPerRedeem;
+    final redeemMwk =
+        VeroRewardsService.formatMwk(VeroRewardsService.mwkPerRedeem);
+    final coinMwk =
+        VeroRewardsService.formatMwk(VeroRewardsService.mwkPerCoin);
+    final jackpot =
+        VeroRewardsService.formatMwk(VeroRewardsService.maxSpinMwk);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFFFFBF6),
+      extendBodyBehindAppBar: true,
+      backgroundColor: const Color(0xFFFFF7F0),
       appBar: AppBar(
-        title: const Text('Vero Coin'),
-        backgroundColor: _orange,
+        title: const Text(
+          'Vero Coin',
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.4,
+          ),
+        ),
+        backgroundColor: Colors.transparent,
         foregroundColor: Colors.white,
         elevation: 0,
+        flexibleSpace: ClipRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    const Color(0xFFE85D04).withValues(alpha: 0.96),
+                    const Color(0xFFFF6B00).withValues(alpha: 0.88),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
       body: uid == null
           ? const Center(child: Text('Sign in to earn Vero Coins.'))
-          : StreamBuilder<VeroRewardsBalance>(
-              stream: VeroRewardsService.watchBalance(uid),
-              builder: (context, snap) {
-                final b = snap.data ?? const VeroRewardsBalance();
-                final canRedeem = b.coins >= VeroRewardsService.coinsPerRedeem;
+          : Stack(
+              children: [
+                const _AmbientBackdrop(),
+                StreamBuilder<VeroRewardsBalance>(
+                  stream: VeroRewardsService.watchBalance(uid),
+                  builder: (context, snap) {
+                    final b = snap.data ?? const VeroRewardsBalance();
+                    final canRedeem =
+                        _cashOutEnabled && b.coins >= redeemCoins;
+                    final topPad = MediaQuery.paddingOf(context).top + kToolbarHeight + 8;
 
-                return ListView(
-                  controller: _scrollCtrl,
-                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
-                  children: [
-                    _balanceCard(b),
-                    const SizedBox(height: 18),
-                    KeyedSubtree(
-                      key: _spinKey,
-                      child: _spinCard(b),
-                    ),
-                    const SizedBox(height: 14),
-                    _card(
-                      title: 'Prize values',
-                      child: Column(
+                    return FadeTransition(
+                      opacity: CurvedAnimation(
+                        parent: _enterCtrl,
+                        curve: Curves.easeOut,
+                      ),
+                      child: ListView(
+                        controller: _scrollCtrl,
+                        padding: EdgeInsets.fromLTRB(20, topPad, 20, 48),
                         children: [
-                          for (final p in VeroRewardsService.spinPrizes)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              child: Row(
-                                children: [
-                                  Container(
-                                    width: 10,
-                                    height: 10,
-                                    decoration: BoxDecoration(
-                                      color: Color(p.colorValue),
-                                      shape: BoxShape.circle,
+                          SlideTransition(
+                            position: Tween<Offset>(
+                              begin: const Offset(0, 0.08),
+                              end: Offset.zero,
+                            ).animate(
+                              CurvedAnimation(
+                                parent: _enterCtrl,
+                                curve: Curves.easeOutCubic,
+                              ),
+                            ),
+                            child: _balanceHero(b, coinMwk),
+                          ),
+                          const SizedBox(height: 22),
+                          KeyedSubtree(
+                            key: _spinKey,
+                            child: _spinStage(b),
+                          ),
+                          const SizedBox(height: 20),
+                          _sectionShell(
+                            emoji: '🎁',
+                            title: 'Prize values',
+                            subtitle: 'What the wheel can land on',
+                            gradient: const [
+                              Color(0xFFFFF1E0),
+                              Color(0xFFFFE0C2),
+                            ],
+                            accent: const Color(0xFFFF6B00),
+                            child: Column(
+                              children: [
+                                for (final p in VeroRewardsService.spinPrizes)
+                                  _prizeRow(p),
+                                const SizedBox(height: 8),
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFFF8EF),
+                                    borderRadius: BorderRadius.circular(14),
+                                    border: Border.all(
+                                      color: const Color(0xFFFFD7A8),
                                     ),
                                   ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      p.label.replaceAll('\n', ' '),
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 13.5,
-                                      ),
-                                    ),
-                                  ),
-                                  Text(
-                                    p.valueLabel,
-                                    style: TextStyle(
-                                      color: Colors.grey.shade700,
-                                      fontWeight: FontWeight.w600,
+                                  child: Text(
+                                    '🏆 Jackpot sits at MWK $jackpot. Land it if you dare.',
+                                    style: const TextStyle(
                                       fontSize: 12.5,
+                                      height: 1.4,
+                                      color: Color(0xFF8A4B12),
+                                      fontWeight: FontWeight.w700,
                                     ),
                                   ),
-                                ],
-                              ),
-                            ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Biggest cash spin is MWK 20,000.',
-                            style: TextStyle(
-                              fontSize: 12.5,
-                              height: 1.35,
-                              color: Colors.grey.shade700,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _card(
-                      title: 'Show-up bonus',
-                      child: Text(
-                        b.visitWeekCapReached
-                            ? 'Weekly show-up bonus done (${b.visitPointsThisWeek}/${VeroRewardsService.visitPointsPerWeek} this week). Come back next week.'
-                            : b.pointEarnedToday
-                                ? 'Today’s show-up bonus done (1 point = 1 coin = MWK 100). ${b.visitPointsLeftThisWeek} left this week.'
-                                : 'Open the app ${b.visitsNeededToday} more time${b.visitsNeededToday == 1 ? '' : 's'} today → 1 point = 1 coin = MWK 100.\nThis week: ${b.visitPointsThisWeek}/${VeroRewardsService.visitPointsPerWeek} show-up bonuses used.',
-                        style: const TextStyle(
-                          fontSize: 14.5,
-                          height: 1.4,
-                          color: Color(0xFF444444),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _card(
-                      title: 'Simple rules',
-                      child: const Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _Rule('1 point = 1 coin = MWK 100'),
-                          _Rule('5 coins = MWK 1,000 in your wallet'),
-                          _Rule('Open app 3 times a day → 1 point'),
-                          _Rule(
-                            'Show-up bonus max 3 times a week — then no more until next week',
-                          ),
-                          _Rule('Free spin every day'),
-                          _Rule(
-                            'Also earn a spin after marketplace, food, courier, ride, or stay payment',
-                          ),
-                          _Rule('Highest spin = MWK 20,000'),
-                          _Rule('For customers and merchants'),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 50,
-                      child: FilledButton(
-                        onPressed: canRedeem && !_redeeming ? _redeem : null,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _orange,
-                          disabledBackgroundColor: const Color(0xFFFFD8B0),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        child: _redeeming
-                            ? const SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
                                 ),
-                              )
-                            : Text(
-                                canRedeem
-                                    ? 'Cash out 5 coins → MWK 1,000'
-                                    : 'Need 5 coins (MWK 1,000) to cash out',
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          _sectionShell(
+                            emoji: '👋',
+                            title: 'Show-up bonus',
+                            subtitle: 'Open the app, earn quietly',
+                            gradient: const [
+                              Color(0xFFE8F8F0),
+                              Color(0xFFD4F0E2),
+                            ],
+                            accent: const Color(0xFF0F9F6E),
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.55),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Text(
+                                b.visitWeekCapReached
+                                    ? '✅ Weekly show-up bonus done (${b.visitPointsThisWeek}/${VeroRewardsService.visitPointsPerWeek} this week). Come back next week 💚'
+                                    : b.pointEarnedToday
+                                        ? '🎉 Today’s show-up bonus done (1 point = 1 coin = MWK $coinMwk). ${b.visitPointsLeftThisWeek} left this week.'
+                                        : '📱 Open the app ${b.visitsNeededToday} more time${b.visitsNeededToday == 1 ? '' : 's'} today → 1 point = 1 coin = MWK $coinMwk.\n📅 This week: ${b.visitPointsThisWeek}/${VeroRewardsService.visitPointsPerWeek} show-up bonuses used.',
                                 style: const TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 15,
+                                  fontSize: 14.5,
+                                  height: 1.45,
+                                  color: Color(0xFF1F3D32),
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          _sectionShell(
+                            emoji: '✨',
+                            title: 'How it works',
+                            subtitle: 'Short rules, fair odds',
+                            gradient: const [
+                              Color(0xFFFFF4D6),
+                              Color(0xFFFFE8B0),
+                            ],
+                            accent: const Color(0xFFD97706),
+                            child: Column(
+                              children: [
+                                _Rule(
+                                  emoji: '🪙',
+                                  text: '1 point = 1 coin = MWK $coinMwk',
+                                ),
+                                _Rule(
+                                  emoji: '💸',
+                                  text:
+                                      '$redeemCoins coins = MWK $redeemMwk in your reward wallet',
+                                ),
+                                const _Rule(
+                                  emoji: '📲',
+                                  text: 'Open app 3 times a day → 1 point',
+                                ),
+                                const _Rule(
+                                  emoji: '📆',
+                                  text: 'Show-up bonus max 3 times a week',
+                                ),
+                                const _Rule(
+                                  emoji: '🎡',
+                                  text: 'Free spin every day',
+                                ),
+                                const _Rule(
+                                  emoji: '🛒',
+                                  text:
+                                      'Earn a spin after marketplace, food, courier, ride, or stay payment',
+                                ),
+                                _Rule(
+                                  emoji: '🏆',
+                                  text: 'Jackpot = MWK $jackpot',
+                                ),
+                                const _Rule(
+                                  emoji: '🤝',
+                                  text: 'For customers and merchants',
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 22),
+                          _cashOutButton(
+                            canRedeem: canRedeem,
+                            redeemCoins: redeemCoins,
+                            redeemMwk: redeemMwk,
+                          ),
+                        ],
                       ),
-                    ),
-                  ],
-                );
-              },
+                    );
+                  },
+                ),
+              ],
             ),
     );
   }
 
-  Widget _balanceCard(VeroRewardsBalance b) {
+  Widget _balanceHero(VeroRewardsBalance b, String coinMwk) {
+    final walletFmt = VeroRewardsService.formatMwk(b.rewardEarningsMwk);
+    final coinsWorth = VeroRewardsService.formatMwk(
+      b.coins * VeroRewardsService.mwkPerCoin,
+    );
+
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.fromLTRB(22, 22, 22, 20),
       decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(28),
         gradient: const LinearGradient(
-          colors: [Color(0xFFD94F00), Color(0xFFFF9A3C)],
+          colors: [Color(0xFFC2410C), Color(0xFFFF6B00), Color(0xFFFFB347)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
+          stops: [0.0, 0.55, 1.0],
         ),
-        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: _orange.withValues(alpha: 0.35),
+            blurRadius: 28,
+            offset: const Offset(0, 14),
+          ),
+        ],
       ),
-      child: Row(
+      child: Stack(
         children: [
-          const Icon(Icons.monetization_on_rounded, color: Colors.white, size: 48),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${b.coins}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 36,
-                    fontWeight: FontWeight.w900,
-                    height: 1,
+          Positioned(
+            right: -18,
+            top: -24,
+            child: AnimatedBuilder(
+              animation: _pulseCtrl,
+              builder: (_, __) {
+                final t = 0.85 + (_pulseCtrl.value * 0.15);
+                return Transform.scale(
+                  scale: t,
+                  child: Container(
+                    width: 120,
+                    height: 120,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white.withValues(alpha: 0.08),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Vero Coins  ·  ${b.points} points',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.9),
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '1 coin = MWK 100  ·  Wallet MWK ${(_walletMwk ?? 0).toStringAsFixed(0)}',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.85),
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'Your coins ≈ MWK ${(b.coins * VeroRewardsService.mwkPerCoin).toStringAsFixed(0)}',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.85),
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
+                );
+              },
             ),
+          ),
+          Positioned(
+            right: 28,
+            bottom: -36,
+            child: Container(
+              width: 90,
+              height: 90,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.06),
+              ),
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.28),
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.monetization_on_rounded,
+                      color: Colors.white,
+                      size: 26,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Your balance',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '${b.points} pt${b.points == 1 ? '' : 's'}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              Text(
+                '${b.coins}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 52,
+                  fontWeight: FontWeight.w900,
+                  height: 0.95,
+                  letterSpacing: -1.6,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Vero Coins',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.92),
+                  fontWeight: FontWeight.w600,
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _heroChip('1 coin = MWK $coinMwk'),
+                  _heroChip('Wallet MWK $walletFmt'),
+                  _heroChip('Worth ≈ MWK $coinsWorth'),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Reward wallet shows spin & cash-out earnings only',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.78),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  Widget _spinCard(VeroRewardsBalance b) {
-    final canSpin = b.canSpin && !_spinning;
+  Widget _heroChip(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.22)),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget _spinStage(VeroRewardsBalance b) {
+    final canSpin = _earningEnabled && b.canSpin && !_spinning;
     final spinsReady =
         b.availableSpins > 0 ? b.availableSpins : (b.dailySpinAvailable ? 1 : 0);
-    return _card(
-      title: 'Vero spin',
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(18, 20, 18, 18),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.82),
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: const Color(0xFFFFE0C2)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFFF6B00).withValues(alpha: 0.08),
+            blurRadius: 24,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
       child: Column(
         children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Vero Daily Spin',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 24,
+                        letterSpacing: -0.5,
+                        color: _orange,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Fast spin. Come back tomorrow 🤓.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: _muted,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: spinsReady > 0
+                      ? const Color(0xFFFFF0E0)
+                      : const Color(0xFFF3F0EC),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Text(
+                  spinsReady > 0
+                      ? '$spinsReady ready'
+                      : 'None left',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12.5,
+                    color: spinsReady > 0 ? _orange : _muted,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
           Text(
             spinsReady > 0
-                ? 'You have $spinsReady spin${spinsReady == 1 ? '' : 's'} ready.'
-                : 'No spins yet. Finish an order, ride, courier, or stay — or open the app tomorrow for a free spin.',
+                ? 'You have $spinsReady spin${spinsReady == 1 ? '' : 's'}. Make it count.'
+                : 'No spins yet. Finish an order — or open the app tomorrow for a free spin.',
             textAlign: TextAlign.center,
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: 13.5,
-              height: 1.35,
-              color: Colors.grey.shade700,
+              height: 1.4,
+              color: _muted,
               fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 14),
           SizedBox(
-            height: 304,
-            width: 304,
+            height: 318,
+            width: 318,
             child: Stack(
               alignment: Alignment.center,
               children: [
+                AnimatedBuilder(
+                  animation: _pulseCtrl,
+                  builder: (_, __) {
+                    final glow = 0.12 + (_pulseCtrl.value * 0.1);
+                    return Container(
+                      width: 300,
+                      height: 300,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: _orange.withValues(alpha: glow),
+                            blurRadius: 36,
+                            spreadRadius: 2,
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+                Container(
+                  width: 308,
+                  height: 308,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.9),
+                      width: 6,
+                    ),
+                  ),
+                ),
                 Transform.rotate(
                   angle: _wheelTurns * 2 * math.pi,
                   child: CustomPaint(
-                    size: const Size(304, 304),
+                    size: const Size(292, 292),
                     painter: _WheelPainter(VeroRewardsService.spinPrizes),
                   ),
                 ),
-                const Positioned(
-                  top: 0,
-                  child: Icon(Icons.arrow_drop_down, size: 46, color: _orange),
+                Positioned(
+                  top: 2,
+                  child: Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      color: _orange,
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _orange.withValues(alpha: 0.45),
+                          blurRadius: 10,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.arrow_drop_down_rounded,
+                      size: 34,
+                      color: Colors.white,
+                    ),
+                  ),
                 ),
                 Container(
-                  width: 58,
-                  height: 58,
-                  decoration: const BoxDecoration(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
                     color: Colors.white,
                     shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0xFFFFE0C2), width: 3),
                     boxShadow: [
-                      BoxShadow(color: Colors.black26, blurRadius: 8),
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.12),
+                        blurRadius: 14,
+                        offset: const Offset(0, 4),
+                      ),
                     ],
                   ),
-                  child: const Icon(Icons.casino_rounded, color: _orange, size: 30),
+                  child: Icon(
+                    Icons.casino_rounded,
+                    color: _spinning ? const Color(0xFFEA580C) : _orange,
+                    size: 30,
+                  ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           if (_lastSpinMessage != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10),
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF4EA),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFFFE0C2)),
+              ),
               child: Text(
                 _lastSpinMessage!,
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   fontWeight: FontWeight.w700,
                   fontSize: 14,
-                  color: Color(0xFF333333),
+                  color: _ink,
+                  height: 1.35,
                 ),
               ),
             ),
           SizedBox(
             width: double.infinity,
-            height: 46,
+            height: 52,
             child: FilledButton(
               onPressed: canSpin ? () => _spin(true) : null,
               style: FilledButton.styleFrom(
                 backgroundColor: _orange,
                 disabledBackgroundColor: const Color(0xFFFFD8B0),
                 foregroundColor: Colors.white,
+                elevation: canSpin ? 2 : 0,
+                shadowColor: _orange.withValues(alpha: 0.45),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(16),
                 ),
               ),
               child: Text(
                 _spinning
                     ? 'Spinning…'
-                    : canSpin
-                        ? 'Spin now'
-                        : 'Earn a spin to play',
-                style: const TextStyle(fontWeight: FontWeight.w800),
+                    : !_earningEnabled
+                        ? 'Spins temporarily paused'
+                        : canSpin
+                            ? 'Spin now'
+                            : 'Earn a spin to play',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                  letterSpacing: -0.2,
+                ),
               ),
             ),
           ),
@@ -486,28 +812,233 @@ class _VeroCoinPageState extends State<VeroCoinPage>
     );
   }
 
-  Widget _card({required String title, required Widget child}) {
+  Widget _prizeRow(VeroSpinPrize p) {
+    final emoji = switch (p.id) {
+      'try_again' => '🔁',
+      '1_coin' => '🪙',
+      '1_point' => '⭐',
+      '2_points' => '🌟',
+      '5_points' => '🔥',
+      'jackpot' => '🏆',
+      _ => '🎁',
+    };
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.62),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: Color(p.colorValue).withValues(alpha: 0.28),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: Color(p.colorValue).withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Text(emoji, style: const TextStyle(fontSize: 16)),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              p.label.replaceAll('\n', ' '),
+              style: const TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 14,
+                color: _ink,
+              ),
+            ),
+          ),
+          Text(
+            p.valueLabel,
+            style: TextStyle(
+              color: Color(p.colorValue).withValues(alpha: 0.95),
+              fontWeight: FontWeight.w800,
+              fontSize: 12.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionShell({
+    required String emoji,
+    required String title,
+    required String subtitle,
+    required List<Color> gradient,
+    required Color accent,
+    required Widget child,
+  }) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFFFE8CC)),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: gradient,
+        ),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: accent.withValues(alpha: 0.22)),
+        boxShadow: [
+          BoxShadow(
+            color: accent.withValues(alpha: 0.12),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontWeight: FontWeight.w900,
-              fontSize: 16,
-              color: Color(0xFF111111),
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.7),
+                  borderRadius: BorderRadius.circular(13),
+                  border: Border.all(color: accent.withValues(alpha: 0.2)),
+                ),
+                child: Text(emoji, style: const TextStyle(fontSize: 20)),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 17,
+                        letterSpacing: -0.3,
+                        color: accent.withValues(alpha: 0.95),
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: accent.withValues(alpha: 0.72),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _cashOutButton({
+    required bool canRedeem,
+    required int redeemCoins,
+    required String redeemMwk,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      height: 54,
+      child: FilledButton(
+        onPressed:
+            canRedeem && _cashOutEnabled && !_redeeming ? _redeem : null,
+        style: FilledButton.styleFrom(
+          backgroundColor: _ink,
+          disabledBackgroundColor: const Color(0xFFD9D0C7),
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+        ),
+        child: _redeeming
+            ? const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+            : Text(
+                !_cashOutEnabled
+                    ? 'Cash-outs temporarily paused'
+                    : canRedeem
+                        ? 'Cash out $redeemCoins coins → MWK $redeemMwk'
+                        : 'Need $redeemCoins coins (MWK $redeemMwk) to cash out',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 15,
+                  letterSpacing: -0.2,
+                ),
+              ),
+      ),
+    );
+  }
+}
+
+class _AmbientBackdrop extends StatelessWidget {
+  const _AmbientBackdrop();
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0xFFFFE4CC),
+                  Color(0xFFFFF7F0),
+                  Color(0xFFFFFBF7),
+                ],
+                stops: [0.0, 0.28, 1.0],
+              ),
             ),
           ),
-          const SizedBox(height: 10),
-          child,
+          Positioned(
+            top: -60,
+            right: -40,
+            child: Container(
+              width: 220,
+              height: 220,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFFFF6B00).withValues(alpha: 0.12),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 180,
+            left: -70,
+            child: Container(
+              width: 180,
+              height: 180,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFFFFB347).withValues(alpha: 0.14),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -516,23 +1047,31 @@ class _VeroCoinPageState extends State<VeroCoinPage>
 
 class _Rule extends StatelessWidget {
   final String text;
-  const _Rule(this.text);
+  final String emoji;
+  const _Rule({required this.text, this.emoji = '•'});
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.58),
+        borderRadius: BorderRadius.circular(12),
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('•  ', style: TextStyle(fontWeight: FontWeight.w900)),
+          Text(emoji, style: const TextStyle(fontSize: 15)),
+          const SizedBox(width: 8),
           Expanded(
             child: Text(
               text,
               style: const TextStyle(
                 fontSize: 14,
-                height: 1.35,
-                color: Color(0xFF444444),
+                height: 1.4,
+                color: Color(0xFF3D3229),
+                fontWeight: FontWeight.w700,
               ),
             ),
           ),
@@ -571,8 +1110,8 @@ class _WheelPainter extends CustomPainter {
         true,
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5
-          ..color = Colors.white.withValues(alpha: 0.7),
+          ..strokeWidth = 1.8
+          ..color = Colors.white.withValues(alpha: 0.75),
       );
 
       final mid = start + sweep / 2;
@@ -587,12 +1126,19 @@ class _WheelPainter extends CustomPainter {
             color: Colors.white,
             fontSize: 10.5,
             fontWeight: FontWeight.w800,
+            shadows: [
+              Shadow(
+                color: Colors.black38,
+                blurRadius: 3,
+                offset: Offset(0, 1),
+              ),
+            ],
           ),
         ),
         textAlign: TextAlign.center,
         textDirection: TextDirection.ltr,
         maxLines: 2,
-      )..layout(maxWidth: 64);
+      )..layout(maxWidth: 68);
       canvas.save();
       canvas.translate(labelPos.dx - tp.width / 2, labelPos.dy - tp.height / 2);
       tp.paint(canvas, Offset.zero);
@@ -606,11 +1152,12 @@ class _WheelPainter extends CustomPainter {
       radius,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 4
+        ..strokeWidth = 5
         ..color = const Color(0xFFFF6B00),
     );
   }
 
   @override
-  bool shouldRepaint(covariant _WheelPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _WheelPainter oldDelegate) =>
+      oldDelegate.prizes != prizes;
 }

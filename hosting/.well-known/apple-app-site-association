@@ -8,7 +8,10 @@
           "/accommodation/*",
           "/stay/*",
           "/stays/*",
-          "/marketplace/*"
+          "/marketplace/*",
+          "/shop/*",
+          "/merchant/*",
+          "/food/*"
         ]
       }
     ]

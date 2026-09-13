@@ -1025,6 +1025,18 @@ class NotificationService {
         openVeroMainShell(navigator.context, email: email, tabIndex: 4);
         break;
 
+      case 'story_posted':
+        if (kDebugMode) debugPrint('→ Open home for story');
+        final storyEmail = FirebaseAuth.instance.currentUser?.email ?? '';
+        openVeroMainShell(navigator.context, email: storyEmail, tabIndex: 0);
+        break;
+
+      case 'new_review':
+        if (kDebugMode) debugPrint('→ Open merchant reviews / dashboard');
+        final reviewEmail = FirebaseAuth.instance.currentUser?.email ?? '';
+        openVeroMainShell(navigator.context, email: reviewEmail, tabIndex: 4);
+        break;
+
       case 'marketplace_moderation':
         if (kDebugMode) debugPrint('→ Open marketplace listing (moderation)');
         final modStatus =

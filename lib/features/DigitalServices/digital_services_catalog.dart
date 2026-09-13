@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
+import 'package:vero360_app/features/DigitalServices/netflix_plans.dart';
 
 /// Loads admin-editable USD→MWK rate + product prices from
 /// Firestore `app_config/digital_services` and merges onto the local catalog.
@@ -265,11 +266,21 @@ class DigitalServicesCatalog extends ChangeNotifier {
     _homepage = kDigitalProducts
         .map(merge)
         .where((p) => p.active && !disabledKeys.contains(p.key))
+        .where((p) => !p.isNetflixPlan)
         .toList();
-    _all = kAllDigitalProducts
-        .map(merge)
-        .where((p) => p.active && !disabledKeys.contains(p.key))
-        .toList();
+    _all = [
+      ...kAllDigitalProducts
+          .map(merge)
+          .where((p) => p.active && !disabledKeys.contains(p.key)),
+    ];
+    // Ensure Netflix plan products are always mergeable even if omitted from spread.
+    for (final base in kNetflixPlanProducts) {
+      if (_all.any((p) => p.key == base.key)) continue;
+      final merged = merge(base);
+      if (merged.active && !disabledKeys.contains(merged.key)) {
+        _all = [..._all, merged];
+      }
+    }
 
     // Append admin-created cards (USDT, Yuan, BNB, …) that are not in the
     // baked-in Flutter catalog.

@@ -28,6 +28,21 @@ class MerchantReviewPrompt {
   static String _merchantDoneKey(int merchantId) =>
       'merchant_review_done_v1_$merchantId';
 
+  /// Prefer a Firebase UID-looking value for notifications / listing sync.
+  static String? _bestMerchantFirebaseUid({
+    String? merchantRef,
+    String? sellerUserId,
+    String? serviceProviderId,
+  }) {
+    bool looksLikeUid(String s) =>
+        s.length >= 20 && !RegExp(r'^\d+$').hasMatch(s);
+    for (final raw in [sellerUserId, merchantRef, serviceProviderId]) {
+      final v = (raw ?? '').trim();
+      if (looksLikeUid(v)) return v;
+    }
+    return null;
+  }
+
   static Future<({int merchantId, int customerId})?> _resolveReviewIds({
     String? merchantRef,
     String? serviceProviderId,
@@ -175,6 +190,11 @@ class MerchantReviewPrompt {
         customerId: customerId,
         rating: draft.rating,
         comment: draft.comment,
+        merchantFirebaseUid: _bestMerchantFirebaseUid(
+          merchantRef: merchantRef,
+          sellerUserId: sellerUserId,
+          serviceProviderId: serviceProviderId,
+        ),
       );
 
       await _markReviewHandled(

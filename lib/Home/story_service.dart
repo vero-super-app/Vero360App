@@ -9,8 +9,11 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
+import 'package:flutter/foundation.dart';
+
 import 'package:vero360_app/Home/merchant_story_model.dart';
 import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
+import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 
 const String _collection = 'merchant_stories';
 const String _storagePathPrefix = 'merchant_stories';
@@ -452,6 +455,7 @@ class StoryService {
     String? musicTrackId,
     String? musicTrackName,
     String mediaType = 'image',
+    bool notifyFollowers = true,
   }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || user.uid != merchantId) {
@@ -504,6 +508,17 @@ class StoryService {
         'In Firebase Console, create a Firestore database for this project, then try again.',
       );
     }
+
+    if (notifyFollowers) {
+      // Fire-and-forget so posting stays snappy.
+      unawaited(
+        OrderPartyNotificationService.publishStoryPostedToFollowers(
+          merchantUid: merchantId,
+          merchantName: merchantName,
+          serviceType: serviceType,
+        ),
+      );
+    }
   }
 
   /// Post multiple stories in one batch (e.g. multiple slides with captions).
@@ -525,8 +540,17 @@ class StoryService {
         musicTrackId: slide.musicTrackId,
         musicTrackName: slide.musicTrackName,
         mediaType: slide.mediaType,
+        notifyFollowers: false,
       );
     }
+    // One notification for the whole batch.
+    unawaited(
+      OrderPartyNotificationService.publishStoryPostedToFollowers(
+        merchantUid: merchantId,
+        merchantName: merchantName,
+        serviceType: serviceType,
+      ),
+    );
   }
 
   Future<String> _uploadToStorage(String merchantId, Uint8List imageBytes) async {

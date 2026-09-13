@@ -63,6 +63,8 @@ import 'package:vero360_app/features/DigitalServices/digital_services_catalog.da
 import 'package:vero360_app/features/DigitalServices/digital_service_order_service.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_services_page.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_product_amount_page.dart';
+import 'package:vero360_app/features/DigitalServices/presentation/netflix_plan_picker_page.dart';
+import 'package:vero360_app/features/DigitalServices/netflix_plans.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -628,7 +630,25 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
   }
 
   Future<void> _openDigitalAmount(DigitalProduct p) async {
-    // Spotify / Apple Music / Netflix / ChatGPT: fixed MWK → checkout directly.
+    // Netflix hub → choose Mobile / Basic / Standard / Premium first.
+    if (p.isNetflixHub || isNetflixHubKey(p.key)) {
+      if (!mounted) return;
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => NetflixPlanPickerPage(
+          onSelectPlan: (plan) {
+            // Push buy on top — Back returns to Choose your plan.
+            _openDigitalCheckout(
+              product: plan,
+              selectedUsd: 0,
+              payMethod: DigitalPayMethod.paychangu,
+            );
+          },
+        ),
+      ));
+      return;
+    }
+
+    // Spotify / Apple Music / Netflix plan / ChatGPT: fixed MWK → checkout.
     if (!p.usesAmountPicker) {
       await _openDigitalCheckout(
         product: p,

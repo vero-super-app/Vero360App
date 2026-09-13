@@ -11,6 +11,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:app_links/app_links.dart';
 
 // Firebase
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -900,8 +901,37 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   void _openAccommodationFromShare(Uri uri) {
-    final id = accommodationIdFromShareUri(uri);
+    unawaited(_openAccommodationFromShareAsync(uri));
+  }
+
+  Future<void> _openAccommodationFromShareAsync(Uri uri) async {
+    var id = accommodationIdFromShareUri(uri);
+    final ref = accommodationRefFromShareUri(uri);
     final q = accommodationSearchQueryFromShareUri(uri);
+
+    // Facebook posts often use Firestore room doc ids (e.g. uid_123).
+    if ((id == null || id <= 0) && ref != null && ref.isNotEmpty) {
+      try {
+        final db = FirebaseFirestore.instance;
+        DocumentSnapshot<Map<String, dynamic>>? doc;
+        final room = await db.collection('accommodation_rooms').doc(ref).get();
+        if (room.exists) {
+          doc = room;
+        } else {
+          final acc = await db.collection('accommodations').doc(ref).get();
+          if (acc.exists) doc = acc;
+        }
+        final data = doc?.data();
+        if (data != null) {
+          id = int.tryParse(
+                '${data['accommodationId'] ?? data['sqlId'] ?? data['id'] ?? ''}',
+              ) ??
+              (ref.contains('_') ? int.tryParse(ref.split('_').last) : null);
+        }
+      } catch (_) {}
+    }
+
+    if (!mounted) return;
     navKey.currentState?.push(
       MaterialPageRoute(
         builder: (_) => AccommodationMainPage(

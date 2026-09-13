@@ -5,5 +5,11 @@
 	<!-- Required for FCM / APNs. Signing profile selects development vs production. -->
 	<key>aps-environment</key>
 	<string>development</string>
+	<!-- Universal Links: https://vero360.app/{marketplace|food|accommodation|shop}/… -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:vero360.app</string>
+		<string>applinks:www.vero360.app</string>
+	</array>
 </dict>
 </plist>

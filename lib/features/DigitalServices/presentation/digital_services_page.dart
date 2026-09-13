@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
 import 'package:vero360_app/features/DigitalServices/digital_services_catalog.dart';
+import 'package:vero360_app/features/DigitalServices/netflix_plans.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_product_amount_page.dart';
+import 'package:vero360_app/features/DigitalServices/presentation/netflix_plan_picker_page.dart';
 
 class DigitalServicesPage extends StatefulWidget {
   final void Function({
@@ -62,6 +64,8 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
 
   List<DigitalProduct> get _filtered {
     return _all.where((p) {
+      // Plans are chosen via the Netflix hub picker, not as separate tiles.
+      if (p.isNetflixPlan) return false;
       final catOk = _category == 'all' || p.category == _category;
       if (!catOk) return false;
       if (_query.isEmpty) return true;
@@ -72,6 +76,24 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
   }
 
   void _openProduct(DigitalProduct p) {
+    if (p.isNetflixHub || isNetflixHubKey(p.key)) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => NetflixPlanPickerPage(
+            onSelectPlan: (plan) {
+              // Keep plan picker under checkout so Back returns here.
+              widget.onContinueCheckout(
+                product: plan,
+                selectedUsd: 0,
+                payMethod: DigitalPayMethod.paychangu,
+              );
+            },
+          ),
+        ),
+      );
+      return;
+    }
+
     // Fixed-price streaming codes skip the USD amount picker.
     if (!p.usesAmountPicker) {
       widget.onContinueCheckout(

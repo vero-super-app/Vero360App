@@ -2555,8 +2555,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   icon: Icons.apps_outlined,
                   title: _t('App version', 'Mtundu wa pulogalamu'),
                   subtitle: _t(
-                    'v$_appVersion ($_buildNumber) · Tap to check for updates',
-                    'v$_appVersion ($_buildNumber) · Dinani kuyang\'ana zatsopano',
+                    'v$_appVersion · Tap to check for updates',
+                    'v$_appVersion · Dinani kuyang\'ana zatsopano',
                   ),
                   onTap: _checkForAppUpdates,
                 ),
@@ -2925,7 +2925,7 @@ class AboutUsPage extends StatelessWidget {
                     const Icon(Icons.info_outline, size: 18),
                     const SizedBox(width: 8),
                     Text(
-                      'Version v$appVersion ($buildNumber)',
+                      'Version v$appVersion',
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                   ],

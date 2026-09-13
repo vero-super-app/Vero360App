@@ -16,6 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/config/api_config.dart';
@@ -446,9 +447,11 @@ class MarketplaceService {
       sellerOpeningHours: data['sellerOpeningHours']?.toString(),
       sellerStatus: data['sellerStatus']?.toString(),
       sellerBusinessDescription: data['sellerBusinessDescription']?.toString(),
-      sellerRating: (data['sellerRating'] is num)
-          ? (data['sellerRating'] as num).toDouble()
-          : double.tryParse('${data['sellerRating']}'),
+      sellerRating: () {
+        final r = data['sellerRating'] ?? data['averageRating'] ?? data['rating'];
+        if (r is num) return r.toDouble();
+        return double.tryParse('$r');
+      }(),
       sellerLogoUrl: data['sellerLogoUrl']?.toString(),
       serviceProviderId: data['serviceProviderId']?.toString(),
       sellerUserId: data['sellerUserId']?.toString(),
@@ -608,6 +611,9 @@ class MarketplaceService {
         if (byPromo != 0) return byPromo;
         final byVision = b.visionScore.compareTo(a.visionScore);
         if (byVision != 0) return byVision;
+        final byCredit = MerchantCredit.feedScore(b.item.sellerRating)
+            .compareTo(MerchantCredit.feedScore(a.item.sellerRating));
+        if (byCredit != 0) return byCredit;
         final aVis = a.visualDistance != _noVisualDistance;
         final bVis = b.visualDistance != _noVisualDistance;
         if (aVis && bVis) {

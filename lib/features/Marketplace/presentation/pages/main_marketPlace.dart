@@ -276,6 +276,7 @@ class MarketplaceDetailModel {
   final String? sellerStatus;
   final String? sellerBusinessDescription;
   final double? sellerRating;
+  final int sellerReviewCount;
   final String? sellerLogoUrl;
   final String? serviceProviderId;
   final String? sellerUserId;
@@ -294,7 +295,7 @@ class MarketplaceDetailModel {
     this.latitude, this.longitude,
     this.isActive = true, this.createdAt, this.gallery = const [],
     this.sellerBusinessName, this.sellerOpeningHours, this.sellerStatus,
-    this.sellerBusinessDescription, this.sellerRating, this.sellerLogoUrl,
+    this.sellerBusinessDescription, this.sellerRating, this.sellerReviewCount = 0, this.sellerLogoUrl,
     this.serviceProviderId, this.sellerUserId, this.merchantId,
     this.merchantName, this.serviceType = 'marketplace',
     this.merchantBackendId,
@@ -350,6 +351,7 @@ class MarketplaceDetailModel {
       stockQuantity: stockQuantity,
       peopleAddedCount: peopleAddedCount ?? this.peopleAddedCount,
       promotedUntil: promotedUntil ?? this.promotedUntil,
+      sellerReviewCount: sellerReviewCount,
     );
   }
 
@@ -398,9 +400,13 @@ class MarketplaceDetailModel {
     final seen = <String>{}; final gallery = <String>[];
     for (final s in [...fromGallery, ...fromGalleryUrls]) { final t = s.trim(); if (t.isEmpty || seen.contains(t)) continue; seen.add(t); gallery.add(t); }
     double? sellerRating;
-    final r = data['sellerRating'];
+    final r = data['sellerRating'] ?? data['averageRating'] ?? data['rating'];
     if (r is num) sellerRating = r.toDouble();
     else if (r != null) sellerRating = double.tryParse(r.toString());
+    int sellerReviewCount = 0;
+    final rc = data['sellerReviewCount'] ?? data['reviewCount'] ?? data['reviewsCount'];
+    if (rc is num) sellerReviewCount = rc.toInt();
+    else if (rc != null) sellerReviewCount = int.tryParse(rc.toString()) ?? 0;
     return MarketplaceDetailModel(
       id: doc.id, name: (data['name'] ?? '').toString(), category: cat, price: price,
       image: rawImage, imageBytes: bytes, description: data['description']?.toString(),
@@ -411,7 +417,7 @@ class MarketplaceDetailModel {
       createdAt: created, sqlItemId: sqlId, gallery: gallery,
       sellerBusinessName: data['sellerBusinessName']?.toString(), sellerOpeningHours: data['sellerOpeningHours']?.toString(),
       sellerStatus: data['sellerStatus']?.toString(), sellerBusinessDescription: data['sellerBusinessDescription']?.toString(),
-      sellerRating: sellerRating, sellerLogoUrl: data['sellerLogoUrl']?.toString(),
+      sellerRating: sellerRating, sellerReviewCount: sellerReviewCount, sellerLogoUrl: data['sellerLogoUrl']?.toString(),
       serviceProviderId: data['serviceProviderId']?.toString(),
       sellerUserId: (data['sellerUserId'] ?? data['ownerId'])?.toString(),
       merchantId: data['merchantId']?.toString(), merchantName: data['merchantName']?.toString(),
@@ -740,7 +746,10 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       final t = last[i.id];
       if (t != null) { final days = DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(t)).inHours / 24.0; s += (days <= 7 ? 2.2 : 1.2 / (1 + days / 7)); }
       if (_itemIsFromFollowedSeller(i)) s += 22.0;
-      s += MerchantCredit.feedScore(i.sellerRating);
+      s += MerchantCredit.feedScore(
+        i.sellerRating,
+        reviewCount: i.sellerReviewCount,
+      );
       return s;
     }
     final ranked = List<MarketplaceDetailModel>.from(items);
@@ -771,8 +780,14 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     copy.sort((a, b) {
       final byPromo = (b.isPromotedNow ? 1 : 0).compareTo(a.isPromotedNow ? 1 : 0);
       if (byPromo != 0) return byPromo;
-      final rb = MerchantCredit.feedScore(b.sellerRating);
-      final ra = MerchantCredit.feedScore(a.sellerRating);
+      final rb = MerchantCredit.feedScore(
+        b.sellerRating,
+        reviewCount: b.sellerReviewCount,
+      );
+      final ra = MerchantCredit.feedScore(
+        a.sellerRating,
+        reviewCount: a.sellerReviewCount,
+      );
       final byCredit = rb.compareTo(ra);
       if (byCredit != 0) return byCredit;
       final db = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
@@ -852,8 +867,14 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       } else if (db != null) {
         return 1;
       }
-      final ra = MerchantCredit.feedScore(a.sellerRating);
-      final rb = MerchantCredit.feedScore(b.sellerRating);
+      final ra = MerchantCredit.feedScore(
+        a.sellerRating,
+        reviewCount: a.sellerReviewCount,
+      );
+      final rb = MerchantCredit.feedScore(
+        b.sellerRating,
+        reviewCount: b.sellerReviewCount,
+      );
       final byCredit = rb.compareTo(ra);
       if (byCredit != 0) return byCredit;
       final tb = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
@@ -875,6 +896,16 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       list.sort((a, b) {
         final byPromo = (b.isPromotedNow ? 1 : 0).compareTo(a.isPromotedNow ? 1 : 0);
         if (byPromo != 0) return byPromo;
+        final rb = MerchantCredit.feedScore(
+          b.sellerRating,
+          reviewCount: b.sellerReviewCount,
+        );
+        final ra = MerchantCredit.feedScore(
+          a.sellerRating,
+          reviewCount: a.sellerReviewCount,
+        );
+        final byCredit = rb.compareTo(ra);
+        if (byCredit != 0) return byCredit;
         final db = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
         final da = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
         return db.compareTo(da);

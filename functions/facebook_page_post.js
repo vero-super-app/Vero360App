@@ -9,7 +9,7 @@
  * Token must include pages_manage_posts + pages_read_engagement (Page token from /me/accounts).
  *
  * Deploy:
- *   firebase deploy --only functions:onMarketplaceItemFacebookPost,functions:onFoodMenuItemFacebookPost,functions:onAccommodationFacebookPost
+ *   firebase deploy --only functions:onMarketplaceItemFacebookPost,functions:onFoodMenuItemFacebookPost,functions:onAccommodationFacebookPost,functions:onAccommodationRoomFacebookPost,functions:onMarketplaceItemCreated,functions:onMarketplaceItemUpdated
  */
 
 const { onDocumentWritten } = require('firebase-functions/v2/firestore');
@@ -20,7 +20,10 @@ const FACEBOOK_PAGE_ACCESS_TOKEN = defineSecret('FACEBOOK_PAGE_ACCESS_TOKEN');
 const FACEBOOK_PAGE_ID = defineSecret('FACEBOOK_PAGE_ID');
 
 const DEFAULT_PAGE_ID = '1146056985268073';
-const GRAPH_VERSION = 'v21.0';
+const GRAPH_VERSION = 'v26.0';
+/** Same SA as other Vero functions — Compute default often cannot write Firestore. */
+const FUNCTIONS_SERVICE_ACCOUNT =
+  'vero360app-ca423@appspot.gserviceaccount.com';
 
 function listingTitle(data) {
   return String(
@@ -39,14 +42,14 @@ function firstHttpImage(data) {
   ];
   for (const k of keys) {
     const v = String(data[k] || '').trim();
-    if (/^https?:\/\//i.test(v)) return v;
+    if (/^https?:\/\//i.test(v) && !v.startsWith('data:')) return v;
   }
   for (const field of ['gallery', 'galleryUrls', 'images']) {
     const list = data[field];
     if (!Array.isArray(list)) continue;
     for (const e of list) {
       const v = String(e || '').trim();
-      if (/^https?:\/\//i.test(v)) return v;
+      if (/^https?:\/\//i.test(v) && !v.startsWith('data:')) return v;
     }
   }
   return '';
@@ -92,7 +95,12 @@ function accommodationShareUrl(id, data) {
   const params = new URLSearchParams();
   const name = listingTitle(data);
   const loc = String(data.location || '').trim();
-  const price = data.price != null ? String(data.price) : '';
+  const price =
+    data.price != null
+      ? String(data.price)
+      : data.pricePerNight != null
+        ? String(data.pricePerNight)
+        : '';
   const img = firstHttpImage(data);
   if (name) params.set('name', name);
   if (loc) params.set('loc', loc);
@@ -155,30 +163,93 @@ function becamePublicAccommodation(before, after) {
   return !isPublicAccommodation(before || {});
 }
 
+function resolvePageCredentials(tokenOverride, pageIdOverride) {
+  let token = String(tokenOverride || '').trim();
+  let pageId = String(pageIdOverride || '').trim() || DEFAULT_PAGE_ID;
+  if (!token) {
+    try {
+      token = String(FACEBOOK_PAGE_ACCESS_TOKEN.value() || '').trim();
+    } catch (_) {
+      token = String(process.env.FACEBOOK_PAGE_ACCESS_TOKEN || '').trim();
+    }
+  }
+  if (!pageId || pageId === DEFAULT_PAGE_ID) {
+    try {
+      pageId =
+        String(FACEBOOK_PAGE_ID.value() || '').trim() || DEFAULT_PAGE_ID;
+    } catch (_) {
+      pageId =
+        String(process.env.FACEBOOK_PAGE_ID || '').trim() || DEFAULT_PAGE_ID;
+    }
+  }
+  return { token, pageId };
+}
+
+async function graphPost(path, fields) {
+  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${path}`;
+  const body = new URLSearchParams();
+  for (const [k, v] of Object.entries(fields)) {
+    if (v == null) continue;
+    const s = String(v).trim();
+    if (!s) continue;
+    body.set(k, s);
+  }
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+  const json = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, json };
+}
+
+async function scrapeFacebookUrl(link, token) {
+  const access = String(token || '').trim();
+  const url = String(link || '').trim();
+  if (!access || !url) return;
+  try {
+    // Warm Facebook's link preview cache so the card shows our OG image.
+    await graphPost('', {
+      id: url,
+      scrape: 'true',
+      access_token: access,
+    });
+  } catch (err) {
+    console.warn(
+      'Facebook scrape warning',
+      err && err.message ? err.message : err,
+    );
+  }
+}
+
 async function postLinkToFacebookPage({ link, message, pageId, token }) {
   const pid = String(pageId || DEFAULT_PAGE_ID).trim() || DEFAULT_PAGE_ID;
   const access = String(token || '').trim();
   if (!access) {
-    console.warn('Facebook Page post skipped: FACEBOOK_PAGE_ACCESS_TOKEN not set');
+    console.warn(
+      'Facebook Page post skipped: FACEBOOK_PAGE_ACCESS_TOKEN not set (len=0)',
+    );
     return null;
   }
 
-  const url = new URL(
-    `https://graph.facebook.com/${GRAPH_VERSION}/${encodeURIComponent(pid)}/feed`,
-  );
-  url.searchParams.set('access_token', access);
-  url.searchParams.set('link', link);
-  url.searchParams.set('message', message);
+  await scrapeFacebookUrl(link, access);
 
-  const res = await fetch(url.toString(), { method: 'POST' });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    console.error('Facebook Graph link post failed', res.status, body);
+  const { ok, status, json } = await graphPost(
+    `${encodeURIComponent(pid)}/feed`,
+    {
+      access_token: access,
+      link,
+      message,
+      published: 'true',
+    },
+  );
+  if (!ok) {
+    console.error('Facebook Graph link post failed', status, json);
     throw new Error(
-      `Facebook Graph error ${res.status}: ${JSON.stringify(body)}`,
+      `Facebook Graph error ${status}: ${JSON.stringify(json)}`,
     );
   }
-  return body && body.id ? String(body.id) : null;
+  return json && json.id ? String(json.id) : null;
 }
 
 /**
@@ -196,23 +267,22 @@ async function postPhotoToFacebookPage({
   const img = String(imageUrl || '').trim();
   if (!access || !img || !/^https?:\/\//i.test(img)) return null;
 
-  const url = new URL(
-    `https://graph.facebook.com/${GRAPH_VERSION}/${encodeURIComponent(pid)}/photos`,
+  const { ok, status, json } = await graphPost(
+    `${encodeURIComponent(pid)}/photos`,
+    {
+      access_token: access,
+      url: img,
+      caption,
+      published: 'true',
+    },
   );
-  url.searchParams.set('access_token', access);
-  url.searchParams.set('url', img);
-  url.searchParams.set('caption', caption);
-  url.searchParams.set('published', 'true');
-
-  const res = await fetch(url.toString(), { method: 'POST' });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    console.warn('Facebook Graph photo post failed', res.status, body);
+  if (!ok) {
+    console.warn('Facebook Graph photo post failed', status, json);
     return null;
   }
   // Photo posts return { id: "<photo_id>", post_id: "<pageId_postId>" }
-  if (body && body.post_id) return String(body.post_id);
-  if (body && body.id) return String(body.id);
+  if (json && json.post_id) return String(json.post_id);
+  if (json && json.id) return String(json.id);
   return null;
 }
 
@@ -289,14 +359,17 @@ async function handleFacebookPost({
       : becameLiveMarketplace(before, after);
     link = marketplaceShareUrl(docId, after);
     const price =
-      after.price != null ? ` — MWK ${Number(after.price).toLocaleString('en-US')}` : '';
-    message = `New on Vero360 Marketplace: ${listingTitle(after)}${price}\n${link}`;
+      after.price != null
+        ? ` — MWK ${Number(after.price).toLocaleString('en-US')}`
+        : '';
+    // Keep the URL out of the message — Facebook attaches a clickable image card via `link`.
+    message = `New on Vero360 Marketplace: ${listingTitle(after)}${price}`;
   } else if (kind === 'food') {
     shouldPost = isCreate
       ? isPublicFood(after) && !after.facebookPostId && !after.facebookPostedAt
       : becamePublicFood(before, after);
     link = foodShareUrl(docId, after);
-    message = `New dish on Vero360: ${listingTitle(after)}\n${link}`;
+    message = `New dish on Vero360: ${listingTitle(after)}`;
   } else if (kind === 'accommodation') {
     shouldPost = isCreate
       ? isPublicAccommodation(after) &&
@@ -304,34 +377,65 @@ async function handleFacebookPost({
         !after.facebookPostedAt
       : becamePublicAccommodation(before, after);
     link = accommodationShareUrl(docId, after);
-    message = `New stay on Vero360: ${listingTitle(after)}\n${link}`;
+    message = `New stay on Vero360: ${listingTitle(after)}`;
   }
 
-  if (!shouldPost) return;
+  if (!shouldPost) {
+    console.log(`Facebook Page post not needed (${kind})`, docId, {
+      isCreate,
+      reviewStatus: after.reviewStatus || after.status || null,
+      isActive: after.isActive,
+      alreadyPosted: Boolean(after.facebookPostId || after.facebookPostedAt),
+    });
+    return;
+  }
 
-  const claimed = await claimFacebookPostSlot(afterSnap.ref);
+  const creds = resolvePageCredentials(token, pageId);
+  const access = creds.token;
+  const resolvedPageId = creds.pageId;
+  if (!access) {
+    console.warn(
+      `Facebook Page post aborted (${kind}) ${docId}: missing page access token`,
+    );
+    return;
+  }
+
+  let claimed = false;
+  try {
+    claimed = await claimFacebookPostSlot(afterSnap.ref);
+  } catch (claimErr) {
+    console.error(
+      `Facebook claim failed (${kind})`,
+      docId,
+      claimErr && claimErr.message ? claimErr.message : claimErr,
+    );
+    // Still attempt Graph post — better a rare double-post than silent failure.
+    claimed = true;
+  }
   if (!claimed) {
-    console.log(`Facebook Page post skipped (already claimed/posted) (${kind})`, docId);
+    console.log(
+      `Facebook Page post skipped (already claimed/posted) (${kind})`,
+      docId,
+    );
     return;
   }
 
   try {
     const imageUrl = firstHttpImage(after);
-    let postId = null;
-    if (imageUrl) {
+    // Prefer a link card (embedded image preview + click opens Vero360).
+    // Plain photo posts open Facebook's photo viewer instead of our listing URL.
+    let postId = await postLinkToFacebookPage({
+      link,
+      message,
+      pageId: resolvedPageId,
+      token: access,
+    });
+    if (!postId && imageUrl) {
       postId = await postPhotoToFacebookPage({
         imageUrl,
-        caption: message,
-        pageId,
-        token,
-      });
-    }
-    if (!postId) {
-      postId = await postLinkToFacebookPage({
-        link,
-        message,
-        pageId,
-        token,
+        caption: `${message}\n${link}`,
+        pageId: resolvedPageId,
+        token: access,
       });
     }
     // Never stamp facebookPostedAt without a real Graph post id — that permanently
@@ -366,14 +470,15 @@ async function tryPostFromEvent({
   kind,
   isCreate = false,
 }) {
+  const { token, pageId } = resolvePageCredentials();
   await handleFacebookPost({
     before,
     after,
     afterSnap,
     docId,
     kind,
-    token: FACEBOOK_PAGE_ACCESS_TOKEN.value(),
-    pageId: FACEBOOK_PAGE_ID.value() || DEFAULT_PAGE_ID,
+    token,
+    pageId,
     isCreate,
   });
 }
@@ -385,6 +490,7 @@ exports.FACEBOOK_PAGE_ID = FACEBOOK_PAGE_ID;
 const firestoreOpts = {
   timeoutSeconds: 60,
   memory: '256MiB',
+  serviceAccount: FUNCTIONS_SERVICE_ACCOUNT,
   secrets: [FACEBOOK_PAGE_ACCESS_TOKEN, FACEBOOK_PAGE_ID],
 };
 
@@ -402,14 +508,15 @@ exports.onMarketplaceItemFacebookPost = onDocumentWritten(
     const afterSnap = event.data?.after;
     if (!afterSnap || !afterSnap.exists) return;
     try {
+      const { token, pageId } = resolvePageCredentials();
       await handleFacebookPost({
         before,
         after,
         afterSnap,
         docId: String(event.params.id || '').trim(),
         kind: 'marketplace',
-        token: FACEBOOK_PAGE_ACCESS_TOKEN.value(),
-        pageId: FACEBOOK_PAGE_ID.value() || DEFAULT_PAGE_ID,
+        token,
+        pageId,
         isCreate,
       });
     } catch (err) {
@@ -432,14 +539,15 @@ exports.onFoodMenuItemFacebookPost = onDocumentWritten(
     const afterSnap = event.data?.after;
     if (!afterSnap || !afterSnap.exists) return;
     try {
+      const { token, pageId } = resolvePageCredentials();
       await handleFacebookPost({
         before,
         after,
         afterSnap,
         docId: String(event.params.id || '').trim(),
         kind: 'food',
-        token: FACEBOOK_PAGE_ACCESS_TOKEN.value(),
-        pageId: FACEBOOK_PAGE_ID.value() || DEFAULT_PAGE_ID,
+        token,
+        pageId,
         isCreate,
       });
     } catch (err) {
@@ -462,14 +570,15 @@ exports.onAccommodationFacebookPost = onDocumentWritten(
     const afterSnap = event.data?.after;
     if (!afterSnap || !afterSnap.exists) return;
     try {
+      const { token, pageId } = resolvePageCredentials();
       await handleFacebookPost({
         before,
         after,
         afterSnap,
         docId: String(event.params.id || after.id || '').trim(),
         kind: 'accommodation',
-        token: FACEBOOK_PAGE_ACCESS_TOKEN.value(),
-        pageId: FACEBOOK_PAGE_ID.value() || DEFAULT_PAGE_ID,
+        token,
+        pageId,
         isCreate,
       });
     } catch (err) {
@@ -493,14 +602,15 @@ exports.onAccommodationRoomFacebookPost = onDocumentWritten(
     const afterSnap = event.data?.after;
     if (!afterSnap || !afterSnap.exists) return;
     try {
+      const { token, pageId } = resolvePageCredentials();
       await handleFacebookPost({
         before,
         after,
         afterSnap,
         docId: String(event.params.id || after.id || '').trim(),
         kind: 'accommodation',
-        token: FACEBOOK_PAGE_ACCESS_TOKEN.value(),
-        pageId: FACEBOOK_PAGE_ID.value() || DEFAULT_PAGE_ID,
+        token,
+        pageId,
         isCreate,
       });
     } catch (err) {

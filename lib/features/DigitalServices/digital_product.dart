@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:vero360_app/features/DigitalServices/netflix_plans.dart';
 
 /// Fallback USD → MWK rate when Firestore config is unavailable.
 const double kUsdToMwkRate = 4700;
@@ -62,7 +63,12 @@ class DigitalProduct {
     this.active = true,
   });
 
-  bool get usesAmountPicker => fixedMwkPrice == null;
+  bool get usesAmountPicker => fixedMwkPrice == null && key != 'netflix';
+
+  /// Homepage Netflix tile — opens plan picker instead of checkout.
+  bool get isNetflixHub => key == 'netflix';
+
+  bool get isNetflixPlan => key.startsWith('netflix_');
 
   double get startingUsd =>
       usdAmounts.isEmpty ? 0 : usdAmounts.reduce((a, b) => a < b ? a : b);
@@ -86,6 +92,7 @@ class DigitalProduct {
   }
 
   String get priceLabel {
+    if (isNetflixHub) return 'Choose a plan';
     if (fixedMwkPrice != null) return formatMwk(fixedMwkPrice!);
     if (usdAmounts.isEmpty) return '';
     return 'From ${formatAmount(startingUsd)}';
@@ -153,13 +160,13 @@ const List<DigitalProduct> kDigitalProducts = [
   DigitalProduct(
     key: 'netflix',
     name: 'Netflix',
-    subtitle: '1-month subscription',
+    subtitle: 'Choose a plan',
     category: 'streaming',
     accent: Color(0xFFE50914),
     brandTag: 'Netflix',
     logoAsset: 'assets/brands/netflix.png',
     icon: Icons.movie_creation_outlined,
-    fixedMwkPrice: 15000,
+    // Hub only — prices live on netflix_* plan products.
   ),
   DigitalProduct(
     key: 'chatgpt_plus',
@@ -277,6 +284,7 @@ const List<DigitalProduct> kAllDigitalProducts = [
     usdAmounts: [10, 25, 50, 100],
   ),
   ...kDigitalProducts,
+  ...kNetflixPlanProducts,
 ];
 
 class DigitalCategory {

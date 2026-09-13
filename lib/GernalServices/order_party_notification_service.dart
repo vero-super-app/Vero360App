@@ -623,6 +623,92 @@ class OrderPartyNotificationService {
     }
   }
 
+  /// Followers: a merchant you follow posted a new story.
+  static Future<void> publishStoryPostedToFollowers({
+    required String merchantUid,
+    required String merchantName,
+    String? serviceType,
+  }) async {
+    final mid = merchantUid.trim();
+    if (mid.isEmpty) return;
+    final name =
+        merchantName.trim().isEmpty ? 'A seller you follow' : merchantName.trim();
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('merchant_followers')
+          .doc(mid)
+          .collection('followers')
+          .limit(200)
+          .get();
+      if (snap.docs.isEmpty) return;
+
+      final batch = FirebaseFirestore.instance.batch();
+      var writes = 0;
+      for (final doc in snap.docs) {
+        final toUid = (doc.id).trim();
+        if (toUid.isEmpty || toUid == mid) continue;
+        final ref =
+            FirebaseFirestore.instance.collection(collectionName).doc();
+        batch.set(ref, {
+          'toUid': toUid,
+          'title': 'New story',
+          'body': '$name posted a new story. Tap to watch it.',
+          'payload': {
+            'type': 'story_posted',
+            'merchantId': mid,
+            'merchantName': name,
+            if (serviceType != null && serviceType.trim().isNotEmpty)
+              'serviceType': serviceType.trim().toLowerCase(),
+          },
+          'createdAt': FieldValue.serverTimestamp(),
+          'consumed': false,
+          'read': false,
+        });
+        writes++;
+        // Firestore batch max 500; stay under for safety.
+        if (writes >= 450) break;
+      }
+      if (writes > 0) await batch.commit();
+    } catch (e) {
+      debugPrint('[OrderPartyNotification] publishStoryPostedToFollowers: $e');
+    }
+  }
+
+  /// Merchant: someone left a star review on their shop.
+  static Future<void> publishNewReviewToMerchant({
+    required String merchantUid,
+    required int rating,
+    String? reviewerName,
+    String? comment,
+  }) async {
+    final uid = merchantUid.trim();
+    if (uid.isEmpty) return;
+    final stars = rating.clamp(1, 5);
+    final who =
+        (reviewerName ?? '').trim().isEmpty ? 'A customer' : reviewerName!.trim();
+    final note = (comment ?? '').trim();
+    final body = note.isEmpty
+        ? '$who rated you $stars★'
+        : '$who rated you $stars★: ${note.length > 80 ? '${note.substring(0, 80)}…' : note}';
+    try {
+      await FirebaseFirestore.instance.collection(collectionName).add({
+        'toUid': uid,
+        'title': 'New review',
+        'body': body,
+        'payload': {
+          'type': 'new_review',
+          'rating': stars,
+          'merchantId': uid,
+        },
+        'createdAt': FieldValue.serverTimestamp(),
+        'consumed': false,
+        'read': false,
+      });
+    } catch (e) {
+      debugPrint('[OrderPartyNotification] publishNewReviewToMerchant: $e');
+    }
+  }
+
   /// Resolve Firebase Auth uid from a users/{doc} email field (best-effort).
   static Future<String?> resolveUidByEmail(String? email) async {
     final e = (email ?? '').trim().toLowerCase();

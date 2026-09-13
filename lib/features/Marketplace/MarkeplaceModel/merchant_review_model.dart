@@ -107,13 +107,27 @@ class MerchantCredit {
   }
 
   /// Feed boost so highly reviewed sellers rise in marketplace lists.
-  static double feedScore(double? rating) {
+  /// Stronger weight than personalization keywords so good credit visibly
+  /// prioritizes items (still below paid `promotedUntil` boost).
+  static double feedScore(double? rating, {int reviewCount = 0}) {
     final r = (rating ?? 0).clamp(0.0, 5.0);
     if (r <= 0) return 0;
-    if (r >= 4.5) return 20 + r;
-    if (r >= 4.0) return 14 + r;
-    if (r >= 3.0) return 4 + r;
-    return r - 2; // soft demote poor credit
+    final reviews = reviewCount < 0 ? 0 : reviewCount;
+    // More reviews = more trustworthy → extra bump.
+    final countBoost = reviews >= 20
+        ? 18.0
+        : reviews >= 10
+            ? 12.0
+            : reviews >= 5
+                ? 8.0
+                : reviews >= 1
+                    ? 3.0
+                    : 0.0;
+    if (r >= 4.5) return 48 + r + countBoost;
+    if (r >= 4.0) return 34 + r + countBoost;
+    if (r >= 3.5) return 16 + r + (countBoost * 0.5);
+    if (r >= 3.0) return 6 + r;
+    return r - 6; // demote poor credit further
   }
 }
 

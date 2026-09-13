@@ -6,5 +6,11 @@
 	     closed-app FCM pushes never reach the device. -->
 	<key>aps-environment</key>
 	<string>production</string>
+	<!-- Universal Links: https://vero360.app/{marketplace|food|accommodation|shop}/… -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:vero360.app</string>
+		<string>applinks:www.vero360.app</string>
+	</array>
 </dict>
 </plist>

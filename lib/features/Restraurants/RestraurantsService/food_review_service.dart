@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 import 'package:vero360_app/GernalServices/api_exception.dart';
+import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 
 /// Firestore `food_reviews` — same fields the merchant dashboard reads.
 class FoodReviewService {
@@ -102,5 +104,20 @@ class FoodReviewService {
       'comment': comment.trim(),
       'createdAt': FieldValue.serverTimestamp(),
     });
+
+    final mid = merchantId.trim();
+    if (mid.isNotEmpty) {
+      // Best-effort: never block submit on notification failure.
+      try {
+        await OrderPartyNotificationService.publishNewReviewToMerchant(
+          merchantUid: mid,
+          rating: stars,
+          reviewerName: name,
+          comment: comment,
+        );
+      } catch (e) {
+        debugPrint('[FoodReviewService] notify merchant: $e');
+      }
+    }
   }
 }

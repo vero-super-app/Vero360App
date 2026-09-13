@@ -311,6 +311,7 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
         'galleryUrls': gallery,
         'category': _category,
         'isAvailable': _isAvailable,
+        'isActive': true,
         'quantity': quantity,
         if (businessName.isNotEmpty) 'businessName': businessName,
         if (restaurantId != null && restaurantId.isNotEmpty)

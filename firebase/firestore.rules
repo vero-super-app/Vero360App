@@ -91,6 +91,15 @@ service cloud.firestore {
         && resource.data.userId == request.auth.uid;
     }
 
+    // Marketplace product promote (top boost + Facebook ad orders).
+    match /marketplace_promotions/{promoId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.resource.data.merchantId == request.auth.uid;
+      allow update: if isSignedIn()
+        && resource.data.merchantId == request.auth.uid;
+    }
+
     // Vero Coin / Points — owner only.
     match /vero_rewards/{uid} {
       allow read, write: if isSignedIn() && request.auth.uid == uid;

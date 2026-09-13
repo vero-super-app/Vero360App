@@ -111,6 +111,7 @@ class MarketplaceDetailModel {
   final double? longitude;
   /// Available units the seller has. Null = legacy / uncapped (buyer limited to 99).
   final int? stockQuantity;
+  final DateTime? promotedUntil;
 
   MarketplaceDetailModel({
     required this.id,
@@ -140,10 +141,14 @@ class MarketplaceDetailModel {
     this.latitude,
     this.longitude,
     this.stockQuantity,
+    this.promotedUntil,
     int? backendItemId,
   });
 
   bool get isOutOfStock => stockQuantity != null && stockQuantity! <= 0;
+
+  bool get isPromotedNow =>
+      promotedUntil != null && promotedUntil!.isAfter(DateTime.now());
 
   int get maxOrderQty {
     if (stockQuantity == null) return 99999;

@@ -284,6 +284,8 @@ class MarketplaceDetailModel {
   final int? stockQuantity;
   /// Unique people who added this listing to cart (social proof).
   final int peopleAddedCount;
+  /// Paid marketplace boost expiry (null / past = not promoted).
+  final DateTime? promotedUntil;
 
   MarketplaceDetailModel({
     required this.id, required this.name, required this.category,
@@ -298,6 +300,7 @@ class MarketplaceDetailModel {
     this.merchantBackendId,
     this.stockQuantity,
     this.peopleAddedCount = 0,
+    this.promotedUntil,
   });
 
   bool get hasValidSqlItemId => sqlItemId != null && sqlItemId! > 0;
@@ -307,13 +310,16 @@ class MarketplaceDetailModel {
 
   bool get isOutOfStock => stockQuantity != null && stockQuantity! <= 0;
 
+  bool get isPromotedNow =>
+      promotedUntil != null && promotedUntil!.isAfter(DateTime.now());
+
   /// Max units a buyer can order (Taobao-style stock cap).
   int get maxOrderQty {
     if (stockQuantity == null) return 99999;
     return stockQuantity!.clamp(0, 99999);
   }
 
-  MarketplaceDetailModel copyWith({int? peopleAddedCount}) {
+  MarketplaceDetailModel copyWith({int? peopleAddedCount, DateTime? promotedUntil}) {
     return MarketplaceDetailModel(
       id: id,
       sqlItemId: sqlItemId,
@@ -343,6 +349,7 @@ class MarketplaceDetailModel {
       merchantBackendId: merchantBackendId,
       stockQuantity: stockQuantity,
       peopleAddedCount: peopleAddedCount ?? this.peopleAddedCount,
+      promotedUntil: promotedUntil ?? this.promotedUntil,
     );
   }
 
@@ -359,6 +366,15 @@ class MarketplaceDetailModel {
       try { final bp = rawImage.contains(',') ? rawImage.split(',').last : rawImage; bytes = base64Decode(bp); } catch (_) { bytes = null; }
     }
     DateTime? created = MarketplaceTime.parseCreatedAt(data['createdAt']);
+    DateTime? promotedUntil;
+    final rawPromo = data['promotedUntil'];
+    if (rawPromo is Timestamp) {
+      promotedUntil = rawPromo.toDate();
+    } else if (rawPromo is DateTime) {
+      promotedUntil = rawPromo;
+    } else if (rawPromo != null) {
+      promotedUntil = DateTime.tryParse(rawPromo.toString());
+    }
     double price = 0;
     final p = data['price'];
     if (p is num) price = p.toDouble();
@@ -402,6 +418,7 @@ class MarketplaceDetailModel {
       serviceType: data['serviceType']?.toString() ?? 'marketplace',
       merchantBackendId: parseInt(data['merchantBackendId'] ?? data['backendUserId']),
       stockQuantity: parseInt(data['stockQuantity'] ?? data['quantity'] ?? data['stock']),
+      promotedUntil: promotedUntil,
     );
   }
 }
@@ -728,6 +745,8 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     }
     final ranked = List<MarketplaceDetailModel>.from(items);
     ranked.sort((a, b) {
+      final byPromo = (b.isPromotedNow ? 1 : 0).compareTo(a.isPromotedNow ? 1 : 0);
+      if (byPromo != 0) return byPromo;
       final sb = score(b);
       final sa = score(a);
       final byScore = sb.compareTo(sa);
@@ -750,6 +769,8 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   Future<List<MarketplaceDetailModel>> _sortByNewest(List<MarketplaceDetailModel> items) async {
     final copy = List<MarketplaceDetailModel>.from(items);
     copy.sort((a, b) {
+      final byPromo = (b.isPromotedNow ? 1 : 0).compareTo(a.isPromotedNow ? 1 : 0);
+      if (byPromo != 0) return byPromo;
       final rb = MerchantCredit.feedScore(b.sellerRating);
       final ra = MerchantCredit.feedScore(a.sellerRating);
       final byCredit = rb.compareTo(ra);
@@ -816,6 +837,8 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
 
     final ranked = List<MarketplaceDetailModel>.from(items);
     ranked.sort((a, b) {
+      final byPromo = (b.isPromotedNow ? 1 : 0).compareTo(a.isPromotedNow ? 1 : 0);
+      if (byPromo != 0) return byPromo;
       final ca = cityHit(a);
       final cb = cityHit(b);
       if (ca != cb) return cb.compareTo(ca);
@@ -850,6 +873,8 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       // Sync-ish newest sort — skip prefs / follows / social for first paint.
       list = List<MarketplaceDetailModel>.from(items);
       list.sort((a, b) {
+        final byPromo = (b.isPromotedNow ? 1 : 0).compareTo(a.isPromotedNow ? 1 : 0);
+        if (byPromo != 0) return byPromo;
         final db = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
         final da = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
         return db.compareTo(da);
@@ -2682,6 +2707,34 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                     Text(_titleCase(cat), style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w800, letterSpacing: 0.3)),
                   ]),
                 )),
+              if (item.isPromotedNow)
+                Positioned(
+                  top: cat.isNotEmpty ? 36 : 9,
+                  left: 9,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF8A00).withOpacity(0.95),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.campaign_rounded, size: 10, color: Colors.white),
+                        SizedBox(width: 4),
+                        Text(
+                          'Promoted',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               // SOLD ribbon
               if (isSold)
                 Positioned(right: -28, top: 16,

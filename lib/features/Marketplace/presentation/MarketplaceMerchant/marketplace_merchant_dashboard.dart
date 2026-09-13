@@ -35,6 +35,7 @@ import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_moderation.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_promote_service.dart';
 
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/GernalServices/marketplace_stock_reminder_service.dart';
@@ -101,27 +102,27 @@ SliverGridDelegate _merchantItemsGridDelegate(BuildContext context) {
       MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.8).scale(14) /
           14.0;
 
-  // Lower ratio = taller cells (more room for status / reject reason).
-  var ratio = 0.72;
+  // Lower ratio = taller cells (room for status, actions, reject reason).
+  var ratio = 0.68;
   var spacing = 12.0;
   if (w < 330) {
-    ratio = 0.48;
+    ratio = 0.44;
     spacing = 8;
   } else if (w < 360) {
-    ratio = 0.52;
+    ratio = 0.48;
     spacing = 8;
   } else if (w < 400) {
-    ratio = 0.58;
+    ratio = 0.54;
     spacing = 10;
   } else if (w < 430) {
-    ratio = 0.64;
+    ratio = 0.60;
     spacing = 10;
   }
 
   if (textScale > 1.08) {
     ratio -= 0.06 * ((textScale - 1.0) * 2).clamp(0.0, 1.0);
   }
-  ratio = ratio.clamp(0.42, 0.78);
+  ratio = ratio.clamp(0.40, 0.72);
 
   return SliverGridDelegateWithFixedCrossAxisCount(
     crossAxisCount: 2,
@@ -5882,6 +5883,29 @@ class _MarketplaceMerchantDashboardState
                         busy: _busyRow,
                         onDelete: () => _deleteItem(filtered[i]),
                         onEdit: () => _openEditItemSheet(filtered[i]),
+                        onPromote: () async {
+                          final it = filtered[i];
+                          final id = (it['id'] ?? '').toString().trim();
+                          if (id.isEmpty) return;
+                          final canPromote =
+                              _itemReviewStatus(it) == 'approved' &&
+                                  it['isActive'] == true;
+                          if (!canPromote) {
+                            ToastHelper.showCustomToast(
+                              context,
+                              'Only live (approved) items can be promoted.',
+                              isSuccess: false,
+                              errorMessage: 'Cannot promote',
+                            );
+                            return;
+                          }
+                          await MarketplacePromoteService.presentPromoteSheet(
+                            context: context,
+                            itemId: id,
+                            item: it,
+                          );
+                          await _loadItems(showLoading: false);
+                        },
                       ),
                     ),
         ),
@@ -6585,12 +6609,14 @@ class _ItemCard extends StatelessWidget {
   final bool busy;
   final VoidCallback onDelete;
   final VoidCallback onEdit;
+  final VoidCallback? onPromote;
 
   const _ItemCard({
     required this.item,
     required this.busy,
     required this.onDelete,
     required this.onEdit,
+    this.onPromote,
   });
 
   @override
@@ -6602,6 +6628,11 @@ class _ItemCard extends StatelessWidget {
             'rejected';
     final rejectReason = (item['rejectedReason'] ?? '').toString().trim();
     final showRejectReason = isRejected && rejectReason.isNotEmpty;
+    final canPromote =
+        _MarketplaceMerchantDashboardState._itemReviewStatus(item) ==
+                'approved' &&
+            item['isActive'] == true;
+    final isBoosted = MarketplacePromoteService.isPromotedNow(item);
 
     // Flex layout: image shrinks; text never overflows the grid cell.
     return Material(
@@ -6614,12 +6645,12 @@ class _ItemCard extends StatelessWidget {
         child: LayoutBuilder(
           builder: (context, c) {
             final narrow = c.maxWidth < 168;
-            final padH = narrow ? 8.0 : 10.0;
-            final padV = narrow ? 5.0 : 7.0;
-            final nameSize = narrow ? 12.0 : 13.5;
-            final priceSize = narrow ? 11.5 : 13.0;
-            final metaSize = narrow ? 10.5 : 12.0;
-            final reasonSize = narrow ? 9.5 : 10.5;
+            final padH = narrow ? 6.0 : 8.0;
+            final padV = narrow ? 4.0 : 5.0;
+            final nameSize = narrow ? 11.5 : 13.0;
+            final priceSize = narrow ? 11.0 : 12.5;
+            final metaSize = narrow ? 10.0 : 11.5;
+            final reasonSize = narrow ? 9.0 : 10.0;
 
             return Stack(
               children: [
@@ -6635,61 +6666,111 @@ class _ItemCard extends StatelessWidget {
                       child: Padding(
                         padding: EdgeInsets.fromLTRB(padH, padV, padH, padV),
                         child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Text(
-                              (item['name'] ?? 'Unknown').toString(),
-                              style: TextStyle(
-                                fontWeight: FontWeight.w900,
-                                fontSize: nameSize,
-                                height: 1.15,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              mwk0(item['price']),
-                              style: TextStyle(
-                                fontWeight: FontWeight.w900,
-                                color: Colors.green,
-                                fontSize: priceSize,
-                                height: 1.15,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              (item['category'] ?? 'other').toString(),
-                              style: TextStyle(
-                                color: Colors.black54,
-                                fontWeight: FontWeight.w800,
-                                fontSize: metaSize,
-                                height: 1.15,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            if (showRejectReason) ...[
-                              const SizedBox(height: 2),
-                              Expanded(
-                                child: Align(
-                                  alignment: Alignment.topLeft,
-                                  child: Text(
-                                    rejectReason,
-                                    style: TextStyle(
-                                      color: Colors.red.shade700,
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: reasonSize,
-                                      height: 1.2,
+                            Expanded(
+                              child: LayoutBuilder(
+                                builder: (context, textConstraints) {
+                                  return FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    alignment: Alignment.topLeft,
+                                    child: ConstrainedBox(
+                                      constraints: BoxConstraints(
+                                        maxWidth: textConstraints.maxWidth,
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            (item['name'] ?? 'Unknown')
+                                                .toString(),
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w900,
+                                              fontSize: nameSize,
+                                              height: 1.1,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          const SizedBox(height: 1),
+                                          Text(
+                                            mwk0(item['price']),
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w900,
+                                              color: Colors.green,
+                                              fontSize: priceSize,
+                                              height: 1.1,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          const SizedBox(height: 1),
+                                          Text(
+                                            (item['category'] ?? 'other')
+                                                .toString(),
+                                            style: TextStyle(
+                                              color: Colors.black54,
+                                              fontWeight: FontWeight.w800,
+                                              fontSize: metaSize,
+                                              height: 1.1,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          if (showRejectReason) ...[
+                                            const SizedBox(height: 1),
+                                            Text(
+                                              rejectReason,
+                                              style: TextStyle(
+                                                color: Colors.red.shade700,
+                                                fontWeight: FontWeight.w700,
+                                                fontSize: reasonSize,
+                                                height: 1.1,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ],
+                                        ],
+                                      ),
                                     ),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
+                                  );
+                                },
                               ),
-                            ],
+                            ),
+                            const SizedBox(height: 2),
+                            SizedBox(
+                              height: 28,
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  if (canPromote && onPromote != null) ...[
+                                    _iconBtn(
+                                      icon: Icons.campaign_rounded,
+                                      color: const Color(0xFFFF8A00),
+                                      onTap: busy ? null : onPromote,
+                                      compact: true,
+                                    ),
+                                    const SizedBox(width: 10),
+                                  ],
+                                  _iconBtn(
+                                    icon: Icons.edit,
+                                    color: const Color(0xFF16284C),
+                                    onTap: onEdit,
+                                    compact: true,
+                                  ),
+                                  const SizedBox(width: 10),
+                                _iconBtn(
+                                    icon: Icons.delete,
+                                    color: Colors.red,
+                                    onTap: busy ? null : onDelete,
+                                    compact: true,
+                                  ),
+                                ],
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -6699,44 +6780,48 @@ class _ItemCard extends StatelessWidget {
                 Positioned(
                   top: 8,
                   left: 8,
-                  child: Container(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: narrow ? 8 : 10,
-                      vertical: narrow ? 4 : 5,
-                    ),
-                    decoration: BoxDecoration(
-                      color: statusColor,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      statusLabel,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: narrow ? 10.5 : 12,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _iconBtn(
-                        icon: Icons.edit,
-                        color: const Color(0xFF16284C),
-                        onTap: onEdit,
-                        compact: narrow,
+                      Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: narrow ? 8 : 10,
+                          vertical: narrow ? 4 : 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: statusColor,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          statusLabel,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: narrow ? 10.5 : 12,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
                       ),
-                      SizedBox(width: narrow ? 4 : 6),
-                      _iconBtn(
-                        icon: Icons.delete,
-                        color: Colors.red,
-                        onTap: busy ? null : onDelete,
-                        compact: narrow,
-                      ),
+                      if (isBoosted) ...[
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: narrow ? 8 : 10,
+                            vertical: narrow ? 3 : 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFF8A00),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            'Promoted',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: narrow ? 10 : 11,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -6754,20 +6839,21 @@ class _ItemCard extends StatelessWidget {
     required VoidCallback? onTap,
     bool compact = false,
   }) {
-    final size = compact ? 28.0 : 32.0;
-    return Container(
-      decoration: BoxDecoration(
+    final size = compact ? 26.0 : 30.0;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Material(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.black12),
-      ),
-      child: IconButton(
-        icon: Icon(icon),
-        iconSize: compact ? 15 : 17,
-        padding: EdgeInsets.zero,
-        constraints: BoxConstraints.tightFor(width: size, height: size),
-        color: color,
-        onPressed: onTap,
+        shape: const CircleBorder(
+          side: BorderSide(color: Colors.black12),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          customBorder: const CircleBorder(),
+          child: Icon(icon, size: compact ? 14 : 16, color: color),
+        ),
       ),
     );
   }

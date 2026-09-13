@@ -627,6 +627,7 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
     final byApiIdRoomType = <int, String>{};
     final byApiIdAvailability = <int, bool>{};
     final byApiIdAmenities = <int, List<String>>{};
+    final byApiIdPromotedUntil = <int, DateTime>{};
     try {
       final idList = ids.toList();
       final chunks = <List<int>>[];
@@ -686,6 +687,16 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
           if (amenities.isNotEmpty) {
             byApiIdAmenities[apiId] = amenities;
           }
+          final rawPromo = d['promotedUntil'];
+          DateTime? until;
+          if (rawPromo is Timestamp) {
+            until = rawPromo.toDate();
+          } else if (rawPromo is DateTime) {
+            until = rawPromo;
+          } else if (rawPromo != null) {
+            until = DateTime.tryParse(rawPromo.toString());
+          }
+          if (until != null) byApiIdPromotedUntil[apiId] = until;
         }
       }));
     } catch (_) {
@@ -704,23 +715,29 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
 
     if (byApiId.isEmpty &&
         byApiIdCapacity.isEmpty &&
-        byApiIdAmenities.isEmpty) {
+        byApiIdAmenities.isEmpty &&
+        byApiIdPromotedUntil.isEmpty) {
       return list;
     }
-    return list
+    final merged = list
         .map((a) {
           final p = byApiId[a.id];
           final cap = byApiIdCapacity[a.id];
           final amenities = byApiIdAmenities[a.id];
+          final promo = byApiIdPromotedUntil[a.id];
           var updated = a;
           if (p != null) updated = updated.withPricingPeriod(p);
           if (cap != null) updated = updated.withRoomsAvailable(cap);
           if (amenities != null && amenities.isNotEmpty) {
             updated = updated.withAmenities(amenities);
           }
+          if (promo != null) updated = updated.withPromotedUntil(promo);
           return updated;
         })
         .toList();
+    final promoted = merged.where((a) => a.isPromotedNow).toList();
+    final rest = merged.where((a) => !a.isPromotedNow).toList();
+    return [...promoted, ...rest];
   }
 
   void _showDistrictPicker() {

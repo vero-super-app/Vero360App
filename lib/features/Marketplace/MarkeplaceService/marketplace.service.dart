@@ -422,6 +422,15 @@ class MarketplaceService {
     final id = sqlId ?? _stablePositiveIdFromString(doc.id);
 
     final createdAt = MarketplaceTime.parseCreatedAt(data['createdAt']);
+    DateTime? promotedUntil;
+    final rawPromo = data['promotedUntil'];
+    if (rawPromo is Timestamp) {
+      promotedUntil = rawPromo.toDate();
+    } else if (rawPromo is DateTime) {
+      promotedUntil = rawPromo;
+    } else if (rawPromo != null) {
+      promotedUntil = DateTime.tryParse(rawPromo.toString());
+    }
 
     return MarketplaceDetailModel(
       id: id,
@@ -451,6 +460,7 @@ class MarketplaceService {
       firestoreDocId: doc.id,
       serviceType: data['serviceType']?.toString() ?? 'marketplace',
       createdAt: createdAt,
+      promotedUntil: promotedUntil,
     );
   }
 
@@ -593,6 +603,9 @@ class MarketplaceService {
       }
 
       matches.sort((a, b) {
+        final byPromo =
+            (b.item.isPromotedNow ? 1 : 0).compareTo(a.item.isPromotedNow ? 1 : 0);
+        if (byPromo != 0) return byPromo;
         final byVision = b.visionScore.compareTo(a.visionScore);
         if (byVision != 0) return byVision;
         final aVis = a.visualDistance != _noVisualDistance;

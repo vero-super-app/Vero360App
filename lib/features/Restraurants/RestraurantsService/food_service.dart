@@ -252,44 +252,51 @@ class FoodService {
     double? longitude,
     double radiusKm = 30,
   }) {
+    List<FoodModel> base;
     if (latitude == null || longitude == null || items.isEmpty) {
-      return List<FoodModel>.from(items);
-    }
+      base = List<FoodModel>.from(items);
+    } else {
+      final r = radiusKm.clamp(1.0, 200.0);
+      final inRadius = <FoodModel>[];
+      final noCoords = <FoodModel>[];
+      final outRadius = <FoodModel>[];
 
-    final r = radiusKm.clamp(1.0, 200.0);
-    final inRadius = <FoodModel>[];
-    final noCoords = <FoodModel>[];
-    final outRadius = <FoodModel>[];
-
-    for (final f in items) {
-      if (f.latitude == null || f.longitude == null) {
-        noCoords.add(f);
-        continue;
+      for (final f in items) {
+        if (f.latitude == null || f.longitude == null) {
+          noCoords.add(f);
+          continue;
+        }
+        final d = distanceKm(latitude, longitude, f.latitude!, f.longitude!);
+        if (d != null && d <= r) {
+          inRadius.add(f);
+        } else {
+          outRadius.add(f);
+        }
       }
-      final d = distanceKm(latitude, longitude, f.latitude!, f.longitude!);
-      if (d != null && d <= r) {
-        inRadius.add(f);
+
+      int byDistance(FoodModel a, FoodModel b) {
+        final da = distanceKm(latitude, longitude, a.latitude!, a.longitude!) ??
+            double.infinity;
+        final db = distanceKm(latitude, longitude, b.latitude!, b.longitude!) ??
+            double.infinity;
+        return da.compareTo(db);
+      }
+
+      inRadius.sort(byDistance);
+      outRadius.sort(byDistance);
+
+      // Local food first; far kitchens only after nearby + unknown-coords.
+      if (inRadius.isNotEmpty) {
+        base = [...inRadius, ...noCoords, ...outRadius];
       } else {
-        outRadius.add(f);
+        base = [...outRadius, ...noCoords];
       }
     }
 
-    int byDistance(FoodModel a, FoodModel b) {
-      final da = distanceKm(latitude, longitude, a.latitude!, a.longitude!) ??
-          double.infinity;
-      final db = distanceKm(latitude, longitude, b.latitude!, b.longitude!) ??
-          double.infinity;
-      return da.compareTo(db);
-    }
-
-    inRadius.sort(byDistance);
-    outRadius.sort(byDistance);
-
-    // Local food first; far kitchens only after nearby + unknown-coords.
-    if (inRadius.isNotEmpty) {
-      return [...inRadius, ...noCoords, ...outRadius];
-    }
-    return [...outRadius, ...noCoords];
+    // Paid boosts always float above distance ranking (stable within groups).
+    final promoted = base.where((e) => e.isPromotedNow).toList();
+    final rest = base.where((e) => !e.isPromotedNow).toList();
+    return [...promoted, ...rest];
   }
 
   /// Items within [radiusKm] of the user (empty if none / no location).
@@ -343,6 +350,8 @@ class FoodService {
   ) {
     final copy = List<FoodModel>.from(items);
     copy.sort((a, b) {
+      final byPromo = (b.isPromotedNow ? 1 : 0).compareTo(a.isPromotedNow ? 1 : 0);
+      if (byPromo != 0) return byPromo;
       final aHas = a.latitude != null && a.longitude != null;
       final bHas = b.latitude != null && b.longitude != null;
       if (!aHas && !bHas) return 0;

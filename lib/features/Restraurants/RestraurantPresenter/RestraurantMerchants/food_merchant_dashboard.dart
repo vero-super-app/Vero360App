@@ -17,6 +17,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_tim
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/utils/app_wallet_pin.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_menu_post_page.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_promote_service.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/kyc_verification_screen.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/settings/Settings.dart';
@@ -955,6 +956,35 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                   _editMenuItem(item);
                 },
               ),
+              if (item['isAvailable'] != false)
+                ListTile(
+                  leading: const Icon(
+                    Icons.campaign_rounded,
+                    color: Color(0xFFFF8A00),
+                  ),
+                  title: Text(
+                    MarketplacePromoteService.isPromotedNow(item)
+                        ? 'Boost / promote (active)'
+                        : 'Promote / boost dish',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  subtitle: const Text(
+                    'Top of Food feed or Facebook ads',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    final id = (item['id'] ?? '').toString().trim();
+                    if (id.isEmpty) return;
+                    await MarketplacePromoteService.presentPromoteSheet(
+                      context: context,
+                      itemId: id,
+                      item: item,
+                      vertical: PromoteVertical.food,
+                    );
+                    await _loadMenuItems();
+                  },
+                ),
               ListTile(
                 leading: const Icon(Icons.delete_outline_rounded,
                     color: Colors.red),
@@ -2773,7 +2803,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
               crossAxisCount: 2,
               crossAxisSpacing: 12,
               mainAxisSpacing: 12,
-              childAspectRatio: 0.76,
+              childAspectRatio: 0.68,
             ),
             itemCount: _menuItems.length,
             itemBuilder: (context, index) {
@@ -2854,7 +2884,35 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                               Positioned(
                                 top: 8,
                                 left: 8,
-                                child: _menuAvailabilityBadge(available),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _menuAvailabilityBadge(available),
+                                    if (MarketplacePromoteService.isPromotedNow(
+                                        item)) ...[
+                                      const SizedBox(height: 4),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 3,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFFF8A00),
+                                          borderRadius:
+                                              BorderRadius.circular(999),
+                                        ),
+                                        child: const Text(
+                                          'Promoted',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
                               ),
                               Positioned(
                                 top: 6,
@@ -2908,7 +2966,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                           ),
                         ),
                         Padding(
-                          padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+                          padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -2954,6 +3012,57 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                                       ),
                                     ),
                                   ],
+                                ),
+                              ],
+                              if (available) ...[
+                                const SizedBox(height: 8),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Material(
+                                    color: const Color(0xFFFFF7ED),
+                                    borderRadius: BorderRadius.circular(999),
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(999),
+                                      onTap: () async {
+                                        final id =
+                                            (item['id'] ?? '').toString().trim();
+                                        if (id.isEmpty) return;
+                                        await MarketplacePromoteService
+                                            .presentPromoteSheet(
+                                          context: context,
+                                          itemId: id,
+                                          item: item,
+                                          vertical: PromoteVertical.food,
+                                        );
+                                        await _loadMenuItems();
+                                      },
+                                      child: const Padding(
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 6,
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              Icons.campaign_rounded,
+                                              size: 15,
+                                              color: Color(0xFFFF8A00),
+                                            ),
+                                            SizedBox(width: 6),
+                                            Text(
+                                              'Promote',
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.w900,
+                                                fontSize: 12,
+                                                color: Color(0xFFFF8A00),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
                                 ),
                               ],
                             ],

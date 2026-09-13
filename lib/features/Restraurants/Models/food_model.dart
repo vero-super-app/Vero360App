@@ -103,6 +103,8 @@ class FoodModel {
   final int? restaurantAvgPrepTimeMinutes;
   /// Available stock set by the merchant. Null = legacy (no cap).
   final int? quantity;
+  /// Paid Food feed boost expiry.
+  final DateTime? promotedUntil;
 
   FoodModel({
     required this.id,
@@ -125,7 +127,11 @@ class FoodModel {
     this.prepTimeMinutes,
     this.restaurantAvgPrepTimeMinutes,
     this.quantity,
+    this.promotedUntil,
   });
+
+  bool get isPromotedNow =>
+      promotedUntil != null && promotedUntil!.isAfter(DateTime.now());
 
   /// Max units a buyer may select. Legacy (null) → uncapped high default.
   int get maxOrderQuantity {
@@ -249,6 +255,19 @@ class FoodModel {
       json['quantity'] ?? json['stock'] ?? json['availableQuantity'],
     );
 
+    DateTime? promotedUntil;
+    final rawPromo = json['promotedUntil'];
+    if (rawPromo is DateTime) {
+      promotedUntil = rawPromo;
+    } else if (rawPromo != null) {
+      try {
+        // Firestore Timestamp has toDate().
+        promotedUntil = (rawPromo as dynamic).toDate() as DateTime?;
+      } catch (_) {
+        promotedUntil = DateTime.tryParse(rawPromo.toString());
+      }
+    }
+
     return FoodModel(
       id: id(json['id']),
       FoodName: str(json['FoodName']).isNotEmpty
@@ -277,6 +296,7 @@ class FoodModel {
       restaurantAvgPrepTimeMinutes:
           (restPrep != null && restPrep > 0) ? restPrep : null,
       quantity: qty,
+      promotedUntil: promotedUntil,
     );
   }
 
@@ -301,6 +321,7 @@ class FoodModel {
     int? prepTimeMinutes,
     int? restaurantAvgPrepTimeMinutes,
     int? quantity,
+    DateTime? promotedUntil,
   }) {
     return FoodModel(
       id: id ?? this.id,
@@ -324,6 +345,7 @@ class FoodModel {
       restaurantAvgPrepTimeMinutes:
           restaurantAvgPrepTimeMinutes ?? this.restaurantAvgPrepTimeMinutes,
       quantity: quantity ?? this.quantity,
+      promotedUntil: promotedUntil ?? this.promotedUntil,
     );
   }
 

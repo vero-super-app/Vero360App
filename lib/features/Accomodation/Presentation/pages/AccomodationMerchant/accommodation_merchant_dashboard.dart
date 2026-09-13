@@ -28,6 +28,7 @@ import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_promote_service.dart';
 import 'package:vero360_app/utils/app_wallet_pin.dart';
 import 'package:vero360_app/Home/homepage.dart';
 import 'package:vero360_app/settings/Settings.dart';
@@ -1258,6 +1259,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         final row = _accommodationRowFromApi(a);
         final fsMeta = fsByApiId[a.id];
         if (fsMeta != null) {
+          row['firestoreDocId'] = fsMeta['id'];
           row['capacity'] = (fsMeta['capacity'] ?? row['capacity']);
           row['pricingPeriod'] =
               (fsMeta['pricingPeriod'] ?? row['pricingPeriod']);
@@ -1265,6 +1267,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
           row['hostelGender'] =
               (fsMeta['hostelGender'] ?? row['hostelGender']);
           row['roomType'] = (fsMeta['roomType'] ?? row['roomType']);
+          row['promotedUntil'] = fsMeta['promotedUntil'];
         }
         return row;
       }).toList();
@@ -1390,6 +1393,63 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         ],
       ),
     );
+  }
+
+  /// Firestore doc id for promote boost writes on `accommodation_rooms`.
+  String? _firestoreRoomDocId(Map<String, dynamic> room) {
+    final explicit = (room['firestoreDocId'] ?? '').toString().trim();
+    if (explicit.isNotEmpty) return explicit;
+    final id = (room['id'] ?? '').toString().trim();
+    if (id.isEmpty) return null;
+    // API numeric ids are not Firestore document ids.
+    if (int.tryParse(id) != null) return null;
+    return id;
+  }
+
+  Future<void> _promoteProperty(Map<String, dynamic> room) async {
+    var fsId = _firestoreRoomDocId(room);
+    if (fsId == null || fsId.isEmpty) {
+      // Ensure a Firestore mirror exists so boost fields have a home.
+      final apiId = _apiAccommodationId(room);
+      if (apiId == null) {
+        _toastErr('Save this property first, then promote it.');
+        return;
+      }
+      try {
+        final existing = await _firestore
+            .collection('accommodation_rooms')
+            .where('apiAccommodationId', isEqualTo: apiId)
+            .limit(1)
+            .get();
+        if (existing.docs.isNotEmpty) {
+          fsId = existing.docs.first.id;
+        } else {
+          final doc = await _firestore.collection('accommodation_rooms').add({
+            ...Map<String, dynamic>.from(room)
+              ..remove('_fromApi')
+              ..remove('id'),
+            'apiAccommodationId': apiId,
+            'merchantId': _uid,
+            'isActive': true,
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+          fsId = doc.id;
+        }
+        room['firestoreDocId'] = fsId;
+      } catch (e) {
+        _toastErr('Could not prepare property for promote.');
+        return;
+      }
+    }
+
+    await MarketplacePromoteService.presentPromoteSheet(
+      context: context,
+      itemId: fsId,
+      item: room,
+      vertical: PromoteVertical.accommodation,
+    );
+    await _loadRooms();
   }
 
   Future<void> _confirmDeleteProperty(Map<String, dynamic> room) async {
@@ -1910,14 +1970,25 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
               'apiAccommodationId': apiNumeric,
               'pricingPeriod': pricingPeriod,
               'capacity': capacity,
+              'price': price,
+              'pricePerNight': price,
+              'isActive': true,
+              'published': true,
+              'isAvailable': isAvailable,
               if (hostelGender != null && hostelGender.isNotEmpty)
                 'hostelGender': hostelGender,
               if (roomType != null && roomType.isNotEmpty) 'roomType': roomType,
-              'isAvailable': isAvailable,
               if (amenities.isNotEmpty) 'amenities': amenities,
               if (name.isNotEmpty) 'name': name,
               if (location.isNotEmpty) 'location': location,
               if (desc.isNotEmpty) 'description': desc,
+              if (coverUrl.isNotEmpty) 'image': coverUrl,
+              if (coverUrl.isNotEmpty) 'imageUrl': coverUrl,
+              if (galleryUrls.isNotEmpty) 'galleryUrls': galleryUrls,
+              'accommodationType': selectedType,
+              'type': selectedType,
+              'createdAt': FieldValue.serverTimestamp(),
+              'updatedAt': FieldValue.serverTimestamp(),
             },
             SetOptions(merge: true),
           ),
@@ -2789,6 +2860,10 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                               'pricingPeriod':
                                                   selectedPricePeriod.apiValue,
                                               'capacity': normalizedRooms,
+                                              'price': price,
+                                              'pricePerNight': price,
+                                              'isActive': true,
+                                              'published': true,
                                               if (selectedType == 'hostel')
                                                 'hostelGender': hostelGender,
                                               if (selectedType == 'hostel')
@@ -2803,6 +2878,14 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                               'description':
                                                   descriptionController.text
                                                       .trim(),
+                                              if (coverUrl.toString().trim().isNotEmpty)
+                                                'image': coverUrl,
+                                              if (coverUrl.toString().trim().isNotEmpty)
+                                                'imageUrl': coverUrl,
+                                              if (galleryUrls.isNotEmpty)
+                                                'galleryUrls': galleryUrls,
+                                              'updatedAt':
+                                                  FieldValue.serverTimestamp(),
                                             },
                                             SetOptions(merge: true),
                                           ),
@@ -6119,6 +6202,23 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                   materialTapTargetSize:
                                       MaterialTapTargetSize.shrinkWrap,
                                 ),
+                                if (MarketplacePromoteService.isPromotedNow(
+                                    room))
+                                  const Chip(
+                                    label: Text(
+                                      'Promoted',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                    backgroundColor: Color(0xFFFF8A00),
+                                    padding: EdgeInsets.zero,
+                                    visualDensity: VisualDensity.compact,
+                                    materialTapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                  ),
                                 if (typeKey == 'hotel' || typeKey == 'lodge')
                                   Chip(
                                     label: Text(
@@ -6244,6 +6344,22 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                     Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        if (canEditApi ||
+                            (room['firestoreDocId'] ?? room['id'])
+                                .toString()
+                                .trim()
+                                .isNotEmpty)
+                          IconButton(
+                            icon: Icon(
+                              Icons.campaign_rounded,
+                              color: MarketplacePromoteService.isPromotedNow(
+                                      room)
+                                  ? const Color(0xFFFF8A00)
+                                  : Colors.grey.shade800,
+                            ),
+                            tooltip: 'Promote / boost',
+                            onPressed: () => _promoteProperty(room),
+                          ),
                         if (canEditApi)
                           IconButton(
                             icon: Icon(

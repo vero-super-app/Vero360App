@@ -98,6 +98,7 @@ class MarketplaceDetailModel {
   final String? sellerStatus;
   final String? sellerBusinessDescription;
   final double? sellerRating;
+  final int sellerReviewCount;
   final String? sellerLogoUrl;
   final String? serviceProviderId;
   final String? sellerUserId;
@@ -129,6 +130,7 @@ class MarketplaceDetailModel {
     this.sellerStatus,
     this.sellerBusinessDescription,
     this.sellerRating,
+    this.sellerReviewCount = 0,
     this.sellerLogoUrl,
     this.serviceProviderId,
     this.sellerUserId,
@@ -226,6 +228,12 @@ class MarketplaceDetailModel {
       sellerRating: (j['sellerRating'] is num)
           ? (j['sellerRating'] as num).toDouble()
           : double.tryParse('${j['sellerRating']}'),
+      sellerReviewCount: () {
+        final rc =
+            j['sellerReviewCount'] ?? j['reviewCount'] ?? j['reviewsCount'];
+        if (rc is num) return rc.toInt();
+        return int.tryParse('${rc ?? ''}') ?? 0;
+      }(),
       sellerLogoUrl: j['sellerLogoUrl']?.toString(),
       serviceProviderId: j['serviceProviderId']?.toString(),
       sellerUserId: sellerUserId,

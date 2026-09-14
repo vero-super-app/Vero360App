@@ -122,6 +122,30 @@ class AppUpdateChecker {
   static String defaultStoreUrl({required bool isIos}) =>
       isIos ? appStoreSearchUrl() : playStoreUrl(playStoreId);
 
+  /// Open Play Store (Android) or App Store (iOS) for this install.
+  /// Prefers Firestore `app_config/app_version` URLs when set.
+  static Future<bool> openStoreForThisPlatform() async {
+    if (kIsWeb) return false;
+    final isIos = defaultTargetPlatform == TargetPlatform.iOS;
+    final remote = await _loadRemoteConfig();
+    String url;
+    if (isIos) {
+      url = (remote?.appStoreUrl ?? '').trim();
+      if (url.isEmpty &&
+          remote?.appleAppId != null &&
+          remote!.appleAppId!.trim().isNotEmpty) {
+        url = appStoreUrlForId(remote.appleAppId!.trim());
+      }
+      if (url.isEmpty) url = appStoreSearchUrl();
+    } else {
+      url = (remote?.playStoreUrl ?? '').trim();
+      if (url.isEmpty) {
+        url = playStoreUrl(remote?.androidPackageId ?? playStoreId);
+      }
+    }
+    return openStore(url);
+  }
+
   static Future<bool> openStore(String url) async {
     final raw = url.trim();
     if (raw.isEmpty) return false;

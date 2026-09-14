@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../MarkeplaceModel/marketplace.model.dart';
 import '../../MarkeplaceService/marketplace.service.dart';
 import '../../MarkeplaceService/marketplace_moderation.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 
@@ -178,7 +179,7 @@ class _MarketplaceEditPageState extends State<MarketplaceEditPage> {
       final patch = <String, dynamic>{
         'name': _name.text.trim(),
         'price': double.tryParse(_price.text.trim()) ?? widget.item.price,
-        'description': _desc.text.trim(),
+        'description': DescriptionContactMask.mask(_desc.text.trim()),
         'updatedAt': FieldValue.serverTimestamp(),
         if (_category != null) 'category': _category,
       };

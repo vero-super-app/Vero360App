@@ -1,15 +1,14 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
-import 'dart:async';
-import 'dart:convert';
 
-import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 
 /// Cross-device chat alerts via Firestore → Cloud Function → FCM.
 /// Critical when the recipient app is backgrounded or killed (WebSocket is offline).
+///
+/// Single push transport only — do not also call Nest `/notifications/send`
+/// (that previously caused duplicate FCM deliveries for every message).
 class ChatNotificationService {
   ChatNotificationService._();
 
@@ -71,6 +70,8 @@ class ChatNotificationService {
           'type': 'new_message',
           'chatId': chatId,
           'badgeRoute': 'messages',
+          'senderName': safeSender,
+          'title': safeSender,
         },
         'createdAt': FieldValue.serverTimestamp(),
         'consumed': false,
@@ -85,14 +86,6 @@ class ChatNotificationService {
         debugPrint('[ChatNotificationService] Firestore alert failed: $e');
       }
     }
-
-    // Best-effort Nest push (may 404 if endpoint missing — CF path is primary).
-    unawaited(_requestBackendPush(
-      recipientFirebaseUid: toUid,
-      title: safeSender,
-      body: preview,
-      chatId: chatId,
-    ));
   }
 
   static String _previewBody(String raw) {
@@ -123,43 +116,5 @@ class ChatNotificationService {
       }
     } catch (_) {}
     return null;
-  }
-
-  /// Best-effort server push (no-op if endpoint unavailable).
-  static Future<void> _requestBackendPush({
-    required String recipientFirebaseUid,
-    required String title,
-    required String body,
-    required String chatId,
-  }) async {
-    try {
-      await BackendChatService.ensureAuth();
-      final token = await BackendChatService.getAuthToken();
-      final uri = ApiConfig.endpoint('/api/v1/notifications/send');
-      final res = await http
-          .post(
-            uri,
-            headers: {
-              'Authorization': 'Bearer $token',
-              'Content-Type': 'application/json',
-            },
-            body: jsonEncode({
-              'toFirebaseUid': recipientFirebaseUid,
-              'title': title,
-              'body': body,
-              'data': {
-                'type': 'new_message',
-                'chatId': chatId,
-                'badgeRoute': 'messages',
-              },
-            }),
-          )
-          .timeout(const Duration(seconds: 8));
-      if (kDebugMode && res.statusCode >= 400) {
-        debugPrint(
-          '[ChatNotificationService] backend push ${res.statusCode}',
-        );
-      }
-    } catch (_) {}
   }
 }

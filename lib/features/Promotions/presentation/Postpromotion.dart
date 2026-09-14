@@ -3,13 +3,16 @@ import 'dart:async';
 import 'dart:io' show File;
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:vero360_app/GernalServices/engagement_notification_service.dart';
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
 import 'package:vero360_app/utils/formatters.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import '../../../utils/toasthelper.dart';
 
@@ -32,6 +35,8 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
   DateTime? _startDate;
   DateTime? _endDate;
   bool _submitting = false;
+  /// Share to Vero360 Facebook Page after create (Cloud Function).
+  bool _postToFacebook = true;
 
   // images (up to 4 photos per promotion)
   static const int _maxPromoPhotos = 4;
@@ -79,6 +84,48 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
       );
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Cloud Function posts this to the Facebook Page.
+  Future<void> _queueFacebookPromo(
+    PromoModel p, {
+    required String reason,
+    List<String> uploadedUrls = const [],
+  }) async {
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+      final resolved = <String>[
+        ...uploadedUrls.map((e) => e.trim()).where((e) => e.isNotEmpty),
+        ...(p.resolvedImageUrls),
+      ];
+      final seen = <String>{};
+      final gallery = <String>[];
+      for (final u in resolved) {
+        if (seen.add(u)) gallery.add(u);
+      }
+      final image = gallery.isNotEmpty ? gallery.first : '';
+      await FirebaseFirestore.instance.collection('merchant_promotions').add({
+        'promoId': p.id,
+        'title': p.title.trim(),
+        'name': p.title.trim(),
+        'description': (p.description ?? '').trim(),
+        'price': p.price,
+        if (image.isNotEmpty) ...{
+          'imageUrl': image,
+          'image': image,
+        },
+        if (gallery.length > 1) 'gallery': gallery.sublist(1),
+        if (gallery.isNotEmpty) 'galleryUrls': gallery,
+        if (p.startsAt != null) 'startsAt': p.startsAt!.toIso8601String(),
+        if (p.endsAt != null) 'endsAt': p.endsAt!.toIso8601String(),
+        if (uid.isNotEmpty) 'merchantId': uid,
+        'postToFacebook': true,
+        'source': reason,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      if (kDebugMode) debugPrint('[Promo] Facebook queue failed: $e');
     }
   }
 
@@ -281,7 +328,7 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
       if (price == null || price <= 0) {
         ToastHelper.showCustomToast(
           context,
-          'Enter a valid promotion price greater than zero.',
+          'Enter a valid price (MWK).',
           isSuccess: false,
           errorMessage: 'Price required',
         );
@@ -294,7 +341,9 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
         merchantId: 0,
         serviceProviderId: null,
         title: _title.text.trim(),
-        description: _desc.text.trim().isEmpty ? null : _desc.text.trim(),
+        description: _desc.text.trim().isEmpty
+            ? null
+            : DescriptionContactMask.mask(_desc.text.trim()),
         price: price,
         image: uploadedUrls.isNotEmpty ? uploadedUrls.first : null,
         gallery: uploadedUrls.length > 1 ? uploadedUrls.sublist(1) : const [],
@@ -313,10 +362,41 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
           promoId: created.id > 0 ? created.id : null,
         ),
       );
+      if (_postToFacebook) {
+        // Prefer freshly uploaded URLs so the CF always has a photo to share.
+        final forFacebook = PromoModel(
+          id: created.id,
+          merchantId: created.merchantId,
+          serviceProviderId: created.serviceProviderId,
+          title: postedTitle,
+          description: created.description ??
+              (_desc.text.trim().isEmpty ? null : _desc.text.trim()),
+          price: created.price ?? price,
+          image: uploadedUrls.isNotEmpty
+              ? uploadedUrls.first
+              : created.image,
+          gallery: uploadedUrls.length > 1
+              ? uploadedUrls.sublist(1)
+              : created.gallery,
+          isActive: true,
+          startsAt: created.startsAt ?? _startDate,
+          endsAt: created.endsAt ?? _endDate,
+          createdAt: created.createdAt,
+        );
+        unawaited(
+          _queueFacebookPromo(
+            forFacebook,
+            reason: 'create',
+            uploadedUrls: uploadedUrls,
+          ),
+        );
+      }
 
       ToastHelper.showCustomToast(
         context,
-        'Promotion posted',
+        _postToFacebook
+            ? 'Promotion posted (also sharing to Facebook)'
+            : 'Promotion posted',
         isSuccess: true,
         errorMessage: 'Created',
       );
@@ -328,6 +408,7 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
       _startDate = null;
       _endDate = null;
       _pickedImages.clear();
+      _postToFacebook = true;
       setState(() {});
       await _loadMine();
       _tabs.animateTo(1);
@@ -340,50 +421,6 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
       );
     } finally {
       if (mounted) setState(() => _submitting = false);
-    }
-  }
-
-  Future<void> _subscribe(PromoModel p) async {
-    final controller =
-        TextEditingController(text: formatMwkInput(p.price ?? 0));
-    final amount = await showDialog<double?>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Subscribe / Extend'),
-        content: TextField(
-          controller: controller,
-          keyboardType:
-              const TextInputType.numberWithOptions(decimal: false),
-          inputFormatters: [ThousandsSeparatorInputFormatter()],
-          decoration: const InputDecoration(labelText: 'Amount (MWK)'),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () =>
-                  Navigator.pop(context, parseMwkInput(controller.text)),
-              child: const Text('Pay')),
-        ],
-      ),
-    );
-    if (amount == null) return;
-
-    setState(() => _busyRow = true);
-    try {
-      await svc.subscribe(p.id, amount);
-      ToastHelper.showCustomToast(
-          context, 'Subscribed', isSuccess: true, errorMessage: 'Subscribed');
-      await _loadMine();
-    } catch (e) {
-      ToastHelper.showCustomToast(
-          context,
-          UserFacingError.from(e, fallback: 'Subscribe failed'),
-          isSuccess: false,
-          errorMessage: 'Subscribe failed');
-    } finally {
-      if (mounted) setState(() => _busyRow = false);
     }
   }
 
@@ -408,7 +445,8 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
   Future<void> _activate(PromoModel p) async {
     setState(() => _busyRow = true);
     try {
-      await svc.activate(p.id);
+      await svc.activate(p.id, endsAt: p.endsAt, startsAt: p.startsAt);
+      unawaited(_queueFacebookPromo(p, reason: 'activate'));
       ToastHelper.showCustomToast(
           context, 'Activated', isSuccess: true, errorMessage: 'Activated');
       await _loadMine();
@@ -597,13 +635,13 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
                       const TextInputType.numberWithOptions(decimal: false),
                   inputFormatters: [ThousandsSeparatorInputFormatter()],
                   decoration: _inputDecoration(
-                    label: 'Price (MWK) *',
+                    label: 'Price (MWK)',
                     hint: 'e.g. 12,000',
                   ),
                   validator: (v) {
                     final pv = parseMwkInput(v);
                     if (pv == null || pv <= 0) {
-                      return 'Enter price';
+                      return 'Enter a valid price';
                     }
                     return null;
                   },
@@ -635,6 +673,35 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
                   value: _formatPickedDateTime(_endDate),
                   onTap: () => _pickDateTime(isStart: false),
                 ),
+                const SizedBox(height: 14),
+
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  value: _postToFacebook,
+                  activeThumbColor: _brandOrange,
+                  secondary: const FacebookLogoMark(size: 22),
+                  title: const Text(
+                    'Also post on Facebook',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                  ),
+                  subtitle: Text(
+                    'Share this promotion on the Vero360 Facebook Page.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                  onChanged: _submitting
+                      ? null
+                      : (v) => setState(() => _postToFacebook = v),
+                ),
+                if (_postToFacebook) ...[
+                  const SizedBox(height: 8),
+                  const FacebookShareHint(
+                    message:
+                        'We’ll also share this promotion on the Vero360 Facebook Page to help grow your customers.',
+                  ),
+                ],
                 const SizedBox(height: 16),
 
                 FilledButton.icon(
@@ -646,7 +713,11 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
                           width: 18,
                           child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.campaign),
-                  label: const Text('Post Promotion'),
+                  label: Text(
+                    _postToFacebook
+                        ? 'Post Promotion + Facebook'
+                        : 'Post Promotion',
+                  ),
                 ),
               ],
             ),
@@ -807,29 +878,12 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
                               ),
                             ),
 
-                            if (p.subscribedAt != null)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 6),
-                                child: Text(
-                                  'Subscribed: ${PromoDateFormat.dayMonthYearTime(p.subscribedAt!)}',
-                                  style: const TextStyle(
-                                    color: Colors.black54,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
                             const SizedBox(height: 10),
 
                             Wrap(
                               spacing: 8,
                               runSpacing: 8,
                               children: [
-                                FilledButton.tonalIcon(
-                                  onPressed:
-                                      _busyRow ? null : () => _subscribe(p),
-                                  icon: const Icon(Icons.payment),
-                                  label: const Text('Subscribe'),
-                                ),
                                 if (p.isActive)
                                   OutlinedButton.icon(
                                     onPressed: _busyRow

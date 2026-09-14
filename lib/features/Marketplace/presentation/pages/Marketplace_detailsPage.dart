@@ -31,6 +31,7 @@ import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_seller_loader.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
@@ -1575,7 +1576,7 @@ class _DetailsPageState extends State<DetailsPage> {
             ),
             const SizedBox(height: 8),
             Text(
-              item.description,
+              DescriptionContactMask.mask(item.description),
               style: const TextStyle(
                 fontSize: 15,
                 height: 1.45,
@@ -1813,7 +1814,9 @@ class _DetailsPageState extends State<DetailsPage> {
     final rating = s?.rating ?? item.sellerRating;
     final reviewCount = s?.reviewCount ?? 0;
     final recentReviews = s?.recentReviews ?? const <MerchantReview>[];
-    final businessDesc = s?.description ?? item.sellerBusinessDescription;
+    final businessDesc = DescriptionContactMask.mask(
+      s?.description ?? item.sellerBusinessDescription,
+    );
     final logo = s?.logoUrl ?? item.sellerLogoUrl;
 
     final hasMerchant =

@@ -133,16 +133,11 @@ class _VeroCoinPageState extends State<VeroCoinPage>
     if (!mounted) return;
 
     if (!res.ok) {
+      // Inline feedback under the wheel only — no toast (esp. "Try again").
       setState(() {
         _spinning = false;
         _lastSpinMessage = res.message;
       });
-      ToastHelper.showCustomToast(
-        context,
-        res.message,
-        isSuccess: false,
-        errorMessage: '',
-      );
       return;
     }
 
@@ -175,12 +170,7 @@ class _VeroCoinPageState extends State<VeroCoinPage>
       _lastSpinMessage = res.message;
       _wheelTurns = endTurns;
     });
-    ToastHelper.showCustomToast(
-      context,
-      res.message,
-      isSuccess: res.awardedCoins > 0 || res.awardedPoints > 0,
-      errorMessage: '',
-    );
+    // Result stays under the wheel — avoid a second toast (Try again looked like an error).
   }
 
   @override

@@ -12,6 +12,8 @@ class BackendMessagingCache {
   static Box<String>? _box;
   static bool _ready = false;
   static final Set<String> _warmedUrls = <String>{};
+  /// Instant open without waiting for Nest user id / Hive.
+  static final Map<String, List<BackendChatMessage>> _memMessagesByChat = {};
 
   static Future<void> initialize() async {
     if (_ready) return;
@@ -36,6 +38,62 @@ class BackendMessagingCache {
 
   /// Survives logout — not under the [clearUser] `u$userId:` prefix.
   static String _deletedThreadsKey(int userId) => 'deleted_threads_$userId';
+
+  static List<BackendChatMessage> _decodeMessages(String raw) {
+    if (raw.isEmpty) return [];
+    try {
+      final list = jsonDecode(raw) as List;
+      final messages = list
+          .map(
+            (e) => BackendChatMessage.fromJson(
+              Map<String, dynamic>.from(e as Map),
+            ),
+          )
+          .toList();
+      messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      return messages;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static List<BackendChatMessage> _readDiskMessagesForChat(
+    String chatId, {
+    int? preferUserId,
+  }) {
+    if (!_ready || _box == null) return [];
+    final id = chatId.trim();
+    if (id.isEmpty) return [];
+
+    if (preferUserId != null && preferUserId > 0) {
+      final raw = _box!.get(_messagesKey(preferUserId, id));
+      if (raw != null && raw.isNotEmpty) {
+        final decoded = _decodeMessages(raw);
+        if (decoded.isNotEmpty) return decoded;
+      }
+    }
+
+    // Nest user id can change across sessions — find any cached copy for this chat.
+    final suffix = ':msgs:$id';
+    List<BackendChatMessage> best = const [];
+    for (final key in _box!.keys) {
+      final ks = key.toString();
+      if (!ks.endsWith(suffix)) continue;
+      final raw = _box!.get(key);
+      if (raw == null || raw.isEmpty) continue;
+      final decoded = _decodeMessages(raw);
+      if (decoded.length > best.length) best = decoded;
+    }
+    return best;
+  }
+
+  static void _putMem(String chatId, List<BackendChatMessage> messages) {
+    final id = chatId.trim();
+    if (id.isEmpty) return;
+    final sorted = [...messages]
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    _memMessagesByChat[id] = sorted;
+  }
 
   static DateTime? peekChatClearedAt(int? userId, String chatId) {
     if (!_ready || userId == null || _box == null) return null;
@@ -200,23 +258,19 @@ class BackendMessagingCache {
   }
 
   static List<BackendChatMessage> peekMessages(int? userId, String chatId) {
-    if (!_ready || userId == null || _box == null) return [];
-    final raw = _box!.get(_messagesKey(userId, chatId));
-    if (raw == null || raw.isEmpty) return [];
-    try {
-      final list = jsonDecode(raw) as List;
-      final messages = list
-          .map(
-            (e) => BackendChatMessage.fromJson(
-              Map<String, dynamic>.from(e as Map),
-            ),
-          )
-          .toList();
-      messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
-      return filterAfterClear(userId, chatId, messages);
-    } catch (_) {
-      return [];
+    final id = chatId.trim();
+    if (id.isEmpty) return [];
+
+    final mem = _memMessagesByChat[id];
+    if (mem != null && mem.isNotEmpty) {
+      return filterAfterClear(userId, id, List<BackendChatMessage>.from(mem));
     }
+
+    if (!_ready || _box == null) return [];
+    final disk = _readDiskMessagesForChat(id, preferUserId: userId);
+    if (disk.isEmpty) return [];
+    _putMem(id, disk);
+    return filterAfterClear(userId, id, List<BackendChatMessage>.from(disk));
   }
 
   static Future<void> saveThreads(
@@ -241,13 +295,17 @@ class BackendMessagingCache {
     String chatId,
     List<BackendChatMessage> messages,
   ) async {
+    final id = chatId.trim();
+    if (id.isEmpty) return;
+    final sorted = [...messages]
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    _putMem(id, sorted);
+
     await initialize();
-    if (_box == null) return;
+    if (_box == null || userId <= 0) return;
     try {
-      final sorted = [...messages]
-        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
       await _box!.put(
-        _messagesKey(userId, chatId),
+        _messagesKey(userId, id),
         jsonEncode(sorted.map((m) => m.toJson()).toList()),
       );
       unawaited(_warmImageUrls(_imageUrlsFromMessages(sorted)));
@@ -287,10 +345,18 @@ class BackendMessagingCache {
   }
 
   static Future<void> deleteMessagesForChat(int userId, String chatId) async {
+    final id = chatId.trim();
+    _memMessagesByChat.remove(id);
     await initialize();
     if (_box == null) return;
     try {
-      await _box!.delete(_messagesKey(userId, chatId));
+      await _box!.delete(_messagesKey(userId, id));
+      // Also drop any leftover copies keyed under a previous Nest user id.
+      final suffix = ':msgs:$id';
+      final stale = _box!.keys
+          .where((k) => k.toString().endsWith(suffix))
+          .toList();
+      if (stale.isNotEmpty) await _box!.deleteAll(stale);
     } catch (e) {
       if (kDebugMode) {
         debugPrint('[BackendMessagingCache] deleteMessagesForChat: $e');
@@ -314,10 +380,21 @@ class BackendMessagingCache {
 
   static Future<void> clearUser(int userId) async {
     await initialize();
+    // Drop in-memory copies for this account's chats.
+    final prefix = 'u$userId:msgs:';
+    if (_box != null) {
+      for (final key in _box!.keys) {
+        final ks = key.toString();
+        if (ks.startsWith(prefix)) {
+          final chatId = ks.substring(prefix.length);
+          _memMessagesByChat.remove(chatId);
+        }
+      }
+    }
     if (_box == null) return;
-    final prefix = 'u$userId:';
+    final userPrefix = 'u$userId:';
     final keys = _box!.keys
-        .where((k) => k.toString().startsWith(prefix))
+        .where((k) => k.toString().startsWith(userPrefix))
         .toList();
     await _box!.deleteAll(keys);
   }
@@ -326,6 +403,7 @@ class BackendMessagingCache {
   /// markers so the same user can log back in without resurrecting hidden chats.
   static Future<void> clearSessionThreads() async {
     await initialize();
+    _memMessagesByChat.clear();
     if (_box == null) return;
     try {
       final keys = _box!.keys
@@ -343,6 +421,7 @@ class BackendMessagingCache {
   /// Full wipe including deleted-thread markers. Use on account deletion.
   static Future<void> clearAll() async {
     await initialize();
+    _memMessagesByChat.clear();
     _warmedUrls.clear();
     if (_box == null) return;
     try {

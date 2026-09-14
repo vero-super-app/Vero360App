@@ -34,6 +34,7 @@ import 'package:vero360_app/Home/homepage.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/utils/app_logger.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/vero_coin_icon_button.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_amenities.dart';
@@ -108,6 +109,8 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
   AccommodationPricePeriod _selectedPricePeriod =
       AccommodationPricePeriod.night;
   bool _submitting = false;
+  /// Share to Vero360 Facebook Page after publish (default on).
+  bool _postToFacebook = true;
   _PropertyMedia? _cover;
   final List<_PropertyMedia> _gallery = [];
   final Set<String> _selectedAmenities = {};
@@ -725,10 +728,34 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                     ),
                   ],
                   const SizedBox(height: 24),
-                  const FacebookShareHint(
-                    message:
-                        'After you publish, we can also share this stay on the Vero360 Facebook Page to help grow your guests.',
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    value: _postToFacebook,
+                    activeThumbColor: _orange,
+                    secondary: const FacebookLogoMark(size: 22),
+                    title: const Text(
+                      'Also post on Facebook',
+                      style:
+                          TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                    ),
+                    subtitle: Text(
+                      'Share this stay on the Vero360 Facebook Page.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                    onChanged: _submitting
+                        ? null
+                        : (v) => setState(() => _postToFacebook = v),
                   ),
+                  if (_postToFacebook) ...[
+                    const SizedBox(height: 8),
+                    const FacebookShareHint(
+                      message:
+                          'After you publish, we can also share this stay on the Vero360 Facebook Page to help grow your guests.',
+                    ),
+                  ],
                   const SizedBox(height: 10),
                   SizedBox(
                     width: double.infinity,
@@ -792,8 +819,9 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                                   galleryUrls
                                       .add(await widget.onUploadPhoto(m));
                                 }
-                                final desc =
-                                    _descriptionController.text.trim();
+                                final desc = DescriptionContactMask.mask(
+                                  _descriptionController.text.trim(),
+                                );
                                 final created = await widget
                                     .accommodationApi
                                     .createAccommodation(
@@ -836,6 +864,7 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                                     'galleryUrls': galleryUrls,
                                     'amenities':
                                         _selectedAmenities.toList(growable: false),
+                                    'postToFacebook': _postToFacebook,
                                   },
                                 );
                               } catch (e) {
@@ -1927,6 +1956,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
               .toList() ??
           <String>[];
       final amenities = parseAccommodationAmenities(payload['amenities']);
+      final postToFacebook = (payload['postToFacebook'] as bool?) ?? true;
       final newId = (created is Map && created['id'] != null)
           ? created['id'].toString()
           : 'api-${DateTime.now().millisecondsSinceEpoch}';
@@ -1987,6 +2017,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
               if (galleryUrls.isNotEmpty) 'galleryUrls': galleryUrls,
               'accommodationType': selectedType,
               'type': selectedType,
+              'postToFacebook': postToFacebook,
               'createdAt': FieldValue.serverTimestamp(),
               'updatedAt': FieldValue.serverTimestamp(),
             },
@@ -2004,9 +2035,10 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         'Property added successfully',
         isSuccess: true,
         errorMessage: '',
-        showFacebook: true,
-        facebookMessage:
-            'We’ll also share this stay on the Vero360 Facebook Page.',
+        showFacebook: postToFacebook,
+        facebookMessage: postToFacebook
+            ? 'We’ll also share this stay on the Vero360 Facebook Page.'
+            : null,
       );
     });
   }
@@ -2828,8 +2860,9 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                         id: apiId,
                                         name: name,
                                         location: location,
-                                        description: descriptionController.text
-                                            .trim(),
+                                        description: DescriptionContactMask.mask(
+                                          descriptionController.text.trim(),
+                                        ),
                                         pricePerNight: price,
                                         capacity: normalizedRooms,
                                         pricingPeriod:
@@ -2876,8 +2909,10 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                               'name': name,
                                               'location': location,
                                               'description':
-                                                  descriptionController.text
-                                                      .trim(),
+                                                  DescriptionContactMask.mask(
+                                                descriptionController.text
+                                                    .trim(),
+                                              ),
                                               if (coverUrl.toString().trim().isNotEmpty)
                                                 'image': coverUrl,
                                               if (coverUrl.toString().trim().isNotEmpty)
@@ -2896,7 +2931,9 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                       updated['name'] = name;
                                       updated['location'] = location;
                                       updated['description'] =
-                                          descriptionController.text.trim();
+                                          DescriptionContactMask.mask(
+                                        descriptionController.text.trim(),
+                                      );
                                       updated['price'] = price;
                                       updated['pricePerNight'] = price;
                                       updated['capacity'] = normalizedRooms;

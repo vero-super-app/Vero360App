@@ -1208,12 +1208,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
           }
         });
       });
-    } catch (e) {
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
-        'Apple sign-in failed.',
+        (e.message ?? '').trim().isNotEmpty
+            ? e.message!.trim()
+            : 'Apple sign-in failed. Please try again.',
         isSuccess: false,
-        errorMessage: e.toString(),
+        errorMessage: '',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Apple sign-in failed. Please try again.',
+        isSuccess: false,
+        errorMessage: '',
       );
     } finally {
       if (mounted) setState(() => _socialLoading = false);

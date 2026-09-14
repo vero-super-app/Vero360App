@@ -65,6 +65,8 @@ class _ChatListPageState extends State<ChatListPage> {
   @override
   void initState() {
     super.initState();
+    // Warm Hive so watchThreads can emit disk cache on first frame.
+    unawaited(BackendMessagingCache.initialize());
     _threadsStream = BackendChatService.watchThreads();
     _messageSub = BackendMessagingSocket.messageStream.listen((message) async {
       final chatId = message.chatId.trim();
@@ -1053,6 +1055,7 @@ class _ChatListPageState extends State<ChatListPage> {
                             ),
                           ),
                         );
+                        BackendChatService.clearThreadUnread(tile.threadId);
                         BackendChatService.setActiveChatId(null);
                         BackendChatService.refreshThreads();
                       },
@@ -1260,61 +1263,19 @@ class _ThreadTile {
       myEmail: myEmail,
       myName: myName,
     );
-    final threadTitle = (t.name ?? '').trim();
-    final myEmailNorm = (myEmail ?? '').trim().toLowerCase();
-    final myNameNorm = (myName ?? '').trim().toLowerCase();
-    final myEmailLocal = myEmailNorm.contains('@')
-        ? myEmailNorm.split('@').first
-        : myEmailNorm;
-
-    bool looksLikeMe(String raw) {
-      final n = raw.trim().toLowerCase();
-      if (n.isEmpty) return false;
-      if (myNameNorm.isNotEmpty && n == myNameNorm) return true;
-      if (myEmailNorm.isNotEmpty && n == myEmailNorm) return true;
-      if (myEmailLocal.isNotEmpty && n == myEmailLocal) return true;
-      return false;
-    }
-
-    bool usablePeerName(String raw) {
-      final n = raw.trim();
-      if (n.isEmpty || looksLikeMe(n) || ChatParticipant.isPlaceholderName(n)) {
-        return false;
-      }
-      if (n.contains('@')) return false;
-      final email = (otherParticipant?.email ?? '').trim();
-      if (ChatParticipant.looksLikeEmailLocalName(n, email)) return false;
-      return true;
-    }
 
     var peerName = (resolvedBusinessName ?? '').trim();
-    if (!usablePeerName(peerName)) {
-      peerName = (otherParticipant?.preferredDisplayName ?? '').trim();
+    final resolvedOk = peerName.isNotEmpty &&
+        !ChatParticipant.isPlaceholderName(peerName) &&
+        peerName.toLowerCase() != (myName ?? '').trim().toLowerCase();
+    if (!resolvedOk) {
+      peerName = BackendChatService.peerDisplayNameForThread(
+        t,
+        me,
+        myEmail: myEmail,
+        myName: myName,
+      );
     }
-    if (!usablePeerName(peerName)) {
-      peerName = (otherParticipant?.businessName ?? '').trim();
-    }
-    if (!usablePeerName(peerName)) {
-      peerName = (otherParticipant?.name ?? '').trim();
-    }
-    if (!usablePeerName(peerName)) {
-      if (threadTitle.isNotEmpty &&
-          threadTitle.toLowerCase() != 'direct' &&
-          usablePeerName(threadTitle)) {
-        peerName = threadTitle;
-      } else {
-        for (final p in t.participants) {
-          if (me > 0 && p.id > 0 && p.id == me) continue;
-          if (looksLikeMe(p.name) || looksLikeMe(p.email)) continue;
-          final candidate = (p.businessName ?? p.preferredDisplayName).trim();
-          if (usablePeerName(candidate)) {
-            peerName = candidate;
-            break;
-          }
-        }
-      }
-    }
-    if (!usablePeerName(peerName)) peerName = 'Contact';
 
     final product = t.lastProductTag;
     final display = BackendChatService.describeLastMessagePreview(
@@ -1332,8 +1293,12 @@ class _ThreadTile {
     // Prefer the peer's name for the row title; product name is secondary label.
     final title = peerName;
     final peerLabel = product != null ? product.name : null;
-    final avatarUrl = (otherParticipant?.profilePicture ?? t.avatarUrl ?? '')
-        .trim();
+    final avatarUrl = BackendChatService.peerAvatarUrlForThread(
+      t,
+      me,
+      myEmail: myEmail,
+      myName: myName,
+    );
 
     return _ThreadTile(
       threadId: t.id,
@@ -1637,6 +1602,78 @@ class _ChatRow extends StatelessWidget {
   static const _muted = Color(0xFF6B7280);
   static const _brandOrange = Color(0xFFFF8A00);
 
+  void _viewAvatar(BuildContext context) {
+    final url = tile.avatarUrl.trim();
+    final name = (tile.peerLabel ?? tile.title).trim();
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (ctx) {
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.all(18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (name.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Text(
+                    name,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 18,
+                    ),
+                  ),
+                ),
+              AspectRatio(
+                aspectRatio: 1,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: url.isNotEmpty
+                      ? InteractiveViewer(
+                          minScale: 0.8,
+                          maxScale: 4,
+                          child: ResilientCachedNetworkImage(
+                            url: url,
+                            fit: BoxFit.contain,
+                          ),
+                        )
+                      : Container(
+                          color: const Color(0xFF1F2937),
+                          alignment: Alignment.center,
+                          child: Text(
+                            name.isNotEmpty ? name[0].toUpperCase() : '?',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 72,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextButton.icon(
+                onPressed: () => Navigator.pop(ctx),
+                icon: const Icon(Icons.close, color: Colors.white),
+                label: const Text(
+                  'Close',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final unread = tile.unreadCount > 0;
@@ -1655,9 +1692,13 @@ class _ChatRow extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              _ChatAvatar(
-                name: tile.peerLabel ?? tile.title,
-                imageUrl: tile.avatarUrl,
+              GestureDetector(
+                onTap: () => _viewAvatar(context),
+                behavior: HitTestBehavior.opaque,
+                child: _ChatAvatar(
+                  name: tile.peerLabel ?? tile.title,
+                  imageUrl: tile.avatarUrl,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(

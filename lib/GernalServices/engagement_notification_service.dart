@@ -221,7 +221,8 @@ class EngagementNotificationService {
     );
   }
 
-  /// Call after a marketplace listing is created (optional — CF also fires).
+  /// Call after a marketplace listing is **approved** (optional — CF also fires).
+  /// Do not call on create/pending/reject — buyers must not see those.
   Future<void> notifyNewMarketplaceItem(
     String itemName, {
     String? marketplaceItemId,
@@ -240,6 +241,15 @@ class EngagementNotificationService {
           'marketplaceItemId': marketplaceItemId!.trim(),
       },
     );
+  }
+
+  /// Public feed / digests: approved + active only. Rejected/pending are poster-only.
+  static bool _isLiveMarketplaceDoc(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data();
+    if (data['isActive'] == false) return false;
+    final rs = (data['reviewStatus'] ?? '').toString().trim().toLowerCase();
+    if (rs == 'pending' || rs == 'rejected') return false;
+    return true;
   }
 
   Future<bool> _canSendDigest(SharedPreferences prefs) async {
@@ -309,11 +319,13 @@ class EngagementNotificationService {
           .collection('marketplace_items')
           .where('createdAt', isGreaterThan: since)
           .orderBy('createdAt', descending: true)
-          .limit(12)
+          .limit(24)
           .get();
-      marketCount = snap.docs.length;
-      if (snap.docs.isNotEmpty) {
-        final first = snap.docs.first;
+      // Only live (approved) listings — never pending/rejected (poster-only).
+      final live = snap.docs.where(_isLiveMarketplaceDoc).toList();
+      marketCount = live.length;
+      if (live.isNotEmpty) {
+        final first = live.first;
         newestMarketDocId = first.id;
         final data = first.data();
         marketTitle = (data['name'] ?? data['title'] ?? data['productName'] ?? '')
@@ -333,9 +345,10 @@ class EngagementNotificationService {
         final snap = await FirebaseFirestore.instance
             .collection('marketplace_items')
             .orderBy('createdAt', descending: true)
-            .limit(8)
+            .limit(16)
             .get();
         for (final doc in snap.docs) {
+          if (!_isLiveMarketplaceDoc(doc)) continue;
           final data = doc.data();
           final created = data['createdAt'];
           DateTime? dt;

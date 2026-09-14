@@ -417,6 +417,27 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
                 '')
             .toString()
             .trim();
+        // If this tip was a rejection (or listing is no longer public), send
+        // the poster to manage listings instead of the public product page.
+        final status =
+            (payload['status'] ?? '').toString().trim().toLowerCase();
+        final text = '${msg.title} ${msg.body}'.toLowerCase();
+        if (status == 'rejected' ||
+            text.contains('not approved') ||
+            text.contains('rejected')) {
+          final email =
+              (FirebaseAuth.instance.currentUser?.email ?? '').trim();
+          await Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => MarketplaceMerchantDashboard(
+                email: email,
+                merchantUid: FirebaseAuth.instance.currentUser?.uid,
+                onBackToHomeTab: () {},
+              ),
+            ),
+          );
+          return;
+        }
         await Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => _TeamMarketplaceListingPage(itemId: itemId),
@@ -784,6 +805,13 @@ class _TeamMarketplaceListingPage extends StatelessWidget {
           .get();
       if (!doc.exists) return null;
       final data = doc.data() ?? const <String, dynamic>{};
+      final review =
+          (data['reviewStatus'] ?? '').toString().trim().toLowerCase();
+      final inactive = data['isActive'] == false;
+      if (review == 'pending' || review == 'rejected' || inactive) {
+        // Not public — seller should use manage listings CTA, not product page.
+        return null;
+      }
       int? sql;
       final rawSql = data['sqlItemId'] ?? data['backendId'] ?? data['itemId'];
       if (rawSql is int) {

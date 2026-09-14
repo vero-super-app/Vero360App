@@ -79,7 +79,7 @@ class KycGate {
   }
 
   /// If KYC is incomplete, show a prompt and open verification before withdraw.
-  /// Food merchants always get a mandatory prompt (no skip).
+  /// Always mandatory — payouts stay locked until KYC is approved.
   /// Returns `true` only when the user is verified (already or after completing).
   static Future<bool> ensureVerifiedForWithdraw(
     BuildContext context, {
@@ -103,9 +103,19 @@ class KycGate {
       title: 'Verify before withdrawing',
       message:
           'Before withdrawing wallet funds, complete identity verification. '
-          'This protects your account and payouts.',
+          'This protects your account and payouts. Payouts are locked until '
+          'KYC is approved.',
       pendingMessage:
           'Verification is still pending. You can withdraw once KYC is approved.',
+      mandatory: true,
+    );
+  }
+
+  /// Throws if [uid] is not KYC-approved. Use before debiting a payout.
+  static Future<void> assertVerifiedForPayout({String? uid}) async {
+    if (await isVerified(uid: uid)) return;
+    throw Exception(
+      'Identity verification required. Complete KYC before withdrawing funds.',
     );
   }
 }

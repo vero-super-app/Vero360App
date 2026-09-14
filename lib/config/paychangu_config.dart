@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/utils/app_logger.dart';
 
-/// PayChangu configuration – using deep links completely
+/// PayChangu configuration – secrets from `.env` / dart-define (never hardcode).
 class PayChanguConfig {
   // ───────────────────────────────────────────────
   //  Base & Auth
@@ -9,16 +11,84 @@ class PayChanguConfig {
 
   static const String baseUrl = 'https://api.paychangu.com';
 
-  static bool get isTestMode => kDebugMode;
+  static String _secretTest = '';
+  static String _secretLive = '';
+  static bool _initialized = false;
+
+  /// `test` | `live`. Empty → debug builds use test, release uses live.
+  static String _modeOverride = '';
+
+  static Future<void> initialize() async {
+    if (_initialized &&
+        (_secretTest.isNotEmpty || _secretLive.isNotEmpty)) {
+      return;
+    }
+
+    const ddTest =
+        String.fromEnvironment('PAYCHANGU_SECRET_TEST', defaultValue: '');
+    const ddLive =
+        String.fromEnvironment('PAYCHANGU_SECRET_LIVE', defaultValue: '');
+    const ddMode =
+        String.fromEnvironment('PAYCHANGU_MODE', defaultValue: '');
+
+    if (ddTest.isNotEmpty || ddLive.isNotEmpty) {
+      _secretTest = ddTest.trim();
+      _secretLive = ddLive.trim();
+      _modeOverride = ddMode.trim().toLowerCase();
+      _initialized = true;
+      _warnIfMissing();
+      return;
+    }
+
+    try {
+      if (!dotenv.isInitialized) {
+        try {
+          await dotenv.load(fileName: '.env');
+        } catch (_) {
+          await dotenv.load(fileName: '.env.example');
+        }
+      }
+      _secretTest = (dotenv.env['PAYCHANGU_SECRET_TEST'] ?? '').trim();
+      _secretLive = (dotenv.env['PAYCHANGU_SECRET_LIVE'] ?? '').trim();
+      _modeOverride =
+          (dotenv.env['PAYCHANGU_MODE'] ?? '').trim().toLowerCase();
+    } catch (e) {
+      AppLogger.d('[PayChanguConfig] Error loading env', e);
+    }
+
+    _initialized = true;
+    _warnIfMissing();
+  }
+
+  static void _warnIfMissing() {
+    if (kDebugMode && !isConfigured) {
+      AppLogger.w(
+        '[PayChanguConfig] Missing PayChangu secret. '
+        'Add PAYCHANGU_SECRET_TEST / PAYCHANGU_SECRET_LIVE to .env '
+        'or use --dart-define.',
+      );
+    }
+  }
+
+  /// Debug → test; release → live. Override with PAYCHANGU_MODE=test|live.
+  static bool get isTestMode {
+    if (_modeOverride == 'test') return true;
+    if (_modeOverride == 'live') return false;
+    return kDebugMode;
+  }
+
+  static String get _rawSecret {
+    final raw = isTestMode ? _secretTest : _secretLive;
+    if (raw.isNotEmpty) return raw;
+    // Fallback: if live empty in release, don't silently charge test.
+    return isTestMode ? _secretTest : _secretLive;
+  }
 
   static String get authorizationToken {
-    if (isTestMode) {
-      return 'Bearer SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u';
-    } else {
-      // Replace with your real production secret key
-      // Better: load from secure storage / Remote Config in production
-      return 'Bearer SEC-LIVE-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
-    }
+    final secret = _rawSecret;
+    if (secret.isEmpty) return '';
+    if (secret.toLowerCase().startsWith('bearer ')) return secret;
+    return 'Bearer $secret';
   }
 
   // ───────────────────────────────────────────────
@@ -103,6 +173,8 @@ class PayChanguConfig {
     };
   }
 
-  static bool get isConfigured =>
-      authorizationToken.isNotEmpty && !authorizationToken.contains('XXX');
+  static bool get isConfigured {
+    final t = authorizationToken;
+    return t.isNotEmpty && !t.contains('XXX') && !t.endsWith('Bearer ');
+  }
 }

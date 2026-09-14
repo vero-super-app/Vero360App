@@ -734,6 +734,27 @@ class _GiftCardTileState extends State<_GiftCardTile> {
                                     color: const Color(0xFFFF6B00),
                                   ),
                                 ),
+                              ] else if (p.isNetflixHub) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Choose a plan',
+                                  maxLines: 1,
+                                  style: TextStyle(
+                                    fontSize: compact ? 11 : 12,
+                                    fontWeight: FontWeight.w800,
+                                    color: const Color(0xFFFF6B00),
+                                  ),
+                                ),
+                              ] else if (p.category == 'streaming') ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  '…',
+                                  style: TextStyle(
+                                    fontSize: compact ? 11 : 12,
+                                    fontWeight: FontWeight.w800,
+                                    color: const Color(0xFFFF6B00),
+                                  ),
+                                ),
                               ],
                               const SizedBox(height: 6),
                               Align(

@@ -593,25 +593,101 @@ class PromoService {
     final t = await _token();
     final url = ApiConfig.endpoint('promos/$promoId/deactivate');
     final r = await http.patch(url, headers: _auth(t));
-    _decode(r, where: 'PATCH /promos/$promoId/deactivate');
-  }
-
-  Future<void> activate(int promoId) async {
-    await ApiConfig.readBase();
-    final t = await _token();
-    // Prefer dedicated activate route; fall back to isActive patch.
-    final activateUrl = ApiConfig.endpoint('promos/$promoId/activate');
-    final activateRes = await http.patch(activateUrl, headers: _auth(t));
-    if (activateRes.statusCode >= 200 && activateRes.statusCode < 300) {
-      return;
-    }
+    if (r.statusCode >= 200 && r.statusCode < 300) return;
+    // Fallback: some backends only support isActive patch.
     final patchUrl = ApiConfig.endpoint('promos/$promoId');
     final patchRes = await http.patch(
       patchUrl,
       headers: _auth(t, extra: {'Content-Type': 'application/json'}),
-      body: jsonEncode({'isActive': true}),
+      body: jsonEncode({'isActive': false, 'active': false}),
     );
-    _decode(patchRes, where: 'PATCH /promos/$promoId (activate)');
+    _decode(patchRes, where: 'PATCH /promos/$promoId (deactivate)');
+  }
+
+  Future<void> activate(int promoId, {DateTime? endsAt, DateTime? startsAt}) async {
+    await ApiConfig.readBase();
+    final t = await _token();
+    final now = DateTime.now();
+    final effectiveEnds = (endsAt != null && endsAt.isAfter(now))
+        ? endsAt
+        : now.add(const Duration(days: 7));
+    final effectiveStarts =
+        (startsAt != null && !startsAt.isAfter(now)) ? startsAt : now;
+    final reviveBody = <String, dynamic>{
+      'isActive': true,
+      'active': true,
+      'status': 'active',
+      'startsAt': effectiveStarts.toUtc().toIso8601String(),
+      'endsAt': effectiveEnds.toUtc().toIso8601String(),
+    };
+
+    final attempts = <({String label, Future<http.Response> Function() run})>[
+      (
+        label: 'PATCH /promos/$promoId/activate',
+        run: () => http.patch(
+              ApiConfig.endpoint('promos/$promoId/activate'),
+              headers: _auth(t),
+            ),
+      ),
+      (
+        label: 'PUT /promos/$promoId/activate',
+        run: () => http.put(
+              ApiConfig.endpoint('promos/$promoId/activate'),
+              headers: _auth(t),
+            ),
+      ),
+      (
+        label: 'POST /promos/$promoId/activate',
+        run: () => http.post(
+              ApiConfig.endpoint('promos/$promoId/activate'),
+              headers: _auth(t),
+            ),
+      ),
+      (
+        label: 'PATCH /promos/$promoId isActive+dates',
+        run: () => http.patch(
+              ApiConfig.endpoint('promos/$promoId'),
+              headers: _auth(t, extra: {'Content-Type': 'application/json'}),
+              body: jsonEncode(reviveBody),
+            ),
+      ),
+      (
+        label: 'PUT /promos/$promoId isActive+dates',
+        run: () => http.put(
+              ApiConfig.endpoint('promos/$promoId'),
+              headers: _auth(t, extra: {'Content-Type': 'application/json'}),
+              body: jsonEncode(reviveBody),
+            ),
+      ),
+      (
+        label: 'PATCH /promos/$promoId isActive only',
+        run: () => http.patch(
+              ApiConfig.endpoint('promos/$promoId'),
+              headers: _auth(t, extra: {'Content-Type': 'application/json'}),
+              body: jsonEncode({
+                'isActive': true,
+                'active': true,
+                'status': 'active',
+              }),
+            ),
+      ),
+    ];
+
+    String? lastBody;
+    int? lastCode;
+    for (final attempt in attempts) {
+      try {
+        final res = await attempt.run();
+        if (res.statusCode >= 200 && res.statusCode < 300) return;
+        lastCode = res.statusCode;
+        lastBody = res.body;
+      } catch (_) {}
+    }
+    throw Exception(
+      'Activate failed'
+      '${lastCode != null ? ' ($lastCode)' : ''}'
+      '${(lastBody ?? '').trim().isNotEmpty ? ': ${lastBody!.trim()}' : ''}',
+    );
   }
 
   Future<void> deletePromo(int promoId) async {

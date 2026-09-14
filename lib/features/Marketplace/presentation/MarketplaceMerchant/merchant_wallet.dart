@@ -58,6 +58,8 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   List<_HeldEscrowRow> _heldEscrowRows = [];
   bool _isLoading = true;
   bool _isProcessingPayout = false;
+  /// True while KYC / opening the payout sheet — blocks multi-taps on the main CTA.
+  bool _openingPayout = false;
   List<WalletTransaction> _recentTransactions = [];
   
   final _formKey = GlobalKey<FormState>();
@@ -473,19 +475,26 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
       widget.serviceType.trim().toLowerCase() == 'food';
 
   Future<void> _onRequestPayoutPressed() async {
-    final ok = await KycGate.ensureVerifiedForWithdraw(
-      context,
-      foodMerchant: _isFoodMerchant,
-    );
-    if (!ok || !mounted) return;
-    _showPayoutDialog();
+    if (_openingPayout || _isProcessingPayout) return;
+    setState(() => _openingPayout = true);
+    try {
+      final ok = await KycGate.ensureVerifiedForWithdraw(
+        context,
+        foodMerchant: _isFoodMerchant,
+      );
+      if (!ok || !mounted) return;
+      _showPayoutDialog();
+    } finally {
+      if (mounted) setState(() => _openingPayout = false);
+    }
   }
 
   void _showPayoutDialog() {
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => StatefulBuilder(
-        builder: (context, setState) => Dialog(
+        builder: (context, setDialogState) => Dialog(
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),
           ),
@@ -631,7 +640,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                       ],
                       selected: {_selectedPayoutMethod},
                       onSelectionChanged: (Set<String> newSelection) {
-                        setState(() {
+                        setDialogState(() {
                           _selectedPayoutMethod = newSelection.first;
                         });
                       },
@@ -701,7 +710,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                           );
                         }).toList(),
                         onChanged: (value) {
-                          setState(() => _selectedBankIndex = value);
+                          setDialogState(() => _selectedBankIndex = value);
                         },
                         validator: (value) => 
                             value == null ? 'Please select a bank' : null,
@@ -740,7 +749,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                                 ))
                             .toList(),
                         onChanged: (value) {
-                          setState(() => _selectedMobileProvider = value!);
+                          setDialogState(() => _selectedMobileProvider = value!);
                         },
                         validator: (value) => 
                             value == null ? 'Please select provider' : null,
@@ -886,10 +895,12 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                       children: [
                         Expanded(
                           child: TextButton(
-                            onPressed: () {
-                              _clearControllers();
-                              Navigator.pop(context);
-                            },
+                            onPressed: _isProcessingPayout
+                                ? null
+                                : () {
+                                    _clearControllers();
+                                    Navigator.pop(context);
+                                  },
                             style: TextButton.styleFrom(
                               padding: const EdgeInsets.symmetric(vertical: 16),
                               shape: RoundedRectangleBorder(
@@ -904,7 +915,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                           child: ElevatedButton(
                             onPressed: _isProcessingPayout
                                 ? null
-                                : () => _requestPayout(setState),
+                                : () => _requestPayout(setDialogState),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFFFF8A00),
                               foregroundColor: Colors.white,
@@ -983,28 +994,21 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
     _selectedBankIndex = null;
   }
 
-  Future<void> _requestPayout(void Function(void Function()) setState) async {
+  Future<void> _requestPayout(void Function(void Function()) setDialogState) async {
+    if (_isProcessingPayout) return;
     if (!_formKey.currentState!.validate()) return;
-
-    if (!await KycGate.isVerified()) {
-      if (mounted) {
-        Navigator.of(context).pop(); // close payout dialog
-        await KycGate.ensureVerifiedForWithdraw(
-          context,
-          foodMerchant: _isFoodMerchant,
-        );
-      }
-      return;
-    }
 
     if (_selectedPayoutMethod == 'bank' && _selectedBankIndex == null) {
       _showError('Please select a bank');
       return;
     }
 
-    setState(() => _isProcessingPayout = true);
+    // Immediate spinner + disable — KYC re-checked below before cash-out.
+    setDialogState(() => _isProcessingPayout = true);
 
     try {
+      await KycGate.assertVerifiedForPayout(uid: widget.merchantId);
+
       final amount = double.parse(_amountController.text);
       final payoutRef =
           'PAYOUT-${widget.serviceType}-${DateTime.now().millisecondsSinceEpoch}';
@@ -1043,8 +1047,12 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
         UserFacingError.from(e, fallback: 'Failed to process payout'),
       );
     } finally {
+      _isProcessingPayout = false;
       if (mounted) {
-        setState(() => _isProcessingPayout = false);
+        // Dialog may already be closed on success — only rebuild if still open.
+        try {
+          setDialogState(() {});
+        } catch (_) {}
       }
     }
   }
@@ -1402,11 +1410,26 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton.icon(
-                            onPressed: _walletBalance >= 1000
+                            onPressed: (_walletBalance >= 1000 &&
+                                    !_openingPayout &&
+                                    !_isProcessingPayout)
                                 ? _onRequestPayoutPressed
                                 : null,
-                            icon: const Icon(Icons.payment),
-                            label: const Text('Request Payout'),
+                            icon: _openingPayout
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Color(0xFFFF8A00),
+                                    ),
+                                  )
+                                : const Icon(Icons.payment),
+                            label: Text(
+                              _openingPayout
+                                  ? 'Opening…'
+                                  : 'Request Payout',
+                            ),
                             style: ElevatedButton.styleFrom(
                               foregroundColor: const Color(0xFFFF8A00),
                               backgroundColor: Colors.white,

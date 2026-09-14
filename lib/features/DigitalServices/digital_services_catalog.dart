@@ -27,6 +27,21 @@ class DigitalServicesCatalog extends ChangeNotifier {
   List<DigitalProduct> get allProducts =>
       List<DigitalProduct>.unmodifiable(_all);
   bool get loaded => _loaded;
+  /// True once Firestore `app_config/digital_services` has been applied.
+  bool get hasRemoteConfig => _hasRemoteConfig;
+
+  /// Resolve the live admin-priced product (never trust a stale checkout snapshot).
+  DigitalProduct? productByKey(String key) {
+    final k = key.trim();
+    if (k.isEmpty) return null;
+    for (final p in _all) {
+      if (p.key == k && p.active) return p;
+    }
+    for (final p in _homepage) {
+      if (p.key == k && p.active) return p;
+    }
+    return null;
+  }
 
   /// Start listening (idempotent). Safe to call from homepage / gift cards.
   Future<void> ensureStarted() async {
@@ -113,8 +128,18 @@ class DigitalServicesCatalog extends ChangeNotifier {
       _hasRemoteConfig = false;
       _usdToMwkRate = kUsdToMwkRate;
       digitalServicesUsdToMwkRate = kUsdToMwkRate;
-      _homepage = List<DigitalProduct>.from(kDigitalProducts);
-      _all = List<DigitalProduct>.from(kAllDigitalProducts);
+      // Never show baked-in MWK — wait for admin config.
+      _homepage = kDigitalProducts
+          .map((p) => p.copyWith(clearFixedMwkPrice: true, active: true))
+          .where((p) => !p.isNetflixPlan)
+          .toList();
+      _all = [
+        ...kAllDigitalProducts.map(
+          (p) => p.category == 'streaming' || p.category == 'subscription'
+              ? p.copyWith(clearFixedMwkPrice: true, active: true)
+              : p,
+        ),
+      ];
       return;
     }
 
@@ -136,10 +161,18 @@ class DigitalServicesCatalog extends ChangeNotifier {
           (cfg == null || _asActive(cfg['active']));
 
       if (!active) {
-        return base.copyWith(active: false);
+        return base.copyWith(active: false, clearFixedMwkPrice: true);
       }
+
+      final isSub =
+          base.category == 'streaming' || base.category == 'subscription';
+
       if (cfg == null) {
-        return base.copyWith(active: true);
+        // No admin row → no subscription price (do not keep hardcoded seeds).
+        return base.copyWith(
+          active: true,
+          clearFixedMwkPrice: isSub,
+        );
       }
 
       final name = (cfg['name'] ?? '').toString().trim();
@@ -181,14 +214,12 @@ class DigitalServicesCatalog extends ChangeNotifier {
             .toList();
       }
 
-      final isSub =
-          base.category == 'streaming' || base.category == 'subscription';
-
       return base.copyWith(
         name: name.isNotEmpty ? name : null,
         subtitle: subtitle.isNotEmpty ? subtitle : null,
         brandTag: brandTag.isNotEmpty ? brandTag : null,
-        fixedMwkPrice: isSub ? (fixed ?? base.fixedMwkPrice) : base.fixedMwkPrice,
+        fixedMwkPrice: isSub ? fixed : base.fixedMwkPrice,
+        clearFixedMwkPrice: isSub && fixed == null,
         usdAmounts: !isSub && amounts != null && amounts.isNotEmpty
             ? amounts
             : null,

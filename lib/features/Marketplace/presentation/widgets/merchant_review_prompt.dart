@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
@@ -27,6 +29,13 @@ class MerchantReviewPrompt {
 
   static String _merchantDoneKey(int merchantId) =>
       'merchant_review_done_v1_$merchantId';
+
+  /// Clears local "already rated" flag so the user can rate again after delete.
+  static Future<void> clearDoneForMerchant(int merchantId) async {
+    if (merchantId <= 0) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_merchantDoneKey(merchantId));
+  }
 
   /// Prefer a Firebase UID-looking value for notifications / listing sync.
   static String? _bestMerchantFirebaseUid({
@@ -125,28 +134,42 @@ class MerchantReviewPrompt {
     final prefs = await SharedPreferences.getInstance();
     if (!force && prefs.getBool(_prefsKey(key)) == true) return false;
 
-    final ids = await _resolveReviewIds(
-      merchantRef: merchantRef,
-      serviceProviderId: serviceProviderId,
-      sellerUserId: sellerUserId,
-      merchantBackendId: merchantBackendId,
-    );
-    if (ids != null &&
-        await _customerAlreadyReviewedMerchant(
+    // Resolve IDs with a hard timeout so chat/order flows never hang silently
+    // before the sheet appears (or before we decide to skip).
+    ({int merchantId, int customerId})? ids;
+    try {
+      ids = await _resolveReviewIds(
+        merchantRef: merchantRef,
+        serviceProviderId: serviceProviderId,
+        sellerUserId: sellerUserId,
+        merchantBackendId: merchantBackendId,
+      ).timeout(const Duration(seconds: 4));
+    } catch (_) {
+      ids = null;
+    }
+
+    if (ids != null) {
+      try {
+        final already = await _customerAlreadyReviewedMerchant(
           merchantId: ids.merchantId,
           customerId: ids.customerId,
-        )) {
-      await _markReviewHandled(
-        prefs,
-        contextKey: key,
-        merchantId: ids.merchantId,
-      );
-      if (force && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('You already rated this seller.')),
-        );
+        ).timeout(const Duration(seconds: 3));
+        if (already) {
+          await _markReviewHandled(
+            prefs,
+            contextKey: key,
+            merchantId: ids.merchantId,
+          );
+          if (force && context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('You already rated this seller.')),
+            );
+          }
+          return false;
+        }
+      } catch (_) {
+        // Network blip — still offer the sheet.
       }
-      return false;
     }
 
     if (!context.mounted) return false;

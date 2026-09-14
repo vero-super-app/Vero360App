@@ -18,6 +18,7 @@ import 'package:vero360_app/features/Accomodation/Presentation/widgets/accommoda
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
 
@@ -1578,7 +1579,8 @@ class _AccommodationCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final name = accommodation.name;
     final location = accommodation.location;
-    final description = accommodation.description.trim();
+    final description =
+        DescriptionContactMask.mask(accommodation.description.trim());
     final type = accommodation.accommodationType.toLowerCase();
     final isHotelOrLodge = type == 'hotel' || type == 'lodge';
     final isHostel = type == 'hostel';

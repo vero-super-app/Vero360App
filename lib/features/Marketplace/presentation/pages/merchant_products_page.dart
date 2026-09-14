@@ -20,6 +20,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.mod
 import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_followers_page.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_reviews_page.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_id_resolver.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_service.dart';
@@ -1244,7 +1245,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             if (stay.description.trim().isNotEmpty) ...[
               const SizedBox(height: 14),
               Text(
-                stay.description.trim(),
+                DescriptionContactMask.mask(stay.description.trim()),
                 style: TextStyle(
                   fontSize: 14,
                   height: 1.45,
@@ -3866,7 +3867,7 @@ class _MerchantProfileCard extends StatelessWidget {
                     if ((businessDescription ?? '').trim().isNotEmpty) ...[
                       const SizedBox(height: 6),
                       Text(
-                        businessDescription!.trim(),
+                        DescriptionContactMask.mask(businessDescription!.trim()),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(

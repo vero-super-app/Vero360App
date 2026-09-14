@@ -252,6 +252,8 @@ async function notifyMerchant(merchantUid, title, body, payload) {
     type: 'marketplace_moderation',
     title,
     body,
+    // Bind alert to the poster so other accounts never claim this tip.
+    toUid: uid,
     ...(payload || {}),
   });
 
@@ -537,6 +539,29 @@ async function moderateMarketplaceListing(snap) {
 }
 
 async function sendMarketplaceAudiencePush(itemId, name) {
+  const id = String(itemId || '').trim();
+  // Never broadcast a listing that is not publicly live (rejected/pending).
+  if (id) {
+    try {
+      const snap = await admin
+        .firestore()
+        .collection('marketplace_items')
+        .doc(id)
+        .get();
+      const data = snap.data() || {};
+      const rs = String(data.reviewStatus || '').trim().toLowerCase();
+      if (data.isActive === false || rs === 'pending' || rs === 'rejected') {
+        console.log(
+          `Marketplace audience push skipped (not live): ${id} status=${rs}`,
+        );
+        return;
+      }
+    } catch (err) {
+      console.warn('Marketplace audience push status check failed', err);
+      return;
+    }
+  }
+
   const cooldownRef = admin
     .firestore()
     .collection('engagement_meta')
@@ -562,7 +587,7 @@ async function sendMarketplaceAudiencePush(itemId, name) {
     title,
     body,
   };
-  if (itemId) dataPayload.marketplaceItemId = itemId;
+  if (id) dataPayload.marketplaceItemId = id;
 
   await admin.messaging().send({
     topic: ENGAGEMENT_TOPIC,
@@ -583,7 +608,7 @@ async function sendMarketplaceAudiencePush(itemId, name) {
     },
   });
 
-  console.log(`Marketplace engagement push sent: ${name || itemId}`);
+  console.log(`Marketplace engagement push sent: ${name || id}`);
 }
 
 function phoneLookupVariants(phone) {
@@ -2050,3 +2075,14 @@ exports.onAccommodationFacebookPost =
   facebookPagePost.onAccommodationFacebookPost;
 exports.onAccommodationRoomFacebookPost =
   facebookPagePost.onAccommodationRoomFacebookPost;
+exports.onMarketplacePromotionFacebookPost =
+  facebookPagePost.onMarketplacePromotionFacebookPost;
+exports.onLatestArrivalFacebookPost =
+  facebookPagePost.onLatestArrivalFacebookPost;
+exports.onMerchantPromotionFacebookPost =
+  facebookPagePost.onMerchantPromotionFacebookPost;
+
+/** PayChangu-verified promote activation — see ./activate_marketplace_promotion.js */
+const activateMarketplacePromotion = require('./activate_marketplace_promotion');
+exports.activateMarketplacePromotion =
+  activateMarketplacePromotion.activateMarketplacePromotion;

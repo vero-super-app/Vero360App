@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
 import 'package:vero360_app/features/DigitalServices/digital_services_catalog.dart';
 import 'package:vero360_app/features/DigitalServices/netflix_plans.dart';
+import 'dart:async';
 
 /// Netflix plan chooser — Mobile / Basic / Standard / Premium (Vero360 orange UI).
 class NetflixPlanPickerPage extends StatefulWidget {
@@ -51,9 +52,10 @@ class _NetflixPlanPickerPageState extends State<NetflixPlanPickerPage> {
     for (final p in _catalog.allProducts) {
       if (p.key == spec.key && p.active) return p;
     }
-    if (!_catalog.loaded) {
-      for (final p in buildNetflixPlanProducts()) {
-        if (p.key == spec.key) return p;
+    // Shell product without price while catalog warms — never use hardcoded MWK.
+    for (final p in kNetflixPlanProducts) {
+      if (p.key == spec.key) {
+        return p.copyWith(clearFixedMwkPrice: true);
       }
     }
     return null;
@@ -64,13 +66,6 @@ class _NetflixPlanPickerPageState extends State<NetflixPlanPickerPage> {
     for (final s in kNetflixPlanSpecs) {
       final p = _productFor(s);
       if (p != null) out.add((spec: s, product: p));
-    }
-    if (out.isEmpty) {
-      for (final s in kNetflixPlanSpecs) {
-        final fallback =
-            buildNetflixPlanProducts().firstWhere((p) => p.key == s.key);
-        out.add((spec: s, product: fallback));
-      }
     }
     return out;
   }
@@ -153,8 +148,7 @@ class _NetflixPlanPickerPageState extends State<NetflixPlanPickerPage> {
               itemBuilder: (context, i) {
                 final entry = plans[i];
                 final selected = _selectedKey == entry.spec.key;
-                final price =
-                    entry.product.fixedMwkPrice ?? entry.spec.defaultMwkPrice;
+                final price = entry.product.fixedMwkPrice;
                 return _PlanCard(
                   spec: entry.spec,
                   priceMwk: price,
@@ -185,8 +179,23 @@ class _NetflixPlanPickerPageState extends State<NetflixPlanPickerPage> {
                     if (key == null) return;
                     final match = plans.where((e) => e.spec.key == key);
                     if (match.isEmpty) return;
+                    final product = match.first.product;
+                    final live =
+                        _catalog.productByKey(product.key) ?? product;
+                    if (live.fixedMwkPrice == null ||
+                        live.fixedMwkPrice! <= 0) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Price not set yet. Please try again in a moment.',
+                          ),
+                        ),
+                      );
+                      unawaited(_catalog.ensureStarted());
+                      return;
+                    }
                     // Keep this page under checkout so Back returns here.
-                    widget.onSelectPlan(match.first.product);
+                    widget.onSelectPlan(live);
                   },
                   child: const Text(
                     'Continue',
@@ -211,7 +220,7 @@ class _PlanCard extends StatelessWidget {
   static const _muted = Color(0xFF6B7280);
 
   final NetflixPlanSpec spec;
-  final double priceMwk;
+  final double? priceMwk;
   final bool selected;
   final VoidCallback onTap;
 
@@ -224,6 +233,9 @@ class _PlanCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final priceText = (priceMwk != null && priceMwk! > 0)
+        ? '${formatMwk(priceMwk!)} / month'
+        : 'Price from admin…';
     return Material(
       color: Colors.white,
       elevation: selected ? 3 : 0,
@@ -298,7 +310,7 @@ class _PlanCard extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                '${formatMwk(priceMwk)} / month',
+                priceText,
                 style: const TextStyle(
                   color: _orange,
                   fontWeight: FontWeight.w900,

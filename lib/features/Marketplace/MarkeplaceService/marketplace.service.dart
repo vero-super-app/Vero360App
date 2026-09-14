@@ -452,7 +452,10 @@ class MarketplaceService {
         if (r is num) return r.toDouble();
         return double.tryParse('$r');
       }(),
-      sellerLogoUrl: data['sellerLogoUrl']?.toString(),
+
+
+
+
       serviceProviderId: data['serviceProviderId']?.toString(),
       sellerUserId: data['sellerUserId']?.toString(),
       merchantId: data['merchantId']?.toString(),
@@ -611,8 +614,15 @@ class MarketplaceService {
         if (byPromo != 0) return byPromo;
         final byVision = b.visionScore.compareTo(a.visionScore);
         if (byVision != 0) return byVision;
-        final byCredit = MerchantCredit.feedScore(b.item.sellerRating)
-            .compareTo(MerchantCredit.feedScore(a.item.sellerRating));
+        final byCredit = MerchantCredit.feedScore(
+          b.item.sellerRating,
+          reviewCount: b.item.sellerReviewCount,
+        ).compareTo(
+          MerchantCredit.feedScore(
+            a.item.sellerRating,
+            reviewCount: a.item.sellerReviewCount,
+          ),
+        );
         if (byCredit != 0) return byCredit;
         final aVis = a.visualDistance != _noVisualDistance;
         final bVis = b.visualDistance != _noVisualDistance;

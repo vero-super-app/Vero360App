@@ -76,6 +76,8 @@ class NotificationStore extends ChangeNotifier {
   static const String kBadgeRefund = 'quick_refund';
   static const String kBadgePromotions = 'quick_promotions';
   static const String kBadgePostArrival = 'quick_post_arrival';
+  /// Tap opens Play Store / App Store for an update download.
+  static const String kBadgeAppUpdate = 'app_update';
 
   /// Maps order notifications to the correct dashboard tile (merchant vs buyer).
   static String badgeRouteForOrderStatus(

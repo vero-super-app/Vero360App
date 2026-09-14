@@ -2,6 +2,9 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:vero360_app/GernalServices/engagement_notification_service.dart';
@@ -27,6 +30,8 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
   final _name = TextEditingController();
   final _price = TextEditingController();
   bool _submitting = false;
+  /// Share to Vero360 Facebook Page after create (default on).
+  bool _postToFacebook = true;
 
   // image
   final _picker = ImagePicker();
@@ -61,6 +66,34 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
     final s = e.toString();
     if (s.length <= 200) return s;
     return '${s.substring(0, 200)}...';
+  }
+
+  /// Cloud Function [onLatestArrivalFacebookPost] posts this to the Facebook Page.
+  Future<void> _queueFacebookLatestArrival({
+    required String name,
+    required double price,
+    required String imageUrl,
+    int? arrivalId,
+  }) async {
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+      await FirebaseFirestore.instance.collection('latest_arrivals').add({
+        'name': name.trim(),
+        'title': name.trim(),
+        'price': price,
+        'imageUrl': imageUrl.trim(),
+        'image': imageUrl.trim(),
+        if (arrivalId != null && arrivalId > 0) 'arrivalId': arrivalId,
+        if (uid.isNotEmpty) 'merchantId': uid,
+        'postToFacebook': true,
+        'source': 'merchant_latest_arrival',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[LatestArrival] Facebook queue failed: $e');
+      }
+    }
   }
 
   Future<void> _loadMine() async {
@@ -159,18 +192,35 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
         ),
       );
 
+      // Mirror to Firestore so Cloud Function posts to the Facebook Page.
+      if (_postToFacebook) {
+        unawaited(_queueFacebookLatestArrival(
+          name: postedName,
+          price: priceVal,
+          imageUrl: imageUrl,
+          arrivalId: created.id > 0 ? created.id : null,
+        ));
+      }
+
       if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
-        'Latest arrival posted',
+        _postToFacebook
+            ? 'Latest arrival posted (also sharing to Facebook)'
+            : 'Latest arrival posted',
         isSuccess: true,
         errorMessage: 'Created',
+        showFacebook: _postToFacebook,
+        facebookMessage: _postToFacebook
+            ? 'We’ll also share this on the Vero360 Facebook Page.'
+            : null,
       );
 
       _form.currentState!.reset();
       _name.clear();
       _price.clear();
       _clearPicked();
+      _postToFacebook = true;
 
       await _loadMine();
       if (mounted) _tabs.animateTo(1);
@@ -563,6 +613,34 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
                   },
                 ),
                 const SizedBox(height: 16),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  value: _postToFacebook,
+                  activeThumbColor: _brandOrange,
+                  secondary: const FacebookLogoMark(size: 22),
+                  title: const Text(
+                    'Also post on Facebook',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                  ),
+                  subtitle: Text(
+                    'Share this arrival on the Vero360 Facebook Page.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                  onChanged: _submitting
+                      ? null
+                      : (v) => setState(() => _postToFacebook = v),
+                ),
+                if (_postToFacebook) ...[
+                  const SizedBox(height: 8),
+                  const FacebookShareHint(
+                    message:
+                        'We’ll also share this latest arrival on the Vero360 Facebook Page to help grow your customers.',
+                  ),
+                ],
+                const SizedBox(height: 12),
                 FilledButton.icon(
                   style: _filledBtnStyle(),
                   onPressed: _submitting ? null : _create,
@@ -576,7 +654,13 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
                           ),
                         )
                       : const Icon(Icons.add),
-                  label: Text(_submitting ? 'Posting...' : 'Post Arrival'),
+                  label: Text(
+                    _submitting
+                        ? 'Posting...'
+                        : (_postToFacebook
+                            ? 'Post Arrival + Facebook'
+                            : 'Post Arrival'),
+                  ),
                 ),
               ],
             ),

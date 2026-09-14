@@ -876,6 +876,13 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     setState(() => _paying = true);
 
     try {
+      await PayChanguConfig.initialize();
+      if (!PayChanguConfig.isConfigured) {
+        throw Exception(
+          'Payment is not configured. Add PAYCHANGU_SECRET_TEST to .env.',
+        );
+      }
+
       final prefs = await SharedPreferences.getInstance();
       final email = prefs.getString('email') ?? 'customer@example.com';
       final name = prefs.getString('name') ?? 'Customer';
@@ -897,12 +904,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
 
       final response = await http
           .post(
-            Uri.parse('https://api.paychangu.com/payment'),
-            headers: {
-              'Accept': 'application/json',
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u',
-            },
+            PayChanguConfig.paymentUri,
+            headers: PayChanguConfig.authHeaders,
             body: json.encode({
               'tx_ref': txRef,
               'first_name': firstName,
@@ -1932,11 +1935,12 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
 
   Future<void> _checkPaymentStatus() async {
     try {
+      await PayChanguConfig.initialize();
       final response = await http.get(
-        Uri.parse('https://api.paychangu.com/transaction/verify/${widget.txRef}'),
+        PayChanguConfig.verifyUri(widget.txRef),
         headers: {
           'Accept': 'application/json',
-          'Authorization': 'Bearer SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u',
+          'Authorization': PayChanguConfig.authorizationToken,
         },
       );
 

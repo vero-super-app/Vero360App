@@ -108,6 +108,7 @@ class CallSession {
 CallStatus _parseCallStatus(String status) {
   switch (status.toLowerCase()) {
     case 'incoming':
+    case 'ringing':
       return CallStatus.incoming;
     case 'outgoing':
       return CallStatus.outgoing;

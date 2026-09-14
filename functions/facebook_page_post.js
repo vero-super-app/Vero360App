@@ -6,10 +6,40 @@
  *   firebase functions:secrets:set FACEBOOK_PAGE_ID
  *     value: 1146056985268073
  *
- * Token must include pages_manage_posts + pages_read_engagement (Page token from /me/accounts).
+ * ---------------------------------------------------------------------------
+ * NEVER-EXPIRE PAGE TOKEN (do this once — do NOT use Graph Explorer "User" token)
+ * ---------------------------------------------------------------------------
+ * Short-lived Explorer tokens expire in ~1–2 hours. A Page token minted from a
+ * long-lived User token does not expire (until password change / app revoke /
+ * secret rotation).
  *
- * Deploy:
- *   firebase deploy --only functions:onMarketplaceItemFacebookPost,functions:onFoodMenuItemFacebookPost,functions:onAccommodationFacebookPost,functions:onAccommodationRoomFacebookPost,functions:onMarketplaceItemCreated,functions:onMarketplaceItemUpdated
+ * 1) Meta App Dashboard → your app → copy App ID + App Secret
+ * 2) Graph API Explorer:
+ *      - User or Page = your user
+ *      - Permissions: pages_show_list, pages_manage_posts, pages_read_engagement,
+ *        pages_manage_metadata (optional), business_management (if required)
+ *      - Generate short-lived User access token → copy it (USER_SHORT)
+ * 3) Exchange for long-lived User token (~60 days):
+ *      GET https://graph.facebook.com/v22.0/oauth/access_token
+ *        ?grant_type=fb_exchange_token
+ *        &client_id=APP_ID
+ *        &client_secret=APP_SECRET
+ *        &fb_exchange_token=USER_SHORT
+ *      → copy access_token (USER_LONG)
+ * 4) Mint the permanent Page token:
+ *      GET https://graph.facebook.com/v22.0/me/accounts
+ *        ?access_token=USER_LONG
+ *      → find Page id 1146056985268073 → copy that object's access_token
+ *        (this Page token is the never-expire one)
+ * 5) Optional check (should show expires_at: 0):
+ *      GET https://graph.facebook.com/v22.0/debug_token
+ *        ?input_token=PAGE_TOKEN
+ *        &access_token=APP_ID|APP_SECRET
+ * 6) Save + redeploy:
+ *      firebase functions:secrets:set FACEBOOK_PAGE_ACCESS_TOKEN
+ *      firebase deploy --only functions:onMarketplaceItemFacebookPost,functions:onFoodMenuItemFacebookPost,functions:onAccommodationFacebookPost,functions:onAccommodationRoomFacebookPost,functions:onMarketplacePromotionFacebookPost,functions:onLatestArrivalFacebookPost,functions:onMerchantPromotionFacebookPost,functions:onMarketplaceItemCreated,functions:onMarketplaceItemUpdated
+ *
+ * Failed attempts write `facebookPostError` on the Firestore listing doc.
  */
 
 const { onDocumentWritten } = require('firebase-functions/v2/firestore');
@@ -20,10 +50,39 @@ const FACEBOOK_PAGE_ACCESS_TOKEN = defineSecret('FACEBOOK_PAGE_ACCESS_TOKEN');
 const FACEBOOK_PAGE_ID = defineSecret('FACEBOOK_PAGE_ID');
 
 const DEFAULT_PAGE_ID = '1146056985268073';
-const GRAPH_VERSION = 'v26.0';
+/** Prefer a stable version; v26 is fine for feed but token errors dominate outages. */
+const GRAPH_VERSION = 'v22.0';
 /** Same SA as other Vero functions — Compute default often cannot write Firestore. */
 const FUNCTIONS_SERVICE_ACCOUNT =
   'vero360app-ca423@appspot.gserviceaccount.com';
+
+const FACEBOOK_CLAIM_TTL_MS = 3 * 60 * 1000;
+const FACEBOOK_RETRY_COOLDOWN_MS = 10 * 60 * 1000;
+
+function timestampToMs(value) {
+  if (!value) return 0;
+  if (typeof value.toMillis === 'function') return value.toMillis();
+  if (typeof value === 'number') return value;
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isFacebookAuthError(errOrJson) {
+  const raw =
+    typeof errOrJson === 'string'
+      ? errOrJson
+      : JSON.stringify(errOrJson || {});
+  const s = raw.toLowerCase();
+  return (
+    s.includes('oauthexception') ||
+    s.includes('session has expired') ||
+    s.includes('invalid oauth') ||
+    s.includes('error validating access token') ||
+    s.includes('cannot parse access token') ||
+    s.includes('"code":190') ||
+    s.includes('"code":102')
+  );
+}
 
 function listingTitle(data) {
   return String(
@@ -125,6 +184,31 @@ function becameLiveMarketplace(before, after) {
   if (!isLiveMarketplace(after)) return false;
   if (after.facebookPostId || after.facebookPostedAt) return false;
   return !isLiveMarketplace(before);
+}
+
+/** Live listing that never got a Graph post id — retry after claim/attempt cools down. */
+function needsFacebookRetry(after, isLiveFn) {
+  if (!after || typeof after !== 'object') return false;
+  if (after.facebookPostId || after.facebookPostedAt) return false;
+  if (!isLiveFn(after)) return false;
+
+  const claimMs = timestampToMs(after.facebookPostClaimAt);
+  if (claimMs > 0 && Date.now() - claimMs < FACEBOOK_CLAIM_TTL_MS) {
+    return false; // in-flight
+  }
+
+  const lastMs = timestampToMs(after.facebookPostLastAttemptAt);
+  if (lastMs > 0 && Date.now() - lastMs < FACEBOOK_RETRY_COOLDOWN_MS) {
+    return false;
+  }
+
+  // Retry only when we previously failed / claimed, or never attempted after going live.
+  return (
+    Boolean(after.facebookPostError) ||
+    claimMs > 0 ||
+    lastMs > 0 ||
+    after.facebookPostNeeded === true
+  );
 }
 
 function isPublicFood(data) {
@@ -245,6 +329,13 @@ async function postLinkToFacebookPage({ link, message, pageId, token }) {
   );
   if (!ok) {
     console.error('Facebook Graph link post failed', status, json);
+    if (isFacebookAuthError(json)) {
+      throw new Error(
+        'Facebook Page access token expired or invalid. ' +
+          'Refresh FACEBOOK_PAGE_ACCESS_TOKEN (Page token with pages_manage_posts). ' +
+          `Graph: ${JSON.stringify(json)}`,
+      );
+    }
     throw new Error(
       `Facebook Graph error ${status}: ${JSON.stringify(json)}`,
     );
@@ -294,18 +385,15 @@ async function claimFacebookPostSlot(ref) {
     if (data.facebookPostId || data.facebookPostedAt) return false;
     // Soft claim so concurrent CF triggers don't double-post.
     if (data.facebookPostClaimAt) {
-      const claimed = data.facebookPostClaimAt;
-      const ms =
-        claimed && typeof claimed.toMillis === 'function'
-          ? claimed.toMillis()
-          : Number(claimed) || 0;
-      // Allow retry if claim is older than 3 minutes (failed previous attempt).
-      if (ms > 0 && Date.now() - ms < 3 * 60 * 1000) return false;
+      const ms = timestampToMs(data.facebookPostClaimAt);
+      // Allow retry if claim is older than TTL (failed previous attempt).
+      if (ms > 0 && Date.now() - ms < FACEBOOK_CLAIM_TTL_MS) return false;
     }
     tx.set(
       ref,
       {
         facebookPostClaimAt: admin.firestore.FieldValue.serverTimestamp(),
+        facebookPostLastAttemptAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true },
     );
@@ -313,12 +401,17 @@ async function claimFacebookPostSlot(ref) {
   });
 }
 
-async function clearFacebookPostClaim(ref) {
+async function clearFacebookPostClaim(ref, errorMessage) {
   try {
-    await ref.set(
-      { facebookPostClaimAt: admin.firestore.FieldValue.delete() },
-      { merge: true },
-    );
+    const patch = {
+      facebookPostClaimAt: admin.firestore.FieldValue.delete(),
+      facebookPostLastAttemptAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    const msg = String(errorMessage || '').trim();
+    if (msg) {
+      patch.facebookPostError = msg.slice(0, 500);
+    }
+    await ref.set(patch, { merge: true });
   } catch (_) {}
 }
 
@@ -330,6 +423,8 @@ async function markPosted(ref, postId) {
       facebookPostId: id,
       facebookPostedAt: admin.firestore.FieldValue.serverTimestamp(),
       facebookPostClaimAt: admin.firestore.FieldValue.delete(),
+      facebookPostError: admin.firestore.FieldValue.delete(),
+      facebookPostNeeded: admin.firestore.FieldValue.delete(),
     },
     { merge: true },
   );
@@ -356,7 +451,8 @@ async function handleFacebookPost({
       ? isLiveMarketplace(after) &&
         !after.facebookPostId &&
         !after.facebookPostedAt
-      : becameLiveMarketplace(before, after);
+      : becameLiveMarketplace(before, after) ||
+        needsFacebookRetry(after, isLiveMarketplace);
     link = marketplaceShareUrl(docId, after);
     const price =
       after.price != null
@@ -367,7 +463,8 @@ async function handleFacebookPost({
   } else if (kind === 'food') {
     shouldPost = isCreate
       ? isPublicFood(after) && !after.facebookPostId && !after.facebookPostedAt
-      : becamePublicFood(before, after);
+      : becamePublicFood(before, after) ||
+        needsFacebookRetry(after, isPublicFood);
     link = foodShareUrl(docId, after);
     message = `New dish on Vero360: ${listingTitle(after)}`;
   } else if (kind === 'accommodation') {
@@ -375,7 +472,8 @@ async function handleFacebookPost({
       ? isPublicAccommodation(after) &&
         !after.facebookPostId &&
         !after.facebookPostedAt
-      : becamePublicAccommodation(before, after);
+      : becamePublicAccommodation(before, after) ||
+        needsFacebookRetry(after, isPublicAccommodation);
     link = accommodationShareUrl(docId, after);
     message = `New stay on Vero360: ${listingTitle(after)}`;
   }
@@ -386,7 +484,18 @@ async function handleFacebookPost({
       reviewStatus: after.reviewStatus || after.status || null,
       isActive: after.isActive,
       alreadyPosted: Boolean(after.facebookPostId || after.facebookPostedAt),
+      lastError: after.facebookPostError || null,
     });
+    return;
+  }
+
+  // Merchant opted out on the post form (toggle default is on).
+  if (after.postToFacebook === false) {
+    console.log(`Facebook Page post skipped by merchant (${kind})`, docId);
+    return;
+  }
+
+  if (!assertFacebookPostAllowed({ after, kind })) {
     return;
   }
 
@@ -395,7 +504,11 @@ async function handleFacebookPost({
   const resolvedPageId = creds.pageId;
   if (!access) {
     console.warn(
-      `Facebook Page post aborted (${kind}) ${docId}: missing page access token`,
+      `Facebook Page post aborted (${kind}) ${docId}: missing page access token — set secret FACEBOOK_PAGE_ACCESS_TOKEN`,
+    );
+    await clearFacebookPostClaim(
+      afterSnap.ref,
+      'Missing FACEBOOK_PAGE_ACCESS_TOKEN secret',
     );
     return;
   }
@@ -447,13 +560,18 @@ async function handleFacebookPost({
         docId,
         '— not marking as posted',
       );
-      await clearFacebookPostClaim(afterSnap.ref);
+      await clearFacebookPostClaim(
+        afterSnap.ref,
+        'Graph returned no post id (check token + Page permissions)',
+      );
       return;
     }
     await markPosted(afterSnap.ref, postId);
     console.log(`Facebook Page post ok (${kind})`, docId, postId);
   } catch (err) {
-    await clearFacebookPostClaim(afterSnap.ref);
+    const msg = err && err.message ? String(err.message) : String(err);
+    console.error(`Facebook Page post failed (${kind})`, docId, msg);
+    await clearFacebookPostClaim(afterSnap.ref, msg);
     throw err;
   }
 }
@@ -615,6 +733,349 @@ exports.onAccommodationRoomFacebookPost = onDocumentWritten(
       });
     } catch (err) {
       console.error('onAccommodationRoomFacebookPost failed', err);
+    }
+  },
+);
+
+function verticalItemsCollection(vertical) {
+  const v = String(vertical || 'marketplace').trim().toLowerCase();
+  if (v === 'food') return 'food_menu_items';
+  if (v === 'accommodation' || v === 'stay') return 'accommodation_rooms';
+  return 'marketplace_items';
+}
+
+function shareUrlForVertical(vertical, itemId, itemData) {
+  const v = String(vertical || 'marketplace').trim().toLowerCase();
+  if (v === 'food') return foodShareUrl(itemId, itemData);
+  if (v === 'accommodation' || v === 'stay') {
+    return accommodationShareUrl(itemId, itemData);
+  }
+  return marketplaceShareUrl(itemId, itemData);
+}
+
+function isPaidPromoStatus(status) {
+  const s = String(status || '').trim().toLowerCase();
+  return s === 'paid' || s === 'active' || s === 'fulfilled';
+}
+
+/** Owner uid on listing / promo docs (common field names across verticals). */
+function listingOwnerId(data) {
+  if (!data || typeof data !== 'object') return '';
+  return String(
+    data.merchantId ||
+      data.sellerUserId ||
+      data.ownerId ||
+      data.userId ||
+      data.hostUid ||
+      '',
+  ).trim();
+}
+
+/**
+ * Refuse Page posts when the doc has no owner, or (for paid promote) when
+ * promo.merchantId does not own the linked listing. Also require server-side
+ * payment verification for marketplace_promotions.
+ */
+function assertFacebookPostAllowed({ after, kind, item }) {
+  const owner = listingOwnerId(after);
+  if (!owner) {
+    console.warn(
+      `Facebook Page post blocked (${kind}): missing merchantId/owner`,
+    );
+    return false;
+  }
+  if (kind === 'marketplace_promotion') {
+    if (after.paymentVerifiedBy !== 'activateMarketplacePromotion') {
+      console.warn(
+        'Facebook Page post blocked (marketplace_promotion): payment not verified server-side',
+      );
+      return false;
+    }
+    const itemOwner = listingOwnerId(item || {});
+    if (!itemOwner || itemOwner !== owner) {
+      console.warn(
+        'Facebook Page post blocked (marketplace_promotion): promo owner != listing owner',
+        { promoOwner: owner, itemOwner },
+      );
+      return false;
+    }
+  }
+  if (kind === 'merchant_promotion' && !owner) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * When a promote package is paid/activated, also post the item to the Facebook Page.
+ */
+exports.onMarketplacePromotionFacebookPost = onDocumentWritten(
+  {
+    document: 'marketplace_promotions/{id}',
+    ...firestoreOpts,
+  },
+  async (event) => {
+    const isCreate = !event.data?.before?.exists;
+    const before = event.data?.before?.exists
+      ? event.data.before.data() || {}
+      : {};
+    const after = event.data?.after?.data() || {};
+    const afterSnap = event.data?.after;
+    if (!afterSnap || !afterSnap.exists) return;
+
+    const promoId = String(event.params.id || '').trim();
+    try {
+      const becamePaid =
+        isPaidPromoStatus(after.status) &&
+        (isCreate || !isPaidPromoStatus(before.status));
+      if (!becamePaid) return;
+      if (after.facebookPostId || after.facebookPostedAt) return;
+
+      const itemId = String(after.itemId || '').trim();
+      if (!itemId) {
+        console.warn('Promotion FB post skipped: missing itemId', promoId);
+        return;
+      }
+
+      const vertical = String(after.vertical || 'marketplace').trim();
+      const col = verticalItemsCollection(vertical);
+      const itemSnap = await admin.firestore().collection(col).doc(itemId).get();
+      if (!itemSnap.exists) {
+        console.warn(
+          'Promotion FB post skipped: item not found',
+          col,
+          itemId,
+        );
+        return;
+      }
+      const item = itemSnap.data() || {};
+      if (
+        !assertFacebookPostAllowed({
+          after,
+          kind: 'marketplace_promotion',
+          item,
+        })
+      ) {
+        return;
+      }
+
+      const { token, pageId } = resolvePageCredentials();
+      if (!token) {
+        console.warn('Promotion FB post aborted: missing page token', promoId);
+        return;
+      }
+
+      let claimed = false;
+      try {
+        claimed = await claimFacebookPostSlot(afterSnap.ref);
+      } catch (_) {
+        claimed = true;
+      }
+      if (!claimed) return;
+
+      const link = shareUrlForVertical(vertical, itemId, item);
+      const title = listingTitle(item);
+      const planLabel = String(after.planId || after.channel || 'boost').trim();
+      const price =
+        item.price != null
+          ? ` — MWK ${Number(item.price).toLocaleString('en-US')}`
+          : '';
+      const message = `🔥 Promoted on Vero360 (${planLabel}): ${title}${price}\nShop now on Vero360`;
+
+      let postId = await postLinkToFacebookPage({
+        link,
+        message,
+        pageId,
+        token,
+      });
+      const imageUrl = firstHttpImage(item);
+      if (!postId && imageUrl) {
+        postId = await postPhotoToFacebookPage({
+          imageUrl,
+          caption: `${message}\n${link}`,
+          pageId,
+          token,
+        });
+      }
+      if (!postId) {
+        await clearFacebookPostClaim(afterSnap.ref);
+        return;
+      }
+      await markPosted(afterSnap.ref, postId);
+      console.log('Promotion Facebook Page post ok', promoId, postId);
+    } catch (err) {
+      console.error('onMarketplacePromotionFacebookPost failed', err);
+      try {
+        await clearFacebookPostClaim(afterSnap.ref);
+      } catch (_) {}
+    }
+  },
+);
+
+/**
+ * Latest arrivals → Facebook Page photo/link post.
+ */
+exports.onLatestArrivalFacebookPost = onDocumentWritten(
+  {
+    document: 'latest_arrivals/{id}',
+    ...firestoreOpts,
+  },
+  async (event) => {
+    const isCreate = !event.data?.before?.exists;
+    if (!isCreate) return;
+    const after = event.data?.after?.data() || {};
+    const afterSnap = event.data?.after;
+    if (!afterSnap || !afterSnap.exists) return;
+    const docId = String(event.params.id || '').trim();
+
+    try {
+      if (after.facebookPostId || after.facebookPostedAt) return;
+      if (after.postToFacebook === false) return;
+      if (!assertFacebookPostAllowed({ after, kind: 'latest_arrival' })) {
+        return;
+      }
+
+      const { token, pageId } = resolvePageCredentials();
+      if (!token) {
+        console.warn('Latest arrival FB post aborted: missing page token', docId);
+        return;
+      }
+
+      let claimed = false;
+      try {
+        claimed = await claimFacebookPostSlot(afterSnap.ref);
+      } catch (_) {
+        claimed = true;
+      }
+      if (!claimed) return;
+
+      const name = listingTitle(after);
+      const price =
+        after.price != null
+          ? ` — MWK ${Number(after.price).toLocaleString('en-US')}`
+          : '';
+      const link = 'https://vero360.app/';
+      const message = `🆕 Today's arrival on Vero360: ${name}${price}\nOpen the app to shop.`;
+      const imageUrl = firstHttpImage(after);
+
+      let postId = null;
+      if (imageUrl) {
+        postId = await postPhotoToFacebookPage({
+          imageUrl,
+          caption: `${message}\n${link}`,
+          pageId,
+          token,
+        });
+      }
+      if (!postId) {
+        postId = await postLinkToFacebookPage({
+          link,
+          message,
+          pageId,
+          token,
+        });
+      }
+      if (!postId) {
+        await clearFacebookPostClaim(afterSnap.ref);
+        return;
+      }
+      await markPosted(afterSnap.ref, postId);
+      console.log('Latest arrival Facebook Page post ok', docId, postId);
+    } catch (err) {
+      console.error('onLatestArrivalFacebookPost failed', err);
+      try {
+        await clearFacebookPostClaim(afterSnap.ref);
+      } catch (_) {}
+    }
+  },
+);
+
+/**
+ * Merchant promotions (Nest promos) → Facebook Page when queued from the app.
+ */
+exports.onMerchantPromotionFacebookPost = onDocumentWritten(
+  {
+    document: 'merchant_promotions/{id}',
+    ...firestoreOpts,
+  },
+  async (event) => {
+    const isCreate = !event.data?.before?.exists;
+    if (!isCreate) return;
+    const after = event.data?.after?.data() || {};
+    const afterSnap = event.data?.after;
+    if (!afterSnap || !afterSnap.exists) return;
+    const docId = String(event.params.id || '').trim();
+
+    try {
+      if (after.facebookPostId || after.facebookPostedAt) return;
+      if (after.postToFacebook === false) return;
+      if (
+        !assertFacebookPostAllowed({ after, kind: 'merchant_promotion' })
+      ) {
+        return;
+      }
+
+      const { token, pageId } = resolvePageCredentials();
+      if (!token) {
+        console.warn(
+          'Merchant promo FB post aborted: missing page token',
+          docId,
+        );
+        return;
+      }
+
+      let claimed = false;
+      try {
+        claimed = await claimFacebookPostSlot(afterSnap.ref);
+      } catch (_) {
+        claimed = true;
+      }
+      if (!claimed) return;
+
+      const name = listingTitle(after);
+      const price =
+        after.price != null
+          ? ` — MWK ${Number(after.price).toLocaleString('en-US')}`
+          : '';
+      const desc = String(after.description || '').trim();
+      const link = 'https://vero360.app/';
+      const message = [
+        `🏷️ Promotion on Vero360: ${name}${price}`,
+        desc ? desc.slice(0, 180) : '',
+        'Open the app to grab the deal.',
+      ]
+        .filter(Boolean)
+        .join('\n');
+      const imageUrl = firstHttpImage(after);
+
+      let postId = null;
+      if (imageUrl) {
+        postId = await postPhotoToFacebookPage({
+          imageUrl,
+          caption: `${message}\n${link}`,
+          pageId,
+          token,
+        });
+      }
+      if (!postId) {
+        postId = await postLinkToFacebookPage({
+          link,
+          message,
+          pageId,
+          token,
+        });
+      }
+      if (!postId) {
+        await clearFacebookPostClaim(afterSnap.ref);
+        return;
+      }
+      await markPosted(afterSnap.ref, postId);
+      console.log('Merchant promo Facebook Page post ok', docId, postId);
+    } catch (err) {
+      console.error('onMerchantPromotionFacebookPost failed', err);
+      try {
+        await clearFacebookPostClaim(afterSnap.ref);
+      } catch (_) {}
     }
   },
 );

@@ -128,12 +128,13 @@ class ChatPeerReceipt {
   bool coversDelivered(DateTime messageCreatedAt) {
     final t = deliveredUpTo;
     if (t == null) return false;
-    return !messageCreatedAt.isAfter(t.add(const Duration(seconds: 2)));
+    // Generous skew so clock drift / network lag doesn't drop ticks.
+    return !messageCreatedAt.isAfter(t.add(const Duration(seconds: 8)));
   }
 
   bool coversRead(DateTime messageCreatedAt) {
     final t = readUpTo;
     if (t == null) return false;
-    return !messageCreatedAt.isAfter(t.add(const Duration(seconds: 2)));
+    return !messageCreatedAt.isAfter(t.add(const Duration(seconds: 8)));
   }
 }

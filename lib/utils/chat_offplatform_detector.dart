@@ -1,3 +1,5 @@
+import 'package:vero360_app/utils/description_contact_mask.dart';
+
 /// Detects off-platform contact / payment details in chat text
 /// (phone numbers, bank accounts, mobile money, etc.).
 class ChatOffPlatformDetector {
@@ -14,27 +16,48 @@ class ChatOffPlatformDetector {
     caseSensitive: false,
   );
 
+  /// Already-masked phones in chat (e.g. 0991******).
+  static final RegExp _maskedMalawiPhone = RegExp(
+    r'(?:(?:\+|00)?265[\s\-]*)?0?[89]\d{0,7}\*{2,}',
+    caseSensitive: false,
+  );
+
   /// Generic international-ish phone (9–15 digits, optional +).
   static final RegExp _genericPhone = RegExp(
     r'(?<!\d)(?:\+?\d[\s\-]?){9,15}\d(?!\d)',
   );
 
   static final RegExp _bankOrPaymentKeywords = RegExp(
-    r'\b('
+    r'(?:'
+    r'\b(?:'
     r'bank\s*account|account\s*(?:number|no\.?|#)|acc(?:ount)?\s*(?:no\.?|number|#)|'
     r'iban|swift(?:\s*code)?|sort\s*code|routing\s*(?:number|no\.?)|'
     r'account\s*name|deposit\s*(?:to|into)|wire\s*transfer|bank\s*transfer|'
-    r'airtel\s*money|tnm\s*mpamba|mpamba|mobile\s*money|mo|NB|'
+    r'airtel\s*money|tnm\s*mpamba|mpamba|mobile\s*money|'
     r'standard\s*bank|national\s*bank|fdh(?:\s*bank)?|nbs(?:\s*bank)?|'
     r'centenary(?:\s*bank)?|first\s*capital|ecobank|opportunity\s*bank|'
-    r'pay\s*outside|pay\s*offline|pay\s*directly|send\s*money\s*to|'
-    r'whatsapp\s*(?:me|number)|call\s*me\s*on|text\s*me\s*on'
-    r')\b',
+    r'pay\s*outside|pay\s*offline|pay\s*directly|'
+    r'send\s*(?:me\s+)?(?:money|cash|ndalama)|'
+    r'send\s*money\s*to|'
+    r'whatsapp\s*(?:me|number)|call\s*me\s*on|text\s*me\s*on|'
+    r'pay\s*(?:me\s+)?(?:outside|offline|directly|cash)|'
+    r'transfer\s*(?:money|cash|ndalama)|'
+    r'cash\s*outside'
+    r')\b'
+    r'|'
+    // Chichewa / local: tumiza(n/i) ndalama = send money
+    r'tumizani?\s+ndalama|tumizan\s+ndalama|tumiza\s+ndalama|'
+    r'ndalama\s+(?:apa|pano|kunja)|'
+    r'tipange\s+kunja|business\s+kunja'
+    r')',
     caseSensitive: false,
   );
 
   /// Long digit runs that look like account numbers (not already matched as phone).
   static final RegExp _longAccountDigits = RegExp(r'(?<!\d)\d{10,16}(?!\d)');
+
+  /// Mask phones in chat text for display / before send.
+  static String maskPhones(String? text) => DescriptionContactMask.mask(text);
 
   /// Returns true when [text] looks like it shares phone / bank / payment details.
   static bool containsSensitiveDetails(String? text) {
@@ -58,6 +81,7 @@ class ChatOffPlatformDetector {
     }
 
     if (_malawiPhone.hasMatch(cleaned)) return true;
+    if (_maskedMalawiPhone.hasMatch(cleaned)) return true;
     if (_bankOrPaymentKeywords.hasMatch(cleaned)) return true;
 
     // Account-like digit runs only when bank / payment context is nearby.
@@ -96,7 +120,8 @@ class ChatOffPlatformDetector {
         (digits[3] == '8' || digits[3] == '9')) {
       return true;
     }
-    if (digits.length == 9 && (digits.startsWith('8') || digits.startsWith('9'))) {
+    if (digits.length == 9 &&
+        (digits.startsWith('8') || digits.startsWith('9'))) {
       return true;
     }
     return false;

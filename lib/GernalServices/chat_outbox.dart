@@ -43,7 +43,12 @@ class ChatOutboxEntry {
   bool get isAudio => type == 'audio';
   bool get isImage => type == 'image';
 
-  ChatOutboxEntry copyWith({String? status}) {
+  ChatOutboxEntry copyWith({
+    String? status,
+    String? localVoicePath,
+    String? localImagePath,
+    int? voiceDurationMs,
+  }) {
     return ChatOutboxEntry(
       clientMessageId: clientMessageId,
       chatId: chatId,
@@ -52,9 +57,9 @@ class ChatOutboxEntry {
       content: content,
       status: status ?? this.status,
       createdAt: createdAt,
-      localVoicePath: localVoicePath,
-      voiceDurationMs: voiceDurationMs,
-      localImagePath: localImagePath,
+      localVoicePath: localVoicePath ?? this.localVoicePath,
+      voiceDurationMs: voiceDurationMs ?? this.voiceDurationMs,
+      localImagePath: localImagePath ?? this.localImagePath,
       imageMime: imageMime,
       imageFilename: imageFilename,
       tags: tags,
@@ -168,10 +173,33 @@ class ChatOutbox {
   }) async {
     final dir = await mediaDir();
     final dest = '${dir.path}/$clientMessageId.m4a';
+    final src = File(sourcePath);
+    if (!src.existsSync()) {
+      // Already durable?
+      final existing = File(dest);
+      if (existing.existsSync()) return dest;
+      throw StateError('Voice note source missing: $sourcePath');
+    }
     if (sourcePath != dest) {
-      await File(sourcePath).copy(dest);
+      await src.copy(dest);
+    }
+    final out = File(dest);
+    if (!out.existsSync() || out.lengthSync() <= 0) {
+      throw StateError('Voice note persist failed');
     }
     return dest;
+  }
+
+  /// Recover a durable VN path even if the outbox row lost it.
+  static Future<String?> recoverVoicePath(String clientMessageId) async {
+    final id = clientMessageId.trim();
+    if (id.isEmpty) return null;
+    try {
+      final dir = await mediaDir();
+      final dest = File('${dir.path}/$id.m4a');
+      if (dest.existsSync() && dest.lengthSync() > 0) return dest.path;
+    } catch (_) {}
+    return null;
   }
 
   static Future<String> persistImageBytes({
@@ -181,7 +209,8 @@ class ChatOutbox {
   }) async {
     final dir = await mediaDir();
     final dest = '${dir.path}/$clientMessageId.$ext';
-    await File(dest).writeAsBytes(bytes, flush: true);
+    // flush:false — chat UX should not wait on fsync before the bubble paints.
+    await File(dest).writeAsBytes(bytes, flush: false);
     return dest;
   }
 

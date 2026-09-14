@@ -62,6 +62,9 @@ class OAuthButtonsRow extends StatelessWidget {
           darkBg: true,
           onPressed: Platform.isIOS ? onApple : null,
           fallbackIcon: Icons.phone_iphone,
+          disabledHint: Platform.isIOS
+              ? null
+              : 'Apple Sign-In is available on iPhone',
         ),
       ],
     );
@@ -128,6 +131,7 @@ class _SocialButton extends StatelessWidget {
   final bool darkBg;
   final VoidCallback? onPressed;
   final IconData fallbackIcon;
+  final String? disabledHint;
 
   const _SocialButton({
     required this.asset,
@@ -136,71 +140,88 @@ class _SocialButton extends StatelessWidget {
     required this.darkBg,
     required this.onPressed,
     required this.fallbackIcon,
+    this.disabledHint,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final enabled = onPressed != null;
 
-    final btn = Container(
-      height: 52,
-      decoration: BoxDecoration(
-        color: darkBg ? Colors.black : Colors.white,
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(
-          color: darkBg
-              ? Colors.black
-              : Colors.black.withValues(alpha: 0.12),
+    final btn = Opacity(
+      opacity: enabled ? 1 : 0.45,
+      child: Container(
+        height: 52,
+        decoration: BoxDecoration(
+          color: darkBg ? Colors.black : Colors.white,
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(
+            color: darkBg
+                ? Colors.black
+                : Colors.black.withValues(alpha: 0.12),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.08),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        mainAxisSize: MainAxisSize.max,
-        children: [
-          Image.asset(
-            asset,
-            width: 22,
-            height: 22,
-            fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) => Icon(
-              fallbackIcon,
-              size: 24,
-              color: darkBg ? Colors.white : Colors.black87,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.max,
+          children: [
+            Image.asset(
+              asset,
+              width: 22,
+              height: 22,
+              fit: BoxFit.contain,
+              errorBuilder: (_, __, ___) => Icon(
+                fallbackIcon,
+                size: 24,
+                color: darkBg ? Colors.white : Colors.black87,
+              ),
             ),
-          ),
-          const SizedBox(width: 10),
-          Flexible(
-            child: Text(
-              label,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: darkBg ? Colors.white : Colors.black87,
-                  ) ??
-                  TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: darkBg ? Colors.white : Colors.black87,
-                  ),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: darkBg ? Colors.white : Colors.black87,
+                    ) ??
+                    TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: darkBg ? Colors.white : Colors.black87,
+                    ),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
 
     return Semantics(
       label: semanticLabel,
       button: true,
+      enabled: enabled,
       child: InkWell(
-        onTap: onPressed,
+        onTap: enabled
+            ? onPressed
+            : (disabledHint == null
+                ? null
+                : () {
+                    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                      SnackBar(
+                        content: Text(disabledHint!),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  }),
         borderRadius: BorderRadius.circular(40),
         child: btn,
       ),

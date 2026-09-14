@@ -60,6 +60,7 @@ import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GernalServices/vero_rewards_service.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
+import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -380,7 +381,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
 
   /// Brand flash — keep short so home arrives in ~1s.
   static const _minLauncher = Duration(milliseconds: 450);
-  static const _splashBg = Color(0xFFFFFBF6);
+  static const _splashBg = Color(0xFFFFF8F2);
 
   @override
   void initState() {
@@ -388,6 +389,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
     _bootFuture = _boot();
 
     unawaited(GoogleMapsConfig.initialize());
+    unawaited(PayChanguConfig.initialize());
 
     // Register FCM background handler as soon as Firebase is usable.
     // Must happen before process can receive background messages.
@@ -425,6 +427,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
 
       try {
         await GoogleMapsConfig.initialize();
+        await PayChanguConfig.initialize();
       } catch (_) {}
 
       if (mounted) {

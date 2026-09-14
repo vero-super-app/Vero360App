@@ -741,13 +741,17 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 
   // ── Paychangu API (same flow as checkout_from_cart_page) ─────────────────
-  static const String _paychanguApiUrl = 'https://api.paychangu.com/payment';
-  static const String _paychanguBearer = 'Bearer SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u';
-
   Future<void> _startPayChanguPayment() async {
     setState(() => _submitting = true);
 
     try {
+      await PayChanguConfig.initialize();
+      if (!PayChanguConfig.isConfigured) {
+        throw Exception(
+          'Payment is not configuredFOR PO.',
+        );
+      }
+
       final prefs = await SharedPreferences.getInstance();
       final email = prefs.getString('email') ?? 'customer@example.com';
       final name = prefs.getString('name') ?? 'Customer';
@@ -773,12 +777,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
       final response = await http
           .post(
-            Uri.parse(_paychanguApiUrl),
-            headers: {
-              'Accept': 'application/json',
-              'Content-Type': 'application/json',
-              'Authorization': _paychanguBearer,
-            },
+            PayChanguConfig.paymentUri,
+            headers: PayChanguConfig.authHeaders,
             body: json.encode({
               'tx_ref': txRef,
               'first_name': firstName,

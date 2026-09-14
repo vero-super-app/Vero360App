@@ -24,6 +24,7 @@ import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 
 import 'package:vero360_app/utils/ExchangeRate.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/Quickservices/customerservice.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food.dart';
 import 'package:vero360_app/Quickservices/jobs.dart';
@@ -103,21 +104,19 @@ class Mini {
   final String keyId;
   final String label;
   final IconData icon;
-  /// Colorful emoji icon shown on the home Quick Services grid.
-  final String emoji;
-  const Mini(this.keyId, this.label, this.icon, {required this.emoji});
+  const Mini(this.keyId, this.label, this.icon);
 }
 
 const List<Mini> kQuickServices = [
-  Mini('taxi',           'Vero Ride', Icons.local_taxi_rounded,          emoji: '🚗'),
-  Mini('courier',        'Courier',   Icons.local_shipping_rounded,      emoji: '🚚'),
-  Mini('vero_bike',      'Vero Bike', Icons.two_wheeler,                  emoji: '🏍️'),
-  Mini('fx',             'Forex',     Icons.currency_exchange_rounded,   emoji: '💱'),
-  Mini('food',           'Food',      Icons.fastfood_rounded,            emoji: '🍔'),
-  Mini('jobs',           'Jobs',      Icons.business_center_rounded,     emoji: '💼'),
-  Mini('tenders',        'Tenders',   Icons.description_rounded,         emoji: '📋'),
-  Mini('accommodation',  'Stay',      Icons.hotel_rounded,               emoji: '🛏️'),
-  Mini('customer_service', 'Support', Icons.support_agent_rounded,       emoji: '💬'),
+  Mini('taxi',             'Vero Ride', Icons.local_taxi_rounded),
+  Mini('courier',          'Courier',   Icons.local_shipping_rounded),
+  Mini('vero_bike',        'Vero Bike', Icons.two_wheeler_rounded),
+  Mini('fx',               'Forex',     Icons.currency_exchange_rounded),
+  Mini('food',             'Food',      Icons.restaurant_rounded),
+  Mini('jobs',             'Jobs',      Icons.business_center_rounded),
+  Mini('tenders',          'Tenders',   Icons.description_rounded),
+  Mini('accommodation',    'Stay',      Icons.hotel_rounded),
+  Mini('customer_service', 'Support',   Icons.support_agent_rounded),
 ];
 
 /// Services shown in the home coach / quick guide (never includes removed ones).
@@ -926,7 +925,7 @@ class _HeroHeader extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              '$greeting 👋',
+                              greeting,
                               style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
@@ -1333,7 +1332,7 @@ class _MiniIconsGrid extends StatelessWidget {
             final m = items[i];
             return _MiniIconTile(
               tileKey: tileKeys[m.keyId],
-              emoji:   m.emoji,
+              icon:    m.icon,
               label:   m.label,
               onTap:   () => onOpen(m.keyId),
             );
@@ -1346,12 +1345,12 @@ class _MiniIconsGrid extends StatelessWidget {
 
 class _MiniIconTile extends StatefulWidget {
   final Key?         tileKey;
-  final String       emoji;
+  final IconData     icon;
   final String       label;
   final VoidCallback onTap;
   const _MiniIconTile({
     this.tileKey,
-    required this.emoji,
+    required this.icon,
     required this.label,
     required this.onTap,
   });
@@ -1399,9 +1398,10 @@ class _MiniIconTileState extends State<_MiniIconTile> with SingleTickerProviderS
                 borderRadius: BorderRadius.circular(16),
               ),
               alignment: Alignment.center,
-              child: Text(
-                widget.emoji,
-                style: const TextStyle(fontSize: 28, height: 1),
+              child: Icon(
+                widget.icon,
+                size: 28,
+                color: AppColors.brandOrangeDeep,
               ),
             ),
             const SizedBox(height: 6),
@@ -1739,7 +1739,7 @@ class QuickServiceSearchDelegate extends SearchDelegate<Mini?> {
           child: ListTile(
             leading: CircleAvatar(
               backgroundColor: AppColors.brandOrangePale,
-              child: Text(m.emoji, style: const TextStyle(fontSize: 20)),
+              child: Icon(m.icon, color: AppColors.brandOrangeDeep, size: 22),
             ),
             title: Text(m.label,
                 style: const TextStyle(fontWeight: FontWeight.w800)),
@@ -2120,7 +2120,7 @@ class _PromoSlide extends StatelessWidget {
   Widget build(BuildContext context) {
     final imageUrl = promo.resolvedImageUrl;
     final subtitle = promo.description?.trim().isNotEmpty == true
-        ? promo.description!.trim()
+        ? DescriptionContactMask.mask(promo.description!.trim())
         : (promo.isFree ? 'Special offer' : promo.formattedPrice);
 
     return GestureDetector(
@@ -2561,6 +2561,30 @@ class _DigitalTileState extends State<_DigitalTile> with SingleTickerProviderSta
                         textAlign: TextAlign.center,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: widget.compact ? 8 : 9,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.brandOrange,
+                        ),
+                      ),
+                    ] else if (widget.p.isNetflixHub) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        'Choose a plan',
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: widget.compact ? 8 : 9,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.brandOrange,
+                        ),
+                      ),
+                    ] else if (widget.p.category == 'streaming') ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        '…',
+                        textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: widget.compact ? 8 : 9,
                           fontWeight: FontWeight.w800,
@@ -4182,15 +4206,21 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
   late final TextEditingController _emailCtrl;
   bool _submitting = false;
 
-  bool get _isFixedPrice => widget.product.fixedMwkPrice != null;
+  DigitalProduct get _product {
+    final live =
+        DigitalServicesCatalog.instance.productByKey(widget.product.key);
+    return live ?? widget.product;
+  }
+
+  bool get _isFixedPrice => _product.fixedMwkPrice != null;
 
   double get _mwkAmount =>
-      widget.product.fixedMwkPrice ??
-      widget.product.amountToMwk(widget.selectedUsd);
+      _product.fixedMwkPrice ?? _product.amountToMwk(widget.selectedUsd);
 
   @override
   void initState() {
     super.initState();
+    unawaited(DigitalServicesCatalog.instance.ensureStarted());
     _nameCtrl  = TextEditingController(text: widget.initialName  ?? '');
     _phoneCtrl = TextEditingController(text: widget.initialPhone ?? '');
     _emailCtrl = TextEditingController(text: widget.initialEmail ?? '');
@@ -4266,6 +4296,19 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
       final firstName = parts.isNotEmpty ? parts.first : 'Customer';
       final lastName  = parts.length > 1  ? parts.sublist(1).join(' ') : '';
       final amount    = _mwkAmount;
+      if (_product.category == 'streaming' ||
+          _product.category == 'subscription') {
+        if (_product.fixedMwkPrice == null || _product.fixedMwkPrice! <= 0) {
+          ToastHelper.showCustomToast(
+            context,
+            'Price not available yet. Please wait for admin pricing to load.',
+            isSuccess: false,
+            errorMessage: '',
+          );
+          unawaited(DigitalServicesCatalog.instance.ensureStarted());
+          return;
+        }
+      }
       if (amount <= 0) {
         ToastHelper.showCustomToast(context, 'Invalid price.', isSuccess: false, errorMessage: '');
         return;
@@ -4276,12 +4319,12 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
       }
       final txRef       = 'vero-digital-${DateTime.now().millisecondsSinceEpoch}';
       final description = _isFixedPrice
-          ? 'Digital: ${widget.product.name} • ${formatMwk(amount)}'
-          : 'Digital: ${widget.product.name} • ${widget.product.formatAmount(widget.selectedUsd)} '
+          ? 'Digital: ${_product.name} • ${formatMwk(amount)}'
+          : 'Digital: ${_product.name} • ${_product.formatAmount(widget.selectedUsd)} '
               '(${formatMwk(amount)})';
 
       final orderId = await DigitalServiceOrderService.createPendingOrder(
-        product: widget.product,
+        product: _product,
         amountMwk: amount,
         txRef: txRef,
         buyerName: name,
@@ -4358,7 +4401,7 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    final p = widget.product;
+    final p = _product;
     return Scaffold(
       appBar: AppBar(
         title:           Text('Buy ${p.name}'),
@@ -4415,16 +4458,18 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                           Text(
                             _isFixedPrice
                                 ? formatMwk(_mwkAmount)
-                                : '${widget.product.formatAmount(widget.selectedUsd)}  ·  ${formatMwk(_mwkAmount)}',
+                                : (p.usdAmounts.isEmpty
+                                    ? 'Price from admin…'
+                                    : '${p.formatAmount(widget.selectedUsd)}  ·  ${formatMwk(_mwkAmount)}'),
                             style: const TextStyle(
                               color: AppColors.brandOrange,
                               fontWeight: FontWeight.w800,
                             ),
                           ),
-                          if (!_isFixedPrice) ...[
+                          if (!_isFixedPrice && p.usdAmounts.isNotEmpty) ...[
                             const SizedBox(height: 2),
                             Text(
-                              'Rate: 1 ${((widget.product.unitLabel ?? '').trim().isNotEmpty) ? widget.product.unitLabel!.trim() : 'USD'} = ${widget.product.effectiveMwkPerUnit.toStringAsFixed(0)} MWK',
+                              'Rate: 1 ${((p.unitLabel ?? '').trim().isNotEmpty) ? p.unitLabel!.trim() : 'USD'} = ${p.effectiveMwkPerUnit.toStringAsFixed(0)} MWK',
                               style: const TextStyle(
                                 fontSize: 11,
                                 color: AppColors.body,

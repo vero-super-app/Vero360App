@@ -141,7 +141,6 @@ class BackendChatThread {
     if (participants.isEmpty) return null;
 
     final myEmailNorm = (myEmail ?? '').trim().toLowerCase();
-    final myNameNorm = (myName ?? '').trim().toLowerCase();
 
     bool isMe(ChatParticipant p) {
       if (myUserId > 0 && p.id > 0 && p.id == myUserId) return true;
@@ -149,12 +148,8 @@ class BackendChatThread {
       if (myEmailNorm.isNotEmpty && email.isNotEmpty && email == myEmailNorm) {
         return true;
       }
-      // Only treat name as "me" when we also lack a usable id mismatch signal
-      // and there is more than one participant to choose from.
-      if (myNameNorm.isNotEmpty && participants.length > 1) {
-        final n = p.name.trim().toLowerCase();
-        if (n.isNotEmpty && n == myNameNorm) return true;
-      }
+      // Do NOT match by display name — merchants/customers can share names and
+      // that falsely made calls report "you can't call yourself".
       return false;
     }
 
@@ -460,7 +455,15 @@ class ChatParticipant {
         !name.contains('@')) {
       return name;
     }
-    return biz.isNotEmpty ? biz : 'Contact';
+    final e = email.trim();
+    if (e.contains('@') && !e.toLowerCase().startsWith('+firebase_')) {
+      final local = e.split('@').first.trim();
+      if (local.length > 1 && !isPlaceholderName(local)) {
+        return local[0].toUpperCase() + local.substring(1);
+      }
+    }
+    // Avoid generic "Contact" in chat lists / forward picker.
+    return 'Chat';
   }
 
   static bool isPlaceholderName(String name) => _isPlaceholderChatName(name);
@@ -588,7 +591,7 @@ class BackendChatService {
     String? raw, {
     String? messageType,
   }) {
-    final t = (raw ?? '').trim();
+    var t = _stripForwardedPreviewMarker((raw ?? '').trim());
     if (t.isEmpty) {
       return const ChatLastMessagePreview(
         label: '',
@@ -597,7 +600,10 @@ class BackendChatService {
     }
 
     final type = messageType?.toLowerCase() ?? '';
-    if (type == 'audio' || t.startsWith(_legacyAudPrefix)) {
+    if (type == 'audio' ||
+        t.startsWith(_legacyAudPrefix) ||
+        t.toLowerCase().contains(_legacyAudPrefix) ||
+        _looksLikeAudioContent(t)) {
       return ChatLastMessagePreview(
         label: _voicePreviewLabel(t),
         kind: ChatLastMessagePreviewKind.voice,
@@ -615,12 +621,6 @@ class BackendChatService {
         kind: ChatLastMessagePreviewKind.video,
       );
     }
-    if (_looksLikeAudioContent(t)) {
-      return ChatLastMessagePreview(
-        label: _voicePreviewLabel(t),
-        kind: ChatLastMessagePreviewKind.voice,
-      );
-    }
     if (t.length > 80) {
       return ChatLastMessagePreview(
         label: '${t.substring(0, 80)}…',
@@ -633,10 +633,27 @@ class BackendChatService {
     );
   }
 
+  static String _stripForwardedPreviewMarker(String raw) {
+    var t = raw.trim();
+    if (t.isEmpty) return t;
+    final lower = t.toLowerCase();
+    final isForwarded = t.startsWith('↪️') ||
+        lower.startsWith('forwarded') ||
+        lower.startsWith('fwd:');
+    if (!isForwarded) return t;
+    final nl = t.indexOf('\n');
+    if (nl >= 0) return t.substring(nl + 1).trim();
+    // e.g. "↪️ Forwarded: hello"
+    final colon = t.indexOf(':');
+    if (colon >= 0 && colon < 24) return t.substring(colon + 1).trim();
+    return t;
+  }
+
   static String _voicePreviewLabel(String raw) {
     var rest = raw;
-    if (rest.startsWith(_legacyAudPrefix)) {
-      rest = rest.substring(_legacyAudPrefix.length);
+    final audIdx = rest.toLowerCase().indexOf(_legacyAudPrefix);
+    if (audIdx >= 0) {
+      rest = rest.substring(audIdx + _legacyAudPrefix.length);
     }
     final pipeIdx = rest.lastIndexOf('|');
     if (pipeIdx > 0) {
@@ -647,18 +664,111 @@ class BackendChatService {
         return '$m:${s.toString().padLeft(2, '0')}';
       }
     }
-    return 'Voice message';
+    return 'Voice note';
   }
 
   static bool _looksLikeAudioContent(String t) {
-    if (!t.startsWith('http')) return false;
     final lower = t.toLowerCase();
+    if (lower.contains(_legacyAudPrefix)) return true;
+    if (lower.contains('firebasestorage') &&
+        (lower.contains('audio') ||
+            lower.contains('.m4a') ||
+            lower.contains('.mp3') ||
+            lower.contains('.aac') ||
+            lower.contains('.ogg') ||
+            lower.contains('.wav'))) {
+      return true;
+    }
+    if (!t.startsWith('http')) return false;
     return lower.contains('/audio') ||
         lower.endsWith('.m4a') ||
         lower.endsWith('.mp3') ||
         lower.endsWith('.aac') ||
         lower.endsWith('.wav') ||
         lower.endsWith('.ogg');
+  }
+
+  /// Peer title for inbox / forward picker — never the signed-in user's name.
+  static String peerDisplayNameForThread(
+    BackendChatThread t,
+    int myUserId, {
+    String? myEmail,
+    String? myName,
+  }) {
+    final otherParticipant = t.otherParticipant(
+      myUserId,
+      myEmail: myEmail,
+      myName: myName,
+    );
+    final threadTitle = (t.name ?? '').trim();
+    final myEmailNorm = (myEmail ?? '').trim().toLowerCase();
+    final myNameNorm = (myName ?? '').trim().toLowerCase();
+    final myEmailLocal = myEmailNorm.contains('@')
+        ? myEmailNorm.split('@').first
+        : myEmailNorm;
+
+    bool looksLikeMe(String raw) {
+      final n = raw.trim().toLowerCase();
+      if (n.isEmpty) return false;
+      if (myNameNorm.isNotEmpty && n == myNameNorm) return true;
+      if (myEmailNorm.isNotEmpty && n == myEmailNorm) return true;
+      if (myEmailLocal.isNotEmpty && n == myEmailLocal) return true;
+      return false;
+    }
+
+    bool usablePeerName(String raw) {
+      final n = raw.trim();
+      if (n.isEmpty || looksLikeMe(n) || ChatParticipant.isPlaceholderName(n)) {
+        return false;
+      }
+      if (n.contains('@')) return false;
+      final email = (otherParticipant?.email ?? '').trim();
+      if (ChatParticipant.looksLikeEmailLocalName(n, email)) return false;
+      return true;
+    }
+
+    var peerName = (otherParticipant?.preferredDisplayName ?? '').trim();
+    if (!usablePeerName(peerName)) {
+      peerName = (otherParticipant?.businessName ?? '').trim();
+    }
+    if (!usablePeerName(peerName)) {
+      peerName = (otherParticipant?.name ?? '').trim();
+    }
+    if (!usablePeerName(peerName)) {
+      if (threadTitle.isNotEmpty &&
+          threadTitle.toLowerCase() != 'direct' &&
+          usablePeerName(threadTitle)) {
+        peerName = threadTitle;
+      } else {
+        for (final p in t.participants) {
+          if (myUserId > 0 && p.id > 0 && p.id == myUserId) continue;
+          if (looksLikeMe(p.name) || looksLikeMe(p.email)) continue;
+          final candidate = (p.businessName ?? p.preferredDisplayName).trim();
+          if (usablePeerName(candidate)) {
+            peerName = candidate;
+            break;
+          }
+        }
+      }
+    }
+    if (!usablePeerName(peerName)) peerName = 'Chat';
+    return peerName;
+  }
+
+  static String peerAvatarUrlForThread(
+    BackendChatThread t,
+    int myUserId, {
+    String? myEmail,
+    String? myName,
+  }) {
+    final other = t.otherParticipant(
+      myUserId,
+      myEmail: myEmail,
+      myName: myName,
+    );
+    final fromPeer = (other?.profilePicture ?? '').trim();
+    if (fromPeer.isNotEmpty) return fromPeer;
+    return (t.avatarUrl ?? '').trim();
   }
 
   /// Uses ApiConfig for base URL (supports dart-define, ngrok, etc.)
@@ -686,15 +796,51 @@ class BackendChatService {
   static Timer? _threadsFallbackPollTimer;
   static String? _activeChatId;
   static bool _wsConnected = false;
+  /// Chats recently marked read locally — keeps server lag from resurrecting badges.
+  static final Map<String, DateTime> _markReadGraceUntil = {};
 
   /// Chat currently open in [MessagePageBackendApi] (suppresses unread bump).
   static String? get activeChatId => _activeChatId;
 
+  static bool _isActiveChat(String? chatId) {
+    final active = (_activeChatId ?? '').trim();
+    final id = (chatId ?? '').trim();
+    return active.isNotEmpty && id.isNotEmpty && active == id;
+  }
+
   static void setActiveChatId(String? chatId) {
-    _activeChatId = chatId;
-    if (chatId != null && chatId.trim().isNotEmpty) {
-      unawaited(restoreThreadLocally(chatId));
+    final normalized = chatId?.trim();
+    _activeChatId =
+        (normalized == null || normalized.isEmpty) ? null : normalized;
+    if (_activeChatId != null) {
+      unawaited(restoreThreadLocally(_activeChatId!));
     }
+  }
+
+  static void _rememberMarkedRead(String chatId) {
+    final id = chatId.trim();
+    if (id.isEmpty) return;
+    _markReadGraceUntil[id] =
+        DateTime.now().add(const Duration(seconds: 20));
+  }
+
+  static void _forgetMarkedRead(String chatId) {
+    _markReadGraceUntil.remove(chatId.trim());
+  }
+
+  static List<BackendChatThread> _applyUnreadOverrides(
+    List<BackendChatThread> threads,
+  ) {
+    final now = DateTime.now();
+    _markReadGraceUntil.removeWhere((_, until) => now.isAfter(until));
+    if (_activeChatId == null && _markReadGraceUntil.isEmpty) return threads;
+    return threads.map((t) {
+      final id = t.id.trim();
+      if (_isActiveChat(id) || _markReadGraceUntil.containsKey(id)) {
+        return t.unreadCount == 0 ? t : t.copyWith(unreadCount: 0);
+      }
+      return t;
+    }).toList();
   }
 
   /// Server un-archives when a chat is opened; clear local hide state too.
@@ -764,7 +910,11 @@ class BackendChatService {
 
     final old = _cachedThreads[idx];
     final bumpUnread =
-        !message.isMine(myId) && message.chatId != _activeChatId;
+        !message.isMine(myId) && !_isActiveChat(message.chatId);
+    if (bumpUnread) {
+      // A real new peer message should outrank a stale mark-read grace window.
+      _forgetMarkedRead(chatId);
+    }
 
     var participants = old.participants;
     if (!message.isMine(myId) &&
@@ -830,6 +980,9 @@ class BackendChatService {
         toStore = thread.copyWith(participants: byId.values.toList());
       }
     }
+    if (_isActiveChat(id) || _markReadGraceUntil.containsKey(id)) {
+      toStore = toStore.copyWith(unreadCount: 0);
+    }
     _cachedThreads.removeWhere((t) => t.id.trim() == id);
     _cachedThreads.insert(0, toStore);
     _threadsWatchReady = true;
@@ -882,7 +1035,8 @@ class BackendChatService {
       id: message.chatId,
       type: 'direct',
       participantCount: participants.isEmpty ? 1 : participants.length + 1,
-      unreadCount: message.isMine(myId) ? 0 : 1,
+      unreadCount:
+          (message.isMine(myId) || _isActiveChat(message.chatId)) ? 0 : 1,
       lastMessagePreview: preview.label.isNotEmpty ? preview.label : null,
       lastProductTag: productTag,
       createdAt: message.createdAt,
@@ -925,7 +1079,7 @@ class BackendChatService {
       if (!message.isMine(myId)) {
         // Device received the message → delivered tick for the sender.
         // If this chat is open, the page also publishes read.
-        final asRead = message.chatId == _activeChatId;
+        final asRead = _isActiveChat(message.chatId);
         unawaited(ChatReceiptService.publish(
           chatId: message.chatId,
           userId: myId,
@@ -934,7 +1088,7 @@ class BackendChatService {
         ));
       }
 
-      if (!message.isMine(myId) && message.chatId != _activeChatId) {
+      if (!message.isMine(myId) && !_isActiveChat(message.chatId)) {
         final thread = _cachedThreads.firstWhere(
           (t) => t.id.trim() == chatId,
           orElse: () => _minimalThreadFromMessage(message, myId),
@@ -954,7 +1108,7 @@ class BackendChatService {
       final myId = _userId;
       if (myId == null) return;
       if (message.isMine(myId)) return;
-      if (message.chatId == _activeChatId) return;
+      if (_isActiveChat(message.chatId)) return;
 
       final sender = thread.participants.firstWhere(
         (p) => p.id != myId,
@@ -1011,8 +1165,15 @@ class BackendChatService {
   }
 
   static void clearThreadUnread(String chatId) {
-    final idx = _cachedThreads.indexWhere((t) => t.id == chatId);
-    if (idx < 0) return;
+    final id = chatId.trim();
+    if (id.isEmpty) return;
+    _rememberMarkedRead(id);
+    final idx = _cachedThreads.indexWhere((t) => t.id.trim() == id);
+    if (idx < 0) {
+      _emitCachedThreads();
+      return;
+    }
+    if (_cachedThreads[idx].unreadCount == 0) return;
     _cachedThreads[idx] = _cachedThreads[idx].copyWith(unreadCount: 0);
     _emitCachedThreads();
   }
@@ -1125,8 +1286,9 @@ class BackendChatService {
         }
         return;
       }
-      // Server list is source of truth when it returns data.
-      _cachedThreads = filteredFresh;
+      // Server list is source of truth, but keep active/recently-read chats at 0
+      // so a lagging Nest unreadCount cannot resurrect the badge after open/reply.
+      _cachedThreads = _applyUnreadOverrides(filteredFresh);
       _applyMemoToCachedThreads();
       _threadsWatchReady = true;
       _emitCachedThreads();
@@ -2039,6 +2201,22 @@ class BackendChatService {
     return null;
   }
 
+  /// Peer label/avatar for opening a chat from a notification payload.
+  static ({String name, String avatarUrl, int? peerUserId})?
+      cachedPeerLabelForChat(String chatId) {
+    final thread = findCachedThreadById(chatId);
+    if (thread == null) return null;
+    final myId = _userId ?? 0;
+    final name = peerDisplayNameForThread(thread, myId);
+    final avatar = peerAvatarUrlForThread(thread, myId);
+    final peer = thread.otherParticipant(myId);
+    return (
+      name: name,
+      avatarUrl: avatar,
+      peerUserId: (peer?.id ?? 0) > 0 ? peer!.id : null,
+    );
+  }
+
   /// Best-effort Firebase UID for the other person in a direct chat.
   static Future<String?> resolvePeerFirebaseUid({
     String? chatId,
@@ -2046,30 +2224,42 @@ class BackendChatService {
     String? hintFirebaseUid,
   }) async {
     final myUid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+
+    bool usable(String? uid) {
+      final v = (uid ?? '').trim();
+      if (!_looksLikeFirebaseUid(v)) return false;
+      // Never treat "me" as the peer — callers used to hit this with shop ids.
+      if (myUid.isNotEmpty && v == myUid) return false;
+      return true;
+    }
+
     final hint = (hintFirebaseUid ?? '').trim();
-    if (_looksLikeFirebaseUid(hint) && hint != myUid) return hint;
+    if (usable(hint)) return hint;
 
     final myId = peekUserId() ?? 0;
     final threadId = (chatId ?? '').trim();
     if (threadId.isNotEmpty && myId > 0) {
       final thread = findCachedThreadById(threadId);
-      final other = thread?.otherParticipant(myId);
-      final fromParticipant = (other?.firebaseUid ?? '').trim();
-      if (_looksLikeFirebaseUid(fromParticipant) &&
-          fromParticipant != myUid) {
-        return fromParticipant;
-      }
-      final otherId = other?.id ?? 0;
-      if (otherId > 0) {
-        final uid = await getFirebaseUidByUserId(otherId, quiet: true);
-        if (_looksLikeFirebaseUid(uid ?? '') && uid != myUid) return uid;
+      if (thread != null) {
+        final other = thread.otherParticipant(myId);
+        if (usable(other?.firebaseUid)) return other!.firebaseUid!.trim();
+
+        // Fallback: first participant that is not me by Nest id / firebase uid.
+        for (final p in thread.participants) {
+          if (myId > 0 && p.id == myId) continue;
+          if (usable(p.firebaseUid)) return p.firebaseUid!.trim();
+          if (p.id > 0 && p.id != myId) {
+            final uid = await getFirebaseUidByUserId(p.id, quiet: true);
+            if (usable(uid)) return uid!.trim();
+          }
+        }
       }
     }
 
     final peerId = peerUserId ?? 0;
-    if (peerId > 0) {
+    if (peerId > 0 && (myId <= 0 || peerId != myId)) {
       final uid = await getFirebaseUidByUserId(peerId, quiet: true);
-      if (_looksLikeFirebaseUid(uid ?? '') && uid != myUid) return uid;
+      if (usable(uid)) return uid!.trim();
 
       // Firestore fallback when Nest profile omits firebaseUid.
       try {
@@ -2081,7 +2271,7 @@ class BackendChatService {
               .get();
           if (snap.docs.isEmpty) continue;
           final docUid = snap.docs.first.id.trim();
-          if (_looksLikeFirebaseUid(docUid) && docUid != myUid) return docUid;
+          if (usable(docUid)) return docUid;
         }
       } catch (_) {}
     }
@@ -2797,6 +2987,18 @@ class BackendChatService {
   /// Broadcast — safe for multiple listeners (chat list, providers, badges).
   static Stream<List<BackendChatThread>> watchThreads() {
     return Stream.multi((multi) async {
+      // WhatsApp-style: emit disk/memory cache immediately before network.
+      try {
+        final seeded = await loadCachedThreads();
+        if (!multi.isClosed) {
+          multi.add(seeded);
+        }
+      } catch (_) {
+        if (!multi.isClosed && _cachedThreads.isNotEmpty) {
+          multi.add(_filterDeletedThreads(_cachedThreads));
+        }
+      }
+
       try {
         await _ensureThreadsWatchInitialized();
         if (!multi.isClosed) {
@@ -2862,9 +3064,59 @@ class BackendChatService {
     }
   }
 
-  /// Cached messages for instant UI (disk). Call after [ensureAuth].
+  /// Cached messages for instant UI (memory + disk). Works even before Nest user id.
   static List<BackendChatMessage> peekCachedMessages(String chatId) {
-    return BackendMessagingCache.peekMessages(_userId, chatId);
+    final id = chatId.trim();
+    if (id.isEmpty) return const [];
+    return BackendMessagingCache.peekMessages(_userId, id);
+  }
+
+  /// In-memory threads for pickers (forward target list, etc.).
+  static List<BackendChatThread> peekCachedThreads() {
+    return List<BackendChatThread>.from(
+      _filterDeletedThreads(_cachedThreads),
+    );
+  }
+
+  /// Like [peekCachedMessages] but warms Hive + prefs user id first (WhatsApp-style open).
+  static Future<List<BackendChatMessage>> loadCachedMessages(String chatId) async {
+    await BackendMessagingCache.initialize();
+    var uid = _userId;
+    if (uid == null) {
+      try {
+        final sp = await SharedPreferences.getInstance();
+        uid = sp.getInt('userId') ?? sp.getInt('user_id');
+        if (uid != null && uid > 0) {
+          _userId = uid;
+        }
+      } catch (_) {}
+    }
+    // Peek works without uid (memory + any disk key for this chat).
+    return BackendMessagingCache.peekMessages(uid, chatId);
+  }
+
+  /// Instant thread list from memory/disk (no network).
+  static Future<List<BackendChatThread>> loadCachedThreads() async {
+    await BackendMessagingCache.initialize();
+    if (_cachedThreads.isNotEmpty) {
+      return _filterDeletedThreads(_cachedThreads);
+    }
+    var uid = _userId;
+    if (uid == null) {
+      try {
+        final sp = await SharedPreferences.getInstance();
+        uid = sp.getInt('userId') ?? sp.getInt('user_id');
+        if (uid != null && uid > 0) _userId = uid;
+      } catch (_) {}
+    }
+    if (uid == null) return const [];
+    await _loadDeletedThreadIds(uid);
+    final disk = BackendMessagingCache.peekThreads(uid);
+    if (disk.isEmpty) return const [];
+    _cachedThreads = _filterDeletedThreads(disk);
+    _cachedThreadsOwnerUserId = uid;
+    _applyMemoToCachedThreads();
+    return List<BackendChatThread>.from(_cachedThreads);
   }
 
   /// Get messages in a chat (network fetch + disk cache).
@@ -2894,12 +3146,57 @@ class BackendChatService {
           chatId,
           messages,
         );
-        if (_userId != null && page == 1) {
-          await BackendMessagingCache.saveMessages(
-            _userId!,
-            chatId,
-            visible,
-          );
+        if (_userId != null) {
+          if (page == 1) {
+            // Keep any older pages already cached locally.
+            final prior = BackendMessagingCache.peekMessages(_userId, chatId);
+            if (prior.isNotEmpty && visible.isNotEmpty) {
+              final cutoff = visible.first.createdAt;
+              final older = prior
+                  .where((m) => m.createdAt.isBefore(cutoff))
+                  .toList();
+              if (older.isNotEmpty) {
+                final byId = <String, BackendChatMessage>{};
+                for (final m in [...older, ...visible]) {
+                  final key = m.id.isNotEmpty
+                      ? m.id
+                      : (m.clientMessageId ??
+                          '${m.createdAt.millisecondsSinceEpoch}');
+                  byId[key] = m;
+                }
+                final merged = byId.values.toList()
+                  ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+                await BackendMessagingCache.saveMessages(
+                  _userId!,
+                  chatId,
+                  merged,
+                );
+                return visible;
+              }
+            }
+            await BackendMessagingCache.saveMessages(
+              _userId!,
+              chatId,
+              visible,
+            );
+          } else if (visible.isNotEmpty) {
+            final prior = BackendMessagingCache.peekMessages(_userId, chatId);
+            final byId = <String, BackendChatMessage>{};
+            for (final m in [...visible, ...prior]) {
+              final key = m.id.isNotEmpty
+                  ? m.id
+                  : (m.clientMessageId ??
+                      '${m.createdAt.millisecondsSinceEpoch}');
+              byId[key] = m;
+            }
+            final merged = byId.values.toList()
+              ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+            await BackendMessagingCache.saveMessages(
+              _userId!,
+              chatId,
+              merged,
+            );
+          }
         }
         return visible;
       } else {
@@ -2951,7 +3248,7 @@ class BackendChatService {
             },
             body: jsonEncode(payload),
           )
-          .timeout(const Duration(seconds: 15));
+            .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 201) {
         final msg = BackendChatMessage.fromJson(
@@ -3061,30 +3358,29 @@ class BackendChatService {
     await ensureAuth();
 
     final trimmedCaption = caption.trim();
-    final mime = mimeType ?? 'image/jpeg';
+    final forwarded = metadata != null &&
+        (metadata['forwarded'] == true || metadata['isForwarded'] == true);
 
+    // Legacy text prefix is the known-good path; keep one modern fallback.
+    String legacyContent;
+    if (forwarded) {
+      legacyContent = trimmedCaption.isNotEmpty
+          ? '$_legacyImgPrefix$imageUrl\n↪️ Forwarded\n$trimmedCaption'
+          : '$_legacyImgPrefix$imageUrl\n↪️ Forwarded';
+    } else {
+      legacyContent = trimmedCaption.isNotEmpty
+          ? '$_legacyImgPrefix$imageUrl\n$trimmedCaption'
+          : '$_legacyImgPrefix$imageUrl';
+    }
     final attempts = <Map<String, dynamic>>[
       {
-        'content': trimmedCaption.isNotEmpty
-            ? '$_legacyImgPrefix$imageUrl\n$trimmedCaption'
-            : '$_legacyImgPrefix$imageUrl',
+        'content': legacyContent,
         'type': 'text',
       },
       {
         'content': trimmedCaption.isNotEmpty ? trimmedCaption : imageUrl,
         'type': 'image',
         'attachmentUrls': [imageUrl],
-      },
-      {
-        'content': imageUrl,
-        'type': 'image',
-        'attachments': [
-          {
-            'url': imageUrl,
-            'type': 'image',
-            'mimeType': mime,
-          },
-        ],
       },
     ];
 
@@ -3113,7 +3409,7 @@ class BackendChatService {
               },
               body: jsonEncode(payload),
             )
-            .timeout(const Duration(seconds: 15));
+            .timeout(const Duration(seconds: 10));
 
         if (response.statusCode == 201) {
           final body = jsonDecode(response.body);
@@ -3133,6 +3429,11 @@ class BackendChatService {
           return msg;
         }
 
+        // Auth errors won't be fixed by a different payload shape.
+        if (response.statusCode == 401 || response.statusCode == 403) {
+          throw Exception('HTTP ${response.statusCode}: ${response.body}');
+        }
+
         if (kDebugMode) {
           print(
             '[BackendChatService] sendImage attempt ${response.statusCode}: ${response.body}',
@@ -3141,6 +3442,8 @@ class BackendChatService {
         lastError = 'HTTP ${response.statusCode}: ${response.body}';
       } catch (e) {
         lastError = e;
+        if (e is Exception && e.toString().contains('HTTP 401')) rethrow;
+        if (e is Exception && e.toString().contains('HTTP 403')) rethrow;
       }
     }
 
@@ -3158,16 +3461,21 @@ class BackendChatService {
   }) async {
     await ensureAuth();
 
-    final mime = mimeType ?? 'audio/mp4';
     final duration = durationMs.clamp(0, 600000);
     final mergedMeta = <String, dynamic>{
       'durationMs': duration,
       if (metadata != null) ...metadata,
     };
 
+    // Legacy prefix first (known-good), then one modern fallback.
+    final forwarded = mergedMeta['forwarded'] == true ||
+        mergedMeta['isForwarded'] == true;
+    final audContent = forwarded
+        ? '$_legacyAudPrefix$audioUrl|$duration\n↪️ Forwarded'
+        : '$_legacyAudPrefix$audioUrl|$duration';
     final attempts = <Map<String, dynamic>>[
       {
-        'content': '$_legacyAudPrefix$audioUrl|$duration',
+        'content': audContent,
         'type': 'text',
         'metadata': mergedMeta,
       },
@@ -3175,19 +3483,6 @@ class BackendChatService {
         'content': audioUrl,
         'type': 'audio',
         'attachmentUrls': [audioUrl],
-        'metadata': mergedMeta,
-      },
-      {
-        'content': audioUrl,
-        'type': 'audio',
-        'attachments': [
-          {
-            'url': audioUrl,
-            'type': 'audio',
-            'mimeType': mime,
-            'durationMs': duration,
-          },
-        ],
         'metadata': mergedMeta,
       },
     ];
@@ -3210,7 +3505,7 @@ class BackendChatService {
               },
               body: jsonEncode(payload),
             )
-            .timeout(const Duration(seconds: 20));
+            .timeout(const Duration(seconds: 12));
 
         if (response.statusCode == 201) {
           final body = jsonDecode(response.body);
@@ -3230,6 +3525,10 @@ class BackendChatService {
           return msg;
         }
 
+        if (response.statusCode == 401 || response.statusCode == 403) {
+          throw Exception('HTTP ${response.statusCode}: ${response.body}');
+        }
+
         if (kDebugMode) {
           print(
             '[BackendChatService] sendAudio attempt ${response.statusCode}: ${response.body}',
@@ -3238,6 +3537,8 @@ class BackendChatService {
         lastError = 'HTTP ${response.statusCode}: ${response.body}';
       } catch (e) {
         lastError = e;
+        if (e is Exception && e.toString().contains('HTTP 401')) rethrow;
+        if (e is Exception && e.toString().contains('HTTP 403')) rethrow;
       }
     }
 
@@ -3546,6 +3847,7 @@ class BackendChatService {
     required List<String> messageIds,
   }) async {
     await ensureAuth();
+    clearThreadUnread(chatId);
 
     try {
       await http
@@ -3558,6 +3860,7 @@ class BackendChatService {
             body: jsonEncode({'messageIds': messageIds}),
           )
           .timeout(const Duration(seconds: 10));
+      clearThreadUnread(chatId);
     } catch (e) {
       print('[BackendChatService] Error marking as read: $e');
       rethrow;

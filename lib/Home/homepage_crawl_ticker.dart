@@ -299,9 +299,6 @@ class _HomepageCrawlTickerState extends State<HomepageCrawlTicker>
   Future<void> _openStoreUpdate(_CrawlItem item) async {
     final target = item.versionLabel;
     final installed = AppVersionInfo.version;
-    final storeUrl = defaultTargetPlatform == TargetPlatform.iOS
-        ? AppUpdateChecker.appStoreSearchUrl()
-        : AppUpdateChecker.playStoreUrl(AppUpdateChecker.playStoreId);
 
     if (!mounted) return;
     final go = await showDialog<bool>(
@@ -329,7 +326,7 @@ class _HomepageCrawlTickerState extends State<HomepageCrawlTicker>
       ),
     );
     if (go != true) return;
-    await AppUpdateChecker.openStore(storeUrl);
+    await AppUpdateChecker.openStoreForThisPlatform();
   }
 
   void _onTap(_CrawlItem item) {

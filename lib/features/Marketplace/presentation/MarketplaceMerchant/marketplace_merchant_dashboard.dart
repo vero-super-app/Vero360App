@@ -35,6 +35,7 @@ import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_moderation.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_promote_service.dart';
 
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
@@ -102,20 +103,20 @@ SliverGridDelegate _merchantItemsGridDelegate(BuildContext context) {
       MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.8).scale(14) /
           14.0;
 
-  // Lower ratio = taller cells (room for status, actions, reject reason).
-  var ratio = 0.68;
+  // Lower ratio = taller cells (room for status, promote, actions, reject reason).
+  var ratio = 0.62;
   var spacing = 12.0;
   if (w < 330) {
-    ratio = 0.44;
+    ratio = 0.40;
     spacing = 8;
   } else if (w < 360) {
-    ratio = 0.48;
+    ratio = 0.44;
     spacing = 8;
   } else if (w < 400) {
-    ratio = 0.54;
+    ratio = 0.50;
     spacing = 10;
   } else if (w < 430) {
-    ratio = 0.60;
+    ratio = 0.56;
     spacing = 10;
   }
 
@@ -207,6 +208,8 @@ class _MarketplaceMerchantDashboardState
   // Create form state
   bool _isActive = true;
   bool _submitting = false;
+  /// Share to Vero360 Facebook Page when listing goes live (default on).
+  bool _postToFacebook = true;
 
   LocalMedia? _cover;
 
@@ -1512,7 +1515,7 @@ class _MarketplaceMerchantDashboardState
   }
 
   Future<void> _saveBusinessDescription(String raw) async {
-    final desc = raw.trim();
+    final desc = DescriptionContactMask.mask(raw.trim());
     if (desc.length > _kBusinessDescMaxLen) {
       _toastErr('Keep it under $_kBusinessDescMaxLen characters.');
       return;
@@ -3103,9 +3106,10 @@ class _MarketplaceMerchantDashboardState
         if (coverBase64 != null) 'image': coverBase64,
         if (galleryUrls.isNotEmpty) 'galleryUrls': galleryUrls,
         if (galleryBase64.isNotEmpty) 'gallery': galleryBase64,
-        'description': _desc.text.trim().isEmpty ? null : _desc.text.trim(),
+        'description': _desc.text.trim().isEmpty
+            ? null
+            : DescriptionContactMask.mask(_desc.text.trim()),
         'location': _location.text.trim(),
-        // Always pending until Cloud Function auto-moderation approves.
         'isActive': false,
         'reviewStatus': 'pending',
         'category': _category ?? 'other',
@@ -3119,6 +3123,7 @@ class _MarketplaceMerchantDashboardState
         'serviceType': 'marketplace',
         'stockQuantity': _stockQty,
         'quantity': _stockQty,
+        'postToFacebook': _postToFacebook,
       };
 
       final docRef =
@@ -3150,7 +3155,16 @@ class _MarketplaceMerchantDashboardState
       }());
 
       if (!mounted) return;
-      _toastOk('Submitted for review. WeG??ll notify you when itG??s live.');
+      ToastHelper.showCustomToast(
+        context,
+        'Submitted for review. We’ll notify you when it’s live.',
+        isSuccess: true,
+        errorMessage: 'Submitted',
+        showFacebook: _postToFacebook,
+        facebookMessage: _postToFacebook
+            ? 'Once approved, we’ll also share this on the Vero360 Facebook Page.'
+            : null,
+      );
 
       _name.clear();
       _price.clear();
@@ -3161,6 +3175,7 @@ class _MarketplaceMerchantDashboardState
       _cover = null;
       _gallery.clear();
       _isActive = true;
+      _postToFacebook = true;
       _category = 'other';
 
       setState(() {});
@@ -3458,7 +3473,7 @@ class _MarketplaceMerchantDashboardState
                   'quantity': stockQty,
                   'updatedAt': FieldValue.serverTimestamp(),
                 };
-                final desc = descCtrl.text.trim();
+                final desc = DescriptionContactMask.mask(descCtrl.text.trim());
                 if (desc.isEmpty) {
                   patch['description'] = FieldValue.delete();
                 } else {
@@ -4721,33 +4736,34 @@ class _MarketplaceMerchantDashboardState
                           ),
                           Container(
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 5,
+                              horizontal: 7,
+                              vertical: 2,
                             ),
                             decoration: BoxDecoration(
                               color: badgeBg,
                               borderRadius: BorderRadius.circular(999),
-                              border: Border.all(color: badgeBorder),
+                              border: Border.all(color: badgeBorder, width: 0.8),
                             ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Container(
-                                  width: 6,
-                                  height: 6,
+                                  width: 5,
+                                  height: 5,
                                   decoration: BoxDecoration(
                                     color: badgeFg,
                                     shape: BoxShape.circle,
                                   ),
                                 ),
-                                const SizedBox(width: 6),
+                                const SizedBox(width: 4),
                                 Text(
                                   badgeLabel,
                                   style: TextStyle(
                                     color: badgeFg,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 11,
-                                    letterSpacing: 0.1,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 10,
+                                    height: 1.1,
+                                    letterSpacing: 0.05,
                                   ),
                                 ),
                               ],
@@ -5440,13 +5456,42 @@ class _MarketplaceMerchantDashboardState
   }
 
 
-  // ----------------- G?Top itemsG? replaced: list ALL merchant items -----------------
+  // ----------------- "My Items" on Dashboard — with promote -----------------
   Widget _buildAllClientItemsSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('My Items',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'My Items',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+              ),
+            ),
+            TextButton.icon(
+              onPressed: () => _marketplaceTabs.animateTo(2),
+              icon: const Icon(Icons.campaign_rounded, size: 18),
+              label: const Text(
+                'Promote',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              style: TextButton.styleFrom(
+                foregroundColor: _brandOrange,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Tap the megaphone on a live item to boost it.',
+          style: TextStyle(
+            color: Colors.grey.shade700,
+            fontWeight: FontWeight.w600,
+            fontSize: 12.5,
+          ),
+        ),
         const SizedBox(height: 10),
         if (_loadingItems)
           const _ItemsGridSkeleton(count: 6)
@@ -5467,10 +5512,39 @@ class _MarketplaceMerchantDashboardState
             physics: const NeverScrollableScrollPhysics(),
             itemCount: _items.length,
             gridDelegate: _merchantItemsGridDelegate(context),
-            itemBuilder: (_, i) => _ModernItemMiniCard(item: _items[i]),
+            itemBuilder: (_, i) {
+              final it = _items[i];
+              return _ModernItemMiniCard(
+                item: it,
+                busy: _busyRow,
+                onPromote: () => _promoteItem(it),
+              );
+            },
           ),
       ],
     );
+  }
+
+  Future<void> _promoteItem(Map<String, dynamic> it) async {
+    final id = (it['id'] ?? '').toString().trim();
+    if (id.isEmpty) return;
+    final canPromote =
+        _itemReviewStatus(it) == 'approved' && it['isActive'] == true;
+    if (!canPromote) {
+      ToastHelper.showCustomToast(
+        context,
+        'Only live (approved) items can be promoted.',
+        isSuccess: false,
+        errorMessage: 'Cannot promote',
+      );
+      return;
+    }
+    await MarketplacePromoteService.presentPromoteSheet(
+      context: context,
+      itemId: id,
+      item: it,
+    );
+    await _loadItems(showLoading: false);
   }
 
   // ----------------- G?? Add Item Tab (with multi-photos) -----------------
@@ -5756,10 +5830,33 @@ class _MarketplaceMerchantDashboardState
                 ),
               ),
               const SizedBox(height: 10),
-              const FacebookShareHint(
-                message:
-                    'Once approved, this listing is also shared on the Vero360 Facebook Page to help more buyers find you.',
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                value: _postToFacebook,
+                activeThumbColor: _brandOrange,
+                secondary: const FacebookLogoMark(size: 22),
+                title: const Text(
+                  'Also post on Facebook',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                ),
+                subtitle: Text(
+                  'Share on the Vero360 Facebook Page once approved.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+                onChanged: _submitting
+                    ? null
+                    : (v) => setState(() => _postToFacebook = v),
               ),
+              if (_postToFacebook) ...[
+                const SizedBox(height: 8),
+                const FacebookShareHint(
+                  message:
+                      'Once approved, this listing is also shared on the Vero360 Facebook Page to help more buyers find you.',
+                ),
+              ],
               const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
@@ -5774,7 +5871,11 @@ class _MarketplaceMerchantDashboardState
                               strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.upload_rounded),
                   label: Text(
-                    _submitting ? 'PostingG?' : 'Post on Marketplace',
+                    _submitting
+                        ? 'Posting…'
+                        : (_postToFacebook
+                            ? 'Post on Marketplace + Facebook'
+                            : 'Post on Marketplace'),
                     style: const TextStyle(fontWeight: FontWeight.w900),
                   ),
                 ),
@@ -5884,27 +5985,7 @@ class _MarketplaceMerchantDashboardState
                         onDelete: () => _deleteItem(filtered[i]),
                         onEdit: () => _openEditItemSheet(filtered[i]),
                         onPromote: () async {
-                          final it = filtered[i];
-                          final id = (it['id'] ?? '').toString().trim();
-                          if (id.isEmpty) return;
-                          final canPromote =
-                              _itemReviewStatus(it) == 'approved' &&
-                                  it['isActive'] == true;
-                          if (!canPromote) {
-                            ToastHelper.showCustomToast(
-                              context,
-                              'Only live (approved) items can be promoted.',
-                              isSuccess: false,
-                              errorMessage: 'Cannot promote',
-                            );
-                            return;
-                          }
-                          await MarketplacePromoteService.presentPromoteSheet(
-                            context: context,
-                            itemId: id,
-                            item: it,
-                          );
-                          await _loadItems(showLoading: false);
+                          await _promoteItem(filtered[i]);
                         },
                       ),
                     ),
@@ -6513,12 +6594,24 @@ String? _coverImageSourceFromItem(Map<String, dynamic> item) {
 
 class _ModernItemMiniCard extends StatelessWidget {
   final Map<String, dynamic> item;
-  const _ModernItemMiniCard({required this.item});
+  final bool busy;
+  final VoidCallback? onPromote;
+
+  const _ModernItemMiniCard({
+    required this.item,
+    this.busy = false,
+    this.onPromote,
+  });
 
   @override
   Widget build(BuildContext context) {
     final statusLabel = _MarketplaceMerchantDashboardState._reviewLabel(item);
     final statusColor = _MarketplaceMerchantDashboardState._reviewColor(item);
+    final canPromote =
+        _MarketplaceMerchantDashboardState._itemReviewStatus(item) ==
+                'approved' &&
+            item['isActive'] == true;
+    final isBoosted = MarketplacePromoteService.isPromotedNow(item);
 
     return Container(
       decoration: BoxDecoration(
@@ -6533,69 +6626,139 @@ class _ModernItemMiniCard extends StatelessWidget {
           final padH = narrow ? 8.0 : 10.0;
           final padV = narrow ? 5.0 : 7.0;
 
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+          return Stack(
             children: [
-              Expanded(
-                flex: 6,
-                child: _ImageAny(_coverImageSourceFromItem(item)),
-              ),
-              Expanded(
-                flex: 4,
-                child: Padding(
-                  padding: EdgeInsets.fromLTRB(padH, padV, padH, padV),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        (item['name'] ?? 'Unknown').toString(),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: narrow ? 12.0 : 13.5,
-                          height: 1.15,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        mwk0(item['price']),
-                        style: TextStyle(
-                          fontWeight: FontWeight.w900,
-                          color: Colors.green,
-                          fontSize: narrow ? 11.5 : 13.0,
-                          height: 1.15,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 2),
-                      Expanded(
-                        child: Row(
-                          children: [
-                            Icon(Icons.circle,
-                                size: narrow ? 8 : 10, color: statusColor),
-                            SizedBox(width: narrow ? 4 : 6),
-                            Flexible(
-                              child: Text(
-                                statusLabel,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  color: Colors.black54,
-                                  fontSize: narrow ? 10.5 : 12,
-                                  height: 1.15,
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    flex: 5,
+                    child: _ImageAny(_coverImageSourceFromItem(item)),
+                  ),
+                  Expanded(
+                    flex: 5,
+                    child: Padding(
+                      padding: EdgeInsets.fromLTRB(padH, padV, padH, padV),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            (item['name'] ?? 'Unknown').toString(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: narrow ? 12.0 : 13.5,
+                              height: 1.15,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            mwk0(item['price']),
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              color: Colors.green,
+                              fontSize: narrow ? 11.5 : 13.0,
+                              height: 1.15,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 2),
+                          Row(
+                            children: [
+                              Icon(Icons.circle,
+                                  size: narrow ? 8 : 10, color: statusColor),
+                              SizedBox(width: narrow ? 4 : 6),
+                              Flexible(
+                                child: Text(
+                                  statusLabel,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.black54,
+                                    fontSize: narrow ? 10.5 : 12,
+                                    height: 1.15,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const Spacer(),
+                          // Promote action below item details
+                          SizedBox(
+                            width: double.infinity,
+                            height: narrow ? 28 : 30,
+                            child: Material(
+                              color: canPromote
+                                  ? const Color(0xFFFF8A00)
+                                  : const Color(0xFFE5E7EB),
+                              borderRadius: BorderRadius.circular(10),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(10),
+                                onTap: (!busy &&
+                                        canPromote &&
+                                        onPromote != null)
+                                    ? onPromote
+                                    : () {
+                                        if (onPromote != null) onPromote!();
+                                      },
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.campaign_rounded,
+                                      size: narrow ? 14 : 16,
+                                      color: canPromote
+                                          ? Colors.white
+                                          : Colors.black45,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      isBoosted ? 'Boosted' : 'Promote',
+                                      style: TextStyle(
+                                        color: canPromote
+                                            ? Colors.white
+                                            : Colors.black45,
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: narrow ? 11 : 12,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
+                  ),
+                ],
+              ),
+              if (isBoosted)
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: narrow ? 8 : 10,
+                      vertical: narrow ? 3 : 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF8A00),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      'Promoted',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: narrow ? 10 : 11,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
                   ),
                 ),
-              ),
             ],
           );
         },

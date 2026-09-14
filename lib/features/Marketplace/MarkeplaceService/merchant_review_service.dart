@@ -89,7 +89,9 @@ class MerchantReviewService {
   Future<MerchantReviewSummary> getMerchantReviewSummary(int merchantId) async {
     try {
       final summary = await getMerchantSummary(merchantId);
-      if (summary.count > 0 || summary.average > 0) return summary;
+      // Trust summary only when it still has reviews. A leftover average with
+      // count 0 (after deletes) must be recomputed from the live list.
+      if (summary.count > 0) return summary;
     } catch (_) {}
 
     final reviews = await getMerchantReviews(merchantId);
@@ -219,7 +221,8 @@ class MerchantReviewService {
   }
 
   /// Writes latest review average onto merchant + listing docs so feed ranking
-  /// can prioritize highly reviewed sellers.
+  /// can prioritize highly reviewed sellers. Also clears rating when reviews
+  /// are gone (e.g. after the last review is deleted).
   static Future<void> syncSellerRatingToListings({
     required String merchantFirebaseUid,
     int? merchantBackendId,
@@ -234,15 +237,15 @@ class MerchantReviewService {
       } else {
         return;
       }
-      final avg = summary.average;
-      if (avg <= 0 && summary.count <= 0) return;
+      final count = summary.count < 0 ? 0 : summary.count;
+      final avg = count > 0 ? summary.average : 0.0;
 
       final db = FirebaseFirestore.instance;
       final patch = <String, dynamic>{
         'sellerRating': avg,
         'averageRating': avg,
-        'sellerReviewCount': summary.count,
-        'reviewCount': summary.count,
+        'sellerReviewCount': count,
+        'reviewCount': count,
         'ratingUpdatedAt': FieldValue.serverTimestamp(),
       };
 
@@ -261,7 +264,7 @@ class MerchantReviewService {
           {
             'sellerRating': avg,
             'averageRating': avg,
-            'reviewCount': summary.count,
+            'reviewCount': count,
           },
           SetOptions(merge: true),
         );
@@ -296,6 +299,8 @@ class MerchantReviewService {
     required String reviewId,
     required int rating,
     required String comment,
+    int? merchantBackendId,
+    String? merchantFirebaseUid,
   }) async {
     final res = await ApiClient.put(
       '/reviews/$reviewId',
@@ -305,11 +310,36 @@ class MerchantReviewService {
       }),
       timeout: _fastTimeout,
     );
+    final mid = merchantBackendId ?? 0;
+    if (mid > 0) invalidateCache(mid);
+    final uid = (merchantFirebaseUid ?? '').trim();
+    if (uid.isNotEmpty && mid > 0) {
+      unawaited(
+        syncSellerRatingToListings(
+          merchantFirebaseUid: uid,
+          merchantBackendId: mid,
+        ),
+      );
+    }
     return MerchantReview.fromJson(_unwrapMap(jsonDecode(res.body)));
   }
 
-  Future<void> deleteReview(String reviewId) async {
+  Future<void> deleteReview({
+    required String reviewId,
+    int? merchantBackendId,
+    String? merchantFirebaseUid,
+  }) async {
     await ApiClient.delete('/reviews/$reviewId', timeout: _fastTimeout);
+    final mid = merchantBackendId ?? 0;
+    if (mid > 0) invalidateCache(mid);
+    final uid = (merchantFirebaseUid ?? '').trim();
+    if (uid.isNotEmpty && mid > 0) {
+      // Await so listing/shop rating clears before UI reloads.
+      await syncSellerRatingToListings(
+        merchantFirebaseUid: uid,
+        merchantBackendId: mid,
+      );
+    }
   }
 
   Future<MerchantReview> likeReview(String reviewId) async {

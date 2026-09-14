@@ -22,6 +22,7 @@ import 'package:vero360_app/features/Auth/AuthPresenter/kyc_verification_screen.
 import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/utils/kyc_gate.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/kyc_status_card.dart';
 import 'package:vero360_app/widgets/vero_coin_icon_button.dart';
@@ -1447,7 +1448,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
   }
 
   Future<void> _saveBusinessDescription(String raw) async {
-    final desc = raw.trim();
+    final desc = DescriptionContactMask.mask(raw.trim());
     if (desc.length > _kDescMax) {
       _toastErr('Keep it under $_kDescMax characters.');
       return;

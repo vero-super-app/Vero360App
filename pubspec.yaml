@@ -102,7 +102,12 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/icons/logo_mark.png"
+  image_path: "assets/icons/app_icon.png"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icons/app_icon_foreground.png"
+  adaptive_icon_foreground_inset: 0
+  remove_alpha_ios: true
+
 
 dependency_overrides:
   firebase_storage_web: ^3.6.22

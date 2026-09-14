@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
 
-/// Fixed Netflix plan specs. Monthly MWK prices come from admin / [DigitalProduct].
+/// Fixed Netflix plan specs. Monthly MWK prices come from admin only.
 class NetflixPlanSpec {
   final String key;
   final String title;
@@ -12,7 +12,6 @@ class NetflixPlanSpec {
   final int downloadDevices;
   final bool spatialAudio;
   final bool mostPopular;
-  final double defaultMwkPrice;
   final Color accent;
 
   const NetflixPlanSpec({
@@ -25,7 +24,6 @@ class NetflixPlanSpec {
     required this.downloadDevices,
     this.spatialAudio = false,
     this.mostPopular = false,
-    required this.defaultMwkPrice,
     this.accent = const Color(0xFFE50914),
   });
 
@@ -48,7 +46,6 @@ const List<NetflixPlanSpec> kNetflixPlanSpecs = [
     supportedDevices: 'Mobile phone, tablet',
     simultaneousStreams: 1,
     downloadDevices: 1,
-    defaultMwkPrice: 8000,
   ),
   NetflixPlanSpec(
     key: 'netflix_basic',
@@ -58,7 +55,6 @@ const List<NetflixPlanSpec> kNetflixPlanSpecs = [
     supportedDevices: 'TV, computer, mobile phone, tablet',
     simultaneousStreams: 1,
     downloadDevices: 1,
-    defaultMwkPrice: 12000,
   ),
   NetflixPlanSpec(
     key: 'netflix_standard',
@@ -68,7 +64,6 @@ const List<NetflixPlanSpec> kNetflixPlanSpecs = [
     supportedDevices: 'TV, computer, mobile phone, tablet',
     simultaneousStreams: 2,
     downloadDevices: 2,
-    defaultMwkPrice: 15000,
   ),
   NetflixPlanSpec(
     key: 'netflix_premium',
@@ -80,7 +75,6 @@ const List<NetflixPlanSpec> kNetflixPlanSpecs = [
     downloadDevices: 6,
     spatialAudio: true,
     mostPopular: true,
-    defaultMwkPrice: 20000,
   ),
 ];
 
@@ -97,7 +91,7 @@ NetflixPlanSpec? netflixPlanSpecForKey(String key) {
   return null;
 }
 
-/// Catalog products for each Netflix plan (prices overridden by admin).
+/// Catalog shells for each Netflix plan — MWK prices set in admin only.
 const List<DigitalProduct> kNetflixPlanProducts = [
   DigitalProduct(
     key: 'netflix_mobile',
@@ -108,7 +102,6 @@ const List<DigitalProduct> kNetflixPlanProducts = [
     brandTag: 'Netflix',
     logoAsset: 'assets/brands/netflix.png',
     icon: Icons.movie_creation_outlined,
-    fixedMwkPrice: 8000,
   ),
   DigitalProduct(
     key: 'netflix_basic',
@@ -119,7 +112,6 @@ const List<DigitalProduct> kNetflixPlanProducts = [
     brandTag: 'Netflix',
     logoAsset: 'assets/brands/netflix.png',
     icon: Icons.movie_creation_outlined,
-    fixedMwkPrice: 12000,
   ),
   DigitalProduct(
     key: 'netflix_standard',
@@ -130,7 +122,6 @@ const List<DigitalProduct> kNetflixPlanProducts = [
     brandTag: 'Netflix',
     logoAsset: 'assets/brands/netflix.png',
     icon: Icons.movie_creation_outlined,
-    fixedMwkPrice: 15000,
   ),
   DigitalProduct(
     key: 'netflix_premium',
@@ -141,10 +132,8 @@ const List<DigitalProduct> kNetflixPlanProducts = [
     brandTag: 'Popular',
     logoAsset: 'assets/brands/netflix.png',
     icon: Icons.movie_creation_outlined,
-    fixedMwkPrice: 20000,
   ),
 ];
 
 List<DigitalProduct> buildNetflixPlanProducts() =>
     List<DigitalProduct>.from(kNetflixPlanProducts);
-

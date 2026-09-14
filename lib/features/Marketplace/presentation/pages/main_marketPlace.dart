@@ -320,7 +320,12 @@ class MarketplaceDetailModel {
     return stockQuantity!.clamp(0, 99999);
   }
 
-  MarketplaceDetailModel copyWith({int? peopleAddedCount, DateTime? promotedUntil}) {
+  MarketplaceDetailModel copyWith({
+    int? peopleAddedCount,
+    DateTime? promotedUntil,
+    double? sellerRating,
+    int? sellerReviewCount,
+  }) {
     return MarketplaceDetailModel(
       id: id,
       sqlItemId: sqlItemId,
@@ -340,7 +345,7 @@ class MarketplaceDetailModel {
       sellerOpeningHours: sellerOpeningHours,
       sellerStatus: sellerStatus,
       sellerBusinessDescription: sellerBusinessDescription,
-      sellerRating: sellerRating,
+      sellerRating: sellerRating ?? this.sellerRating,
       sellerLogoUrl: sellerLogoUrl,
       serviceProviderId: serviceProviderId,
       sellerUserId: sellerUserId,
@@ -351,7 +356,7 @@ class MarketplaceDetailModel {
       stockQuantity: stockQuantity,
       peopleAddedCount: peopleAddedCount ?? this.peopleAddedCount,
       promotedUntil: promotedUntil ?? this.promotedUntil,
-      sellerReviewCount: sellerReviewCount,
+      sellerReviewCount: sellerReviewCount ?? this.sellerReviewCount,
     );
   }
 
@@ -889,10 +894,17 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     bool attachSocial = true,
     bool fast = false,
   }) async {
+    // Fill missing sellerRating from merchant profile so high-rated shops
+    // still float even when older listings were never denormalized.
+    var enriched = items;
+    if (!fast) {
+      enriched = await _enrichSellerRatings(items);
+    }
+
     List<MarketplaceDetailModel> list;
     if (fast) {
       // Sync-ish newest sort — skip prefs / follows / social for first paint.
-      list = List<MarketplaceDetailModel>.from(items);
+      list = List<MarketplaceDetailModel>.from(enriched);
       list.sort((a, b) {
         final byPromo = (b.isPromotedNow ? 1 : 0).compareTo(a.isPromotedNow ? 1 : 0);
         if (byPromo != 0) return byPromo;
@@ -911,9 +923,9 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
         return db.compareTo(da);
       });
     } else if (_forYouMode) {
-      list = await _rankByPersonalization(items);
+      list = await _rankByPersonalization(enriched);
     } else {
-      list = await _sortByNewest(items);
+      list = await _sortByNewest(enriched);
     }
     list = _prioritizeByLocation(list);
     if (!fast && attachSocial) {
@@ -921,6 +933,98 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     }
     if (!fast) _setSuggestionsFromItems(list);
     return list;
+  }
+
+  String? _sellerUidForRating(MarketplaceDetailModel i) {
+    bool looksLikeUid(String s) =>
+        s.length >= 20 && !RegExp(r'^\d+$').hasMatch(s);
+    for (final raw in [i.sellerUserId, i.merchantId]) {
+      final v = (raw ?? '').trim();
+      if (looksLikeUid(v)) return v;
+    }
+    return null;
+  }
+
+  /// Batch-load sellerRating from marketplace_merchants / users when listing
+  /// docs don't have it yet (pre-sync listings).
+  Future<List<MarketplaceDetailModel>> _enrichSellerRatings(
+    List<MarketplaceDetailModel> items,
+  ) async {
+    if (items.isEmpty) return items;
+
+    final needUids = <String>{};
+    for (final i in items) {
+      if ((i.sellerRating ?? 0) > 0) continue;
+      final uid = _sellerUidForRating(i);
+      if (uid != null) needUids.add(uid);
+    }
+    if (needUids.isEmpty) return items;
+
+    final ratings = <String, ({double rating, int count})>{};
+    final ids = needUids.toList(growable: false);
+
+    Future<void> readChunk(
+      String collection,
+      List<String> chunk,
+    ) async {
+      try {
+        final snaps = await Future.wait(
+          chunk.map(
+            (id) => _firestore.collection(collection).doc(id).get(),
+          ),
+        );
+        for (final snap in snaps) {
+          if (!snap.exists) continue;
+          final data = snap.data() ?? const <String, dynamic>{};
+          final raw =
+              data['sellerRating'] ?? data['averageRating'] ?? data['rating'];
+          double? rating;
+          if (raw is num) {
+            rating = raw.toDouble();
+          } else if (raw != null) {
+            rating = double.tryParse(raw.toString());
+          }
+          if (rating == null || rating <= 0) continue;
+          final rc =
+              data['sellerReviewCount'] ?? data['reviewCount'] ?? data['reviewsCount'];
+          var count = 0;
+          if (rc is num) {
+            count = rc.toInt();
+          } else if (rc != null) {
+            count = int.tryParse(rc.toString()) ?? 0;
+          }
+          final existing = ratings[snap.id];
+          if (existing == null || rating > existing.rating) {
+            ratings[snap.id] = (rating: rating, count: count);
+          }
+        }
+      } catch (_) {}
+    }
+
+    for (var i = 0; i < ids.length; i += 10) {
+      final end = (i + 10 > ids.length) ? ids.length : i + 10;
+      final chunk = ids.sublist(i, end);
+      await readChunk('marketplace_merchants', chunk);
+      final stillMissing =
+          chunk.where((id) => !ratings.containsKey(id)).toList();
+      if (stillMissing.isNotEmpty) {
+        await readChunk('users', stillMissing);
+      }
+    }
+
+    if (ratings.isEmpty) return items;
+
+    return items.map((i) {
+      if ((i.sellerRating ?? 0) > 0) return i;
+      final uid = _sellerUidForRating(i);
+      if (uid == null) return i;
+      final hit = ratings[uid];
+      if (hit == null) return i;
+      return i.copyWith(
+        sellerRating: hit.rating,
+        sellerReviewCount: hit.count > 0 ? hit.count : i.sellerReviewCount,
+      );
+    }).toList();
   }
 
   bool get _productCacheFresh =>

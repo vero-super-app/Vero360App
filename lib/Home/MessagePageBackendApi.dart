@@ -1,3 +1,4 @@
+
 import 'dart:async';
 import 'dart:io' show File;
 import 'dart:typed_data';
@@ -22,27 +23,35 @@ import 'package:uuid/uuid.dart';
 
 import 'package:vero360_app/GeneralModels/call_model.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/call_service_impl.dart';
 import 'package:vero360_app/GernalServices/chat_outbox.dart';
 import 'package:vero360_app/GernalServices/chat_notification_service.dart';
 import 'package:vero360_app/GernalServices/chat_receipt_service.dart';
-import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/GernalServices/hidden_message_store.dart';
+import 'package:vero360_app/GernalServices/message_reaction_service.dart';
+import 'package:vero360_app/GernalServices/user_presence_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/widgets/modern_confirm_dialog.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
+import 'package:vero360_app/widgets/linkified_text.dart';
 import 'package:vero360_app/widgets/messaging_skeleton_loaders.dart';
 import 'package:vero360_app/widgets/voice_note_bubble.dart';
 import 'package:vero360_app/utils/chat_offplatform_detector.dart';
 import 'package:vero360_app/widgets/chat_offplatform_warning.dart';
 import 'package:vero360_app/GeneralPages/checkout_page.dart';
+import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart'
     as core;
+import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
 import 'package:vero360_app/features/Marketplace/presentation/widgets/merchant_review_prompt.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_id_resolver.dart';
+import 'package:vero360_app/app_nav_key.dart';
 
 class MessagePageBackendApi extends StatefulWidget {
   /// Chat ID from backend. Empty when chat is resolved after open (marketplace).
@@ -100,6 +109,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   int? _myUserId;
   late String _chatId;
   int? _peerUserId;
+  late String _peerDisplayName;
 
   final _input = TextEditingController();
   final _scroll = ScrollController();
@@ -117,9 +127,17 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   StreamSubscription<bool>? _wsConnectionSub;
   StreamSubscription<ChatPeerReceipt?>? _peerReceiptSub;
   ChatPeerReceipt? _peerReceipt;
+  int? _boundReceiptPeerId;
+  /// Sticky watermarks — never move backwards so ticks don't flicker on poll/rebind.
+  DateTime? _stickyPeerReadUpTo;
+  DateTime? _stickyPeerDeliveredUpTo;
 
   /// Stay pinned to newest only when the user is already near the bottom.
   bool _stickToBottom = true;
+  /// Bumped to cancel in-flight “pin to latest” retries when the user scrolls away.
+  int _scrollPinToken = 0;
+  /// True while a finger is dragging the message list (cancels pin + eases Slidable fight).
+  bool _fingerDraggingList = false;
   int _messagePage = 1;
   bool _loadingOlder = false;
   bool _hasMoreOlder = true;
@@ -138,7 +156,12 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   final Map<String, int> _localVoiceDurations = {};
   BackendChatMessage? _replyingTo;
   final Set<String> _outboxFlushing = {};
+  final Set<String> _hiddenMessageIds = {};
+  final Map<String, GlobalKey> _messageAnchorKeys = {};
+  String? _highlightedMessageKey;
+  Timer? _highlightClearTimer;
 
+  static const _reactionEmojis = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
   static const _imgPrefix = 'img::';
   static const _audPrefix = 'aud::';
   static const _minVoiceMs = 800;
@@ -152,30 +175,32 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     super.initState();
     _chatId = widget.peerId.trim();
     _peerUserId = widget.peerUserId;
+    _peerDisplayName = widget.peerName.trim().isEmpty ? 'Chat' : widget.peerName.trim();
     _resolvingChat = _chatId.isEmpty;
     // Show seller chat chrome immediately (messages may still be loading).
-    _bootComplete = widget.peerName.trim().isNotEmpty;
+    _bootComplete = _peerDisplayName.isNotEmpty &&
+        _peerDisplayName.toLowerCase() != 'chat';
+
+    unawaited(UserPresenceService.goOnline());
+    unawaited(_hydratePeerDisplayName());
 
     if (_chatId.isNotEmpty) {
       BackendChatService.setActiveChatId(_chatId);
       BackendChatService.clearThreadUnread(_chatId);
+      unawaited(_loadHiddenMessages());
 
-      final cached = BackendChatService.peekCachedMessages(_chatId);
-      if (cached.isNotEmpty) {
-        _messages = cached;
+      // Instant paint from memory/disk — never wait on auth/network for this.
+      final warm = BackendChatService.peekCachedMessages(_chatId);
+      if (warm.isNotEmpty) {
+        _messages = warm;
         _loading = false;
         _bootComplete = true;
         if (_hasProductTagInMessages(_messages)) {
           _productTagAttached = true;
         }
-        // Warm media + land on newest (reverse list starts at latest).
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          _prefetchThreadVoiceNotes();
-          _prefetchChatImages();
-          _scheduleScrollToLatest();
-        });
       }
+
+      unawaited(_paintCachedMessages());
     }
 
     _boot();
@@ -188,6 +213,32 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     _scroll.addListener(_onScrollPositionChanged);
 
     _startRealtime();
+  }
+
+  /// WhatsApp-style: show local history immediately, then refresh from network.
+  Future<void> _paintCachedMessages() async {
+    if (_chatId.isEmpty) return;
+    final cached = await BackendChatService.loadCachedMessages(_chatId);
+    if (!mounted || cached.isEmpty) return;
+    final hadLocal = _messages.isNotEmpty;
+    setState(() {
+      // Prefer richer local list if we already painted memory and disk is equal/smaller.
+      if (!hadLocal || cached.length >= _messages.length) {
+        _messages = cached;
+      }
+      _loading = false;
+      _bootComplete = true;
+      if (_hasProductTagInMessages(_messages)) {
+        _productTagAttached = true;
+      }
+    });
+    _prefetchThreadVoiceNotes();
+    unawaited(Future<void>.delayed(const Duration(milliseconds: 320), () {
+      if (mounted) _prefetchChatImages();
+    }));
+    if (_stickToBottom) {
+      _scheduleScrollToLatest(forceStick: true);
+    }
   }
 
   Future<void> _prefetchShopMerchantId() async {
@@ -229,7 +280,11 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     if (!_scroll.hasClients) return;
     final pos = _scroll.position;
     // reverse:true — pixels ≈ 0 is the newest messages.
-    _stickToBottom = pos.pixels <= _nearBottomPx;
+    final atBottom = pos.pixels <= _nearBottomPx;
+    if (!atBottom && _stickToBottom) {
+      _scrollPinToken++;
+    }
+    _stickToBottom = atBottom;
     // Load older history when the user scrolls toward the oldest end.
     if (pos.maxScrollExtent > 0 &&
         pos.pixels >= pos.maxScrollExtent - 80) {
@@ -297,6 +352,26 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
   @override
   void dispose() {
+    final chatId = _chatId.trim();
+    final myUserId = _myUserId;
+    if (chatId.isNotEmpty) {
+      BackendChatService.clearThreadUnread(chatId);
+      if (myUserId != null) {
+        final unreadIds = _messages
+            .where((m) => !m.isMine(myUserId) && !_isUnsent(m))
+            .map((m) => m.id)
+            .where((id) => id.isNotEmpty)
+            .toList();
+        if (unreadIds.isNotEmpty) {
+          unawaited(
+            BackendChatService.markRead(
+              chatId: chatId,
+              messageIds: unreadIds,
+            ),
+          );
+        }
+      }
+    }
     BackendChatService.setActiveChatId(null);
     _fallbackPollTimer?.cancel();
     _readStatusPollTimer?.cancel();
@@ -305,12 +380,14 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     _wsMessageSub?.cancel();
     _wsConnectionSub?.cancel();
     _peerReceiptSub?.cancel();
-    if (_chatId.isNotEmpty) {
-      unawaited(BackendMessagingSocket.leaveChat(_chatId));
+    _boundReceiptPeerId = null;
+    if (chatId.isNotEmpty) {
+      unawaited(BackendMessagingSocket.leaveChat(chatId));
     }
     _input.dispose();
     _scroll.removeListener(_onScrollPositionChanged);
     _scroll.dispose();
+    _highlightClearTimer?.cancel();
     super.dispose();
   }
 
@@ -383,9 +460,15 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
             _me = cachedUserId.toString();
             if (_chatId.isNotEmpty) _bootComplete = true;
           });
+          unawaited(_loadHiddenMessages());
           await _hydrateOutbox();
         }
       }).catchError((_) {}));
+
+      // Paint cache before any network await (WhatsApp-style).
+      if (_chatId.isNotEmpty && _messages.isEmpty) {
+        await _paintCachedMessages();
+      }
 
       // Resolve chat + auth in parallel when needed.
       final resolveFuture = _resolveChatIfNeeded();
@@ -396,18 +479,14 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
       BackendChatService.setActiveChatId(_chatId);
 
-      final cached = BackendChatService.peekCachedMessages(_chatId);
-      if (cached.isNotEmpty && mounted) {
+      // Chat id may have been resolved just now — paint that thread's cache.
+      if (_messages.isEmpty) {
+        await _paintCachedMessages();
+      } else if (mounted) {
         setState(() {
-          _messages = cached;
           _loading = false;
           _bootComplete = true;
-          if (_hasProductTagInMessages(_messages)) {
-            _productTagAttached = true;
-          }
         });
-      } else if (mounted) {
-        setState(() => _bootComplete = true);
       }
 
       // Don't block message fetch on joinChat.
@@ -422,19 +501,23 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       await authFuture;
       final userId = await BackendChatService.getUserId();
 
+      // Background refresh — UI already shows cache when available.
       unawaited(() async {
-        await _loadMessages(silent: cached.isNotEmpty);
+        await _loadMessages(silent: _messages.isNotEmpty);
+        if (!mounted) return;
+        await _markUnreadAsRead(userId);
         if (mounted) await _maybeSendAutoMessage(userId);
       }());
       unawaited(_maybeSendProductEnquiry(userId));
-      unawaited(_markUnreadAsRead(userId));
 
       if (!mounted) return;
       setState(() {
         _myUserId = userId;
         _me = userId.toString();
         _bootComplete = true;
+        if (_messages.isNotEmpty) _loading = false;
       });
+      unawaited(_loadHiddenMessages());
       _bindPeerReceiptListener(userId);
       unawaited(_publishMyReceipts(asRead: true));
       await _hydrateOutbox();
@@ -622,7 +705,9 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       }
 
       final wasEmpty = _messages.isEmpty;
-      final stick = !silent || _stickToBottom || wasEmpty;
+      // Never re-force pin after the user has scrolled away — that made the
+      // first swipe feel sticky / not smooth while messages finished loading.
+      final shouldPin = _stickToBottom && !_fingerDraggingList;
 
       setState(() {
         _messages = _mergeWithPending(mergedServer);
@@ -640,12 +725,20 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       });
       _ensurePeerUserIdFromMessages();
       _prefetchThreadVoiceNotes();
-      _prefetchChatImages();
+      if (!_fingerDraggingList) {
+        unawaited(Future<void>.delayed(const Duration(milliseconds: 280), () {
+          if (mounted && !_fingerDraggingList) _prefetchChatImages();
+        }));
+      }
       // Opening/refreshing the chat means we've delivered + read incoming msgs.
       unawaited(_publishMyReceipts(asRead: true));
+      final myId = _myUserId;
+      if (myId != null) {
+        unawaited(_markUnreadAsRead(myId));
+      }
 
-      if (stick) {
-        _scheduleScrollToLatest();
+      if (shouldPin) {
+        _scheduleScrollToLatest(forceStick: wasEmpty);
       }
     } catch (e) {
       if (!mounted) return;
@@ -701,6 +794,13 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         _loadingOlder = false;
         _stickToBottom = false;
       });
+      // Persist merged history so reopen doesn't wait on network for older pages.
+      final myId = _myUserId ?? BackendChatService.peekUserId();
+      if (myId != null && myId > 0) {
+        unawaited(
+          BackendMessagingCache.saveMessages(myId, _chatId, _messages),
+        );
+      }
       _prefetchThreadVoiceNotes();
       _prefetchChatImages();
 
@@ -722,44 +822,67 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         .toList();
     // Always publish read receipts for ticks (even if Nest has nothing new).
     unawaited(_publishMyReceipts(asRead: true));
+    BackendChatService.clearThreadUnread(_chatId);
     if (unreadIds.isEmpty) return;
     try {
       await BackendChatService.markRead(
         chatId: _chatId,
         messageIds: unreadIds,
       );
+      // Keep local zero; avoid an immediate refresh that can resurrect a
+      // still-stale Nest unreadCount before the bulk/read write settles.
       BackendChatService.clearThreadUnread(_chatId);
-      BackendChatService.refreshThreads();
     } catch (_) {}
   }
 
   void _bindPeerReceiptListener(int myUserId) {
-    _peerReceiptSub?.cancel();
-    _peerReceiptSub = null;
     final peerId = _peerUserId ?? widget.peerUserId;
     if (_chatId.isEmpty || peerId == null || peerId <= 0) return;
+    // Already listening for this peer — don't cancel (kills ticks during polls).
+    if (_peerReceiptSub != null && _boundReceiptPeerId == peerId) return;
 
+    _peerReceiptSub?.cancel();
+    _boundReceiptPeerId = peerId;
     _peerReceiptSub = ChatReceiptService.watchUserReceipt(
       chatId: _chatId,
       userId: peerId,
     ).listen((receipt) {
       if (!mounted) return;
-      setState(() => _peerReceipt = receipt);
+      setState(() {
+        if (receipt != null) {
+          _peerReceipt = receipt;
+          final read = receipt.readUpTo;
+          if (read != null &&
+              (_stickyPeerReadUpTo == null ||
+                  read.isAfter(_stickyPeerReadUpTo!))) {
+            _stickyPeerReadUpTo = read;
+          }
+          final delivered = receipt.deliveredUpTo;
+          if (delivered != null &&
+              (_stickyPeerDeliveredUpTo == null ||
+                  delivered.isAfter(_stickyPeerDeliveredUpTo!))) {
+            _stickyPeerDeliveredUpTo = delivered;
+          }
+        }
+        // Never clear sticky watermarks when stream briefly emits null.
+      });
     });
   }
 
   void _ensurePeerUserIdFromMessages() {
-    if ((_peerUserId ?? 0) > 0) {
-      final myId = _myUserId;
-      if (myId != null) _bindPeerReceiptListener(myId);
-      return;
-    }
     final myId = _myUserId;
     if (myId == null) return;
+
+    if ((_peerUserId ?? 0) > 0) {
+      _bindPeerReceiptListener(myId);
+      unawaited(_hydratePeerDisplayName());
+      return;
+    }
     for (final m in _messages) {
       if (!m.isMine(myId) && m.senderId > 0) {
         _peerUserId = m.senderId;
         _bindPeerReceiptListener(myId);
+        unawaited(_hydratePeerDisplayName());
         return;
       }
     }
@@ -770,6 +893,74 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       _peerUserId = other.id;
       _bindPeerReceiptListener(myId);
     }
+    unawaited(_hydratePeerDisplayName());
+  }
+
+  bool _isPlaceholderPeerName(String raw) {
+    final n = raw.trim().toLowerCase();
+    return n.isEmpty ||
+        n == 'chat' ||
+        n == 'chats' ||
+        n == 'someone' ||
+        n == 'contact' ||
+        n == 'new message' ||
+        n == 'vero360';
+  }
+
+  /// Notification opens often arrive as "Chat" — fill the real peer name ASAP.
+  Future<void> _hydratePeerDisplayName() async {
+    if (!_isPlaceholderPeerName(_peerDisplayName)) return;
+
+    String? next;
+
+    final cached = BackendChatService.cachedPeerLabelForChat(_chatId);
+    if (cached != null && !_isPlaceholderPeerName(cached.name)) {
+      next = cached.name;
+      if ((cached.peerUserId ?? 0) > 0 && (_peerUserId ?? 0) <= 0) {
+        _peerUserId = cached.peerUserId;
+      }
+    }
+
+    if (next == null || _isPlaceholderPeerName(next)) {
+      final myId = _myUserId;
+      if (myId != null) {
+        for (final m in _messages) {
+          if (m.isMine(myId)) continue;
+          final sender = m.sender;
+          if (sender == null) continue;
+          for (final key in ['businessName', 'name', 'displayName', 'username']) {
+            final v = (sender[key] ?? '').toString().trim();
+            if (v.isNotEmpty && !_isPlaceholderPeerName(v) && !v.contains('@')) {
+              next = v;
+              break;
+            }
+          }
+          if (next != null) break;
+        }
+      }
+    }
+
+    if ((next == null || _isPlaceholderPeerName(next)) && _chatId.isNotEmpty) {
+      try {
+        final thread = await BackendChatService.getChat(_chatId);
+        final myId = _myUserId ?? await BackendChatService.getUserId();
+        final name =
+            BackendChatService.peerDisplayNameForThread(thread, myId);
+        if (!_isPlaceholderPeerName(name)) next = name;
+        final other = thread.otherParticipant(myId);
+        if (other != null && other.id > 0 && (_peerUserId ?? 0) <= 0) {
+          _peerUserId = other.id;
+        }
+      } catch (_) {}
+    }
+
+    if (next == null || _isPlaceholderPeerName(next)) return;
+    if (!mounted) return;
+    if (_peerDisplayName == next) return;
+    setState(() {
+      _peerDisplayName = next!;
+      _bootComplete = true;
+    });
   }
 
   /// Tell the peer how far we've delivered/read their messages (for their ticks).
@@ -796,18 +987,151 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
   List<BackendChatMessage> _mergeWithPending(List<BackendChatMessage> server) {
     final myId = _myUserId;
-    if (myId == null) return server;
-
-    final pending = _messages.where(_isUnsent).toList();
-    if (pending.isEmpty) return server;
-
-    final merged = List<BackendChatMessage>.from(server);
-    for (final p in pending) {
-      final alreadySaved = server.any((s) => _isSameMessage(s, p, myId));
-      if (!alreadySaved) merged.add(p);
+    final localByKey = <String, BackendChatMessage>{};
+    for (final m in _messages) {
+      localByKey[_messageKey(m)] = m;
     }
+
+    final merged = <BackendChatMessage>[];
+    final usedLocalKeys = <String>{};
+
+    for (final s in server) {
+      final key = _messageKey(s);
+      BackendChatMessage? local = localByKey[key];
+      if (local == null && myId != null) {
+        for (final entry in localByKey.entries) {
+          if (usedLocalKeys.contains(entry.key)) continue;
+          if (_isSameMessage(s, entry.value, myId)) {
+            local = entry.value;
+            usedLocalKeys.add(entry.key);
+            break;
+          }
+        }
+      } else {
+        usedLocalKeys.add(key);
+      }
+      merged.add(_coalesceReceipt(s, local));
+    }
+
+    // Keep pending/failed + just-sent bubbles until the server page catches up.
+    for (final local in _messages) {
+      final key = _messageKey(local);
+      if (usedLocalKeys.contains(key)) continue;
+      if (myId != null &&
+          server.any((s) => _isSameMessage(s, local, myId))) {
+        continue;
+      }
+      if (_isUnsent(local) || _isRecentLocalSent(local, myId)) {
+        merged.add(local);
+      }
+    }
+
     merged.sort((a, b) => a.createdAt.compareTo(b.createdAt));
     return merged;
+  }
+
+  String _messageKey(BackendChatMessage m) {
+    if (m.id.isNotEmpty) return 'id:${m.id}';
+    final cid = m.clientMessageId?.trim();
+    if (cid != null && cid.isNotEmpty) return 'cid:$cid';
+    return 't:${m.createdAt.millisecondsSinceEpoch}:${m.senderId}:${m.content}';
+  }
+
+  bool _isRecentLocalSent(BackendChatMessage m, int? myId) {
+    if (myId == null || !m.isMine(myId)) return false;
+    if (_isUnsent(m)) return true;
+    return DateTime.now().difference(m.createdAt) <=
+        const Duration(minutes: 2);
+  }
+
+  int _statusRank(String status) {
+    switch (status.trim().toLowerCase()) {
+      case 'read':
+      case 'seen':
+        return 4;
+      case 'delivered':
+        return 3;
+      case 'sent':
+        return 2;
+      case 'pending':
+      case 'queued':
+        return 1;
+      case 'failed':
+        return 0;
+      default:
+        return 1;
+    }
+  }
+
+  /// Keep the strongest receipt fields when Nest silently refreshes as `sent`.
+  BackendChatMessage _coalesceReceipt(
+    BackendChatMessage incoming,
+    BackendChatMessage? local,
+  ) {
+    if (local == null) return _applyStickyReceipt(incoming);
+
+    var status = incoming.status;
+    var readAt = incoming.readAt ?? local.readAt;
+    var deliveredAt = incoming.deliveredAt ?? local.deliveredAt;
+
+    if (_statusRank(local.status) > _statusRank(incoming.status)) {
+      status = local.status;
+    }
+    if (local.readAt != null &&
+        (readAt == null || local.readAt!.isAfter(readAt))) {
+      readAt = local.readAt;
+    }
+    if (local.deliveredAt != null &&
+        (deliveredAt == null || local.deliveredAt!.isAfter(deliveredAt))) {
+      deliveredAt = local.deliveredAt;
+    }
+
+    // Prefer server id / richer payload, but never lose ticks.
+    final preferred = incoming.copyWith(
+      status: status,
+      readAt: readAt,
+      deliveredAt: deliveredAt,
+      clientMessageId: incoming.clientMessageId ?? local.clientMessageId,
+      metadata: incoming.metadata ?? local.metadata,
+      attachments: incoming.attachments ?? local.attachments,
+      tags: incoming.tags ?? local.tags,
+    );
+    return _applyStickyReceipt(preferred);
+  }
+
+  BackendChatMessage _applyStickyReceipt(BackendChatMessage m) {
+    final myId = _myUserId;
+    if (myId == null || !m.isMine(myId) || _isUnsent(m)) return m;
+
+    final stickyRead = _stickyPeerReadUpTo;
+    final stickyDelivered = _stickyPeerDeliveredUpTo;
+    var status = m.status;
+    var readAt = m.readAt;
+    var deliveredAt = m.deliveredAt;
+
+    if (stickyRead != null &&
+        !m.createdAt.isAfter(stickyRead.add(const Duration(seconds: 8)))) {
+      status = 'read';
+      readAt ??= stickyRead;
+    } else if (stickyDelivered != null &&
+        !m.createdAt
+            .isAfter(stickyDelivered.add(const Duration(seconds: 8)))) {
+      if (_statusRank(status) < _statusRank('delivered')) {
+        status = 'delivered';
+      }
+      deliveredAt ??= stickyDelivered;
+    }
+
+    if (status == m.status &&
+        readAt == m.readAt &&
+        deliveredAt == m.deliveredAt) {
+      return m;
+    }
+    return m.copyWith(
+      status: status,
+      readAt: readAt,
+      deliveredAt: deliveredAt,
+    );
   }
 
   bool _isSameMessage(
@@ -835,6 +1159,63 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     setState(() => _replyingTo = msg);
   }
 
+  Widget _buildReactionRow(BackendChatMessage msg, {required bool isMine}) {
+    return StreamBuilder<Map<String, String>>(
+      stream: MessageReactionService.watch(
+        chatId: _chatId,
+        messageId: msg.id,
+      ),
+      builder: (context, snap) {
+        final byUid = snap.data ?? const <String, String>{};
+        if (byUid.isEmpty) return const SizedBox.shrink();
+        final counts = <String, int>{};
+        for (final emoji in byUid.values) {
+          counts[emoji] = (counts[emoji] ?? 0) + 1;
+        }
+        final myUid = FirebaseAuth.instance.currentUser?.uid;
+        final myEmoji = myUid == null ? null : byUid[myUid];
+        return Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            alignment: isMine ? WrapAlignment.end : WrapAlignment.start,
+            children: [
+              for (final entry in counts.entries)
+                GestureDetector(
+                  onTap: () => unawaited(_reactToMessage(msg, entry.key)),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: myEmoji == entry.key
+                          ? _brandOrange.withValues(alpha: 0.18)
+                          : Colors.white,
+                      borderRadius: BorderRadius.circular(99),
+                      border: Border.all(
+                        color: myEmoji == entry.key
+                            ? _brandOrange
+                            : Colors.black12,
+                      ),
+                    ),
+                    child: Text(
+                      '${entry.key} ${entry.value}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   void _clearReply() {
     if (_replyingTo == null) return;
     setState(() => _replyingTo = null);
@@ -855,7 +1236,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     }
     if (text.startsWith(_audPrefix)) return 'Voice note';
     if (text.startsWith(_imgPrefix)) return 'Photo';
-    return text.length > 120 ? '${text.substring(0, 120)}…' : text;
+    final masked = ChatOffPlatformDetector.maskPhones(text);
+    return masked.length > 120 ? '${masked.substring(0, 120)}…' : masked;
   }
 
   Map<String, dynamic>? _replyMetadataPayload() {
@@ -883,6 +1265,58 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   bool _isStoryReply(BackendChatMessage m) {
     final source = (m.metadata?['source'] ?? '').toString().trim().toLowerCase();
     return source == 'story_reply';
+  }
+
+  bool _isForwarded(BackendChatMessage m) {
+    final meta = m.metadata;
+    if (meta != null) {
+      final flag =
+          meta['forwarded'] ?? meta['isForwarded'] ?? meta['forwardedMessage'];
+      if (flag == true ||
+          flag == 1 ||
+          flag?.toString().toLowerCase() == 'true') {
+        return true;
+      }
+    }
+    final content = (m.content ?? '');
+    return content.contains('↪️ Forwarded') ||
+        content.startsWith('Forwarded:');
+  }
+
+  /// Strip the Forwarded marker line from message body for display/copy.
+  String _stripForwardedMarker(String content) {
+    final lines = content.split('\n');
+    final kept = lines.where((l) {
+      final t = l.trim();
+      return t != '↪️ Forwarded' && t != 'Forwarded:' && t != 'Forwarded';
+    }).toList();
+    return kept.join('\n').trim();
+  }
+
+  Widget _buildForwardedLabel({required bool isMine}) {
+    final color = isMine ? Colors.white70 : Colors.black45;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Transform.flip(
+            flipX: true,
+            child: Icon(Icons.reply_rounded, size: 14, color: color),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            'Forwarded',
+            style: TextStyle(
+              fontSize: 12,
+              fontStyle: FontStyle.italic,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   String? _storyMediaUrl(BackendChatMessage m) {
@@ -1006,6 +1440,83 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     );
   }
 
+  GlobalKey _anchorKeyForMessage(BackendChatMessage m) {
+    final key = _messageKey(m);
+    return _messageAnchorKeys.putIfAbsent(key, GlobalKey.new);
+  }
+
+  BackendChatMessage? _messageMatchingReply(Map<String, dynamic> reply) {
+    final targetId =
+        (reply['messageId'] ?? reply['id'] ?? '').toString().trim();
+    final targetCid = (reply['clientMessageId'] ?? '').toString().trim();
+    final preview = (reply['preview'] ?? '').toString().trim();
+
+    for (final m in _visibleMessages) {
+      if (targetId.isNotEmpty && m.id == targetId) return m;
+      if (targetCid.isNotEmpty &&
+          (m.clientMessageId ?? '').trim() == targetCid) {
+        return m;
+      }
+    }
+    // Fallback: match preview text when ids were dropped by the backend.
+    if (preview.isNotEmpty) {
+      for (final m in _visibleMessages.reversed) {
+        if (_replyPreviewFor(m) == preview) return m;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _jumpToRepliedMessage(Map<String, dynamic> reply) async {
+    var target = _messageMatchingReply(reply);
+    var attempts = 0;
+    while (target == null && _hasMoreOlder && attempts < 10) {
+      attempts++;
+      final beforeCount = _messages.length;
+      await _loadOlderMessages();
+      if (!mounted) return;
+      target = _messageMatchingReply(reply);
+      if (target != null) break;
+      if (_messages.length == beforeCount) break;
+    }
+
+    if (target == null) {
+      _toast('Original message isn’t loaded yet');
+      return;
+    }
+
+    final msgKey = _messageKey(target);
+    final anchor = _anchorKeyForMessage(target);
+    _highlightClearTimer?.cancel();
+    setState(() {
+      _highlightedMessageKey = msgKey;
+      _stickToBottom = false;
+      _scrollPinToken++;
+      _fingerDraggingList = false;
+    });
+
+    // Wait a frame so keys exist after older messages were inserted.
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final ctx = anchor.currentContext;
+      if (ctx == null || !mounted) return;
+      await Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+        alignment: 0.25,
+      );
+    });
+
+    _highlightClearTimer = Timer(const Duration(milliseconds: 1600), () {
+      if (!mounted) return;
+      if (_highlightedMessageKey == msgKey) {
+        setState(() => _highlightedMessageKey = null);
+      }
+    });
+  }
+
   Widget _buildReplyQuoteChip(
     Map<String, dynamic> reply, {
     required bool isMine,
@@ -1024,40 +1535,47 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     final fg = isMine ? Colors.white : Colors.black87;
     final accent = isMine ? Colors.white : _brandOrange;
 
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-      decoration: BoxDecoration(
-        color: bg,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => unawaited(_jumpToRepliedMessage(reply)),
         borderRadius: BorderRadius.circular(10),
-        border: Border(
-          left: BorderSide(color: accent, width: 3),
+        child: Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(10),
+            border: Border(
+              left: BorderSide(color: accent, width: 3),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                author,
+                style: TextStyle(
+                  color: accent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                preview,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: fg.withValues(alpha: 0.9),
+                  fontSize: 12.5,
+                  height: 1.25,
+                ),
+              ),
+            ],
+          ),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            author,
-            style: TextStyle(
-              color: accent,
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            preview,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: fg.withValues(alpha: 0.9),
-              fontSize: 12.5,
-              height: 1.25,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -1114,7 +1632,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   }
 
   void _upsertMessage(BackendChatMessage msg) {
-    final idx = _messages.indexWhere(
+    final myId = _myUserId;
+    var idx = _messages.indexWhere(
       (m) =>
           m.id == msg.id ||
           (msg.clientMessageId != null &&
@@ -1123,11 +1642,14 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
               msg.clientMessageId != null &&
               m.id == msg.clientMessageId),
     );
+    if (idx < 0 && myId != null) {
+      idx = _messages.indexWhere((m) => _isSameMessage(m, msg, myId));
+    }
 
     if (idx >= 0) {
-      _messages[idx] = msg;
+      _messages[idx] = _coalesceReceipt(msg, _messages[idx]);
     } else {
-      _messages.add(msg);
+      _messages.add(_applyStickyReceipt(msg));
     }
     _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
   }
@@ -1202,7 +1724,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   Future<void> _sendMessage() async {
     if (_recording) return;
 
-    final content = _input.text.trim();
+    final rawContent = _input.text.trim();
+    final content = ChatOffPlatformDetector.maskPhones(rawContent);
     final pendingImage = _pendingImage;
     if (content.isEmpty && pendingImage == null) return;
 
@@ -1276,47 +1799,24 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     final myId = _myUserId;
     if (myId == null) return;
 
+    final safeCaption = ChatOffPlatformDetector.maskPhones(caption);
+
     final clientMessageId = const Uuid().v4();
     final replyMeta = _replyMetadataPayload();
+    final now = DateTime.now();
     final pending = BackendChatMessage(
       id: clientMessageId,
       chatId: _chatId,
       senderId: myId,
-      content: caption,
+      content: safeCaption,
       type: 'image',
       status: 'pending',
-      createdAt: DateTime.now(),
+      createdAt: now,
       clientMessageId: clientMessageId,
       metadata: replyMeta,
     );
 
-    String? localImagePath;
-    try {
-      final ext = image.filename.contains('.')
-          ? image.filename.split('.').last
-          : 'jpg';
-      localImagePath = await ChatOutbox.persistImageBytes(
-        bytes: image.bytes,
-        clientMessageId: clientMessageId,
-        ext: ext,
-      );
-    } catch (_) {}
-
-    final entry = ChatOutboxEntry(
-      clientMessageId: clientMessageId,
-      chatId: _chatId,
-      senderId: myId,
-      type: 'image',
-      content: caption,
-      status: 'pending',
-      createdAt: pending.createdAt,
-      localImagePath: localImagePath,
-      imageMime: image.mime,
-      imageFilename: image.filename,
-      metadata: replyMeta,
-    );
-    await ChatOutbox.upsert(entry);
-
+    // Paint bubble instantly (same as text / voice), then persist + upload.
     setState(() {
       _localImageBytes[clientMessageId] = image.bytes;
       _messages = [..._messages, pending];
@@ -1324,8 +1824,40 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       _replyingTo = null;
     });
     _input.clear();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom(force: true));
-    unawaited(_deliverOutboxEntry(entry, notifyPeerOnSuccess: true));
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _scrollToBottom(force: true));
+
+    unawaited(() async {
+      String? localImagePath;
+      try {
+        final ext = image.filename.contains('.')
+            ? image.filename.split('.').last
+            : 'jpg';
+        localImagePath = await ChatOutbox.persistImageBytes(
+          bytes: image.bytes,
+          clientMessageId: clientMessageId,
+          ext: ext,
+        );
+      } catch (_) {}
+
+      final entry = ChatOutboxEntry(
+        clientMessageId: clientMessageId,
+        chatId: _chatId,
+        senderId: myId,
+        type: 'image',
+        content: safeCaption,
+        status: 'pending',
+        createdAt: now,
+        localImagePath: localImagePath,
+        imageMime: image.mime,
+        imageFilename: image.filename,
+        metadata: replyMeta,
+      );
+      try {
+        await ChatOutbox.upsert(entry);
+      } catch (_) {}
+      await _deliverOutboxEntry(entry, notifyPeerOnSuccess: true);
+    }());
   }
 
   Future<String> _uploadImageBytes(_PendingImage image) async {
@@ -1348,10 +1880,43 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     }
   }
 
+  Future<String> _uploadImageFile({
+    required String path,
+    required String filename,
+    required String mime,
+  }) async {
+    final file = File(path);
+    if (!file.existsSync()) {
+      throw StateError('Photo is missing on this device');
+    }
+    try {
+      final ref = FirebaseStorage.instance.ref().child(
+            'chat_media/${_chatId}/'
+            '${DateTime.now().millisecondsSinceEpoch}_$filename',
+          );
+      await ref.putFile(file, SettableMetadata(contentType: mime));
+      return ref.getDownloadURL();
+    } catch (_) {
+      final bytes = await file.readAsBytes();
+      return _uploadImageBytes(
+        _PendingImage(bytes: bytes, filename: filename, mime: mime),
+      );
+    }
+  }
+
   Future<User> _requireFirebaseUserForStorage() async {
     await BackendChatService.ensureAuth();
-    await AuthHandler.refreshFirebaseTokenIfSignedIn();
-    return AuthHandler.requireUserForFirestore();
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      throw StateError(
+        'Not signed in to Firebase. Sign out and sign in again, then retry.',
+      );
+    }
+    // Cached token only — force-refresh was doubling VN/image send latency.
+    try {
+      await user.getIdToken(false);
+    } catch (_) {}
+    return user;
   }
 
   Future<String> _uploadAudioBytes(Uint8List bytes, String uid) async {
@@ -1509,6 +2074,24 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     final clientMessageId = const Uuid().v4();
     final replyMeta = _replyMetadataPayload();
     final now = DateTime.now();
+
+    // Harden to durable outbox media FIRST so network failure never loses the VN.
+    String durablePath = filePath;
+    try {
+      durablePath = await ChatOutbox.persistVoiceFile(
+        sourcePath: filePath,
+        clientMessageId: clientMessageId,
+      );
+    } catch (e) {
+      if (kDebugMode) debugPrint('[ChatOutbox] persist VN failed: $e');
+      // Keep recording path if copy failed — retry can still use it while alive.
+      if (!File(filePath).existsSync()) {
+        _toast('Could not save voice note. Please record again.');
+        return;
+      }
+      durablePath = filePath;
+    }
+
     final pending = BackendChatMessage(
       id: clientMessageId,
       chatId: _chatId,
@@ -1521,44 +2104,31 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       metadata: replyMeta,
     );
 
-    // Show bubble instantly with the temp recording path, then harden + upload.
     setState(() {
-      _localVoicePaths[clientMessageId] = filePath;
+      _localVoicePaths[clientMessageId] = durablePath;
       _localVoiceDurations[clientMessageId] = durationMs;
       _messages = [..._messages, pending];
       _replyingTo = null;
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom(force: true));
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _scrollToBottom(force: true));
 
-    unawaited(() async {
-      String durablePath = filePath;
-      try {
-        durablePath = await ChatOutbox.persistVoiceFile(
-          sourcePath: filePath,
-          clientMessageId: clientMessageId,
-        );
-        if (mounted && durablePath != filePath) {
-          setState(() => _localVoicePaths[clientMessageId] = durablePath);
-        }
-      } catch (_) {}
-
-      final entry = ChatOutboxEntry(
-        clientMessageId: clientMessageId,
-        chatId: _chatId,
-        senderId: myId,
-        type: 'audio',
-        content: 'Voice note',
-        status: 'pending',
-        createdAt: now,
-        localVoicePath: durablePath,
-        voiceDurationMs: durationMs,
-        metadata: replyMeta,
-      );
-      try {
-        await ChatOutbox.upsert(entry);
-      } catch (_) {}
-      await _deliverOutboxEntry(entry, notifyPeerOnSuccess: true);
-    }());
+    final entry = ChatOutboxEntry(
+      clientMessageId: clientMessageId,
+      chatId: _chatId,
+      senderId: myId,
+      type: 'audio',
+      content: 'Voice note',
+      status: 'pending',
+      createdAt: now,
+      localVoicePath: durablePath,
+      voiceDurationMs: durationMs,
+      metadata: replyMeta,
+    );
+    try {
+      await ChatOutbox.upsert(entry);
+    } catch (_) {}
+    unawaited(_deliverOutboxEntry(entry, notifyPeerOnSuccess: true));
   }
 
   Future<void> _hydrateOutbox() async {
@@ -1595,20 +2165,26 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     final entries = await ChatOutbox.forChat(userId: myId, chatId: _chatId);
     for (final e in entries) {
       if (!mounted) return;
-      if (e.isAudio &&
-          (e.localVoicePath == null ||
-              e.localVoicePath!.isEmpty ||
-              !File(e.localVoicePath!).existsSync())) {
+      var entry = e;
+      if (entry.isAudio) {
+        final recovered = await _recoverVoicePathForEntry(entry);
+        if (recovered == null) continue;
+        if (recovered != entry.localVoicePath) {
+          entry = entry.copyWith(localVoicePath: recovered);
+          try {
+            await ChatOutbox.upsert(entry);
+          } catch (_) {}
+          _localVoicePaths[entry.clientMessageId] = recovered;
+        }
+      }
+      if (entry.isImage &&
+          _localImageBytes[entry.clientMessageId] == null &&
+          (entry.localImagePath == null ||
+              entry.localImagePath!.isEmpty ||
+              !File(entry.localImagePath!).existsSync())) {
         continue;
       }
-      if (e.isImage &&
-          _localImageBytes[e.clientMessageId] == null &&
-          (e.localImagePath == null ||
-              e.localImagePath!.isEmpty ||
-              !File(e.localImagePath!).existsSync())) {
-        continue;
-      }
-      await _deliverOutboxEntry(e, notifyPeerOnSuccess: true);
+      await _deliverOutboxEntry(entry, notifyPeerOnSuccess: true);
     }
   }
 
@@ -1616,9 +2192,50 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     final myId = _myUserId;
     final id = msg.clientMessageId ?? msg.id;
     if (myId == null || id.isEmpty) return;
-    final entry = await ChatOutbox.get(myId, id);
+    var entry = await ChatOutbox.get(myId, id);
     if (entry == null) return;
-    await _deliverOutboxEntry(entry, notifyPeerOnSuccess: true, userInitiated: true);
+
+    if (entry.isAudio) {
+      final recovered = await _recoverVoicePathForEntry(entry);
+      if (recovered == null) {
+        _toast('Voice note file is gone. Please record a new one.');
+        return;
+      }
+      if (recovered != entry.localVoicePath) {
+        entry = entry.copyWith(localVoicePath: recovered, status: 'pending');
+        try {
+          await ChatOutbox.upsert(entry);
+        } catch (_) {}
+        if (mounted) {
+          setState(() => _localVoicePaths[id] = recovered);
+        }
+      }
+    }
+
+    await _deliverOutboxEntry(
+      entry,
+      notifyPeerOnSuccess: true,
+      userInitiated: true,
+    );
+  }
+
+  Future<String?> _recoverVoicePathForEntry(ChatOutboxEntry entry) async {
+    final id = entry.clientMessageId;
+    final candidates = <String>[
+      if ((entry.localVoicePath ?? '').trim().isNotEmpty)
+        entry.localVoicePath!.trim(),
+      if ((_localVoicePaths[id] ?? '').trim().isNotEmpty)
+        _localVoicePaths[id]!.trim(),
+    ];
+    for (final path in candidates) {
+      try {
+        final f = File(path);
+        if (f.existsSync() && f.lengthSync() > 0) return path;
+      } catch (_) {}
+    }
+    final recovered = await ChatOutbox.recoverVoicePath(id);
+    if (recovered != null) return recovered;
+    return null;
   }
 
   Future<void> _deliverOutboxEntry(
@@ -1630,21 +2247,40 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     if (id.isEmpty || _outboxFlushing.contains(id)) return;
     _outboxFlushing.add(id);
 
-    _setUnsentStatus(id, 'pending');
-    unawaited(
-      ChatOutbox.markStatus(
-        userId: entry.senderId,
-        clientMessageId: id,
-        status: 'pending',
-      ),
+    // Don't demote an already-acked bubble back to pending during flush.
+    final existingIdx = _messages.indexWhere(
+      (m) => m.clientMessageId == id || m.id == id,
     );
+    final existingStatus = existingIdx >= 0
+        ? _messages[existingIdx].status.toLowerCase()
+        : '';
+    if (existingStatus != 'sent' &&
+        existingStatus != 'delivered' &&
+        existingStatus != 'read' &&
+        existingStatus != 'seen') {
+      _setUnsentStatus(id, 'pending');
+      unawaited(
+        ChatOutbox.markStatus(
+          userId: entry.senderId,
+          clientMessageId: id,
+          status: 'pending',
+        ),
+      );
+    }
 
     try {
       BackendChatMessage saved;
       if (entry.isAudio) {
-        final path = entry.localVoicePath;
+        var path = await _recoverVoicePathForEntry(entry);
         if (path == null || path.isEmpty || !File(path).existsSync()) {
           throw StateError('Voice note file is missing on this device');
+        }
+        // Keep durable path in outbox for future retries.
+        if (path != entry.localVoicePath) {
+          try {
+            await ChatOutbox.upsert(entry.copyWith(localVoicePath: path));
+          } catch (_) {}
+          _localVoicePaths[id] = path;
         }
         final firebaseUser = await _requireFirebaseUserForStorage();
         final url = await _uploadAudioFile(path, firebaseUser.uid);
@@ -1671,21 +2307,30 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
           bytes = await File(entry.localImagePath!).readAsBytes();
           _localImageBytes[id] = bytes;
         }
-        if (bytes == null || bytes.isEmpty) {
-          throw StateError('Photo is missing on this device');
+        final filename = entry.imageFilename ?? 'photo.jpg';
+        final mime = entry.imageMime ?? 'image/jpeg';
+        late final String url;
+        if (entry.localImagePath != null &&
+            File(entry.localImagePath!).existsSync()) {
+          url = await _uploadImageFile(
+            path: entry.localImagePath!,
+            filename: filename,
+            mime: mime,
+          );
+        } else {
+          if (bytes == null || bytes.isEmpty) {
+            throw StateError('Photo is missing on this device');
+          }
+          url = await _uploadImageBytes(
+            _PendingImage(bytes: bytes, filename: filename, mime: mime),
+          );
         }
-        final image = _PendingImage(
-          bytes: bytes,
-          filename: entry.imageFilename ?? 'photo.jpg',
-          mime: entry.imageMime ?? 'image/jpeg',
-        );
-        final url = await _uploadImageBytes(image);
         saved = await BackendChatService.sendImageMessage(
           chatId: entry.chatId,
           imageUrl: url,
           caption: entry.content ?? '',
           clientMessageId: id,
-          mimeType: image.mime,
+          mimeType: mime,
           metadata: entry.metadata,
         );
       } else {
@@ -1748,44 +2393,73 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   }
 
   void _jumpToBottom() {
-    if (!_scroll.hasClients) return;
-    // reverse:true — 0 is the latest message.
-    _scroll.jumpTo(0);
-    _stickToBottom = true;
+    if (!_scroll.hasClients || _fingerDraggingList) return;
+    // reverse:true — minScrollExtent is the latest message.
+    final target = _scroll.position.minScrollExtent;
+    if ((_scroll.position.pixels - target).abs() > 0.5) {
+      _scroll.jumpTo(target);
+    }
   }
 
   void _scrollToBottom({bool force = false}) {
     if (!force && !_stickToBottom) return;
-    if (!_scroll.hasClients) return;
+    if (!_scroll.hasClients || _fingerDraggingList) return;
     _stickToBottom = true;
+    final target = _scroll.position.minScrollExtent;
     _scroll.animateTo(
-      0,
-      duration: const Duration(milliseconds: 200),
+      target,
+      duration: const Duration(milliseconds: 180),
       curve: Curves.easeOut,
     );
   }
 
-  /// Retry across frames so late image/layout growth still ends on newest.
-  void _scheduleScrollToLatest({int attempts = 10}) {
+  /// Light pin after open/load. Stops immediately when the user starts dragging.
+  void _scheduleScrollToLatest({
+    int attempts = 3,
+    bool forceStick = false,
+  }) {
+    if (_fingerDraggingList) return;
+    if (!forceStick && !_stickToBottom) return;
+
+    final token = ++_scrollPinToken;
+    if (forceStick) _stickToBottom = true;
+
     void attempt(int left) {
-      if (!mounted || left <= 0) return;
+      if (!mounted ||
+          left <= 0 ||
+          token != _scrollPinToken ||
+          !_stickToBottom ||
+          _fingerDraggingList) {
+        return;
+      }
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _jumpToBottom();
+        if (!mounted ||
+            token != _scrollPinToken ||
+            !_stickToBottom ||
+            _fingerDraggingList) {
+          return;
+        }
         if (!_scroll.hasClients) {
           if (left > 1) attempt(left - 1);
           return;
         }
-        // Content may still be measuring (images); keep pinning briefly.
-        if (_stickToBottom && left > 1) {
-          Future<void>.delayed(const Duration(milliseconds: 50), () {
-            if (!mounted || !_stickToBottom) return;
-            if (_scroll.hasClients && _scroll.position.pixels > 2) {
-              _jumpToBottom();
-            }
-            attempt(left - 1);
-          });
-        }
+        _jumpToBottom();
+        if (left <= 1) return;
+        Future<void>.delayed(const Duration(milliseconds: 64), () {
+          if (!mounted ||
+              token != _scrollPinToken ||
+              !_stickToBottom ||
+              _fingerDraggingList) {
+            return;
+          }
+          if (_scroll.hasClients &&
+              (_scroll.position.pixels - _scroll.position.minScrollExtent)
+                      .abs() >
+                  2) {
+            _jumpToBottom();
+          }
+          attempt(left - 1);
+        });
       });
     }
 
@@ -1843,23 +2517,30 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     if (content.isEmpty) return null;
     if (content.startsWith(_audPrefix)) return null;
     if (m.type == 'audio') return null;
-    if (_isStoryReply(m)) return _storyReplyBody(m);
+    if (_isStoryReply(m)) {
+      final body = _storyReplyBody(m);
+      return body == null ? null : ChatOffPlatformDetector.maskPhones(body);
+    }
     if (content.startsWith(_imgPrefix)) {
       final parts = content.split('\n');
       if (parts.length < 2) return null;
-      final caption = parts.sublist(1).join('\n').trim();
-      return caption.isEmpty ? null : caption;
+      final caption = _stripForwardedMarker(parts.sublist(1).join('\n'));
+      if (caption.isEmpty) return null;
+      return ChatOffPlatformDetector.maskPhones(caption);
     }
     if (imageUrl != null && content == imageUrl) return null;
     if (m.type == 'image' && content.startsWith('http')) return null;
-    return content;
+    final body = _stripForwardedMarker(content);
+    if (body.isEmpty) return null;
+    return ChatOffPlatformDetector.maskPhones(body);
   }
 
   _VoiceNoteInfo? _messageAudio(BackendChatMessage m) {
     final content = m.content?.trim() ?? '';
     if (content.startsWith(_audPrefix)) {
       final body = content.substring(_audPrefix.length).trim();
-      final parts = body.split('|');
+      final firstLine = body.split('\n').first.trim();
+      final parts = firstLine.split('|');
       final url = parts.first.trim();
       final ms = parts.length > 1 ? int.tryParse(parts[1].trim()) ?? 0 : 0;
       if (url.startsWith('http')) {
@@ -2004,89 +2685,408 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     });
   }
 
+  Future<void> _loadHiddenMessages() async {
+    final myId = _myUserId ?? BackendChatService.peekUserId();
+    if (myId == null || _chatId.isEmpty) return;
+    final hidden = await HiddenMessageStore.load(myId, _chatId);
+    if (!mounted || hidden.isEmpty) return;
+    setState(() => _hiddenMessageIds.addAll(hidden));
+  }
+
+  List<BackendChatMessage> get _visibleMessages => _messages
+      .where((m) => !_hiddenMessageIds.contains(m.id))
+      .toList();
+
+  String? _copyableText(BackendChatMessage m) {
+    final caption = _visibleCaption(m, _messageImageUrl(m));
+    if (caption != null && caption.trim().isNotEmpty) return caption.trim();
+    final content = (m.content ?? '').trim();
+    if (content.isEmpty) return null;
+    if (content.startsWith(_audPrefix) || content.startsWith(_imgPrefix)) {
+      return null;
+    }
+    if (m.type == 'audio' || m.type == 'image') return null;
+    return content;
+  }
+
   Future<void> _showMsgActions(BackendChatMessage m) async {
+    if (_isUnsent(m)) {
+      await _showUnsentActions(m);
+      return;
+    }
+
+    HapticFeedback.mediumImpact();
     final myId = _myUserId;
-    if (myId == null || !m.isMine(myId) || !_within5Min(m)) return;
-    if (_isUnsent(m)) return;
+    final isMine = myId != null && m.isMine(myId);
+    final canDeleteEveryone = isMine && _within5Min(m);
+    final canEdit = isMine && _within5Min(m) && _isEditableText(m);
+    final copyText = _copyableText(m);
 
-    final canEdit = _isEditableText(m);
-
-    await showModalBottomSheet<void>(
+    await showGeneralDialog<void>(
       context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (_) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 8),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.black12,
-                borderRadius: BorderRadius.circular(99),
+      barrierDismissible: true,
+      barrierLabel: 'Close',
+      barrierColor: Colors.black.withValues(alpha: 0.45),
+      transitionDuration: const Duration(milliseconds: 180),
+      pageBuilder: (ctx, anim, secondary) {
+        return SafeArea(
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: Material(
+              color: Colors.transparent,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Emoji reactions (WhatsApp-style top bar)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(28),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.12),
+                            blurRadius: 16,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (final emoji in _reactionEmojis)
+                            InkWell(
+                              borderRadius: BorderRadius.circular(20),
+                              onTap: () {
+                                Navigator.pop(ctx);
+                                unawaited(_reactToMessage(m, emoji));
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 4,
+                                ),
+                                child: Text(
+                                  emoji,
+                                  style: const TextStyle(fontSize: 26),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(18),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.1),
+                            blurRadius: 14,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _msgActionTile(
+                            icon: Icons.reply_rounded,
+                            label: 'Reply',
+                            color: _brandOrange,
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              _startReply(m);
+                            },
+                          ),
+                          if (copyText != null)
+                            _msgActionTile(
+                              icon: Icons.copy_rounded,
+                              label: 'Copy',
+                              onTap: () async {
+                                Navigator.pop(ctx);
+                                await Clipboard.setData(
+                                  ClipboardData(text: copyText),
+                                );
+                                _toast('Message copied');
+                              },
+                            ),
+                          if (copyText != null)
+                            _msgActionTile(
+                              icon: Icons.text_fields_rounded,
+                              label: 'Select text',
+                              onTap: () {
+                                Navigator.pop(ctx);
+                                _showSelectText(copyText);
+                              },
+                            ),
+                          _msgActionTile(
+                            icon: Icons.forward_rounded,
+                            label: 'Forward',
+                            onTap: () {
+                              Navigator.pop(ctx);
+                              unawaited(_forwardMessage(m));
+                            },
+                          ),
+                          if (canEdit)
+                            _msgActionTile(
+                              icon: Icons.edit_outlined,
+                              label: 'Edit',
+                              onTap: () async {
+                                Navigator.pop(ctx);
+                                await _editMessage(m);
+                              },
+                            ),
+                          _msgActionTile(
+                            icon: Icons.delete_outline,
+                            label: canDeleteEveryone
+                                ? 'Delete for everyone'
+                                : 'Delete for me',
+                            color: const Color(0xFFEF4444),
+                            onTap: () async {
+                              Navigator.pop(ctx);
+                              if (canDeleteEveryone) {
+                                await _deleteMessage(
+                                  m,
+                                  forEveryone: true,
+                                );
+                              } else {
+                                await _deleteMessage(
+                                  m,
+                                  forEveryone: false,
+                                );
+                              }
+                            },
+                          ),
+                          const SizedBox(height: 4),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-            if (canEdit)
-              ListTile(
-                leading: const Icon(Icons.edit_outlined),
-                title: const Text('Edit message'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  await _editMessage(m);
-                },
-              ),
-            ListTile(
-              leading: const Icon(Icons.reply_rounded, color: _brandOrange),
-              title: const Text('Reply'),
-              onTap: () {
-                Navigator.pop(context);
-                _startReply(m);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline, color: Color(0xFFEF4444)),
-              title: const Text(
-                'Delete message',
-                style: TextStyle(color: Color(0xFFEF4444)),
-              ),
-              onTap: () async {
-                Navigator.pop(context);
-                await _deleteMessage(m);
-              },
-            ),
-            const SizedBox(height: 8),
-          ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _msgActionTile({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    Color? color,
+  }) {
+    return ListTile(
+      dense: true,
+      leading: Icon(icon, color: color ?? Colors.black87),
+      title: Text(
+        label,
+        style: TextStyle(
+          fontWeight: FontWeight.w600,
+          color: color ?? Colors.black87,
         ),
+      ),
+      onTap: onTap,
+    );
+  }
+
+  Future<void> _reactToMessage(BackendChatMessage m, String emoji) async {
+    if (m.id.trim().isEmpty || _chatId.isEmpty) return;
+    await MessageReactionService.setReaction(
+      chatId: _chatId,
+      messageId: m.id,
+      emoji: emoji,
+    );
+  }
+
+  void _showSelectText(String text) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Select text'),
+        content: SingleChildScrollView(
+          child: SelectableText(
+            text,
+            style: const TextStyle(fontSize: 16, height: 1.35),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
       ),
     );
   }
 
-  Future<void> _deleteMessage(BackendChatMessage m) async {
+  Future<void> _forwardMessage(BackendChatMessage m) async {
+    final myId = _myUserId;
+    if (myId == null) {
+      _toast('Sign in to forward messages.');
+      return;
+    }
+
+    // Prefer cached chat list; refresh quietly if empty.
+    var threads = BackendChatService.peekCachedThreads()
+        .where((t) => t.id.trim().isNotEmpty && t.id.trim() != _chatId)
+        .toList();
+    if (threads.isEmpty) {
+      try {
+        threads = (await BackendChatService.getThreads())
+            .where((t) => t.id.trim().isNotEmpty && t.id.trim() != _chatId)
+            .toList();
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    if (threads.isEmpty) {
+      _toast('No other chats to forward to yet.');
+      return;
+    }
+
+    final myEmail = (FirebaseAuth.instance.currentUser?.email ?? '').trim();
+    final myName = await _currentSenderDisplayName();
+    if (!mounted) return;
+
+    final targets = await showModalBottomSheet<List<BackendChatThread>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _ForwardChatPickerSheet(
+        threads: threads,
+        myUserId: myId,
+        myEmail: myEmail,
+        myName: myName,
+      ),
+    );
+
+    if (targets == null || targets.isEmpty || !mounted) return;
+
+    final imageUrl = _messageImageUrl(m);
+    final audio = _messageAudio(m);
+    final text = _copyableText(m);
+    final meta = <String, dynamic>{
+      'forwarded': true,
+      'isForwarded': true,
+      'forwardedFromChatId': _chatId,
+      if (m.id.isNotEmpty) 'forwardedFromMessageId': m.id,
+    };
+
+    var okCount = 0;
+    var failCount = 0;
+    for (final target in targets) {
+      try {
+        if (audio != null && (audio.url).trim().isNotEmpty) {
+          await BackendChatService.sendAudioMessage(
+            chatId: target.id,
+            audioUrl: audio.url.trim(),
+            durationMs: audio.durationMs,
+            mimeType: 'audio/mp4',
+            metadata: meta,
+          );
+        } else if (imageUrl != null && imageUrl.trim().isNotEmpty) {
+          await BackendChatService.sendImageMessage(
+            chatId: target.id,
+            imageUrl: imageUrl.trim(),
+            caption: (text ?? '').trim(),
+            metadata: meta,
+          );
+        } else {
+          final body = (text ?? '').trim().isNotEmpty
+              ? text!.trim()
+              : 'Forwarded message';
+          await BackendChatService.sendMessage(
+            chatId: target.id,
+            // Content marker survives backends that drop metadata.
+            content: '↪️ Forwarded\n$body',
+            type: 'text',
+            metadata: meta,
+          );
+        }
+        okCount++;
+      } catch (_) {
+        failCount++;
+      }
+    }
+
+    if (!mounted) return;
+    if (okCount > 0) {
+      _toast(
+        okCount == 1
+            ? 'Forwarded to 1 chat'
+            : 'Forwarded to $okCount chats',
+      );
+      BackendChatService.refreshThreads();
+    }
+    if (failCount > 0) {
+      _toast(
+        failCount == targets.length
+            ? 'Could not forward'
+            : 'Forwarded to $okCount, failed $failCount',
+      );
+    }
+  }
+
+  Future<void> _deleteMessage(
+    BackendChatMessage m, {
+    required bool forEveryone,
+  }) async {
+    if (forEveryone) {
+      final ok = await showModernConfirmDialog(
+        context,
+        title: 'Delete for everyone?',
+        message:
+            'This message will be removed for everyone. You can only do this within 5 minutes of sending.',
+        confirmLabel: 'Delete',
+      );
+      if (!ok || !mounted) return;
+
+      try {
+        await BackendChatService.deleteMessage(
+          chatId: _chatId,
+          messageId: m.id,
+        );
+        if (!mounted) return;
+        setState(() {
+          _messages = _messages.where((x) => x.id != m.id).toList();
+        });
+        BackendChatService.refreshThreads();
+      } catch (e) {
+        _toast(UserFacingError.from(e, fallback: 'Could not delete message'));
+      }
+      return;
+    }
+
     final ok = await showModernConfirmDialog(
       context,
-      title: 'Delete message?',
-      message: 'This message will be removed for everyone. You can only delete within 5 minutes.',
+      title: 'Delete for me?',
+      message: 'This message will be removed from your chat only.',
       confirmLabel: 'Delete',
     );
     if (!ok || !mounted) return;
 
-    try {
-      await BackendChatService.deleteMessage(
+    final myId = _myUserId;
+    if (myId != null) {
+      await HiddenMessageStore.hide(
+        userId: myId,
         chatId: _chatId,
         messageId: m.id,
       );
-      if (!mounted) return;
-      setState(() {
-        _messages = _messages.where((x) => x.id != m.id).toList();
-      });
-      BackendChatService.refreshThreads();
-    } catch (e) {
-      _toast(UserFacingError.from(e, fallback: 'Could not delete message'));
     }
+    if (!mounted) return;
+    setState(() => _hiddenMessageIds.add(m.id));
   }
 
   Future<void> _editMessage(BackendChatMessage m) async {
@@ -2097,11 +3097,12 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     );
     if (updated == null || updated.isEmpty || updated == m.content) return;
 
+    final safe = ChatOffPlatformDetector.maskPhones(updated);
     try {
       final saved = await BackendChatService.editMessage(
         chatId: _chatId,
         messageId: m.id,
-        newContent: updated,
+        newContent: safe,
       );
       if (!mounted) return;
       setState(() => _upsertMessage(saved));
@@ -2113,43 +3114,108 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
   void _viewImage(String url) {
     final warmUrl = _preferHttps(url);
-    showDialog<void>(
+    final screen = MediaQuery.sizeOf(context);
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final memW = (screen.width * dpr).round().clamp(480, 1600);
+
+    showGeneralDialog<void>(
       context: context,
-      builder: (_) => Dialog(
-        insetPadding: const EdgeInsets.all(14),
-        backgroundColor: Colors.black,
-        child: Stack(
-          children: [
-            InteractiveViewer(
-              minScale: 0.6,
-              maxScale: 4,
-              child: Center(
-                child: ResilientCachedNetworkImage(
-                  url: warmUrl,
-                  fit: BoxFit.contain,
-                  showSpinner: true,
-                ),
-              ),
-            ),
-            Positioned(
-              top: 10,
-              right: 10,
-              child: Material(
-                color: Colors.black54,
-                borderRadius: BorderRadius.circular(999),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(999),
-                  onTap: () => Navigator.pop(context),
-                  child: const Padding(
-                    padding: EdgeInsets.all(8),
-                    child: Icon(Icons.close, color: Colors.white),
+      barrierDismissible: true,
+      barrierLabel: 'Close photo',
+      barrierColor: Colors.black.withValues(alpha: 0.92),
+      transitionDuration: const Duration(milliseconds: 160),
+      pageBuilder: (ctx, _, __) {
+        return Material(
+          type: MaterialType.transparency,
+          child: SafeArea(
+            child: Stack(
+              children: [
+                Center(
+                  child: InteractiveViewer(
+                    minScale: 0.8,
+                    maxScale: 4,
+                    child: ResilientCachedNetworkImage(
+                      url: warmUrl,
+                      fit: BoxFit.contain,
+                      width: screen.width - 24,
+                      showSpinner: true,
+                      memCacheWidth: memW,
+                      placeholderColor: Colors.black,
+                    ),
                   ),
                 ),
-              ),
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: Material(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(999),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(999),
+                      onTap: () => Navigator.pop(ctx),
+                      child: const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: Icon(Icons.close, color: Colors.white),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _viewLocalImage(Uint8List bytes) {
+    final screen = MediaQuery.sizeOf(context);
+    showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Close photo',
+      barrierColor: Colors.black.withValues(alpha: 0.92),
+      transitionDuration: const Duration(milliseconds: 160),
+      pageBuilder: (ctx, _, __) {
+        return Material(
+          type: MaterialType.transparency,
+          child: SafeArea(
+            child: Stack(
+              children: [
+                Center(
+                  child: InteractiveViewer(
+                    minScale: 0.8,
+                    maxScale: 4,
+                    child: Image.memory(
+                      bytes,
+                      fit: BoxFit.contain,
+                      width: screen.width - 24,
+                      filterQuality: FilterQuality.medium,
+                      gaplessPlayback: true,
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: Material(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(999),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(999),
+                      onTap: () => Navigator.pop(ctx),
+                      child: const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: Icon(Icons.close, color: Colors.white),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -2365,8 +3431,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     try {
       final file = await _picker.pickImage(
         source: ImageSource.gallery,
-        imageQuality: 75,
-        maxWidth: 1280,
+        imageQuality: 70,
+        maxWidth: 1080,
       );
       if (file == null) return;
       final bytes = await file.readAsBytes();
@@ -2375,7 +3441,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         filename: file.name.isEmpty ? 'image.jpg' : file.name,
         mime: lookupMimeType(file.name, headerBytes: bytes) ?? 'image/jpeg',
       );
-      await _sendImageMessage(image, caption: _input.text.trim());
+      unawaited(_sendImageMessage(image, caption: _input.text.trim()));
     } catch (_) {
       _toast('Could not pick image');
     }
@@ -2385,8 +3451,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     try {
       final file = await _picker.pickImage(
         source: ImageSource.camera,
-        imageQuality: 75,
-        maxWidth: 1280,
+        imageQuality: 70,
+        maxWidth: 1080,
       );
       if (file == null) return;
       final bytes = await file.readAsBytes();
@@ -2395,7 +3461,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         filename: file.name.isEmpty ? 'camera.jpg' : file.name,
         mime: lookupMimeType(file.name, headerBytes: bytes) ?? 'image/jpeg',
       );
-      await _sendImageMessage(image, caption: _input.text.trim());
+      unawaited(_sendImageMessage(image, caption: _input.text.trim()));
     } catch (_) {
       _toast('Camera not available');
     }
@@ -2496,22 +3562,25 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       _toast('Sign in to start a call.');
       return;
     }
+    final myUid = me.uid.trim();
 
-    var recipientId = _resolvedMerchantId();
-    if (recipientId == null || recipientId.isEmpty) {
-      final peerUserId = widget.peerUserId ?? _peerUserId;
-      if (peerUserId != null && peerUserId > 0) {
-        recipientId =
-            await BackendChatService.getFirebaseUidByUserId(peerUserId);
-      }
-    }
-    if (recipientId == null || recipientId.isEmpty) {
+    // Never hint with our own shop/merchant uid — that caused "can't call yourself".
+    final rawHint = (_resolvedMerchantId() ?? '').trim();
+    final hint = (rawHint.isNotEmpty && rawHint != myUid) ? rawHint : null;
+
+    final peerUid = (await BackendChatService.resolvePeerFirebaseUid(
+          chatId: _chatId,
+          peerUserId: widget.peerUserId ?? _peerUserId,
+          hintFirebaseUid: hint,
+        ))
+            ?.trim() ??
+        '';
+    if (peerUid.isEmpty) {
       _toast('Calling isn’t available for this chat yet.');
       return;
     }
-    final peerUid = recipientId;
-    if (peerUid == me.uid) {
-      _toast('You can’t call yourself.');
+    if (peerUid == myUid) {
+      _toast('Calling isn’t available for this chat yet.');
       return;
     }
 
@@ -2530,14 +3599,26 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     }
 
     try {
+      unawaited(UserPresenceService.goOnline());
       final call = await CallServiceImpl().initiateCall(
-        initiatorId: me.uid,
+        initiatorId: myUid,
         recipientId: peerUid,
         callType: video ? CallType.video : CallType.voice,
         initiatorName: me.displayName ?? me.email ?? 'Vero360 user',
         initiatorAvatar: me.photoURL,
         recipientName: widget.peerName,
         recipientAvatar: widget.peerAvatarUrl,
+      );
+
+      // Best-effort push so the peer rings even if the app is backgrounded.
+      unawaited(
+        ChatNotificationService.notifyRecipientOfMessage(
+          chatId: _chatId,
+          senderName: me.displayName ?? 'Vero360',
+          body: video ? '📹 Incoming video call' : '📞 Incoming voice call',
+          recipientFirebaseUid: peerUid,
+          recipientUserId: widget.peerUserId ?? _peerUserId,
+        ),
       );
 
       // Leave a WhatsApp-style call marker in the thread (best effort).
@@ -2559,7 +3640,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       if (!mounted) return;
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => _ChatCallScreen(
+          builder: (_) => ChatCallScreen(
             call: call,
             peerName: widget.peerName,
             peerAvatarUrl: widget.peerAvatarUrl,
@@ -2588,6 +3669,11 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     if (status == 'read' || status == 'seen' || m.readAt != null) return true;
     final receipt = _peerReceipt;
     if (receipt != null && receipt.coversRead(m.createdAt)) return true;
+    final sticky = _stickyPeerReadUpTo;
+    if (sticky != null &&
+        !m.createdAt.isAfter(sticky.add(const Duration(seconds: 8)))) {
+      return true;
+    }
     return false;
   }
 
@@ -2597,6 +3683,11 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     if (status == 'delivered' || m.deliveredAt != null) return true;
     final receipt = _peerReceipt;
     if (receipt != null && receipt.coversDelivered(m.createdAt)) return true;
+    final sticky = _stickyPeerDeliveredUpTo;
+    if (sticky != null &&
+        !m.createdAt.isAfter(sticky.add(const Duration(seconds: 8)))) {
+      return true;
+    }
     return false;
   }
 
@@ -2818,7 +3909,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         : 'chat_peer:${backendId ?? merchantRef}';
   }
 
-  /// Facebook-style: only prompt after a real two-way conversation.
+  /// Facebook-style: only prompt after a real conversation (≥10 messages).
   /// Only buyers rate merchants — never the reverse.
   bool _eligibleForChatRating() {
     if (_iAmTheMerchantForRating()) return false;
@@ -2841,8 +3932,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         theirs++;
       }
     }
-    // Need both sides to have talked (not a one-sided enquiry).
-    return mine >= 1 && theirs >= 1;
+    // Need a real back-and-forth, and at least 10 messages in the thread.
+    return _messages.length >= 10 && mine >= 1 && theirs >= 1;
   }
 
   Future<void> _promptRateSeller({required bool force}) async {
@@ -2850,7 +3941,12 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       _toast('You can’t rate your own shop.');
       return;
     }
-    if (!_eligibleForChatRating() && !force) return;
+    if (!_eligibleForChatRating()) {
+      if (force) {
+        _toast('Keep chatting — ratings unlock after 10 messages.');
+      }
+      return;
+    }
 
     final merchantRef = _merchantRefForRating();
     final backendId = _merchantBackendIdForRating();
@@ -2873,16 +3969,52 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     );
   }
 
+  /// Leave chat immediately. Review (if any) is shown on the shell underneath —
+  /// never await network/Firestore before popping (that was locking the chat).
   Future<void> _maybePromptChatRatingThenPop() async {
-    if (_leaving) return;
-    _leaving = true;
-    try {
-      if (_eligibleForChatRating() && mounted) {
-        await _promptRateSeller(force: false);
+    // Second back while a leave is in flight → force pop.
+    if (_leaving) {
+      if (mounted) {
+        final nav = Navigator.of(context);
+        if (nav.canPop()) nav.pop();
       }
-    } finally {
-      if (mounted) Navigator.of(context).pop();
+      return;
     }
+    _leaving = true;
+
+    final shouldPrompt = _eligibleForChatRating();
+    final merchantName = widget.peerName;
+    final contextKey = _chatRatingContextKey();
+    final merchantRef = _merchantRefForRating();
+    final backendId = _merchantBackendIdForRating();
+    final serviceProviderId = widget.resolveServiceProviderId;
+    final sellerUserId = widget.resolveSellerUserId ?? merchantRef;
+
+    if (!mounted) return;
+    Navigator.of(context).pop();
+
+    if (!shouldPrompt) return;
+    if (merchantRef.isEmpty && (backendId == null || backendId <= 0)) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(() async {
+        final ctx = appNavKey.currentContext;
+        if (ctx == null || !ctx.mounted) return;
+        try {
+          await MerchantReviewPrompt.maybeShow(
+            ctx,
+            merchantName: merchantName,
+            reason: MerchantReviewReason.afterChat,
+            contextKey: contextKey,
+            merchantRef: merchantRef.isEmpty ? null : merchantRef,
+            serviceProviderId: serviceProviderId,
+            sellerUserId: sellerUserId.isEmpty ? null : sellerUserId,
+            merchantBackendId: backendId,
+            force: false,
+          ).timeout(const Duration(seconds: 8), onTimeout: () => false);
+        } catch (_) {}
+      }());
+    });
   }
 
   @override
@@ -2891,12 +4023,12 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     if (_messages.isEmpty &&
         _loadError == null &&
         !_bootComplete &&
-        widget.peerName.trim().isEmpty) {
+        _isPlaceholderPeerName(_peerDisplayName)) {
       return const ChatBootLoadingScaffold();
     }
 
     final activeProduct = _activeProduct;
-    final title = widget.peerName;
+    final title = _peerDisplayName;
     final hasText = _input.text.trim().isNotEmpty;
     final hasPendingImage = _pendingImage != null;
     final canSend = (hasText || hasPendingImage) &&
@@ -2905,7 +4037,9 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         !_recording;
 
     return PopScope(
-      canPop: false,
+      // Only intercept back when a post-chat rating might be due. Otherwise
+      // allow the normal pop so chat never feels locked.
+      canPop: !_eligibleForChatRating(),
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
         unawaited(_maybePromptChatRatingThenPop());
@@ -2990,21 +4124,50 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                     )
                   : Stack(
                       children: [
-                        SlidableAutoCloseBehavior(
-                          child: ListView.builder(
-                            controller: _scroll,
-                            reverse: true,
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 16,
+                        NotificationListener<ScrollNotification>(
+                          onNotification: (notification) {
+                            // Finger-down: kill auto-pin immediately so the first
+                            // swipe isn't fighting jumpTo / image layout.
+                            if (notification is ScrollStartNotification &&
+                                notification.dragDetails != null) {
+                              _fingerDraggingList = true;
+                              _scrollPinToken++;
+                            }
+                            if (notification is ScrollUpdateNotification &&
+                                notification.dragDetails != null &&
+                                _scroll.hasClients &&
+                                _scroll.position.pixels > 8) {
+                              _stickToBottom = false;
+                            }
+                            if (notification is ScrollEndNotification) {
+                              _fingerDraggingList = false;
+                              if (_scroll.hasClients) {
+                                _stickToBottom =
+                                    _scroll.position.pixels <= _nearBottomPx;
+                              }
+                            }
+                            return false;
+                          },
+                          child: SlidableAutoCloseBehavior(
+                            child: ListView.builder(
+                              controller: _scroll,
+                              reverse: true,
+                              cacheExtent: 900,
+                              keyboardDismissBehavior:
+                                  ScrollViewKeyboardDismissBehavior.onDrag,
+                              physics: const ClampingScrollPhysics(),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 16,
+                              ),
+                              itemCount: _visibleMessages.length,
+                              itemBuilder: (context, i) {
+                                // reverse:true shows index 0 at the bottom → newest first.
+                                final visible = _visibleMessages;
+                                final index = visible.length - 1 - i;
+                                return _buildMessageTile(visible[index], index);
+                              },
                             ),
-                            itemCount: _messages.length,
-                            itemBuilder: (context, i) {
-                              // reverse:true shows index 0 at the bottom → newest first.
-                              final index = _messages.length - 1 - i;
-                              return _buildMessageTile(_messages[index], index);
-                            },
                           ),
                         ),
                         if (_loadingOlder)
@@ -3045,7 +4208,6 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     final audio = _messageAudio(msg);
     final localVoicePath = _localVoicePathFor(msg);
     final voiceDuration = _voiceDurationFor(msg, audio);
-    final canAct = isMine && _within5Min(msg) && !isUnsent;
     final isLastOutgoing = isMine && index == _lastOutgoingMessageIndex();
     final scanText = [
       caption,
@@ -3053,8 +4215,11 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     ].whereType<String>().join('\n');
     final showOffPlatformWarning =
         ChatOffPlatformDetector.containsSensitiveDetails(scanText);
+    final msgKey = _messageKey(msg);
+    final isHighlighted = _highlightedMessageKey == msgKey;
 
     final bubble = Padding(
+      key: _anchorKeyForMessage(msg),
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
         mainAxisAlignment:
@@ -3074,7 +4239,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                 AnimatedOpacity(
                   duration: const Duration(milliseconds: 200),
                   opacity: isPending ? 0.72 : (isFailed ? 0.92 : 1),
-                  child: Container(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 220),
                     padding: const EdgeInsets.symmetric(
                       horizontal: 14,
                       vertical: 10,
@@ -3087,10 +4253,20 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                         bottomLeft: Radius.circular(isMine ? 18 : 6),
                         bottomRight: Radius.circular(isMine ? 6 : 18),
                       ),
+                      border: isHighlighted
+                          ? Border.all(
+                              color: isMine
+                                  ? Colors.white
+                                  : _brandOrange,
+                              width: 2.2,
+                            )
+                          : null,
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.06),
-                          blurRadius: 6,
+                          color: isHighlighted
+                              ? _brandOrange.withValues(alpha: 0.35)
+                              : Colors.black.withValues(alpha: 0.06),
+                          blurRadius: isHighlighted ? 14 : 6,
                           offset: const Offset(0, 2),
                         ),
                       ],
@@ -3102,6 +4278,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                           _buildStoryReplyChip(msg, isMine: isMine),
                         if (msg.replyTo != null && !_isStoryReply(msg))
                           _buildReplyQuoteChip(msg.replyTo!, isMine: isMine),
+                        if (_isForwarded(msg))
+                          _buildForwardedLabel(isMine: isMine),
                         ..._productTagsFor(msg).map(
                           (tag) => Padding(
                             padding: const EdgeInsets.only(bottom: 6),
@@ -3114,11 +4292,17 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                         if (localBytes != null) ...[
                           ClipRRect(
                             borderRadius: BorderRadius.circular(12),
-                            child: Image.memory(
-                              localBytes,
-                              width: 220,
-                              height: 180,
-                              fit: BoxFit.cover,
+                            child: GestureDetector(
+                              onTap: () => _viewLocalImage(localBytes),
+                              child: Image.memory(
+                                localBytes,
+                                width: 220,
+                                height: 180,
+                                fit: BoxFit.cover,
+                                gaplessPlayback: true,
+                                filterQuality: FilterQuality.low,
+                                cacheWidth: 440,
+                              ),
                             ),
                           ),
                           if (caption != null) const SizedBox(height: 8),
@@ -3133,6 +4317,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                                 height: 180,
                                 fit: BoxFit.cover,
                                 memCacheWidth: 440,
+                                showSpinner: false,
                               ),
                             ),
                           ),
@@ -3150,13 +4335,16 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                         if (caption != null &&
                             audio == null &&
                             localVoicePath == null)
-                          Text(
+                          LinkifiedText(
                             caption,
                             style: TextStyle(
                               color: isMine ? Colors.white : Colors.black87,
                               fontSize: 15,
                               height: 1.35,
                             ),
+                            linkColor: isMine
+                                ? Colors.white
+                                : const Color(0xFF2563EB),
                           ),
                         if (caption == null &&
                             localBytes == null &&
@@ -3176,6 +4364,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                     ),
                   ),
                 ),
+                if (!isUnsent && msg.id.isNotEmpty)
+                  _buildReactionRow(msg, isMine: isMine),
                 const SizedBox(height: 4),
                 Row(
                   mainAxisSize: MainAxisSize.min,
@@ -3259,22 +4449,15 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         ],
         GestureDetector(
           onTap: isFailed ? () => unawaited(_retryUnsent(msg)) : null,
-          onLongPress: () {
-            if (isUnsent) {
-              _showUnsentActions(msg);
-            } else if (canAct) {
-              _showMsgActions(msg);
-            } else {
-              _startReply(msg);
-            }
-          },
+          onLongPress: () => unawaited(_showMsgActions(msg)),
           child: Slidable(
             key: ValueKey('msg_${msg.clientMessageId ?? msg.id}'),
             groupTag: 'chat_messages',
+            closeOnScroll: true,
             startActionPane: isUnsent
                 ? null
                 : ActionPane(
-                    motion: const StretchMotion(),
+                    motion: const BehindMotion(),
                     extentRatio: 0.18,
                     children: [
                       CustomSlidableAction(
@@ -3367,8 +4550,13 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   ) {
     final merchantId = (product.merchantId ?? widget.peerMerchantId ?? '')
         .trim();
+    final rawId = product.productId.trim();
+    final sqlId = int.tryParse(rawId);
     return core.MarketplaceDetailModel(
       id: _checkoutItemIdFromProduct(product),
+      firestoreDocId: (sqlId == null || sqlId <= 0) && rawId.isNotEmpty
+          ? rawId
+          : null,
       name: product.name,
       image: product.image ?? '',
       price: product.price ?? 0,
@@ -3377,6 +4565,18 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       merchantId: merchantId.isEmpty ? null : merchantId,
       merchantName: widget.peerName.trim().isEmpty ? null : widget.peerName,
       serviceType: 'marketplace',
+    );
+  }
+
+  void _openProductDetails(ChatProductContext product) {
+    if (!mounted) return;
+    // Open instantly with chat tag data — no network wait before navigation.
+    final item = _checkoutItemFromProduct(product);
+    final cart = CartService('', apiPrefix: ApiConfig.apiPrefix);
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => DetailsPage(item: item, cartService: cart),
+      ),
     );
   }
 
@@ -3412,7 +4612,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
           children: [
             Expanded(
               child: InkWell(
-                onTap: _openMerchantProfile,
+                onTap: () => _openProductDetails(product),
                 child: Row(
                   children: [
                     _productThumb(product.image, size: 54),
@@ -3508,45 +4708,54 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     final price = tag['metadata'] is Map
         ? (tag['metadata'] as Map)['price']
         : null;
+    final product = ChatProductContext.fromTagMap(tag);
 
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: isMine ? Colors.white.withOpacity(0.15) : Colors.grey.shade100,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _openProductDetails(product),
         borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _productThumb(image, size: 40),
-          const SizedBox(width: 8),
-          Flexible(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  name,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: isMine ? Colors.white : Colors.black87,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 12,
-                  ),
-                ),
-                if (price != null)
-                  Text(
-                    _formatPrice((price is num) ? price.toDouble() : 0),
-                    style: TextStyle(
-                      color: isMine ? Colors.white70 : _brandOrange,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-              ],
-            ),
+        child: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color:
+                isMine ? Colors.white.withOpacity(0.15) : Colors.grey.shade100,
+            borderRadius: BorderRadius.circular(8),
           ),
-        ],
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _productThumb(image, size: 40),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: isMine ? Colors.white : Colors.black87,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                      ),
+                    ),
+                    if (price != null)
+                      Text(
+                        _formatPrice((price is num) ? price.toDouble() : 0),
+                        style: TextStyle(
+                          color: isMine ? Colors.white70 : _brandOrange,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -3879,8 +5088,9 @@ class _PendingImage {
 }
 
 /// In-app voice/video call UI (Firestore signaling + live call chrome).
-class _ChatCallScreen extends StatefulWidget {
-  const _ChatCallScreen({
+class ChatCallScreen extends StatefulWidget {
+  const ChatCallScreen({
+    super.key,
     required this.call,
     required this.peerName,
     required this.peerUid,
@@ -3895,17 +5105,18 @@ class _ChatCallScreen extends StatefulWidget {
   final bool video;
 
   @override
-  State<_ChatCallScreen> createState() => _ChatCallScreenState();
+  State<ChatCallScreen> createState() => _ChatCallScreenState();
 }
 
 enum _CallPhase { calling, ringing, connected }
 
-class _ChatCallScreenState extends State<_ChatCallScreen> {
+class _ChatCallScreenState extends State<ChatCallScreen> {
   static const _orange = Color(0xFFFF8A00);
   final _calls = CallServiceImpl();
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _callSub;
   Timer? _presenceTimer;
   Timer? _durationTimer;
+  Timer? _ringingKick;
   int _seconds = 0;
   bool _micOn = true;
   bool _camOn = true;
@@ -3917,7 +5128,13 @@ class _ChatCallScreenState extends State<_ChatCallScreen> {
   void initState() {
     super.initState();
     _phase = _CallPhase.calling;
+    unawaited(UserPresenceService.goOnline());
     unawaited(_refreshPeerPresence(initial: true));
+    // Always progress to Ringing so presence alone cannot block dial UX.
+    _ringingKick = Timer(const Duration(seconds: 1), () {
+      if (!mounted || _phase == _CallPhase.connected) return;
+      setState(() => _phase = _CallPhase.ringing);
+    });
     _presenceTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       if (_phase == _CallPhase.connected) return;
       unawaited(_refreshPeerPresence());
@@ -3934,8 +5151,9 @@ class _ChatCallScreenState extends State<_ChatCallScreen> {
     if (!mounted || _phase == _CallPhase.connected) return;
     setState(() {
       _peerOnline = online;
-      // Offline → Calling. Online (not yet answered) → Ringing.
-      _phase = online ? _CallPhase.ringing : _CallPhase.calling;
+      if (_phase == _CallPhase.calling && online) {
+        _phase = _CallPhase.ringing;
+      }
     });
   }
 
@@ -3966,7 +5184,7 @@ class _ChatCallScreenState extends State<_ChatCallScreen> {
         );
       }
       if (at != null &&
-          DateTime.now().difference(at) <= const Duration(minutes: 2)) {
+          DateTime.now().difference(at) <= const Duration(minutes: 10)) {
         return true;
       }
     } catch (_) {}
@@ -3998,6 +5216,8 @@ class _ChatCallScreenState extends State<_ChatCallScreen> {
   void _enterConnected() {
     _presenceTimer?.cancel();
     _presenceTimer = null;
+    _ringingKick?.cancel();
+    _ringingKick = null;
     setState(() {
       _phase = _CallPhase.connected;
       _seconds = 0;
@@ -4014,6 +5234,7 @@ class _ChatCallScreenState extends State<_ChatCallScreen> {
     _callSub?.cancel();
     _presenceTimer?.cancel();
     _durationTimer?.cancel();
+    _ringingKick?.cancel();
     super.dispose();
   }
 
@@ -4039,6 +5260,7 @@ class _ChatCallScreenState extends State<_ChatCallScreen> {
     setState(() => _ending = true);
     _presenceTimer?.cancel();
     _durationTimer?.cancel();
+    _ringingKick?.cancel();
     try {
       final dur = _phase == _CallPhase.connected ? _seconds : 0;
       await _calls.endCall(widget.call.id, dur);
@@ -4103,7 +5325,7 @@ class _ChatCallScreenState extends State<_ChatCallScreen> {
             Text(
               _phase == _CallPhase.connected
                   ? 'Connected'
-                  : (_peerOnline ? 'Online' : 'Offline'),
+                  : (_peerOnline ? 'Online' : 'Ringing their device…'),
               style: TextStyle(
                 color: _phase == _CallPhase.connected || _peerOnline
                     ? const Color(0xFF22C55E)
@@ -4211,6 +5433,272 @@ class _ChatCallScreenState extends State<_ChatCallScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Forward target picker: multi-select chats + search by peer name.
+class _ForwardChatPickerSheet extends StatefulWidget {
+  final List<BackendChatThread> threads;
+  final int myUserId;
+  final String myEmail;
+  final String myName;
+
+  const _ForwardChatPickerSheet({
+    required this.threads,
+    required this.myUserId,
+    required this.myEmail,
+    required this.myName,
+  });
+
+  @override
+  State<_ForwardChatPickerSheet> createState() => _ForwardChatPickerSheetState();
+}
+
+class _ForwardChatPickerSheetState extends State<_ForwardChatPickerSheet> {
+  final _searchCtrl = TextEditingController();
+  String _query = '';
+  final Set<String> _selectedIds = <String>{};
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<BackendChatThread> get _filtered {
+    final q = _query.trim().toLowerCase();
+    if (q.isEmpty) return widget.threads;
+    return widget.threads.where((t) {
+      final title = BackendChatService.peerDisplayNameForThread(
+        t,
+        widget.myUserId,
+        myEmail: widget.myEmail,
+        myName: widget.myName,
+      ).toLowerCase();
+      final preview = BackendChatService.describeLastMessagePreview(
+        t.lastMessagePreview,
+      ).label.toLowerCase();
+      return title.contains(q) || preview.contains(q);
+    }).toList();
+  }
+
+  void _toggle(BackendChatThread t) {
+    final id = t.id.trim();
+    if (id.isEmpty) return;
+    setState(() {
+      if (_selectedIds.contains(id)) {
+        _selectedIds.remove(id);
+      } else {
+        _selectedIds.add(id);
+      }
+    });
+  }
+
+  void _confirm() {
+    if (_selectedIds.isEmpty) return;
+    final chosen = widget.threads
+        .where((t) => _selectedIds.contains(t.id.trim()))
+        .toList(growable: false);
+    Navigator.pop(context, chosen);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = _filtered;
+    final selectedCount = _selectedIds.length;
+    return SafeArea(
+      child: SizedBox(
+        height: MediaQuery.sizeOf(context).height * 0.72,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SizedBox(height: 10),
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.black12,
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Forward to chats',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 18,
+                      ),
+                    ),
+                  ),
+                  if (selectedCount > 0)
+                    Text(
+                      '$selectedCount selected',
+                      style: const TextStyle(
+                        color: Color(0xFFFF8A00),
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(
+                'Tap to select one or more chats',
+                style: TextStyle(
+                  color: Color(0xFF6B7280),
+                  fontSize: 13,
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: TextField(
+                controller: _searchCtrl,
+                onChanged: (v) => setState(() => _query = v),
+                textInputAction: TextInputAction.search,
+                decoration: InputDecoration(
+                  hintText: 'Search name',
+                  prefixIcon: const Icon(Icons.search_rounded),
+                  suffixIcon: _query.trim().isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: 'Clear',
+                          onPressed: () {
+                            _searchCtrl.clear();
+                            setState(() => _query = '');
+                          },
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                  filled: true,
+                  fillColor: const Color(0xFFF3F4F7),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 12,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ),
+            Expanded(
+              child: rows.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'No chats match that name',
+                        style: TextStyle(color: Color(0xFF6B7280)),
+                      ),
+                    )
+                  : ListView.separated(
+                      itemCount: rows.length,
+                      separatorBuilder: (_, __) =>
+                          const Divider(height: 1, indent: 72),
+                      itemBuilder: (_, i) {
+                        final t = rows[i];
+                        final id = t.id.trim();
+                        final selected = _selectedIds.contains(id);
+                        final title =
+                            BackendChatService.peerDisplayNameForThread(
+                          t,
+                          widget.myUserId,
+                          myEmail: widget.myEmail,
+                          myName: widget.myName,
+                        );
+                        final avatar =
+                            BackendChatService.peerAvatarUrlForThread(
+                          t,
+                          widget.myUserId,
+                          myEmail: widget.myEmail,
+                          myName: widget.myName,
+                        );
+                        final preview =
+                            BackendChatService.describeLastMessagePreview(
+                          t.lastMessagePreview,
+                        ).label;
+                        return ListTile(
+                          selected: selected,
+                          selectedTileColor:
+                              const Color(0xFFFF8A00).withValues(alpha: 0.08),
+                          leading: CircleAvatar(
+                            backgroundColor: const Color(0xFFFFE8CC),
+                            backgroundImage: avatar.startsWith('http')
+                                ? NetworkImage(avatar)
+                                : null,
+                            child: avatar.startsWith('http')
+                                ? null
+                                : Text(
+                                    title.isNotEmpty
+                                        ? title[0].toUpperCase()
+                                        : '?',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      color: Color(0xFFFF8A00),
+                                    ),
+                                  ),
+                          ),
+                          title: Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          subtitle: Text(
+                            preview.trim().isEmpty
+                                ? 'Tap to select'
+                                : preview.trim(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: Checkbox(
+                            value: selected,
+                            activeColor: const Color(0xFFFF8A00),
+                            onChanged: (_) => _toggle(t),
+                          ),
+                          onTap: () => _toggle(t),
+                        );
+                      },
+                    ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: selectedCount == 0 ? null : _confirm,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFF8A00),
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: const Color(0xFFE5E7EB),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: Text(
+                    selectedCount == 0
+                        ? 'Select chats'
+                        : selectedCount == 1
+                            ? 'Forward to 1 chat'
+                            : 'Forward to $selectedCount chats',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

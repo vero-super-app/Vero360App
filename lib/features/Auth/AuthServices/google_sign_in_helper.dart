@@ -1,11 +1,18 @@
+import 'dart:io' show Platform;
+
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb, debugPrint;
 import 'package:google_sign_in/google_sign_in.dart';
 
 /// Web OAuth client from google-services.json (client_type 3).
 /// Required as [GoogleSignIn.initialize] `serverClientId` so Android returns an idToken.
 const String kGoogleWebClientId =
     '1010595167807-vl7asia9e4eep8u68g9c8mp5aa3eotgi.apps.googleusercontent.com';
+
+/// iOS OAuth client from GoogleService-Info.plist `CLIENT_ID`.
+/// Required as [GoogleSignIn.initialize] `clientId` on Apple platforms.
+const String kGoogleIosClientId =
+    '1010595167807-3c4t2b7l8ogrioanlbu30s8tiqk9cu5p.apps.googleusercontent.com';
 
 class GoogleSignInHelper {
   GoogleSignInHelper._();
@@ -15,7 +22,11 @@ class GoogleSignInHelper {
 
   static Future<void> ensureInitialized() async {
     if (_initialized) return;
-    await _google.initialize(serverClientId: kGoogleWebClientId);
+    final useIosClient = !kIsWeb && (Platform.isIOS || Platform.isMacOS);
+    await _google.initialize(
+      clientId: useIosClient ? kGoogleIosClientId : null,
+      serverClientId: kGoogleWebClientId,
+    );
     _initialized = true;
   }
 
@@ -34,18 +45,62 @@ class GoogleSignInHelper {
               'Google Sign-In is not available on this device. Try again or use email.',
         );
       }
+
+      // Prefer a clean account picker (avoids stale session without idToken).
+      try {
+        await _google.signOut();
+      } catch (_) {}
+
       final account = await _google.authenticate(
         scopeHint: const ['email', 'profile', 'openid'],
       );
-      final idToken = account.authentication.idToken;
+      var idToken = account.authentication.idToken;
+      String? accessToken;
+
+      // Some devices/builds omit idToken until scopes are authorized.
+      try {
+        final authz = await account.authorizationClient.authorizationForScopes(
+          const ['email', 'profile', 'openid'],
+        );
+        accessToken = authz?.accessToken;
+      } catch (_) {}
+
       if (idToken == null || idToken.isEmpty) {
+        // One retry after re-auth — common after Play Services / config glitches.
+        try {
+          await _google.signOut();
+        } catch (_) {}
+        final retry = await _google.authenticate(
+          scopeHint: const ['email', 'profile', 'openid'],
+        );
+        idToken = retry.authentication.idToken;
+        try {
+          final authz =
+              await retry.authorizationClient.authorizationForScopes(
+            const ['email', 'profile', 'openid'],
+          );
+          accessToken ??= authz?.accessToken;
+        } catch (_) {}
+      }
+
+      if (idToken == null || idToken.isEmpty) {
+        if (kDebugMode) {
+          debugPrint(
+            '[GoogleSignIn] Missing idToken after authenticate '
+            '(serverClientId / SHA-1 config?)',
+          );
+        }
         throw FirebaseAuthException(
           code: 'missing-id-token',
           message:
               'Google sign-in failed. Please try again or use email to sign in.',
         );
       }
-      final cred = GoogleAuthProvider.credential(idToken: idToken);
+
+      final cred = GoogleAuthProvider.credential(
+        idToken: idToken,
+        accessToken: accessToken,
+      );
       final userCred =
           await FirebaseAuth.instance.signInWithCredential(cred);
       return userCred.user;

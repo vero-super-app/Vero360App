@@ -75,6 +75,21 @@ class _NotificationsPageState extends State<NotificationsPage> {
     _handlingNotificationTap = true;
 
     final payload = Map<String, dynamic>.from(n.payload);
+    final type = (payload['type'] ?? '').toString().toLowerCase();
+    // Older chat alerts stored the peer name only as the list title, not in payload.
+    if (type == 'new_message') {
+      final existing = (payload['senderName'] ??
+              payload['peerName'] ??
+              payload['title'] ??
+              '')
+          .toString()
+          .trim();
+      final title = n.title.trim();
+      if (existing.isEmpty && title.isNotEmpty) {
+        payload['senderName'] = title;
+        payload['title'] = title;
+      }
+    }
     final badgeRoute = (payload[NotificationStore.kPayloadBadgeRoute] ??
             payload['badgeRoute'])
         ?.toString()

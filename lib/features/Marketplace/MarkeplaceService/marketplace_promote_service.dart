@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -10,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/promote_packages_catalog.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
@@ -147,46 +149,80 @@ List<MarketplacePromotePlan> promotePlansFor(PromoteVertical vertical) {
   final prefix = vertical == PromoteVertical.marketplace
       ? 'mp'
       : (vertical == PromoteVertical.food ? 'food' : 'stay');
-  return [
-    MarketplacePromotePlan(
-      id: '${prefix}_24h',
-      label: '24 hours on top',
-      subtitle: 'Stay at the top of $feed for 24 hours',
-      channel: top,
-      priceMwk: 2000,
-      duration: const Duration(hours: 24),
-    ),
-    MarketplacePromotePlan(
-      id: '${prefix}_7d',
-      label: '1 week on top',
-      subtitle: 'Stay at the top of $feed for 7 days',
-      channel: top,
-      priceMwk: 5000,
-      duration: const Duration(days: 7),
-    ),
-    const MarketplacePromotePlan(
-      id: 'fb_3d_local',
-      label: 'Facebook ads · 3 days',
-      subtitle: 'Local reach · Vero360 runs the campaign for you',
-      channel: 'facebook_ads',
-      priceMwk: 7500,
-      duration: Duration(days: 3),
-      reachLabel: 'Local · ~1k–5k people',
-    ),
-    const MarketplacePromotePlan(
-      id: 'fb_7d_wider',
-      label: 'Facebook ads · 7 days',
-      subtitle: 'Wider reach · Vero360 runs the campaign for you',
-      channel: 'facebook_ads',
-      priceMwk: 15000,
-      duration: Duration(days: 7),
-      reachLabel: 'Wider · ~5k–15k people',
-    ),
+  final catalog = PromotePackagesCatalog.instance;
+  final top24 = catalog.package('top_24h');
+  final top7 = catalog.package('top_7d');
+  final fb3 = catalog.package('fb_3d_local');
+  final fb7 = catalog.package('fb_7d_wider');
+
+  final plans = <MarketplacePromotePlan>[
+    if (top24.active)
+      MarketplacePromotePlan(
+        id: '${prefix}_24h',
+        label: top24.label.isNotEmpty ? top24.label : '24 hours on top',
+        subtitle: top24.subtitle.isNotEmpty
+            ? top24.subtitle
+            : 'Stay at the top of $feed for 24 hours',
+        channel: top,
+        priceMwk: top24.priceMwk,
+        duration: Duration(hours: top24.durationHours),
+      ),
+    if (top7.active)
+      MarketplacePromotePlan(
+        id: '${prefix}_7d',
+        label: top7.label.isNotEmpty ? top7.label : '1 week on top',
+        subtitle: top7.subtitle.isNotEmpty
+            ? top7.subtitle
+            : 'Stay at the top of $feed for 7 days',
+        channel: top,
+        priceMwk: top7.priceMwk,
+        duration: Duration(hours: top7.durationHours),
+      ),
+    if (fb3.active)
+      MarketplacePromotePlan(
+        id: 'fb_3d_local',
+        label: fb3.label.isNotEmpty ? fb3.label : 'Facebook ads · 3 days',
+        subtitle: fb3.subtitle.isNotEmpty
+            ? fb3.subtitle
+            : 'Local reach · Vero360 runs the campaign for you',
+        channel: 'facebook_ads',
+        priceMwk: fb3.priceMwk,
+        duration: Duration(hours: fb3.durationHours),
+        reachLabel: fb3.reachLabel,
+      ),
+    if (fb7.active)
+      MarketplacePromotePlan(
+        id: 'fb_7d_wider',
+        label: fb7.label.isNotEmpty ? fb7.label : 'Facebook ads · 7 days',
+        subtitle: fb7.subtitle.isNotEmpty
+            ? fb7.subtitle
+            : 'Wider reach · Vero360 runs the campaign for you',
+        channel: 'facebook_ads',
+        priceMwk: fb7.priceMwk,
+        duration: Duration(hours: fb7.durationHours),
+        reachLabel: fb7.reachLabel,
+      ),
   ];
+
+  // Never return empty — fall back to defaults if admin disabled everything.
+  if (plans.isEmpty) {
+    return [
+      MarketplacePromotePlan(
+        id: '${prefix}_24h',
+        label: '24 hours on top',
+        subtitle: 'Stay at the top of $feed for 24 hours',
+        channel: top,
+        priceMwk: 2000,
+        duration: const Duration(hours: 24),
+      ),
+    ];
+  }
+  return plans;
 }
 
 /// Back-compat alias for marketplace-only callers.
-final kMarketplacePromotePlans = promotePlansFor(PromoteVertical.marketplace);
+List<MarketplacePromotePlan> get kMarketplacePromotePlans =>
+    promotePlansFor(PromoteVertical.marketplace);
 
 class MarketplacePromoteService {
   MarketplacePromoteService._();
@@ -251,97 +287,59 @@ class MarketplacePromoteService {
     return doc.id;
   }
 
+  /// Confirms PayChangu payment on the server, then activates boost / FB ad order.
+  /// Clients cannot write status=paid/active (Firestore rules + CF verify).
   static Future<void> activateAfterPayment({
     required String promoId,
     required String txRef,
   }) async {
+    final callable = FirebaseFunctions.instance
+        .httpsCallable('activateMarketplacePromotion');
+    try {
+      await callable.call(<String, dynamic>{
+        'promoId': promoId,
+        'txRef': txRef,
+      });
+    } on FirebaseFunctionsException catch (e) {
+      throw StateError(
+        (e.message ?? e.code).toString().trim().isEmpty
+            ? 'Could not activate promotion'
+            : (e.message ?? e.code),
+      );
+    }
+
+    // Platform fee bookkeeping (optional; CF already set active/paid).
     final ref = _promos.doc(promoId);
     final snap = await ref.get();
-    if (!snap.exists) throw StateError('Promotion not found');
+    if (!snap.exists) return;
     final data = snap.data() ?? {};
-    if ((data['status'] ?? '').toString() == 'paid' ||
-        (data['status'] ?? '').toString() == 'active' ||
-        (data['status'] ?? '').toString() == 'fulfilled') {
-      return;
-    }
+    if (data['platformFeeCredited'] == true) return;
+
+    final amount = (data['amountMwk'] as num?)?.toDouble() ?? 0;
+    if (amount <= 0) return;
 
     final planId = (data['planId'] ?? '').toString();
     final channel = (data['channel'] ?? '').toString();
-    final itemId = (data['itemId'] ?? '').toString().trim();
-    final hours = (data['durationHours'] as num?)?.toInt() ?? 24;
-    final amount = (data['amountMwk'] as num?)?.toDouble() ?? 0;
     final itemName = (data['itemName'] ?? 'Promote').toString();
     final vertical = PromoteVerticalX.fromTopChannel(channel) ??
         PromoteVerticalX.fromId(data['vertical']?.toString());
-    final now = DateTime.now();
-    final ends = now.add(Duration(hours: hours));
 
-    var feeCredited = data['platformFeeCredited'] == true;
-    if (!feeCredited && amount > 0) {
-      try {
-        await FirebaseWalletService.creditPlatformServiceFee(
-          amount: amount,
-          description: '${vertical.feedLabel} promote · $itemName · $planId',
-          reference: txRef.isNotEmpty ? txRef : 'promo:$promoId',
-        );
-        feeCredited = true;
-      } catch (_) {
-        feeCredited = false;
-      }
-    }
-
-    final topVertical = PromoteVerticalX.fromTopChannel(channel);
-    if (topVertical != null && itemId.isNotEmpty) {
-      final itemRef =
-          _db.collection(topVertical.itemsCollection).doc(itemId);
-      final itemSnap = await itemRef.get();
-      DateTime base = now;
-      if (itemSnap.exists) {
-        final existing = parsePromotedUntil(itemSnap.data()?['promotedUntil']);
-        if (existing != null && existing.isAfter(base)) base = existing;
-      }
-      final until = base.add(Duration(hours: hours));
-      await itemRef.set({
-        'promotedUntil': Timestamp.fromDate(until),
-        'promotionPlanId': planId,
-        'promotionPaidAt': FieldValue.serverTimestamp(),
-        'promotionTxRef': txRef,
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-
+    try {
+      await FirebaseWalletService.creditPlatformServiceFee(
+        amount: amount,
+        description: '${vertical.feedLabel} promote · $itemName · $planId',
+        reference: txRef.isNotEmpty ? txRef : 'promo:$promoId',
+      );
       await ref.set({
-        'status': 'active',
-        'vertical': topVertical.id,
-        'txRef': txRef,
-        'paidAt': FieldValue.serverTimestamp(),
-        'expiresAt': Timestamp.fromDate(until),
-        if (feeCredited) ...{
-          'platformFeeCredited': true,
-          'platformFeeAmount': amount,
-          'platformFeeMode': 'full',
-          'platformFeeCreditedAt': FieldValue.serverTimestamp(),
-        },
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-      return;
-    }
-
-    // Facebook ads order — queued for admin fulfillment.
-    await ref.set({
-      'status': 'paid',
-      'vertical': vertical.id,
-      'fulfillmentStatus': 'queued',
-      'txRef': txRef,
-      'paidAt': FieldValue.serverTimestamp(),
-      'expiresAt': Timestamp.fromDate(ends),
-      if (feeCredited) ...{
         'platformFeeCredited': true,
         'platformFeeAmount': amount,
         'platformFeeMode': 'full',
         'platformFeeCreditedAt': FieldValue.serverTimestamp(),
-      },
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (_) {
+      // Admin dashboard can backfill via "Credit platform fee".
+    }
   }
 
   static Future<void> startCheckout({
@@ -455,8 +453,8 @@ class MarketplacePromoteService {
             } catch (_) {}
             if (rootCtx.mounted) {
               final msg = plan.isFeedTop
-                  ? '${vertical.feedLabel} listing promoted for ${plan.label}. Thank you!'
-                  : 'Facebook ads order paid. Vero360 will run your campaign.';
+                  ? '${vertical.feedLabel} listing promoted for ${plan.label} — also sharing to Facebook Page.'
+                  : 'Promotion paid — sharing to Facebook Page and queuing your campaign.';
               ToastHelper.showCustomToast(
                 rootCtx,
                 msg,
@@ -479,6 +477,7 @@ class MarketplacePromoteService {
     required Map<String, dynamic> item,
     PromoteVertical vertical = PromoteVertical.marketplace,
   }) async {
+    await PromotePackagesCatalog.instance.ensureLoaded();
     final plans = promotePlansFor(vertical);
     MarketplacePromotePlan? selected = plans.first;
     var paying = false;
@@ -495,7 +494,16 @@ class MarketplacePromoteService {
           builder: (ctx, setModal) {
             final promoted = isPromotedNow(item);
             final until = parsePromotedUntil(item['promotedUntil']);
-            return Padding(
+            // Rebuild when admin updates prices while sheet is open.
+            return AnimatedBuilder(
+              animation: PromotePackagesCatalog.instance,
+              builder: (ctx, _) {
+                final livePlans = promotePlansFor(vertical);
+                if (selected == null ||
+                    !livePlans.any((p) => p.id == selected!.id)) {
+                  selected = livePlans.first;
+                }
+                return Padding(
               padding: EdgeInsets.fromLTRB(
                 20,
                 12,
@@ -537,12 +545,12 @@ class MarketplacePromoteService {
                     ),
                   ),
                   const SizedBox(height: 14),
-                  ...plans.map((plan) {
-                    final sel = selected?.id == plan.id;
+                  ...livePlans.map((plan) {
+                    final on = selected?.id == plan.id;
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Material(
-                        color: sel
+                        color: on
                             ? const Color(0xFFFFF7ED)
                             : const Color(0xFFF8FAFC),
                         borderRadius: BorderRadius.circular(14),
@@ -551,24 +559,17 @@ class MarketplacePromoteService {
                           onTap: paying
                               ? null
                               : () => setModal(() => selected = plan),
-                          child: Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(
-                                color: sel
-                                    ? const Color(0xFFFF8A00)
-                                    : Colors.black12,
-                                width: sel ? 2 : 1,
-                              ),
-                            ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(14),
                             child: Row(
                               children: [
                                 Icon(
-                                  plan.isFacebookAds
-                                      ? Icons.campaign_rounded
-                                      : Icons.vertical_align_top_rounded,
-                                  color: const Color(0xFFFF8A00),
+                                  on
+                                      ? Icons.radio_button_checked
+                                      : Icons.radio_button_off,
+                                  color: on
+                                      ? const Color(0xFFFF8A00)
+                                      : Colors.black38,
                                 ),
                                 const SizedBox(width: 10),
                                 Expanded(
@@ -579,19 +580,28 @@ class MarketplacePromoteService {
                                       Text(
                                         plan.label,
                                         style: const TextStyle(
-                                          fontWeight: FontWeight.w900,
+                                          fontWeight: FontWeight.w800,
                                         ),
                                       ),
+                                      const SizedBox(height: 2),
                                       Text(
-                                        plan.reachLabel.isNotEmpty
-                                            ? '${plan.subtitle}\n${plan.reachLabel}'
-                                            : plan.subtitle,
+                                        plan.subtitle,
                                         style: const TextStyle(
-                                          fontSize: 12,
                                           color: Colors.black54,
-                                          height: 1.25,
+                                          fontSize: 12,
                                         ),
                                       ),
+                                      if (plan.reachLabel.isNotEmpty) ...[
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          plan.reachLabel,
+                                          style: const TextStyle(
+                                            color: Color(0xFFC2410C),
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ],
                                     ],
                                   ),
                                 ),
@@ -599,7 +609,7 @@ class MarketplacePromoteService {
                                   plan.priceLabel,
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w900,
-                                    color: Color(0xFF166534),
+                                    color: Color(0xFFFF8A00),
                                   ),
                                 ),
                               ],
@@ -611,13 +621,6 @@ class MarketplacePromoteService {
                   }),
                   const SizedBox(height: 8),
                   FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFFFF8A00),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
                     onPressed: paying || selected == null
                         ? null
                         : () async {
@@ -636,38 +639,35 @@ class MarketplacePromoteService {
                                   ctx,
                                   UserFacingError.from(
                                     e,
-                                    fallback:
-                                        'Could not start payment. Try again.',
+                                    fallback: 'Could not start payment',
                                   ),
                                   isSuccess: false,
-                                  errorMessage: 'Payment failed',
+                                  errorMessage: 'Promote failed',
                                 );
                               }
                             } finally {
                               if (ctx.mounted) setModal(() => paying = false);
                             }
                           },
-                    child: paying
-                        ? const SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2.4,
-                              color: Colors.white,
-                            ),
-                          )
-                        : Text(
-                            selected == null
-                                ? 'Select a plan'
-                                : 'Pay ${selected!.priceLabel}',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w900,
-                              fontSize: 15,
-                            ),
-                          ),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFFFF8A00),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    child: Text(
+                      paying
+                          ? 'Starting…'
+                          : 'Pay ${selected!.priceLabel}',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
                   ),
                 ],
               ),
+                );
+              },
             );
           },
         );

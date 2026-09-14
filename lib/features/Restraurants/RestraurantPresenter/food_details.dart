@@ -27,6 +27,7 @@ import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_chec
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_engagement_service.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_review_service.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_service.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierService/courier_city.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/map_location_picker_screen.dart';
@@ -1127,7 +1128,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     final heroImages = _heroImages;
     final cat    = ((item.category ?? 'Meals').trim().isEmpty)
         ? 'Meals' : item.category!.trim();
-    final desc   = item.description?.trim() ?? '';
+    final desc = DescriptionContactMask.mask(item.description?.trim() ?? '');
     final mq     = MediaQuery.of(context);
 
     // How tall the orange dome is
@@ -2952,7 +2953,7 @@ class _KitchenExplorePageState extends State<_KitchenExplorePage> {
                       if (_description.trim().isNotEmpty) ...[
                         const SizedBox(height: 12),
                         Text(
-                          _description.trim(),
+                          DescriptionContactMask.mask(_description.trim()),
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             color: Colors.grey.shade700,

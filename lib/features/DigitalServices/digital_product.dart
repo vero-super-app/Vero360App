@@ -93,8 +93,10 @@ class DigitalProduct {
 
   String get priceLabel {
     if (isNetflixHub) return 'Choose a plan';
-    if (fixedMwkPrice != null) return formatMwk(fixedMwkPrice!);
-    if (usdAmounts.isEmpty) return '';
+    if (fixedMwkPrice != null && fixedMwkPrice! > 0) {
+      return formatMwk(fixedMwkPrice!);
+    }
+    if (usdAmounts.isEmpty) return '—';
     return 'From ${formatAmount(startingUsd)}';
   }
 
@@ -133,7 +135,7 @@ class DigitalProduct {
   }
 }
 
-/// Homepage Digital Services grid — fixed MWK subscription codes (original logic).
+/// Homepage Digital Services grid — metadata only; MWK prices come from admin.
 const List<DigitalProduct> kDigitalProducts = [
   DigitalProduct(
     key: 'spotify',
@@ -144,7 +146,6 @@ const List<DigitalProduct> kDigitalProducts = [
     brandTag: 'Spotify',
     logoAsset: 'assets/brands/spotify.jpg',
     icon: Icons.music_note_rounded,
-    fixedMwkPrice: 8000,
   ),
   DigitalProduct(
     key: 'apple_music',
@@ -155,7 +156,6 @@ const List<DigitalProduct> kDigitalProducts = [
     brandTag: 'Music',
     logoAsset: 'assets/brands/apple_music.png',
     icon: Icons.music_note_rounded,
-    fixedMwkPrice: 8000,
   ),
   DigitalProduct(
     key: 'netflix',
@@ -166,7 +166,7 @@ const List<DigitalProduct> kDigitalProducts = [
     brandTag: 'Netflix',
     logoAsset: 'assets/brands/netflix.png',
     icon: Icons.movie_creation_outlined,
-    // Hub only — prices live on netflix_* plan products.
+    // Hub only — prices live on netflix_* plan products (admin).
   ),
   DigitalProduct(
     key: 'chatgpt_plus',
@@ -177,7 +177,6 @@ const List<DigitalProduct> kDigitalProducts = [
     brandTag: 'GPT',
     logoAsset: 'assets/brands/chatgpt.png',
     icon: Icons.chat_bubble_outline_rounded,
-    fixedMwkPrice: 35000,
   ),
 ];
 

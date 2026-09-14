@@ -18,12 +18,13 @@ class CallServiceImpl {
   }) async {
     try {
       final callId = 'call_${DateTime.now().millisecondsSinceEpoch}';
+      // Status must be `incoming`/`ringing` so the recipient's listener can ring.
       final callSession = CallSession(
         id: callId,
         initiatorId: initiatorId,
         recipientId: recipientId,
         callType: callType,
-        status: CallStatus.outgoing,
+        status: CallStatus.incoming,
         initiatedAt: DateTime.now(),
         initiatorName: initiatorName,
         initiatorAvatar: initiatorAvatar,
@@ -31,10 +32,11 @@ class CallServiceImpl {
         recipientAvatar: recipientAvatar,
       );
 
-      await _firestore
-          .collection(_callsCollection)
-          .doc(callId)
-          .set(callSession.toFirestore());
+      await _firestore.collection(_callsCollection).doc(callId).set({
+        ...callSession.toFirestore(),
+        // Explicit ringing flag for clients + Cloud Function hooks.
+        'status': 'ringing',
+      });
 
       return callSession;
     } catch (e) {
@@ -166,11 +168,11 @@ class CallServiceImpl {
     return _firestore
         .collection(_callsCollection)
         .where('recipientId', isEqualTo: userId)
-        .where('status', isEqualTo: 'incoming')
+        .where('status', whereIn: ['incoming', 'ringing'])
         .snapshots()
         .map((snapshot) => snapshot.docs
-        .map((doc) => CallSession.fromFirestore(doc))
-        .toList())
+            .map((doc) => CallSession.fromFirestore(doc))
+            .toList())
         .expand((list) => list);
   }
 

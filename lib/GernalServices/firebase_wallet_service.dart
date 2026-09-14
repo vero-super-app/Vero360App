@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/GeneralModels/wallet_model.dart';
+import 'package:vero360_app/utils/kyc_gate.dart';
 
 class FirebaseWalletService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -147,6 +148,7 @@ class FirebaseWalletService {
   }
 
   // Debit wallet (for payouts). Completes immediately so cash-out is not stuck pending.
+  // Requires KYC approval — blocks cash-out even if a UI screen skipped the gate.
   static Future<void> debitWallet({
     required String merchantId,
     required double amount,
@@ -154,6 +156,8 @@ class FirebaseWalletService {
     required String reference,
   }) async {
     try {
+      await KycGate.assertVerifiedForPayout(uid: merchantId);
+
       final walletDoc = await _findWalletDoc(merchantId);
       if (walletDoc == null) {
         throw Exception('Wallet not found for merchant');

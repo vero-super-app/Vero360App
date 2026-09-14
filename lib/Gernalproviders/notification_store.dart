@@ -78,6 +78,8 @@ class NotificationStore extends ChangeNotifier {
   static const String kBadgePostArrival = 'quick_post_arrival';
   /// Tap opens Play Store / App Store for an update download.
   static const String kBadgeAppUpdate = 'app_update';
+  /// Opens Vero360 Team chat (admin broadcasts).
+  static const String kBadgeVeroTeam = 'vero_team';
 
   /// Maps order notifications to the correct dashboard tile (merchant vs buyer).
   static String badgeRouteForOrderStatus(

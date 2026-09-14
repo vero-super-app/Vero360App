@@ -964,6 +964,9 @@ class NotificationService {
       case 'store_update':
         unawaited(_openAppStoreUpdate());
         return true;
+      case NotificationStore.kBadgeVeroTeam:
+      case 'vero360_team':
+        return false; // handled via openChat / type in _navigateWithNavigator
       default:
         return false;
     }
@@ -1168,6 +1171,14 @@ class NotificationService {
       case 'store_update':
         if (kDebugMode) debugPrint('→ Open store for app update');
         unawaited(_openAppStoreUpdate());
+        break;
+
+      case 'vero_team':
+      case 'vero360_team':
+        if (kDebugMode) debugPrint('→ Open Vero360 Team chat');
+        navigator.push(
+          MaterialPageRoute(builder: (_) => const VeroTeamChatPage()),
+        );
         break;
 
       case 'engagement':

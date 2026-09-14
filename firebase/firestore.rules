@@ -243,6 +243,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Admin → Vero360 Team chat broadcasts (everyone).
+    match /vero_team_broadcasts/{broadcastId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
     // Other app collections (chat, notifications, etc.) — signed-in users only.
     match /{document=**} {
       allow read, write: if isSignedIn();

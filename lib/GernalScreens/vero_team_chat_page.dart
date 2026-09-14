@@ -21,6 +21,8 @@ import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketP
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_my_orders_page.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/verocourier.dart';
 import 'package:vero360_app/wallet/merchant_wallet_page.dart';
+import 'package:vero360_app/utils/app_update_checker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// In-app chat thread for Vero360 Team tips (order ship / receive / shelf).
 /// Content lives in Firestore [order_party_alerts]; the notification tray only
@@ -46,29 +48,68 @@ enum _TeamAction {
   accommodation,
   courier,
   wallet,
+  appUpdate,
+  none,
 }
 
 class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
   static const _brandOrange = Color(0xFFFF8A00);
   static const _ink = Color(0xFF101010);
   static const _bg = Color(0xFFECE5DD);
+  static const _broadcastsCollection = 'vero_team_broadcasts';
+  static const _clearedBroadcastsKey = 'vero_team_broadcasts_cleared_at_ms';
 
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _sub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _personalSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _broadcastSub;
+  List<_TeamMessage> _personal = const [];
+  List<_TeamMessage> _broadcasts = const [];
   List<_TeamMessage> _messages = const [];
   bool _loading = true;
   bool _markedRead = false;
   bool _clearing = false;
+  int _clearedBroadcastsBeforeMs = 0;
 
   @override
   void initState() {
     super.initState();
-    _listen();
+    unawaited(_bootstrap());
   }
 
   @override
   void dispose() {
-    _sub?.cancel();
+    _personalSub?.cancel();
+    _broadcastSub?.cancel();
     super.dispose();
+  }
+
+  Future<void> _bootstrap() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _clearedBroadcastsBeforeMs =
+          prefs.getInt(_clearedBroadcastsKey) ?? 0;
+    } catch (_) {}
+    _listen();
+  }
+
+  void _recompute() {
+    final items = <_TeamMessage>[..._personal, ..._broadcasts];
+    items.sort((a, b) {
+      final aa = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final bb = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return aa.compareTo(bb);
+    });
+    if (!mounted) return;
+    setState(() {
+      _messages = items;
+      _loading = false;
+    });
+    if (!_markedRead) {
+      final unread = items.where((m) => !m.read && !m.isBroadcast).toList();
+      if (unread.isNotEmpty) {
+        _markedRead = true;
+        unawaited(_markAllRead(unread.map((m) => m.id)));
+      }
+    }
   }
 
   void _listen() {
@@ -81,7 +122,10 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
       return;
     }
 
-    _sub = FirebaseFirestore.instance
+    _personalSub?.cancel();
+    _broadcastSub?.cancel();
+
+    _personalSub = FirebaseFirestore.instance
         .collection(OrderPartyNotificationService.collectionName)
         .where('toUid', isEqualTo: uid)
         .snapshots()
@@ -120,20 +164,51 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
           ),
         );
       }
-      items.sort((a, b) {
-        final aa = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-        final bb = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-        return aa.compareTo(bb);
-      });
-      if (!mounted) return;
-      setState(() {
-        _messages = items;
-        _loading = false;
-      });
-      if (!_markedRead && items.any((m) => !m.read)) {
-        _markedRead = true;
-        unawaited(_markAllRead(items.where((m) => !m.read).map((m) => m.id)));
+      _personal = items;
+      _recompute();
+    }, onError: (_) {
+      if (mounted) setState(() => _loading = false);
+    });
+
+    _broadcastSub = FirebaseFirestore.instance
+        .collection(_broadcastsCollection)
+        .limit(50)
+        .snapshots()
+        .listen((snap) {
+      final items = <_TeamMessage>[];
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        final title = (data['title'] ?? '').toString().trim();
+        final body = (data['body'] ?? '').toString().trim();
+        if (body.isEmpty && title.isEmpty) continue;
+
+        DateTime? at;
+        final rawAt = data['createdAt'];
+        if (rawAt is Timestamp) at = rawAt.toDate();
+        if (at != null &&
+            at.millisecondsSinceEpoch <= _clearedBroadcastsBeforeMs) {
+          continue;
+        }
+
+        final kind = (data['kind'] ?? 'general').toString().trim().toLowerCase();
+        items.add(
+          _TeamMessage(
+            id: 'bcast_${doc.id}',
+            title: title.isEmpty ? VeroTeamChatPage.displayName : title,
+            body: body,
+            createdAt: at,
+            read: true,
+            isBroadcast: true,
+            payload: {
+              'type': 'vero_team',
+              'kind': kind,
+              'broadcastId': doc.id,
+            },
+          ),
+        );
       }
+      _broadcasts = items;
+      _recompute();
     }, onError: (_) {
       if (mounted) setState(() => _loading = false);
     });
@@ -190,14 +265,25 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
     if (ok != true || !mounted) return;
 
     setState(() => _clearing = true);
-    final ids = _messages.map((m) => m.id).toList();
-    await _batchUpdate(ids, {
-      'cleared': true,
-      'read': true,
-      'consumed': true,
-    });
+    final personalIds =
+        _messages.where((m) => !m.isBroadcast).map((m) => m.id).toList();
+    if (personalIds.isNotEmpty) {
+      await _batchUpdate(personalIds, {
+        'cleared': true,
+        'read': true,
+        'consumed': true,
+      });
+    }
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_clearedBroadcastsKey, nowMs);
+      _clearedBroadcastsBeforeMs = nowMs;
+    } catch (_) {}
     if (mounted) {
       setState(() {
+        _personal = const [];
+        _broadcasts = const [];
         _messages = const [];
         _clearing = false;
       });
@@ -207,6 +293,13 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
   /// Resolve destination from payload + message text (never default to My Orders).
   _TeamAction _actionFor(_TeamMessage msg) {
     final payload = msg.payload ?? const <String, dynamic>{};
+    final kind = (payload['kind'] ?? '').toString().trim().toLowerCase();
+    final typeEarly = (payload['type'] ?? '').toString().trim().toLowerCase();
+    if (msg.isBroadcast || typeEarly == 'vero_team') {
+      if (kind == 'app_update') return _TeamAction.appUpdate;
+      return _TeamAction.none;
+    }
+
     final actionHint =
         (payload['action'] ?? '').toString().trim().toLowerCase();
     if (actionHint == 'send_parcel' || actionHint == 'send') {
@@ -230,7 +323,7 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
         .toString()
         .trim()
         .toLowerCase();
-    final type = (payload['type'] ?? '').toString().trim().toLowerCase();
+    final type = typeEarly;
     final status = (payload['status'] ?? '').toString().trim().toLowerCase();
     final text = '${msg.title} ${msg.body}'.toLowerCase();
 
@@ -342,7 +435,7 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
     return _TeamAction.merchantListings;
   }
 
-  String _ctaLabel(_TeamAction action) {
+  String? _ctaLabel(_TeamAction action) {
     switch (action) {
       case _TeamAction.sendParcel:
         return 'Open Send Parcel';
@@ -364,23 +457,37 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
         return 'Open Vero Courier';
       case _TeamAction.wallet:
         return 'Open wallet';
+      case _TeamAction.appUpdate:
+        return 'Update app';
+      case _TeamAction.none:
+        return null;
     }
   }
 
   Future<void> _openAction(_TeamMessage msg) async {
     final action = _actionFor(msg);
+    if (action == _TeamAction.none) return;
+    if (action == _TeamAction.appUpdate) {
+      await AppUpdateChecker.openStoreForThisPlatform();
+      return;
+    }
     final payload = msg.payload ?? const <String, dynamic>{};
 
     // Clear this tip after the user follows it.
-    unawaited(_batchUpdate([msg.id], {
-      'cleared': true,
-      'read': true,
-      'consumed': true,
-    }));
+    if (!msg.isBroadcast) {
+      unawaited(_batchUpdate([msg.id], {
+        'cleared': true,
+        'read': true,
+        'consumed': true,
+      }));
+    }
 
     if (!mounted) return;
 
     switch (action) {
+      case _TeamAction.none:
+      case _TeamAction.appUpdate:
+        return;
       case _TeamAction.sendParcel:
         await Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => const ToShipPage()),
@@ -558,8 +665,8 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
                   child: Padding(
                     padding: EdgeInsets.all(28),
                     child: Text(
-                      'Vero360 Team will message you here about shipping, '
-                      'receiving parcels, and order tips.',
+                      'Vero360 Team will message you here about updates, '
+                      'shipping, receiving parcels, and order tips.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 15,
@@ -589,7 +696,7 @@ class _VeroTeamMessageList extends StatefulWidget {
 
   final List<_TeamMessage> messages;
   final _TeamAction Function(_TeamMessage) actionFor;
-  final String Function(_TeamAction) ctaLabel;
+  final String? Function(_TeamAction) ctaLabel;
   final void Function(_TeamMessage) onCta;
 
   @override
@@ -654,6 +761,7 @@ class _TeamMessage {
   final String body;
   final DateTime? createdAt;
   final bool read;
+  final bool isBroadcast;
   final Map<String, dynamic>? payload;
 
   const _TeamMessage({
@@ -662,13 +770,14 @@ class _TeamMessage {
     required this.body,
     required this.createdAt,
     required this.read,
+    this.isBroadcast = false,
     this.payload,
   });
 }
 
 class _TeamBubble extends StatelessWidget {
   final _TeamMessage message;
-  final String ctaLabel;
+  final String? ctaLabel;
   final VoidCallback onCta;
 
   const _TeamBubble({
@@ -738,28 +847,30 @@ class _TeamBubble extends StatelessWidget {
                   fontWeight: FontWeight.w500,
                 ),
               ),
-              const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: onCta,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: _brandOrange,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+              if ((ctaLabel ?? '').trim().isNotEmpty) ...[
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: onCta,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _brandOrange,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                     ),
-                  ),
-                  child: Text(
-                    ctaLabel,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 13.5,
+                    child: Text(
+                      ctaLabel!,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13.5,
+                      ),
                     ),
                   ),
                 ),
-              ),
+              ],
               const SizedBox(height: 4),
               Align(
                 alignment: Alignment.centerRight,

@@ -252,7 +252,7 @@ class _FoodOrderTrackingPageState extends State<FoodOrderTrackingPage> {
                 target: mapTarget,
                 zoom: dropoff != null ? 17.2 : 13,
               ),
-              mapType: MapType.hybrid,
+              mapType: MapType.normal,
               myLocationEnabled: true,
               myLocationButtonEnabled: true,
               zoomControlsEnabled: false,

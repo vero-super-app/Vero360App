@@ -114,6 +114,15 @@ service cloud.firestore {
         && request.resource.data.merchantId == request.auth.uid;
       allow update, delete: if isSignedIn()
         && resource.data.merchantId == request.auth.uid;
+
+      match /viewers/{viewerId} {
+        allow read: if true;
+        allow create, update: if isSignedIn()
+          && request.auth.uid == viewerId;
+        allow delete: if isSignedIn()
+          && get(/databases/$(database)/documents/merchant_stories/$(storyId)).data.merchantId
+            == request.auth.uid;
+      }
     }
 
     match /merchant_wallets/{merchantId} {

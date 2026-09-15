@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:vero360_app/Home/merchant_story_model.dart';
@@ -18,6 +16,9 @@ class _StorySectionState extends State<StorySection> {
   final StoryService _service = StoryService();
   late final Stream<List<MerchantStoryGroup>> _stream;
   List<MerchantStoryGroup>? _lastGroups;
+  int? _ownViewCount;
+  String? _ownViewsForMerchantId;
+  String? _ownViewsStoryKey;
 
   @override
   void initState() {
@@ -26,6 +27,53 @@ class _StorySectionState extends State<StorySection> {
     // One stream for this State — avoid resubscribe flashes on parent rebuilds.
     _stream = _service.getActiveStoriesStream(viewerId: viewerId);
     _lastGroups = StoryService.lastActiveGroups;
+  }
+
+  List<MerchantStoryGroup> _orderedGroups(List<MerchantStoryGroup> groups) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) return groups;
+    final ownIndex = groups.indexWhere((g) => g.merchantId == uid);
+    if (ownIndex <= 0) return groups;
+    final copy = List<MerchantStoryGroup>.from(groups);
+    final own = copy.removeAt(ownIndex);
+    copy.insert(0, own);
+    return copy;
+  }
+
+  void _maybeLoadOwnViews(List<MerchantStoryGroup> groups) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) return;
+    MerchantStoryGroup? own;
+    for (final g in groups) {
+      if (g.merchantId == uid) {
+        own = g;
+        break;
+      }
+    }
+    if (own == null || own.items.isEmpty) {
+      if (_ownViewCount != null || _ownViewsForMerchantId != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() {
+            _ownViewCount = null;
+            _ownViewsForMerchantId = null;
+            _ownViewsStoryKey = null;
+          });
+        });
+      }
+      return;
+    }
+    final latest = own.latestItem;
+    if (latest == null) return;
+    final key = own.items.map((e) => e.storyId).join('|');
+    if (_ownViewsForMerchantId == uid && _ownViewsStoryKey == key) return;
+    _ownViewsForMerchantId = uid;
+    _ownViewsStoryKey = key;
+    _service.getStoryViewerCounts(own.items.map((e) => e.storyId).toList()).then((counts) {
+      if (!mounted) return;
+      final total = counts.values.fold<int>(0, (a, b) => a + b);
+      setState(() => _ownViewCount = total);
+    }).catchError((_) {});
   }
 
   @override
@@ -99,18 +147,31 @@ class _StorySectionState extends State<StorySection> {
           );
         }
 
+        final ordered = _orderedGroups(groups);
+        _maybeLoadOwnViews(ordered);
+        final uid = FirebaseAuth.instance.currentUser?.uid;
+        final rowHeight = (uid != null &&
+                ordered.any((g) => g.merchantId == uid) &&
+                _ownViewCount != null)
+            ? _ringSize + 58
+            : _ringSize + 44;
+
         return SizedBox(
-          height: _ringSize + 44,
+          height: rowHeight,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            itemCount: groups.length,
+            itemCount: ordered.length,
             itemBuilder: (context, index) {
+              final group = ordered[index];
+              final isOwn = uid != null && group.merchantId == uid;
               return StoryListRing(
-                group: groups[index],
-                allGroups: groups,
+                group: group,
+                allGroups: ordered,
                 index: index,
                 size: _ringSize,
+                isOwn: isOwn,
+                ownViewCount: isOwn ? _ownViewCount : null,
               );
             },
           ),

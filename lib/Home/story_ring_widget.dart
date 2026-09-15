@@ -219,6 +219,8 @@ class StoryListRing extends StatelessWidget {
   final List<MerchantStoryGroup> allGroups;
   final int index;
   final double size;
+  final bool isOwn;
+  final int? ownViewCount;
 
   const StoryListRing({
     super.key,
@@ -226,10 +228,13 @@ class StoryListRing extends StatelessWidget {
     required this.allGroups,
     required this.index,
     this.size = 64,
+    this.isOwn = false,
+    this.ownViewCount,
   });
 
   @override
   Widget build(BuildContext context) {
+    final label = isOwn ? 'My status' : group.merchantName;
     return Padding(
       padding: const EdgeInsets.only(right: 16),
       child: Column(
@@ -248,17 +253,31 @@ class StoryListRing extends StatelessWidget {
           SizedBox(
             width: size + 20,
             child: Text(
-              group.merchantName,
+              label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF101010),
+                fontWeight: isOwn ? FontWeight.w800 : FontWeight.w600,
+                color: const Color(0xFF101010),
               ),
             ),
           ),
+          if (isOwn && ownViewCount != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              '${ownViewCount!} view${ownViewCount == 1 ? '' : 's'}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[600],
+              ),
+            ),
+          ],
         ],
       ),
     );

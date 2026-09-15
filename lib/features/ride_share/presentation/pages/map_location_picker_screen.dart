@@ -248,7 +248,7 @@ class _MapLocationPickerScreenState
               target: initial,
               zoom: widget.initialLatitude != null ? 17.5 : 15,
             ),
-            mapType: MapType.hybrid,
+            mapType: MapType.normal,
             myLocationEnabled: _myLocationEnabled,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,

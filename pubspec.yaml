@@ -2,7 +2,7 @@ name: vero360_app
 description: "A new Flutter project."
 publish_to: 'none'
 
-version: 1.1.8+10013
+version: 1.1.9+10014
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -30,6 +30,8 @@ dependencies:
   google_sign_in: ^7.2.0
   sign_in_with_apple: ^7.0.1
   google_maps_flutter: ^2.2.8
+  google_maps_flutter_android: ^2.18.12
+  google_maps_flutter_platform_interface: ^2.14.1
   google_maps_flutter_web: ^0.5.14+3
   flutter_polyline_points: ^3.1.0
   flutter_riverpod: ^3.0.3

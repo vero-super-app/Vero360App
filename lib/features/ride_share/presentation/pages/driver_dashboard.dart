@@ -749,17 +749,19 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
               ),
             ],
           ),
-          clipBehavior: Clip.antiAlias,
+          // Do NOT clip GoogleMap — Clip.antiAlias blanks platform views on Android.
           child: Stack(
             children: [
-              MapViewWidget(
-                onMapCreated: (controller) async {
-                  mapController = controller;
-                  await _detectAndCenterDriverLocation(force: true);
-                },
-                initialPosition: _lastPosition,
-                // Nearby taxis are a passenger-facing feature.
-                showNearbyVehicles: false,
+              Positioned.fill(
+                child: MapViewWidget(
+                  onMapCreated: (controller) async {
+                    mapController = controller;
+                    await _detectAndCenterDriverLocation(force: true);
+                  },
+                  initialPosition: _lastPosition,
+                  // Nearby taxis are a passenger-facing feature.
+                  showNearbyVehicles: false,
+                ),
               ),
               Positioned(
                 top: 14,

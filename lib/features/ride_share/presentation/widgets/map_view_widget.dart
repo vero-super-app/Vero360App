@@ -6,7 +6,6 @@ import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
-import 'package:vero360_app/config/map_style_constants.dart';
 import 'package:vero360_app/providers/ride_share/nearby_vehicles_provider.dart';
 import 'package:vero360_app/GernalServices/nearby_vehicles_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
@@ -109,19 +108,8 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget>
   }
 
   Future<void> _loadMapStyle() async {
-    try {
-      final styleString = await MapStyleConstants.loadMapStyle();
-      if (styleString.isNotEmpty && mounted) {
-        setState(() {});
-        if (kDebugMode) {
-          debugPrint('[MapViewWidget] Map style loaded successfully');
-        }
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[MapViewWidget] Error loading map style: $e');
-      }
-    }
+    // Custom style asset was removed; keep default Google style.
+    // Loading a missing asset only adds noise and never applies on Android anyway.
   }
 
   Future<void> _loadTaxiMarkerIcon() async {
@@ -544,12 +532,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget>
       initialCameraPosition: _initialCameraPosition,
       markers: _markers,
       polylines: _polylines,
-      mapType: isiOS ? MapType.normal : MapType.hybrid,
-      style: (!LowRamAndroid.isAndroid &&
-              !isiOS &&
-              MapStyleConstants.mapStyle.isNotEmpty)
-          ? MapStyleConstants.mapStyle
-          : null,
+      mapType: MapType.normal,
       myLocationEnabled: _myLocationEnabled,
       myLocationButtonEnabled: _myLocationEnabled,
       zoomControlsEnabled: !LowRamAndroid.isAndroid,

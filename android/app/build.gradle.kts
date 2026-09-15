@@ -11,12 +11,22 @@ plugins {
 }
 
 // Load .env file (local). Fall back to committed .env.example for CI (Codemagic).
-val envFile = File(project.rootDir.parentFile, ".env")
-val envExampleFile = File(project.rootDir.parentFile, ".env.example")
+val envFileCandidates = listOf(
+    File(project.rootDir.parentFile, ".env"),
+    rootProject.file("../.env"),
+    file("../../.env"),
+)
+val envExampleCandidates = listOf(
+    File(project.rootDir.parentFile, ".env.example"),
+    rootProject.file("../.env.example"),
+    file("../../.env.example"),
+)
 val envProperties = Properties()
+val envFile = envFileCandidates.firstOrNull { it.exists() }
+val envExampleFile = envExampleCandidates.firstOrNull { it.exists() }
 when {
-    envFile.exists() -> envFile.inputStream().use { envProperties.load(it) }
-    envExampleFile.exists() -> envExampleFile.inputStream().use { envProperties.load(it) }
+    envFile != null -> envFile.inputStream().use { envProperties.load(it) }
+    envExampleFile != null -> envExampleFile.inputStream().use { envProperties.load(it) }
 }
 
 // Release signing: create android/key.properties (see Flutter keystore guide).
@@ -43,9 +53,13 @@ android {
         versionName = flutter.versionName
         multiDexEnabled = true
 
-        // Load Google Maps API key from .env
+        // Load Google Maps API key from .env, with built-in fallback for local/CI.
         val googleMapsKey = envProperties.getProperty("GOOGLE_MAPS_API_KEY", "")
+            ?.trim()
+            .orEmpty()
+            .ifEmpty { "AIzaSyAQtLkqSetILdLacfIxnqH8DEC0qcobCuI" }
         manifestPlaceholders["GOOGLE_MAPS_API_KEY"] = googleMapsKey
+        buildConfigField("String", "GOOGLE_MAPS_API_KEY", "\"$googleMapsKey\"")
     }
 
     compileOptions {

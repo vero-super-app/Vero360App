@@ -1087,11 +1087,15 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
             ),
             if (_deliveryLat != null && _deliveryLng != null) ...[
               const SizedBox(height: 8),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(14),
-                child: SizedBox(
-                  height: 140,
-                  width: double.infinity,
+              // Avoid ClipRRect around GoogleMap — it blanks tiles on Android.
+              SizedBox(
+                height: 140,
+                width: double.infinity,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: Colors.black12),
+                  ),
                   child: GoogleMap(
                     key: ValueKey(
                       'pin-${_deliveryLat!.toStringAsFixed(5)}-${_deliveryLng!.toStringAsFixed(5)}',

@@ -3,13 +3,13 @@
 
 import 'dart:convert';
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
 import 'package:flutter/foundation.dart';
+import 'package:image/image.dart' as img;
 
 import 'package:vero360_app/Home/merchant_story_model.dart';
 import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
@@ -21,6 +21,9 @@ const String _viewersSubcollection = 'viewers';
 
 /// Max image size for Firestore fallback (doc limit 1MB; base64 ~1.33x).
 const int _maxFallbackImageBytes = 350000;
+
+/// Target max bytes for Storage uploads (keeps uploads reliable on weak networks).
+const int _maxUploadImageBytes = 900000;
 
 class StoryService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -438,7 +441,32 @@ class StoryService {
 
   /// Delete a single story document by its id.
   Future<void> deleteStory(String storyId) async {
-    await _firestore.collection(_collection).doc(storyId).delete();
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      throw Exception('Sign in to delete your status');
+    }
+    final ref = _firestore.collection(_collection).doc(storyId);
+    final snap = await ref.get();
+    final merchantId = snap.data()?['merchantId']?.toString().trim() ?? '';
+    if (merchantId.isNotEmpty && merchantId != user.uid) {
+      throw Exception('You can only delete your own status');
+    }
+    // Best-effort cleanup of viewers subcollection.
+    try {
+      final viewers = await ref.collection(_viewersSubcollection).limit(200).get();
+      final batch = _firestore.batch();
+      for (final d in viewers.docs) {
+        batch.delete(d.reference);
+      }
+      batch.delete(ref);
+      await batch.commit();
+    } catch (_) {
+      await ref.delete();
+    }
+    _notifyActiveStoriesRefresh();
+    if (merchantId.isNotEmpty) {
+      _notifyMerchantStoriesViewed(merchantId);
+    }
   }
 
   /// Post a new story (image or video). Tries Firebase Storage; on failure (image only) saves as base64.
@@ -466,24 +494,45 @@ class StoryService {
 
     String? mediaUrl;
     String? imageBase64;
+    var bytes = imageBytes;
 
     if (mediaType == 'video') {
-      mediaUrl = await _uploadVideoToStorage(merchantId, imageBytes);
+      mediaUrl = await _uploadVideoToStorage(merchantId, bytes);
     } else {
+      bytes = await prepareStoryImageBytes(bytes);
       try {
-        mediaUrl = await _uploadToStorage(merchantId, imageBytes);
+        mediaUrl = await _uploadToStorage(merchantId, bytes);
       } catch (e) {
-        if (imageBytes.length <= _maxFallbackImageBytes) {
-          imageBase64 = base64Encode(imageBytes);
-        } else {
-          throw Exception(
-            'Upload failed. Try a smaller photo (e.g. from camera roll).\n$e',
+        // Retry once after stronger compression.
+        try {
+          bytes = await prepareStoryImageBytes(
+            bytes,
+            maxEdge: 720,
+            maxBytes: _maxFallbackImageBytes,
           );
+          mediaUrl = await _uploadToStorage(merchantId, bytes);
+        } catch (_) {
+          if (bytes.length <= _maxFallbackImageBytes) {
+            imageBase64 = base64Encode(bytes);
+          } else {
+            final tiny = await prepareStoryImageBytes(
+              bytes,
+              maxEdge: 640,
+              maxBytes: _maxFallbackImageBytes,
+            );
+            if (tiny.length <= _maxFallbackImageBytes) {
+              imageBase64 = base64Encode(tiny);
+            } else {
+              throw Exception(
+                'This photo is too large to post. Try another photo or take a new one.',
+              );
+            }
+          }
         }
       }
     }
 
-    final docRef = await _firestore.collection(_collection).add({
+    await _firestore.collection(_collection).add({
       'merchantId': merchantId,
       'merchantName': merchantName,
       'merchantImageUrl': merchantImageUrl,
@@ -495,19 +544,17 @@ class StoryService {
       if (imageBase64 != null) 'imageBase64': imageBase64,
       'mediaType': mediaType,
       if (caption != null && caption.trim().isNotEmpty) 'caption': caption.trim(),
-      if (musicTrackId != null && musicTrackId.trim().isNotEmpty) 'musicTrackId': musicTrackId.trim(),
-      if (musicTrackName != null && musicTrackName.trim().isNotEmpty) 'musicTrackName': musicTrackName.trim(),
+      if (musicTrackId != null && musicTrackId.trim().isNotEmpty)
+        'musicTrackId': musicTrackId.trim(),
+      if (musicTrackName != null && musicTrackName.trim().isNotEmpty)
+        'musicTrackName': musicTrackName.trim(),
       'createdAt': Timestamp.fromDate(now),
       'expiresAt': Timestamp.fromDate(expiresAt),
     });
-    try {
-      await docRef.get(const GetOptions(source: Source.server));
-    } on FirebaseException catch (e) {
-      throw Exception(
-        'Story was not saved on the server (${e.code}). '
-        'In Firebase Console, create a Firestore database for this project, then try again.',
-      );
-    }
+
+    // Do NOT re-read from server here — that often fails on flaky networks
+    // even after a successful write, which caused "failed but story posted".
+    _notifyActiveStoriesRefresh();
 
     if (notifyFollowers) {
       // Fire-and-forget so posting stays snappy.
@@ -521,41 +568,78 @@ class StoryService {
     }
   }
 
-  /// Post multiple stories in one batch (e.g. multiple slides with captions).
-  Future<void> postStoryBatch({
+  /// Resize/compress story photos so Storage + Firestore fallback stay reliable.
+  static Future<Uint8List> prepareStoryImageBytes(
+    Uint8List raw, {
+    int maxEdge = 1080,
+    int maxBytes = _maxUploadImageBytes,
+  }) async {
+    return compute(_compressStoryImageIsolate, <String, Object>{
+      'bytes': raw,
+      'maxEdge': maxEdge,
+      'maxBytes': maxBytes,
+    });
+  }
+
+  /// Post multiple stories; continues after individual slide failures.
+  Future<StoryPostBatchResult> postStoryBatch({
     required String merchantId,
     required String merchantName,
     String? merchantImageUrl,
     String? serviceType,
     required List<StorySlideInput> slides,
   }) async {
-    for (final slide in slides) {
-      await postStory(
-        merchantId: merchantId,
-        merchantName: merchantName,
-        imageBytes: slide.bytes,
-        merchantImageUrl: merchantImageUrl,
-        serviceType: serviceType,
-        caption: slide.caption,
-        musicTrackId: slide.musicTrackId,
-        musicTrackName: slide.musicTrackName,
-        mediaType: slide.mediaType,
-        notifyFollowers: false,
-      );
+    var posted = 0;
+    final failedIndexes = <int>[];
+    final errors = <String>[];
+
+    for (var i = 0; i < slides.length; i++) {
+      final slide = slides[i];
+      try {
+        await postStory(
+          merchantId: merchantId,
+          merchantName: merchantName,
+          imageBytes: slide.bytes,
+          merchantImageUrl: merchantImageUrl,
+          serviceType: serviceType,
+          caption: slide.caption,
+          musicTrackId: slide.musicTrackId,
+          musicTrackName: slide.musicTrackName,
+          mediaType: slide.mediaType,
+          notifyFollowers: false,
+        );
+        posted++;
+      } catch (e) {
+        failedIndexes.add(i);
+        errors.add(e.toString());
+        if (kDebugMode) {
+          debugPrint('[StoryService] slide $i failed: $e');
+        }
+      }
     }
-    // One notification for the whole batch.
-    unawaited(
-      OrderPartyNotificationService.publishStoryPostedToFollowers(
-        merchantUid: merchantId,
-        merchantName: merchantName,
-        serviceType: serviceType,
-      ),
+
+    if (posted > 0) {
+      unawaited(
+        OrderPartyNotificationService.publishStoryPostedToFollowers(
+          merchantUid: merchantId,
+          merchantName: merchantName,
+          serviceType: serviceType,
+        ),
+      );
+      _notifyActiveStoriesRefresh();
+    }
+
+    return StoryPostBatchResult(
+      posted: posted,
+      failedIndexes: failedIndexes,
+      errors: errors,
     );
   }
 
   Future<String> _uploadToStorage(String merchantId, Uint8List imageBytes) async {
     final now = DateTime.now();
-    final path = '$_storagePathPrefix/$merchantId/${now.millisecondsSinceEpoch}.jpg';
+    final path =
+        '$_storagePathPrefix/$merchantId/${now.millisecondsSinceEpoch}_${imageBytes.length}.jpg';
     final ref = _storage.ref().child(path);
     await ref.putData(
       imageBytes,
@@ -679,4 +763,88 @@ class StorySlideInput {
     this.musicTrackId,
     this.musicTrackName,
   });
+}
+
+/// Result of posting multiple story slides.
+class StoryPostBatchResult {
+  final int posted;
+  final List<int> failedIndexes;
+  final List<String> errors;
+
+  const StoryPostBatchResult({
+    required this.posted,
+    required this.failedIndexes,
+    required this.errors,
+  });
+
+  int get failed => failedIndexes.length;
+  bool get allSucceeded => failed == 0 && posted > 0;
+  bool get allFailed => posted == 0;
+  bool get partial => posted > 0 && failed > 0;
+}
+
+/// Top-level isolate entry for story image compression.
+Uint8List _compressStoryImageIsolate(Map<String, Object> args) {
+  final raw = args['bytes'] as Uint8List;
+  final maxEdge = args['maxEdge'] as int;
+  final maxBytes = args['maxBytes'] as int;
+
+  try {
+    final decoded = img.decodeImage(raw);
+    if (decoded == null) {
+      // Can't re-encode (e.g. exotic format). Use original if small enough.
+      return raw;
+    }
+
+    var im = decoded;
+    if (im.width > maxEdge || im.height > maxEdge) {
+      if (im.width >= im.height) {
+        im = img.copyResize(
+          im,
+          width: maxEdge,
+          interpolation: img.Interpolation.linear,
+        );
+      } else {
+        im = img.copyResize(
+          im,
+          height: maxEdge,
+          interpolation: img.Interpolation.linear,
+        );
+      }
+    }
+
+    var quality = 82;
+    var out = Uint8List.fromList(img.encodeJpg(im, quality: quality));
+    while (out.length > maxBytes && quality > 40) {
+      quality -= 10;
+      out = Uint8List.fromList(img.encodeJpg(im, quality: quality));
+    }
+
+    if (out.length > maxBytes && maxEdge > 640) {
+      final smallerEdge = (maxEdge * 0.7).round().clamp(480, maxEdge);
+      if (im.width >= im.height) {
+        im = img.copyResize(
+          im,
+          width: smallerEdge,
+          interpolation: img.Interpolation.linear,
+        );
+      } else {
+        im = img.copyResize(
+          im,
+          height: smallerEdge,
+          interpolation: img.Interpolation.linear,
+        );
+      }
+      quality = 70;
+      out = Uint8List.fromList(img.encodeJpg(im, quality: quality));
+      while (out.length > maxBytes && quality > 35) {
+        quality -= 8;
+        out = Uint8List.fromList(img.encodeJpg(im, quality: quality));
+      }
+    }
+
+    return out.isNotEmpty ? out : raw;
+  } catch (_) {
+    return raw;
+  }
 }

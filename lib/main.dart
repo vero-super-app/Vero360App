@@ -64,6 +64,8 @@ import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:google_maps_flutter_android/google_maps_flutter_android.dart';
+import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platform_interface.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/utils/low_ram_android.dart';
 import 'package:vero360_app/utils/session_local_cache.dart';
@@ -72,16 +74,32 @@ import 'package:vero360_app/widgets/vero_launch_splash.dart';
 
 final GlobalKey<NavigatorState> navKey = appNavKey;
 
-/// Lower raster resolution on Android so Adreno sharedmem stays under budget.
+/// Do NOT wrap the whole app in a reduced [MediaQuery.devicePixelRatio].
+/// That breaks Google Maps / other Android platform views (blank map tiles).
+/// Image-cache caps in [main] already protect low-RAM GPUs.
 Widget _androidGpuSoftened(BuildContext context, Widget? child) {
-  final content = child ?? const SizedBox.shrink();
-  if (!LowRamAndroid.isAndroid) return content;
-  final mq = MediaQuery.of(context);
-  if (mq.devicePixelRatio <= LowRamAndroid.maxDpr) return content;
-  return MediaQuery(
-    data: mq.copyWith(devicePixelRatio: LowRamAndroid.maxDpr),
-    child: content,
-  );
+  return child ?? const SizedBox.shrink();
+}
+
+/// Android Maps: prefer texture composition (default). Avoid forcing hybrid
+/// surface mode unless needed — hybrid + clipped parents blanks many OEM maps.
+Future<void> _configureAndroidGoogleMaps() async {
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+  try {
+    final mapsImplementation = GoogleMapsFlutterPlatform.instance;
+    if (mapsImplementation is! GoogleMapsFlutterAndroid) return;
+    try {
+      await mapsImplementation.initializeWithRenderer(AndroidMapRenderer.latest);
+    } catch (_) {
+      // Already initialized or unsupported.
+    }
+    // Texture Layer Hybrid Composition (false) is the current recommended default.
+    mapsImplementation.useAndroidViewSurface = false;
+  } catch (e) {
+    if (kDebugMode) {
+      debugPrint('[GoogleMaps] Android configure failed: $e');
+    }
+  }
 }
 
 bool _isPasswordResetDeepLink(Uri uri) {
@@ -315,6 +333,10 @@ Future<void> main() async {
     PaintingBinding.instance.imageCache.maximumSize = 60;
     PaintingBinding.instance.imageCache.maximumSizeBytes = 48 << 20;
   }
+
+  // Must run before any GoogleMap widget is created.
+  await _configureAndroidGoogleMaps();
+  unawaited(GoogleMapsConfig.initialize());
 
   void launchApp() {
     // Cap decoded-image cache — Redmi 8A / 2GB Adreno dies on GPU texture OOM.

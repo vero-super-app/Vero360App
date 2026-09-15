@@ -506,9 +506,6 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (_groups.length > 1 && !_replyFocused) _buildGroupsTray(),
-                    if (_groups.length > 1 && !_replyFocused)
-                      const SizedBox(height: 8),
                     if (!_isOwnStory) _buildReplyBar(),
                     if (_isOwnStory) _buildOwnStoryBar(),
                   ],
@@ -706,92 +703,6 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                 ),
               );
             }),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildGroupsTray() {
-    return SizedBox(
-      height: 78,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        itemCount: _groups.length,
-        itemBuilder: (context, i) {
-          final g = _groups[i];
-          final isActive = i == _groupIndex;
-          return Padding(
-            padding: const EdgeInsets.only(right: 10),
-            child: GestureDetector(
-              onTap: () {
-                if (i == _groupIndex) return;
-                setState(() {
-                  _groupIndex = i;
-                  _currentIndex = 0;
-                });
-                _pageController.jumpToPage(0);
-                _restartProgress();
-                _recordViewForCurrentSlide();
-              },
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 52,
-                    height: 52,
-                    decoration: isActive
-                        ? BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 2),
-                          )
-                        : null,
-                    child: Container(
-                      padding: EdgeInsets.all(g.hasUnviewed ? 2.5 : 1.5),
-                      decoration: StoryRingDecoration.ring(
-                        hasStories: true,
-                        hasUnviewed: g.hasUnviewed,
-                      ),
-                      child: ClipOval(
-                        child: g.merchantImageUrl != null &&
-                                g.merchantImageUrl!.isNotEmpty
-                            ? Image.network(
-                                g.merchantImageUrl!,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => Container(
-                                  color: Colors.white24,
-                                  child: const Icon(Icons.store,
-                                      color: Colors.white, size: 20),
-                                ),
-                              )
-                            : Container(
-                                color: Colors.white24,
-                                child: const Icon(Icons.store,
-                                    color: Colors.white, size: 20),
-                              ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  SizedBox(
-                    width: 56,
-                    child: Text(
-                      g.merchantName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.9),
-                        fontSize: 10,
-                        fontWeight:
-                            isActive ? FontWeight.w800 : FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
           );
         },
       ),

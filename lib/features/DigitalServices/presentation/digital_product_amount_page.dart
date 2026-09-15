@@ -25,8 +25,6 @@ class DigitalProductAmountPage extends StatefulWidget {
 class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
   static const _orange = Color(0xFFFF6B00);
   static const _bg = Color(0xFFFFFBF6);
-  static const _minUsd = 1.0;
-  static const _maxUsd = 500.0;
 
   late double _selectedUsd;
   DigitalPayMethod _payMethod = DigitalPayMethod.paychangu;
@@ -43,6 +41,10 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
   final _visaFormKey = GlobalKey<FormState>();
 
   DigitalProduct get p => widget.product;
+
+  double get _minAmount => p.effectiveMinOtherAmount;
+  double get _maxAmount => p.effectiveMaxOtherAmount;
+  String get _unit => p.amountUnitLabel;
 
   @override
   void initState() {
@@ -70,7 +72,7 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
     if (parsed == null || parsed <= 0) return;
     setState(() {
       _usingCustom = true;
-      _selectedUsd = parsed.clamp(_minUsd, _maxUsd);
+      _selectedUsd = parsed.clamp(_minAmount, _maxAmount);
     });
   }
 
@@ -86,14 +88,14 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
   double get _mwk => p.amountToMwk(_selectedUsd);
 
   bool get _amountValid =>
-      _selectedUsd >= _minUsd && _selectedUsd <= _maxUsd;
+      _selectedUsd >= _minAmount && _selectedUsd <= _maxAmount;
 
   void _onContinue() {
     if (!_amountValid) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Enter an amount between ${p.formatAmount(_minUsd)} and ${p.formatAmount(_maxUsd)}',
+            'Enter an amount between ${p.formatAmount(_minAmount)} and ${p.formatAmount(_maxAmount)}',
           ),
         ),
       );
@@ -402,9 +404,9 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
             ),
             child: Row(
               children: [
-                const Text(
-                  'USD',
-                  style: TextStyle(
+                Text(
+                  _unit,
+                  style: const TextStyle(
                     fontWeight: FontWeight.w900,
                     fontSize: 14,
                     color: _orange,
@@ -430,7 +432,7 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
                       color: Color(0xFF111111),
                     ),
                     decoration: InputDecoration(
-                      hintText: '35',
+                      hintText: 'Enter $_unit amount',
                       hintStyle: TextStyle(
                         color: Colors.grey.shade400,
                         fontWeight: FontWeight.w600,
@@ -454,6 +456,14 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
             ),
           ),
           const SizedBox(height: 6),
+          Text(
+            'Max ${p.formatAmount(_maxAmount)} ',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade600,
+            ),
+          ),
           // Text(
           //   'Converted at 1 USD = ${kUsdToMwkRate.toStringAsFixed(0)} MWK',
           //   style: TextStyle(

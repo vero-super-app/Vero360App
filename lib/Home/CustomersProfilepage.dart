@@ -43,6 +43,7 @@ import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/ride_history_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/driver_profile_hub_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/become_driver_page.dart';
+import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_online_session.dart';
@@ -133,6 +134,47 @@ class _ProfilePageState extends State<ProfilePage> {
 
   void _openDriverCenter() {
     _openBottomSheet(const DriverProfileHubScreen());
+  }
+
+  Future<void> _openPostStory() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      ToastHelper.showCustomToast(
+        context,
+        'Please sign in to post a story',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    final imageUrl = profileUrl.trim().isNotEmpty ? profileUrl.trim() : null;
+    final prefs = await SharedPreferences.getInstance();
+    final role = RoleHelper.normalizeAccountRole(
+          prefs.getString('user_role') ?? prefs.getString('role'),
+        ) ??
+        RoleHelper.customer;
+    final serviceType = switch (role) {
+      RoleHelper.driver => 'ride',
+      RoleHelper.merchant => 'marketplace',
+      _ => 'customer',
+    };
+    final fallbackName = switch (role) {
+      RoleHelper.driver => 'Ride Driver',
+      RoleHelper.merchant => 'Merchant',
+      _ => 'Vero user',
+    };
+    if (!mounted) return;
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => PostStoryPage(
+          merchantId: uid,
+          merchantName:
+              name.trim().isNotEmpty ? name.trim() : fallbackName,
+          merchantImageUrl: imageUrl,
+          serviceType: serviceType,
+        ),
+      ),
+    );
   }
 
   Future<void> _loadUserData() async {
@@ -1739,6 +1781,11 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Widget _otherDetailsGrid() {
     final items = <_DetailItem>[
+      _DetailItem(
+        'Post story',
+        Icons.auto_stories_outlined,
+        _openPostStory,
+      ),
       if (_isDriver) ...[
         _DetailItem(
           'My Orders',

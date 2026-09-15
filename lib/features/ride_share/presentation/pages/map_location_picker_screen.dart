@@ -6,6 +6,7 @@ import 'package:vero360_app/GernalServices/google_places_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 import 'package:vero360_app/GernalServices/location_permission_helper.dart';
+import 'package:vero360_app/utils/vero_map_style.dart';
 
 /// Full-screen map to pick a destination by dragging / tapping.
 class MapLocationPickerScreen extends ConsumerStatefulWidget {
@@ -244,24 +245,30 @@ class _MapLocationPickerScreenState
       body: Stack(
         children: [
           GoogleMap(
-            initialCameraPosition: CameraPosition(
+            initialCameraPosition: VeroMapStyle.camera(
               target: initial,
-              zoom: widget.initialLatitude != null ? 17.5 : 15,
+              zoom: widget.initialLatitude != null
+                  ? VeroMapStyle.defaultZoom
+                  : 16.5,
             ),
-            mapType: MapType.normal,
+            mapType: VeroMapStyle.mapType,
             myLocationEnabled: _myLocationEnabled,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,
-            buildingsEnabled: false,
+            buildingsEnabled: true,
             indoorViewEnabled: false,
             trafficEnabled: false,
+            tiltGesturesEnabled: true,
+            rotateGesturesEnabled: true,
             onMapCreated: (c) => _controller = c,
             onCameraMove: (pos) => _selected = pos.target,
             onCameraIdle: () {
               if (_selected != null) _resolveAddress(_selected!);
             },
             onTap: (latLng) {
-              _controller?.animateCamera(CameraUpdate.newLatLng(latLng));
+              _controller?.animateCamera(
+                VeroMapStyle.cameraUpdate(target: latLng),
+              );
               _resolveAddress(latLng);
             },
           ),

@@ -15,6 +15,7 @@ import 'package:vero360_app/features/Auth/AuthServices/user_service.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/AirportPickup/AirportPresenter/airport_pickup_progress_page.dart';
+import 'package:vero360_app/utils/vero_map_style.dart';
 
 class Airportpickuppage extends StatefulWidget {
   const Airportpickuppage({super.key});
@@ -69,8 +70,10 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
 
   // Map + state
   GoogleMapController? _map;
-  static final CameraPosition _initialCamera = const CameraPosition(
-      target: LatLng(-14.3, 34.3), zoom: 6.8); // Malawi fallback
+  static final CameraPosition _initialCamera = VeroMapStyle.camera(
+    target: const LatLng(-14.3, 34.3),
+    zoom: VeroMapStyle.countryZoom,
+  ); // Malawi fallback
 
   LatLng? _myLatLng;
   String? _serviceCity; // Lilongwe / Blantyre / null
@@ -270,8 +273,9 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
       });
 
       await _map?.animateCamera(
-        CameraUpdate.newCameraPosition(
-          CameraPosition(target: current, zoom: 13.5),
+        VeroMapStyle.cameraUpdate(
+          target: current,
+          zoom: VeroMapStyle.cityZoom,
         ),
       );
 
@@ -618,7 +622,7 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
               children: [
                 GoogleMap(
                   initialCameraPosition: _initialCamera,
-                  mapType: MapType.normal,
+                  mapType: VeroMapStyle.mapType,
                   myLocationEnabled: _myLocationEnabled,
                   myLocationButtonEnabled: _myLocationEnabled,
                   markers: _markers,
@@ -626,9 +630,11 @@ class _AirportpickuppageState extends State<Airportpickuppage> {
                   onMapCreated: _onMapCreated,
                   zoomControlsEnabled: false,
                   compassEnabled: false,
-                  buildingsEnabled: false,
+                  buildingsEnabled: true,
                   indoorViewEnabled: false,
                   trafficEnabled: false,
+                  tiltGesturesEnabled: true,
+                  rotateGesturesEnabled: true,
                 ),
                 // Legend
                 Positioned(

@@ -23,6 +23,7 @@ import 'package:vero360_app/GeneralPages/address.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_share_link.dart';
+import 'package:vero360_app/utils/vero_map_style.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_checkout_page.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_engagement_service.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_review_service.dart';
@@ -1100,14 +1101,16 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                     key: ValueKey(
                       'pin-${_deliveryLat!.toStringAsFixed(5)}-${_deliveryLng!.toStringAsFixed(5)}',
                     ),
-                    initialCameraPosition: CameraPosition(
+                    initialCameraPosition: VeroMapStyle.camera(
                       target: LatLng(_deliveryLat!, _deliveryLng!),
-                      zoom: 17.5,
                     ),
-                    mapType: MapType.normal,
-                    liteModeEnabled: true,
+                    mapType: VeroMapStyle.mapType,
+                    liteModeEnabled: false,
                     myLocationEnabled: false,
                     zoomControlsEnabled: false,
+                    buildingsEnabled: true,
+                    tiltGesturesEnabled: true,
+                    rotateGesturesEnabled: true,
                     markers: {
                       Marker(
                         markerId: const MarkerId('food_dropoff'),

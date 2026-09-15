@@ -199,6 +199,15 @@ class DigitalServicesCatalog extends ChangeNotifier {
         if (n != null && n > 0) mwkPerUnit = n;
       }
 
+      double? maxOtherAmount;
+      final maxRaw = cfg['maxOtherAmount'];
+      if (maxRaw != null && '$maxRaw'.trim().isNotEmpty) {
+        final n = maxRaw is num
+            ? maxRaw.toDouble()
+            : double.tryParse('$maxRaw');
+        if (n != null && n > 0) maxOtherAmount = n;
+      }
+
       List<double>? amounts;
       final amountsRaw = cfg['usdAmounts'];
       if (amountsRaw is List) {
@@ -225,6 +234,8 @@ class DigitalServicesCatalog extends ChangeNotifier {
             : null,
         mwkPerUnit: !isSub ? (mwkPerUnit ?? base.mwkPerUnit) : base.mwkPerUnit,
         unitLabel: unitLabel.isNotEmpty ? unitLabel : null,
+        maxOtherAmount: !isSub ? maxOtherAmount : null,
+        clearMaxOtherAmount: !isSub && maxOtherAmount == null,
         imageUrl: imageUrl.isNotEmpty ? imageUrl : null,
         active: true,
       );
@@ -256,6 +267,15 @@ class DigitalServicesCatalog extends ChangeNotifier {
         if (n != null && n > 0) mwkPerUnit = n;
       }
 
+      double? maxOtherAmount;
+      final maxRaw = cfg['maxOtherAmount'];
+      if (maxRaw != null && '$maxRaw'.trim().isNotEmpty) {
+        final n = maxRaw is num
+            ? maxRaw.toDouble()
+            : double.tryParse('$maxRaw');
+        if (n != null && n > 0) maxOtherAmount = n;
+      }
+
       List<double> amounts = const [];
       final amountsRaw = cfg['usdAmounts'];
       if (amountsRaw is List) {
@@ -281,6 +301,7 @@ class DigitalServicesCatalog extends ChangeNotifier {
         fixedMwkPrice: isSub ? fixed : null,
         mwkPerUnit: isSub ? null : mwkPerUnit,
         unitLabel: unitLabel.isNotEmpty ? unitLabel : null,
+        maxOtherAmount: isSub ? null : maxOtherAmount,
         imageUrl: imageUrl.isNotEmpty ? imageUrl : null,
         icon: Icons.currency_exchange_rounded,
         active: true,

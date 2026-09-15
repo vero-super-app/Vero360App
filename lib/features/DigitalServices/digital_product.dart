@@ -40,8 +40,11 @@ class DigitalProduct {
   /// Custom MWK per unit (USDT / CNY / BNB). Overrides global USD rate when set.
   final double? mwkPerUnit;
 
-  /// Unit label for amount picker (e.g. USDT). Empty → treat as USD.
+  /// Unit label for amount picker (e.g. USDT, RMB, CNY). Empty → treat as USD.
   final String? unitLabel;
+
+  /// Max custom ("other") amount in [unitLabel] units (or USD). Set by admin.
+  final double? maxOtherAmount;
 
   /// When false, product is hidden (admin disabled).
   final bool active;
@@ -57,6 +60,7 @@ class DigitalProduct {
     this.fixedMwkPrice,
     this.mwkPerUnit,
     this.unitLabel,
+    this.maxOtherAmount,
     this.icon,
     this.logoAsset,
     this.imageUrl,
@@ -73,6 +77,26 @@ class DigitalProduct {
   double get startingUsd =>
       usdAmounts.isEmpty ? 0 : usdAmounts.reduce((a, b) => a < b ? a : b);
 
+  /// Currency code shown on the custom-amount field (USDT / RMB / USD…).
+  String get amountUnitLabel {
+    final unit = (unitLabel ?? '').trim();
+    if (unit.isNotEmpty) return unit.toUpperCase();
+    return 'USD';
+  }
+
+  /// Admin max for typed amounts. If unset, allow a high default (not a hard $500).
+  double get effectiveMaxOtherAmount {
+    final admin = maxOtherAmount;
+    if (admin != null && admin > 0) return admin;
+    if (usdAmounts.isNotEmpty) {
+      final largest = usdAmounts.reduce((a, b) => a > b ? a : b);
+      return largest > 1000 ? largest : 10000;
+    }
+    return 10000;
+  }
+
+  double get effectiveMinOtherAmount => 1;
+
   double get effectiveMwkPerUnit =>
       (mwkPerUnit != null && mwkPerUnit! > 0)
           ? mwkPerUnit!
@@ -81,8 +105,8 @@ class DigitalProduct {
   double amountToMwk(num amount) => amount * effectiveMwkPerUnit;
 
   String formatAmount(num amount) {
-    final unit = (unitLabel ?? '').trim();
-    if (unit.isNotEmpty) {
+    final unit = amountUnitLabel;
+    if (unit != 'USD') {
       final n = amount == amount.roundToDouble()
           ? amount.toStringAsFixed(0)
           : amount.toStringAsFixed(2);
@@ -112,6 +136,8 @@ class DigitalProduct {
     double? mwkPerUnit,
     bool clearMwkPerUnit = false,
     String? unitLabel,
+    double? maxOtherAmount,
+    bool clearMaxOtherAmount = false,
     String? imageUrl,
     bool? active,
   }) {
@@ -127,6 +153,9 @@ class DigitalProduct {
           clearFixedMwkPrice ? null : (fixedMwkPrice ?? this.fixedMwkPrice),
       mwkPerUnit: clearMwkPerUnit ? null : (mwkPerUnit ?? this.mwkPerUnit),
       unitLabel: unitLabel ?? this.unitLabel,
+      maxOtherAmount: clearMaxOtherAmount
+          ? null
+          : (maxOtherAmount ?? this.maxOtherAmount),
       icon: icon,
       logoAsset: logoAsset,
       imageUrl: imageUrl ?? this.imageUrl,

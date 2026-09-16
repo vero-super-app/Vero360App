@@ -45,8 +45,18 @@ class FirebaseAuthService {
     return user;
   }
 
+  /// Returns the signed-in [User], or `null` if the user cancelled.
+  /// Throws on configuration / provider failures (missing entitlement, etc.).
   Future<User?> signInWithApple() async {
     try {
+      final available = await SignInWithApple.isAvailable();
+      if (!available) {
+        throw const SignInWithAppleAuthorizationException(
+          code: AuthorizationErrorCode.notHandled,
+          message: 'Sign in with Apple is not available on this device.',
+        );
+      }
+
       final rawNonce = _generateNonce();
       final nonce = _sha256of(rawNonce);
       final appleCred = await SignInWithApple.getAppleIDCredential(
@@ -56,15 +66,65 @@ class FirebaseAuthService {
         ],
         nonce: nonce,
       );
+
+      final idToken = appleCred.identityToken;
+      if (idToken == null || idToken.isEmpty) {
+        throw StateError(
+          'Apple did not return an identity token. Check Sign in with Apple '
+          'capability, App ID, and provisioning profile.',
+        );
+      }
+
       final oauthCred = OAuthProvider('apple.com').credential(
-        idToken: appleCred.identityToken,
+        idToken: idToken,
         rawNonce: rawNonce,
       );
       final userCred = await _auth.signInWithCredential(oauthCred);
       unawaited(logCurrentIdToken());
       return userCred.user;
-    } catch (e) {
-     // debugPrint('Apple sign-in failed: $e');
+    } on SignInWithAppleAuthorizationException catch (e) {
+      if (e.code == AuthorizationErrorCode.canceled) {
+        return null;
+      }
+      rethrow;
+    }
+  }
+
+  /// Apple credential + raw nonce for Firebase reauthentication flows.
+  Future<({AuthorizationCredentialAppleID apple, String rawNonce})?>
+      getAppleCredentialWithNonce() async {
+    try {
+      final available = await SignInWithApple.isAvailable();
+      if (!available) {
+        throw const SignInWithAppleAuthorizationException(
+          code: AuthorizationErrorCode.notHandled,
+          message: 'Sign in with Apple is not available on this device.',
+        );
+      }
+
+      final rawNonce = _generateNonce();
+      final nonce = _sha256of(rawNonce);
+      final appleCred = await SignInWithApple.getAppleIDCredential(
+        scopes: [
+          AppleIDAuthorizationScopes.email,
+          AppleIDAuthorizationScopes.fullName,
+        ],
+        nonce: nonce,
+      );
+
+      if (appleCred.identityToken == null ||
+          appleCred.identityToken!.isEmpty) {
+        throw StateError(
+          'Apple did not return an identity token. Check Sign in with Apple '
+          'capability, App ID, and provisioning profile.',
+        );
+      }
+
+      return (apple: appleCred, rawNonce: rawNonce);
+    } on SignInWithAppleAuthorizationException catch (e) {
+      if (e.code == AuthorizationErrorCode.canceled) {
+        return null;
+      }
       rethrow;
     }
   }

@@ -1209,11 +1209,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
         });
       });
     } catch (e) {
+      if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
-        'Apple sign-in failed.',
+        'Apple sign-in failed. Please try again.',
         isSuccess: false,
-        errorMessage: e.toString(),
+        errorMessage: '',
       );
     } finally {
       if (mounted) setState(() => _socialLoading = false);

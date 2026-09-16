@@ -13,10 +13,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/account_data_purge.dart';
+import 'package:vero360_app/features/Auth/AuthServices/firebaseAuth.dart';
 
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/config/api_config.dart';
@@ -1933,15 +1933,11 @@ class _SettingsPageState extends State<SettingsPage> {
       }
 
       if (authProvider == 'apple.com') {
-        final appleCred = await SignInWithApple.getAppleIDCredential(
-          scopes: [
-            AppleIDAuthorizationScopes.email,
-            AppleIDAuthorizationScopes.fullName,
-          ],
-        );
+        final appleAuth = await FirebaseAuthService().getAppleCredentialWithNonce();
+        if (appleAuth == null) return false;
         final oauthCred = OAuthProvider('apple.com').credential(
-          idToken: appleCred.identityToken,
-          accessToken: appleCred.authorizationCode,
+          idToken: appleAuth.apple.identityToken,
+          rawNonce: appleAuth.rawNonce,
         );
         await user.reauthenticateWithCredential(oauthCred);
         return true;

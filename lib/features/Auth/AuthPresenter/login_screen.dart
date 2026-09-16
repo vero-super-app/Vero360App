@@ -770,9 +770,9 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
-        'Apple sign-in failed.',
+        'Apple sign-in failed. Please try again.',
         isSuccess: false,
-        errorMessage: e.toString(),
+        errorMessage: '',
       );
     } finally {
       if (mounted) {

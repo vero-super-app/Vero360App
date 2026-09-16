@@ -27,6 +27,8 @@ import 'package:vero360_app/GernalServices/location_permission_helper.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
+import 'package:vero360_app/GernalServices/incoming_call_listener.dart';
+import 'package:vero360_app/GernalServices/user_presence_service.dart';
 import 'package:vero360_app/utils/session_local_cache.dart';
 import 'package:vero360_app/app_nav_key.dart';
 import 'package:vero360_app/app_shell_coordinator.dart';
@@ -125,6 +127,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
 
   @override
   void dispose() {
+    IncomingCallListener.stop();
     _authSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
@@ -134,6 +137,11 @@ class _BottomnavbarState extends State<Bottomnavbar>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       LocationPermissionHelper.onAppResumed();
+      unawaited(UserPresenceService.goOnline());
+      IncomingCallListener.start();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      unawaited(UserPresenceService.goOffline());
     }
   }
 
@@ -193,6 +201,11 @@ class _BottomnavbarState extends State<Bottomnavbar>
     setState(() => _isLoggedIn = loggedIn);
     if (loggedIn) {
       unawaited(BlockedMerchantService.reload());
+      unawaited(UserPresenceService.goOnline());
+      IncomingCallListener.start();
+    } else {
+      IncomingCallListener.stop();
+      unawaited(UserPresenceService.goOffline());
     }
     // Guests may use Home + Marketplace. Only kick off Messages/Cart/Profile.
     if (!loggedIn && _tabIsProtected(_selectedIndex)) {
@@ -307,6 +320,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
     _isMerchant = nextMerchant;
     _isDriver = nextDriver;
     _merchantService = nextService;
+    unawaited(loadDriverStatusFromPrefs());
     if (wasMerchant && !nextMerchant && _selectedIndex == 4) {
       _selectedIndex = 0;
     }
@@ -675,9 +689,23 @@ void openVeroMainShell(BuildContext context, {required String email, int tabInde
   final clampedTab = tabIndex.clamp(0, 4);
   final guestHome = email.trim().isEmpty && clampedTab == 0;
 
-  WidgetsBinding.instance.addPostFrameCallback((_) {
+  WidgetsBinding.instance.addPostFrameCallback((_) async {
     if (guestHome) {
       AppShellCoordinator.markGuestHome();
+    } else {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final role = RoleSessionService.readCachedRole(prefs);
+        if (role == RoleHelper.driver) {
+          AppShellCoordinator.markShellRole(RoleHelper.driver);
+        } else if (role == RoleHelper.merchant) {
+          AppShellCoordinator.markShellRole(RoleHelper.merchant);
+        } else {
+          AppShellCoordinator.markShellRole(RoleHelper.customer);
+        }
+      } catch (_) {
+        AppShellCoordinator.markShellRole(RoleHelper.customer);
+      }
     }
     final nav = appNavKey.currentState;
     if (nav == null) return;

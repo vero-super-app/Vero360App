@@ -4,6 +4,8 @@
     <!-- Permissions -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.VIBRATE"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
@@ -74,6 +76,7 @@
                 <data android:scheme="https" android:host="www.vero360.app" android:pathPrefix="/stay" />
                 <data android:scheme="https" android:host="www.vero360.app" android:pathPrefix="/marketplace" />
                 <data android:scheme="https" android:host="www.vero360.app" android:pathPrefix="/shop" />
+                <data android:scheme="https" android:host="www.vero360.app" android:pathPrefix="/merchant" />
                 <data android:scheme="https" android:host="www.vero360.app" android:pathPrefix="/food" />
             </intent-filter>
 
@@ -102,10 +105,18 @@
             android:name="io.flutter.embedding.android.EnableImpeller"
             android:value="false" />
 
-        <!-- Google Maps key (loaded from .env via gradle) -->
+        <!-- Google Maps SDK key (required in the client binary; restrict by package + SHA in Cloud Console) -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"
-            android:value="${GOOGLE_MAPS_API_KEY}"/>
+            android:value="AIzaSyAQtLkqSetILdLacfIxnqH8DEC0qcobCuI"/>
+
+        <!-- FCM: show system trays when app is backgrounded / killed -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="high_importance_channel" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@mipmap/ic_launcher" />
     </application>
 
     <queries>

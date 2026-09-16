@@ -98,6 +98,7 @@ class MarketplaceDetailModel {
   final String? sellerStatus;
   final String? sellerBusinessDescription;
   final double? sellerRating;
+  final int sellerReviewCount;
   final String? sellerLogoUrl;
   final String? serviceProviderId;
   final String? sellerUserId;
@@ -111,6 +112,7 @@ class MarketplaceDetailModel {
   final double? longitude;
   /// Available units the seller has. Null = legacy / uncapped (buyer limited to 99).
   final int? stockQuantity;
+  final DateTime? promotedUntil;
 
   MarketplaceDetailModel({
     required this.id,
@@ -128,6 +130,7 @@ class MarketplaceDetailModel {
     this.sellerStatus,
     this.sellerBusinessDescription,
     this.sellerRating,
+    this.sellerReviewCount = 0,
     this.sellerLogoUrl,
     this.serviceProviderId,
     this.sellerUserId,
@@ -140,10 +143,14 @@ class MarketplaceDetailModel {
     this.latitude,
     this.longitude,
     this.stockQuantity,
+    this.promotedUntil,
     int? backendItemId,
   });
 
   bool get isOutOfStock => stockQuantity != null && stockQuantity! <= 0;
+
+  bool get isPromotedNow =>
+      promotedUntil != null && promotedUntil!.isAfter(DateTime.now());
 
   int get maxOrderQty {
     if (stockQuantity == null) return 99999;
@@ -221,6 +228,12 @@ class MarketplaceDetailModel {
       sellerRating: (j['sellerRating'] is num)
           ? (j['sellerRating'] as num).toDouble()
           : double.tryParse('${j['sellerRating']}'),
+      sellerReviewCount: () {
+        final rc =
+            j['sellerReviewCount'] ?? j['reviewCount'] ?? j['reviewsCount'];
+        if (rc is num) return rc.toInt();
+        return int.tryParse('${rc ?? ''}') ?? 0;
+      }(),
       sellerLogoUrl: j['sellerLogoUrl']?.toString(),
       serviceProviderId: j['serviceProviderId']?.toString(),
       sellerUserId: sellerUserId,

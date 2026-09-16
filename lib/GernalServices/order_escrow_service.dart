@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -7,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/GernalServices/delivery_proof_service.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
+import 'package:vero360_app/GernalServices/marketplace_stock_reminder_service.dart';
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/config/api_config.dart';
@@ -123,6 +125,28 @@ class OrderEscrowService {
     }
 
     await batch.commit();
+
+    // Vero360 Team inbox tips: buyer can remind; merchant should ship.
+    for (final r in refs) {
+      if (!r.item.hasValidMerchant) continue;
+      if (r.item.serviceType != 'marketplace') continue;
+      final mid = r.item.merchantId.trim();
+      if (mid.isEmpty) continue;
+      unawaited(
+        OrderPartyNotificationService.publishPaidOrderTeamMessages(
+          buyerUid: buyerUid,
+          merchantUid: mid,
+          orderNumber: r.orderNumber,
+          itemName: r.item.name,
+          orderId: r.orderId,
+        ),
+      );
+    }
+
+    // If quantity is finished after this sale, remind merchant to clear the shelf.
+    unawaited(
+      MarketplaceStockReminderService.remindIfStockFinishedForOrders(refs: refs),
+    );
   }
 
   /// Escrow hold for a paid food order (10% platform fee, same as marketplace).
@@ -1098,6 +1122,15 @@ class OrderEscrowService {
         buyerConfirmed: buyerConfirmed,
         autoReleaseLabel: escrowAutoReleaseLabel,
       );
+      final buyerUid = (data['buyerUid'] ?? '').toString().trim();
+      if (buyerUid.isNotEmpty) {
+        await OrderPartyNotificationService.publishOrderCompletedToBuyer(
+          buyerUid: buyerUid,
+          orderNumber: orderNo,
+          itemName: itemNm,
+          orderId: orderId,
+        );
+      }
     }
   }
 

@@ -8,6 +8,7 @@ import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_id_resolver.dart';
+import 'package:vero360_app/features/Marketplace/presentation/widgets/merchant_review_prompt.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/widgets/modern_confirm_dialog.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
@@ -52,8 +53,6 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
 
   bool _loading = true;
   bool _refreshing = false;
-  bool _isLoggedIn = false;
-  bool _loginRequired = false;
   String? _error;
   int? _myUserId;
   int? _resolvedMerchantId;
@@ -96,12 +95,11 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
           );
       _reviews = List<MerchantReview>.from(initialReviews ?? const []);
       _loading = false;
-    } else if (widget.rating != null && widget.rating! > 0) {
+    } else {
       _summary = MerchantReviewSummary(
-        average: widget.rating!,
+        average: widget.rating ?? 0,
         count: 0,
       );
-      // Still loading list, but header rating can show.
     }
   }
 
@@ -110,7 +108,6 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
       setState(() {
         _loading = true;
         _error = null;
-        _loginRequired = false;
       });
     } else {
       if (mounted) setState(() => _refreshing = true);
@@ -146,7 +143,6 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
       if (cached != null && silent) {
         if (!mounted) return;
         setState(() {
-          _isLoggedIn = loggedIn;
           _myUserId = myId;
           _myDisplayName = myName.trim();
           _myAvatarUrl = myAvatar?.trim();
@@ -177,15 +173,23 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
 
       if (!mounted) return;
       setState(() {
-        _isLoggedIn = loggedIn;
         _myUserId = myId;
         _myDisplayName = myName.trim();
         _myAvatarUrl = myAvatar?.trim();
         _resolvedMerchantId = merchantBackendId;
-        _summary = bundle.summary;
         _reviews = bundle.reviews
             .map((r) => _enrichReview(r.withNormalizedReaction()))
             .toList();
+        // Never keep a stale average when the live list is empty (e.g. after delete).
+        _summary = _reviews.isEmpty
+            ? const MerchantReviewSummary(average: 0, count: 0)
+            : (bundle.summary.count > 0 || bundle.summary.average > 0
+                ? bundle.summary
+                : MerchantReviewSummary(
+                    average: _reviews.fold<int>(0, (s, r) => s + r.rating) /
+                        _reviews.length,
+                    count: _reviews.length,
+                  ));
         _loading = false;
         _refreshing = false;
         _error = null;
@@ -195,11 +199,10 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
       setState(() {
         _loading = false;
         _refreshing = false;
-        // Keep seeded data visible on refresh failure.
-        if (_reviews.isEmpty && _summary == null) {
-          _error = e is ApiException ? e.message : 'Could not load reviews.';
-          _loginRequired = e is ApiException && e.requiresLogin;
+        if (_summary == null) {
+          _summary = MerchantReviewSummary(average: widget.rating ?? 0, count: 0);
         }
+        _error = null;
       });
     }
   }
@@ -218,15 +221,16 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
       );
       if (!mounted) return;
       setState(() {
-        _isLoggedIn = loggedIn;
         _myUserId = myId;
         _myDisplayName = myName.trim();
         _myAvatarUrl = myAvatar?.trim();
         _resolvedMerchantId = merchantBackendId;
-        _summary = bundle.summary;
         _reviews = bundle.reviews
             .map((r) => _enrichReview(r.withNormalizedReaction()))
             .toList();
+        _summary = _reviews.isEmpty
+            ? const MerchantReviewSummary(average: 0, count: 0)
+            : bundle.summary;
         _refreshing = false;
       });
     } catch (_) {
@@ -243,12 +247,18 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
   }
 
   double get _displayRating {
+    // After the last review is deleted, don't fall back to the stale
+    // [widget.rating] passed in when this page opened.
+    if (_reviews.isEmpty && (_summary?.count ?? 0) <= 0) {
+      if (_summary != null) return 0;
+    }
     final s = _summary;
     if (s != null && s.average > 0) return s.average.clamp(0, 5);
     return (widget.rating ?? 0).clamp(0, 5);
   }
 
-  int get _reviewCount => _summary?.count ?? _reviews.length;
+  int get _reviewCount =>
+      _reviews.isEmpty ? (_summary?.count ?? 0) : (_summary?.count ?? _reviews.length);
 
   bool _isGenericName(String name) {
     final n = name.trim().toLowerCase();
@@ -338,6 +348,8 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
         reviewId: existing.id,
         rating: result.rating,
         comment: result.comment,
+        merchantBackendId: _resolvedMerchantId ?? widget.merchantBackendId,
+        merchantFirebaseUid: _merchantFirebaseUid,
       );
       _toast('Review updated');
       await _load(silent: true);
@@ -348,6 +360,20 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
         error: true,
       );
     }
+  }
+
+  String? get _merchantFirebaseUid {
+    bool looksLikeUid(String s) =>
+        s.length >= 20 && !RegExp(r'^\d+$').hasMatch(s);
+    for (final raw in [
+      widget.sellerUserId,
+      widget.merchantId,
+      widget.serviceProviderId,
+    ]) {
+      final v = (raw ?? '').trim();
+      if (looksLikeUid(v)) return v;
+    }
+    return null;
   }
 
   Future<void> _deleteReview(MerchantReview review) async {
@@ -361,8 +387,30 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
     );
     if (!ok || !mounted) return;
 
+    final merchantId = _resolvedMerchantId ?? widget.merchantBackendId;
     try {
-      await _service.deleteReview(review.id);
+      await _service.deleteReview(
+        reviewId: review.id,
+        merchantBackendId: merchantId,
+        merchantFirebaseUid: _merchantFirebaseUid,
+      );
+      if (merchantId != null && merchantId > 0) {
+        unawaited(MerchantReviewPrompt.clearDoneForMerchant(merchantId));
+      }
+      if (!mounted) return;
+      // Optimistic UI: drop review + zero rating immediately.
+      final remaining =
+          _reviews.where((r) => r.id != review.id).toList(growable: false);
+      setState(() {
+        _reviews = remaining;
+        _summary = remaining.isEmpty
+            ? const MerchantReviewSummary(average: 0, count: 0)
+            : MerchantReviewSummary(
+                average: remaining.fold<int>(0, (s, r) => s + r.rating) /
+                    remaining.length,
+                count: remaining.length,
+              );
+      });
       _toast('Review deleted');
       await _load(silent: true);
     } catch (e) {
@@ -458,7 +506,7 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
       );
     }
 
-    if (_error != null && _reviews.isEmpty) {
+    if (_error != null && _reviews.isEmpty && _summary == null) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -477,14 +525,12 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
-                onPressed: _loginRequired ? _goToLogin : _load,
+                onPressed: _load,
                 style: FilledButton.styleFrom(
                   backgroundColor: MerchantReviewsPage._brandOrange,
                 ),
-                icon: Icon(
-                  _loginRequired ? Icons.login_rounded : Icons.refresh_rounded,
-                ),
-                label: Text(_loginRequired ? 'Log in' : 'Retry'),
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Retry'),
               ),
             ],
           ),
@@ -828,7 +874,7 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
           ],
           if (!isMine) ...[
             const SizedBox(height: 12),
-            _reactionRow(review, readOnly: !_isLoggedIn),
+            _reactionRow(review),
           ],
         ],
       ),

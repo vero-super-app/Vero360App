@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/legacy.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
+import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 
 // ==================== SERVICES ====================
@@ -144,6 +145,16 @@ const _hasDriverProfileKey = 'has_driver_profile';
 Future<bool?> loadDriverStatusFromPrefs() async {
   try {
     final prefs = await SharedPreferences.getInstance();
+    if (RoleSessionService.isMerchantAccount(prefs)) {
+      final changed = _isDriverCachedValue != false;
+      _isDriverCachedValue = false;
+      if (changed) {
+        try {
+          driverSessionRiverpodBump?.call();
+        } catch (_) {}
+      }
+      return false;
+    }
     final role = RoleHelper.normalizeAccountRole(
           prefs.getString('user_role') ?? prefs.getString('role'),
         ) ??

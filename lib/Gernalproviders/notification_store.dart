@@ -76,6 +76,10 @@ class NotificationStore extends ChangeNotifier {
   static const String kBadgeRefund = 'quick_refund';
   static const String kBadgePromotions = 'quick_promotions';
   static const String kBadgePostArrival = 'quick_post_arrival';
+  /// Tap opens Play Store / App Store for an update download.
+  static const String kBadgeAppUpdate = 'app_update';
+  /// Opens Vero360 Team chat (admin broadcasts).
+  static const String kBadgeVeroTeam = 'vero_team';
 
   /// Maps order notifications to the correct dashboard tile (merchant vs buyer).
   static String badgeRouteForOrderStatus(
@@ -109,6 +113,9 @@ class NotificationStore extends ChangeNotifier {
   bool _loaded = false;
   String _loadedKey = '';
   String? _boundUid;
+
+  /// Near-duplicate window for the same alert arriving via FCM + Firestore + WS.
+  static const Duration _dedupeWindow = Duration(minutes: 3);
 
   /// UID whose notifications are currently in memory (null after logout).
   String? get boundUid => _boundUid;
@@ -190,6 +197,12 @@ class NotificationStore extends ChangeNotifier {
   Future<void> ensureLoaded() async {
     final uid = await _resolveUid();
     await switchToUser(uid);
+    final before = _items.length;
+    _collapseNearDuplicates();
+    if (_items.length != before) {
+      await _save();
+      notifyListeners();
+    }
   }
 
   /// Force the in-memory list to match [uid]'s disk cache (or empty when signed out).
@@ -223,10 +236,85 @@ class NotificationStore extends ChangeNotifier {
                 e is Map ? Map<String, dynamic>.from(e) : null);
             if (item != null) _items.add(item);
           }
+          _collapseNearDuplicates();
         }
       }
     } catch (_) {}
     notifyListeners();
+  }
+
+  /// Stable key for “same alert, different transport” (FCM messageId vs chat_doc vs WS).
+  static String contentFingerprint({
+    required String title,
+    required String body,
+    Map<String, dynamic>? payload,
+  }) {
+    final p = payload ?? const <String, dynamic>{};
+    final type = (p['type'] ?? '').toString().trim().toLowerCase();
+    final chatId = (p['chatId'] ?? p['chat_id'] ?? '').toString().trim();
+    final orderId =
+        (p['orderId'] ?? p['order_id'] ?? p['firestoreDocId'] ?? '')
+            .toString()
+            .trim();
+    final badge = (p[kPayloadBadgeRoute] ?? p['badgeRoute'] ?? '')
+        .toString()
+        .trim();
+    return [
+      type,
+      chatId,
+      orderId,
+      badge,
+      title.trim(),
+      body.trim(),
+    ].join('|');
+  }
+
+  String _itemFingerprint(AppNotificationItem e) => contentFingerprint(
+        title: e.title,
+        body: e.body,
+        payload: e.payload,
+      );
+
+  bool _isNearDuplicateOf(AppNotificationItem existing, {
+    required String id,
+    required String fingerprint,
+    required DateTime createdAt,
+  }) {
+    if (existing.id == id) return true;
+    if (_itemFingerprint(existing) != fingerprint) return false;
+    return existing.createdAt.difference(createdAt).abs() <= _dedupeWindow;
+  }
+
+  /// Drop older copies of the same alert (keeps newest; preserves read if any was read).
+  void _collapseNearDuplicates() {
+    if (_items.length < 2) return;
+    final sorted = List<AppNotificationItem>.from(_items)
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final kept = <AppNotificationItem>[];
+    for (final item in sorted) {
+      final fp = _itemFingerprint(item);
+      final dupIdx = kept.indexWhere(
+        (k) => _isNearDuplicateOf(
+          k,
+          id: item.id,
+          fingerprint: fp,
+          createdAt: item.createdAt,
+        ),
+      );
+      if (dupIdx < 0) {
+        kept.add(item);
+        continue;
+      }
+      // Prefer read=true if either copy was opened.
+      if (item.read && !kept[dupIdx].read) {
+        kept[dupIdx].read = true;
+      }
+    }
+    if (kept.length != _items.length) {
+      _items
+        ..clear()
+        ..addAll(kept);
+    }
   }
 
   Future<void> _load() async {
@@ -259,16 +347,29 @@ class NotificationStore extends ChangeNotifier {
   }
 
   /// Add a notification (e.g. from FCM). Notifies listeners.
-  Future<void> addNotification({
+  /// Skips exact id matches and near-duplicates (same title/body/type within 3 min).
+  /// Returns false when skipped as a duplicate.
+  Future<bool> addNotification({
     required String id,
     required String title,
     required String body,
     Map<String, dynamic>? payload,
   }) async {
     final uid = await _resolveUid();
-    if (uid == null || uid.isEmpty) return;
+    if (uid == null || uid.isEmpty) return false;
     await switchToUser(uid);
-    if (_items.any((e) => e.id == id)) return;
+    final now = DateTime.now();
+    final fp = contentFingerprint(title: title, body: body, payload: payload);
+    for (final e in _items) {
+      if (_isNearDuplicateOf(
+        e,
+        id: id,
+        fingerprint: fp,
+        createdAt: now,
+      )) {
+        return false;
+      }
+    }
     _items.add(AppNotificationItem(
       id: id,
       title: title,
@@ -277,6 +378,7 @@ class NotificationStore extends ChangeNotifier {
     ));
     await _save();
     notifyListeners();
+    return true;
   }
 
   /// Mark all as read. Call when user opens the notifications page.

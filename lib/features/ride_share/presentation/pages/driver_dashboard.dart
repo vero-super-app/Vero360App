@@ -13,6 +13,7 @@ import 'package:vero360_app/features/ride_share/presentation/providers/driver_on
 import 'package:vero360_app/features/ride_share/presentation/widgets/map_view_widget.dart';
 import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
+import 'package:vero360_app/utils/vero_map_style.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/notification_badge.dart';
@@ -49,6 +50,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
   Future<List<Ride>>? _recentRidesFuture;
   Position? _detectedPosition;
   bool _locatingDriver = false;
+  bool _availabilityBusy = false;
 
   bool get _isOnline => ref.watch(driverOnlineSessionProvider).isOnline;
 
@@ -189,9 +191,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     if (controller == null) return;
     try {
       await controller.animateCamera(
-        CameraUpdate.newLatLngZoom(
-          LatLng(pos.latitude, pos.longitude),
-          15,
+        VeroMapStyle.cameraUpdate(
+          target: LatLng(pos.latitude, pos.longitude),
         ),
       );
     } catch (_) {}
@@ -213,11 +214,21 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     _mapCenteringTimer = null;
   }
 
-  /// Story entry + avatar (matches [marketplace_merchant_dashboard] app bar).
-  Widget _buildStoryProfileAppBarAction() {
+  /// Opens the 24h story composer for this driver.
+  Future<void> _openPostStory() async {
     final user = FirebaseAuth.instance.currentUser;
-    final asyncProfile = ref.watch(myDriverProfileProvider);
+    final uid = user?.uid;
+    if (uid == null) {
+      ToastHelper.showCustomToast(
+        context,
+        'Please sign in to post a story',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
 
+    final asyncProfile = ref.read(myDriverProfileProvider);
     String? imageUrl = asyncProfile.maybeWhen(
       data: (driver) {
         final p = driver['user']?['profilepicture']?.toString();
@@ -228,13 +239,6 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     );
     imageUrl ??= user?.photoURL;
 
-    ImageProvider? backgroundImage;
-    if (imageUrl != null && imageUrl.isNotEmpty) {
-      if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
-        backgroundImage = NetworkImage(imageUrl);
-      }
-    }
-
     final merchantName = asyncProfile.maybeWhen(
           data: (driver) => driver['user']?['name']?.toString(),
           orElse: () => null,
@@ -242,83 +246,48 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
         user?.displayName ??
         'Ride Driver';
 
-    return Tooltip(
-      message: 'Post story (24h)',
-      child: GestureDetector(
-        onTap: () {
-          final uid = user?.uid;
-          if (uid == null) {
-            ToastHelper.showCustomToast(
-              context,
-              'Please sign in to post a story',
-              isSuccess: false,
-              errorMessage: '',
-            );
-            return;
-          }
-          Navigator.of(context).push(
-            MaterialPageRoute<bool>(
-              builder: (_) => PostStoryPage(
-                merchantId: uid,
-                merchantName: merchantName,
-                merchantImageUrl: imageUrl,
-                serviceType: 'ride',
-              ),
-            ),
-          );
-        },
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(2),
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: LinearGradient(
-                  colors: [
-                    Color(0xFFF58529),
-                    Color(0xFFDD2A7B),
-                    Color(0xFF8134AF),
-                    Color(0xFF515BD4),
-                  ],
-                ),
-              ),
-              child: CircleAvatar(
-                radius: 16,
-                backgroundColor: Colors.grey.shade200,
-                backgroundImage: backgroundImage,
-                child: backgroundImage == null
-                    ? const Icon(Icons.person, size: 18, color: Colors.grey)
-                    : null,
-              ),
-            ),
-            Positioned(
-              bottom: 0,
-              right: 0,
-              child: Container(
-                width: 18,
-                height: 18,
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  shape: BoxShape.circle,
-                ),
-                child: Container(
-                  margin: const EdgeInsets.all(2),
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF25D366),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.add,
-                    size: 14,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ),
-          ],
+    if (!mounted) return;
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => PostStoryPage(
+          merchantId: uid,
+          merchantName: merchantName,
+          merchantImageUrl: imageUrl,
+          serviceType: 'ride',
         ),
       ),
+    );
+  }
+
+  Widget _buildOtherDetailsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Other details',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w800,
+            color: RideShareColors.titleText,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Share a 24-hour status with riders on Vero360',
+          style: TextStyle(
+            fontSize: 13,
+            color: Colors.grey.shade600,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 12),
+        DriverQuickActionButton(
+          label: 'Post story',
+          icon: Icons.auto_stories_outlined,
+          color: const Color(0xFFDD2A7B),
+          onPressed: _openPostStory,
+        ),
+      ],
     );
   }
 
@@ -404,6 +373,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
                             _buildRecentActivitySection(),
                             const SizedBox(height: 18),
                             _buildActionsSectionContent(context, driver),
+                            const SizedBox(height: 18),
+                            _buildOtherDetailsSection(),
                           ],
                         ),
                       );
@@ -416,7 +387,10 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     );
   }
 
+  static const Color _brandNavy = Color(0xFF16284C);
+
   Widget _buildHeader() {
+    // Navy banner — matches merchant / customer profile headers.
     return Container(
       padding: const EdgeInsets.fromLTRB(8, 6, 12, 10),
       decoration: const BoxDecoration(
@@ -457,14 +431,22 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
             isOnline: _isOnline,
             onToggle: _handleOnlineToggle,
           ),
-          const SizedBox(width: 10),
-          _buildStoryProfileAppBarAction(),
         ],
       ),
     );
   }
 
   Future<void> _handleOnlineToggle() async {
+    if (_availabilityBusy) return;
+    setState(() => _availabilityBusy = true);
+    try {
+      await _performOnlineToggle();
+    } finally {
+      if (mounted) setState(() => _availabilityBusy = false);
+    }
+  }
+
+  Future<void> _performOnlineToggle() async {
     final session = ref.read(driverOnlineSessionProvider);
     if (session.isOnline) {
       try {
@@ -597,11 +579,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
         final loading = snap.connectionState == ConnectionState.waiting &&
             !snap.hasData;
         final today = snap.data?.today;
-        final week = snap.data?.thisWeek;
         final todayEarnings = today?.earnings ?? 0;
         final todayTrips = today?.trips ?? 0;
-        final weekEarnings = week?.earnings ?? 0;
-        final weekTrips = week?.trips ?? 0;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -620,8 +599,6 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
               child: DriverEarningsSummaryCard(
                 todayAmountLabel: formatRideMoney(todayEarnings, _money),
                 todayTrips: todayTrips,
-                weekAmountLabel: formatRideMoney(weekEarnings, _money),
-                weekTrips: weekTrips,
                 loading: loading,
               ),
             ),
@@ -740,17 +717,19 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
               ),
             ],
           ),
-          clipBehavior: Clip.antiAlias,
+          // Do NOT clip GoogleMap — Clip.antiAlias blanks platform views on Android.
           child: Stack(
             children: [
-              MapViewWidget(
-                onMapCreated: (controller) async {
-                  mapController = controller;
-                  await _detectAndCenterDriverLocation(force: true);
-                },
-                initialPosition: _lastPosition,
-                // Nearby taxis are a passenger-facing feature.
-                showNearbyVehicles: false,
+              Positioned.fill(
+                child: MapViewWidget(
+                  onMapCreated: (controller) async {
+                    mapController = controller;
+                    await _detectAndCenterDriverLocation(force: true);
+                  },
+                  initialPosition: _lastPosition,
+                  // Nearby taxis are a passenger-facing feature.
+                  showNearbyVehicles: false,
+                ),
               ),
               Positioned(
                 top: 14,
@@ -1058,6 +1037,13 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
           ),
         ),
         const SizedBox(height: 12),
+        DriverQuickActionButton(
+          label: 'Post story',
+          icon: Icons.auto_stories_outlined,
+          color: const Color(0xFFDD2A7B),
+          onPressed: _openPostStory,
+        ),
+        const SizedBox(height: 10),
         if (!isVerified || !hasTaxis)
           Container(
             width: double.infinity,

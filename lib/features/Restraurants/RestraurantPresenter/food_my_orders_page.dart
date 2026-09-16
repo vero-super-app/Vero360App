@@ -1,16 +1,18 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import 'package:vero360_app/GernalServices/api_exception.dart';
-import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_order_model.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantsService/food_order_image_resolver.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_review_service.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_order_tracking_page.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
+import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 const Color _veroOrange = Color(0xFFFF8A00);
 const Color _ink = Color(0xFF1A1109);
@@ -60,9 +62,25 @@ class _FoodMyOrdersPageState extends State<FoodMyOrdersPage> {
     _stream = FirebaseFirestore.instance
         .collection('food_orders')
         .where('customerUid', isEqualTo: uid)
-        .orderBy('createdAt', descending: true)
+        .limit(80)
         .snapshots();
     _loadReviewedIds(uid);
+  }
+
+  List<FoodOrder> _parseOrders(QuerySnapshot<Map<String, dynamic>> snap) {
+    final rows = snap.docs.map((d) {
+      try {
+        return FoodOrder.fromFirestore(d);
+      } catch (_) {
+        return null;
+      }
+    }).whereType<FoodOrder>().toList();
+    rows.sort((a, b) {
+      final at = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final bt = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return bt.compareTo(at);
+    });
+    return rows;
   }
 
   Future<void> _loadReviewedIds(String uid) async {
@@ -81,12 +99,13 @@ class _FoodMyOrdersPageState extends State<FoodMyOrdersPage> {
       backgroundColor: _pageBg,
       appBar: AppBar(
         elevation: 0,
-        backgroundColor: Colors.white,
-        foregroundColor: _ink,
+        scrolledUnderElevation: 0,
+        backgroundColor: _veroOrange,
+        foregroundColor: Colors.white,
         centerTitle: true,
         title: const Text(
           'My Food Orders',
-          style: TextStyle(fontWeight: FontWeight.w800),
+          style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: -0.3),
         ),
       ),
       body: _stream == null
@@ -98,7 +117,10 @@ class _FoodMyOrdersPageState extends State<FoodMyOrdersPage> {
                     !snap.hasData) {
                   return const AppSkeletonListPlaceholder(items: 6);
                 }
-                if (snap.hasError) {
+
+                final orders = snap.hasData ? _parseOrders(snap.data!) : const <FoodOrder>[];
+
+                if (snap.hasError && orders.isEmpty) {
                   return _errorState(
                     UserFacingError.from(
                       snap.error,
@@ -106,16 +128,13 @@ class _FoodMyOrdersPageState extends State<FoodMyOrdersPage> {
                     ),
                   );
                 }
-                final docs = snap.data?.docs ?? const [];
-                if (docs.isEmpty) return _empty();
 
-                final orders = docs
-                    .map(FoodOrder.fromFirestore)
-                    .toList();
+                if (orders.isEmpty) return _empty();
+
                 return ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+                  padding: const EdgeInsets.fromLTRB(16, 20, 16, 28),
                   itemCount: orders.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  separatorBuilder: (_, __) => const SizedBox(height: 14),
                   itemBuilder: (context, i) {
                     final order = orders[i];
                     return _FoodOrderCard(
@@ -233,7 +252,7 @@ class _FoodMyOrdersPageState extends State<FoodMyOrdersPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.wifi_off_rounded,
+            Icon(Icons.error_outline_rounded,
                 size: 44, color: _ink.withValues(alpha: 0.35)),
             const SizedBox(height: 12),
             Text(
@@ -247,6 +266,356 @@ class _FoodMyOrdersPageState extends State<FoodMyOrdersPage> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+String _orderDateLabel(FoodOrder order) {
+  final at = order.createdAt;
+  if (at == null) return '—';
+  return DateFormat('EEE, d MMM yyyy · HH:mm').format(at.toLocal());
+}
+
+String _courierLabel(FoodOrder order) {
+  final method = order.deliveryMethod.trim().isEmpty
+      ? 'Vero Courier'
+      : order.deliveryMethod.trim();
+  final track = order.courierTrackingNumber.trim();
+  if (track.isEmpty) return method;
+  return '$method · $track';
+}
+
+String _kitchenLabel(FoodOrder order) {
+  final n = order.restaurantName.trim();
+  return n.isEmpty ? 'Local kitchen' : n;
+}
+
+Future<void> _copyOrderNumber(BuildContext context, String number) async {
+  final n = number.trim();
+  if (n.isEmpty) return;
+  await Clipboard.setData(ClipboardData(text: n));
+  if (!context.mounted) return;
+  ToastHelper.showCustomToast(
+    context,
+    'Order number copied',
+    isSuccess: true,
+    errorMessage: '',
+  );
+}
+
+String _foodPriceLine(FoodOrder order) {
+  final line = order.primaryLineItem;
+  if (line == null) return _mwk0(order.totalMwk);
+  if (order.lineItems.length == 1) {
+    if (line.quantity > 1) {
+      return '${line.quantity}× ${_mwk0(line.unitPriceMwk)} · ${_mwk0(line.lineTotalMwk)}';
+    }
+    return _mwk0(line.unitPriceMwk);
+  }
+  return '${order.lineItems.length} items · ${_mwk0(order.totalMwk)}';
+}
+
+class _OrderFoodThumb extends StatefulWidget {
+  const _OrderFoodThumb({required this.order});
+
+  final FoodOrder order;
+
+  @override
+  State<_OrderFoodThumb> createState() => _OrderFoodThumbState();
+}
+
+class _OrderFoodThumbState extends State<_OrderFoodThumb> {
+  String? _httpUrl;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _OrderFoodThumb oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.order.id != widget.order.id) {
+      _httpUrl = null;
+      _loading = true;
+      _load();
+    }
+  }
+
+  Future<void> _load() async {
+    final url = await FoodOrderImageResolver.resolve(widget.order);
+    if (!mounted) return;
+    setState(() {
+      _httpUrl = url;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: SizedBox(
+        width: 72,
+        height: 72,
+        child: _httpUrl != null && _httpUrl!.isNotEmpty
+            ? ResilientCachedNetworkImage(
+                url: _httpUrl!,
+                fit: BoxFit.cover,
+                width: 72,
+                height: 72,
+                memCacheWidth: 144,
+                memCacheHeight: 144,
+              )
+            : Container(
+                color: _veroOrange.withValues(alpha: 0.12),
+                child: _loading
+                    ? const Center(
+                        child: SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: _veroOrange,
+                          ),
+                        ),
+                      )
+                    : const Icon(
+                        Icons.restaurant_rounded,
+                        color: _veroOrange,
+                        size: 32,
+                      ),
+              ),
+      ),
+    );
+  }
+}
+
+class _OrderFoodHeader extends StatelessWidget {
+  const _OrderFoodHeader({required this.order});
+
+  final FoodOrder order;
+
+  @override
+  Widget build(BuildContext context) {
+    final kitchen = _kitchenLabel(order);
+    final extra = order.lineItems.length > 1
+        ? '+${order.lineItems.length - 1} more'
+        : null;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+      decoration: BoxDecoration(
+        color: _veroOrange.withValues(alpha: 0.07),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _OrderFoodThumb(order: order),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  order.headerFoodTitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                    color: _ink,
+                    height: 1.2,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _foodPriceLine(order),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
+                    color: _veroOrange,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  kitchen,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: _ink.withValues(alpha: 0.5),
+                  ),
+                ),
+                if (extra != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    extra,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                      color: _ink.withValues(alpha: 0.45),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: _getStatusColor(order.status),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  order.status,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _mwk0(order.totalMwk),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 13,
+                  color: _ink,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CopyableOrderNumberRow extends StatelessWidget {
+  const _CopyableOrderNumberRow({required this.orderNumber});
+
+  final String orderNumber;
+
+  @override
+  Widget build(BuildContext context) {
+    final n = orderNumber.trim();
+    if (n.isEmpty) {
+      return const _ModernOrderInfoRow(
+        icon: Icons.tag_rounded,
+        label: 'Order number',
+        value: '—',
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.tag_rounded, size: 16, color: _veroOrange.withValues(alpha: 0.85)),
+          const SizedBox(width: 10),
+          SizedBox(
+            width: 108,
+            child: Text(
+              'Order number',
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: _ink.withValues(alpha: 0.45),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: () => _copyOrderNumber(context, n),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          n,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            color: _veroOrange,
+                            height: 1.35,
+                          ),
+                        ),
+                      ),
+                      Icon(
+                        Icons.copy_rounded,
+                        size: 16,
+                        color: _veroOrange.withValues(alpha: 0.85),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ModernOrderInfoRow extends StatelessWidget {
+  const _ModernOrderInfoRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final v = value.trim().isEmpty ? '—' : value.trim();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: _veroOrange.withValues(alpha: 0.85)),
+          const SizedBox(width: 10),
+          SizedBox(
+            width: 108,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: _ink.withValues(alpha: 0.45),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              v,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: _ink,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -267,136 +636,123 @@ class _FoodOrderCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final name = order.restaurantName.trim().isEmpty
-        ? 'Kitchen'
-        : order.restaurantName.trim();
-    final when = order.createdAt == null
-        ? ''
-        : MarketplaceTime.formatTimeAgo(order.createdAt!, verbose: true);
+    final kitchen = _kitchenLabel(order);
+    final customer = order.customerName.trim().isEmpty ? '—' : order.customerName.trim();
+    final phone = order.customerPhone.trim().isEmpty ? '—' : order.customerPhone.trim();
 
     return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(16),
+      color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(14, 14, 12, 14),
+        borderRadius: BorderRadius.circular(20),
+        child: Ink(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
             border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: _veroOrange.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(Icons.restaurant_menu_rounded,
-                    color: _veroOrange, size: 22),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 16,
+                offset: const Offset(0, 6),
               ),
-              const SizedBox(width: 12),
-              Expanded(
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _OrderFoodHeader(order: order),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 15,
-                              color: _ink,
-                            ),
-                          ),
-                        ),
-                        Chip(
-                          visualDensity: VisualDensity.compact,
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
-                          padding: const EdgeInsets.symmetric(horizontal: 6),
-                          label: Text(
-                            order.status,
-                            style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          backgroundColor: _getStatusColor(order.status),
-                        ),
-                      ],
+                    _ModernOrderInfoRow(
+                      icon: Icons.person_outline_rounded,
+                      label: 'Customer name',
+                      value: customer,
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _lineSummary(order.lineItems),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: _ink.withValues(alpha: 0.62),
-                        height: 1.3,
-                      ),
+                    _ModernOrderInfoRow(
+                      icon: Icons.phone_outlined,
+                      label: 'Phone number',
+                      value: phone,
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      order.courierTrackingNumber.trim().isEmpty
-                          ? 'Vero Courier'
-                          : 'Vero Courier · ${order.courierTrackingNumber.trim()}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: _ink.withValues(alpha: 0.5),
-                      ),
+                    _CopyableOrderNumberRow(
+                      orderNumber: order.displayOrderNumber,
                     ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Text(
-                          _mwk0(order.totalMwk),
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            color: _veroOrange,
-                          ),
-                        ),
-                        const Spacer(),
-                        TextButton(
-                          onPressed: onTrack,
-                          style: TextButton.styleFrom(
+                    _ModernOrderInfoRow(
+                      icon: Icons.calendar_today_outlined,
+                      label: 'Order date',
+                      value: _orderDateLabel(order),
+                    ),
+                    _ModernOrderInfoRow(
+                      icon: Icons.delivery_dining_rounded,
+                      label: 'Courier',
+                      value: _courierLabel(order),
+                    ),
+                    _ModernOrderInfoRow(
+                      icon: Icons.restaurant_rounded,
+                      label: 'Kitchen',
+                      value: kitchen,
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                child: Row(
+                  children: [
+                    if (canRate)
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: onTap,
+                          style: OutlinedButton.styleFrom(
                             foregroundColor: _veroOrange,
-                            visualDensity: VisualDensity.compact,
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            side: BorderSide(
+                              color: _veroOrange.withValues(alpha: 0.5),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                           ),
                           child: const Text(
-                            'Track',
+                            'Rate order',
                             style: TextStyle(fontWeight: FontWeight.w800),
                           ),
                         ),
-                        if (canRate)
-                          const Text(
-                            'Rate this order',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w800,
-                              color: _veroOrange,
-                            ),
-                          )
-                        else if (when.isNotEmpty)
-                          Text(
-                            when,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: _ink.withValues(alpha: 0.45),
-                            ),
+                      ),
+                    if (canRate) const SizedBox(width: 10),
+                    Expanded(
+                      flex: canRate ? 1 : 2,
+                      child: FilledButton.icon(
+                        onPressed: onTrack,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _veroOrange,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                      ],
+                        ),
+                        icon: const Icon(Icons.map_outlined, size: 18),
+                        label: const Text(
+                          'Track',
+                          style: TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    IconButton(
+                      onPressed: onTap,
+                      tooltip: 'Details',
+                      style: IconButton.styleFrom(
+                        backgroundColor: const Color(0xFFF4F6FA),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.info_outline_rounded,
+                          color: _ink, size: 20),
                     ),
                   ],
                 ),
@@ -505,14 +861,14 @@ class _FoodOrderDetailSheetState extends State<_FoodOrderDetailSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final name = order.restaurantName.trim().isEmpty
-        ? 'Kitchen'
-        : order.restaurantName.trim();
+    final kitchen = _kitchenLabel(order);
     final cancelled = order.status.toLowerCase() == 'cancelled';
+    final customer = order.customerName.trim().isEmpty ? '—' : order.customerName.trim();
+    final phone = order.customerPhone.trim().isEmpty ? '—' : order.customerPhone.trim();
 
     return DraggableScrollableSheet(
       expand: false,
-      initialChildSize: 0.72,
+      initialChildSize: 0.78,
       minChildSize: 0.45,
       maxChildSize: 0.94,
       builder: (context, scroll) {
@@ -531,18 +887,47 @@ class _FoodOrderDetailSheetState extends State<_FoodOrderDetailSheet> {
                 ),
               ),
             ),
-            Text(
-              name,
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w900,
-                color: _ink,
+            _OrderFoodHeader(order: order),
+            const SizedBox(height: 12),
+            _CopyableOrderNumberRow(orderNumber: order.displayOrderNumber),
+            const SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF7F8FA),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
               ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Order #${order.id.length > 8 ? order.id.substring(0, 8) : order.id}',
-              style: TextStyle(color: _ink.withValues(alpha: 0.5)),
+              child: Column(
+                children: [
+                  _ModernOrderInfoRow(
+                    icon: Icons.person_outline_rounded,
+                    label: 'Customer name',
+                    value: customer,
+                  ),
+                  _ModernOrderInfoRow(
+                    icon: Icons.phone_outlined,
+                    label: 'Phone number',
+                    value: phone,
+                  ),
+                  _ModernOrderInfoRow(
+                    icon: Icons.calendar_today_outlined,
+                    label: 'Order date',
+                    value: _orderDateLabel(order),
+                  ),
+                  _ModernOrderInfoRow(
+                    icon: Icons.delivery_dining_rounded,
+                    label: 'Courier',
+                    value: _courierLabel(order),
+                  ),
+                  _ModernOrderInfoRow(
+                    icon: Icons.restaurant_rounded,
+                    label: 'Kitchen',
+                    value: kitchen,
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 16),
             if (cancelled)
@@ -573,7 +958,7 @@ class _FoodOrderDetailSheetState extends State<_FoodOrderDetailSheet> {
               const SizedBox(height: 18),
               _buildRateSection(),
             ],
-            const SizedBox(height: 22),
+            const SizedBox(height: 18),
             const Text(
               'Items',
               style: TextStyle(
@@ -643,6 +1028,7 @@ class _FoodOrderDetailSheetState extends State<_FoodOrderDetailSheet> {
             _kv('Service fee', _mwk0(order.serviceFeeMwk)),
             const SizedBox(height: 6),
             _kv('Total', _mwk0(order.totalMwk), emphasize: true),
+            _kv('Payment ref', order.paymentTxRef.trim().isEmpty ? '—' : order.paymentTxRef),
             const SizedBox(height: 18),
             const Text(
               'Delivery',

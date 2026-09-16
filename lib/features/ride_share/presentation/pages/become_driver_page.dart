@@ -7,7 +7,8 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
-import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
+import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart'
+    show openVeroMainShell;
 import 'package:vero360_app/features/ride_share/core/fleet_date_picker.dart';
 import 'package:vero360_app/features/ride_share/core/fleet_image_compressor.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
@@ -409,10 +410,7 @@ class _BecomeDriverPageState extends ConsumerState<BecomeDriverPage> {
     final prefs = await SharedPreferences.getInstance();
     final email = prefs.getString('email') ?? '';
     if (!mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => Bottomnavbar(email: email)),
-      (route) => false,
-    );
+    openVeroMainShell(context, email: email);
   }
 
   String _fmt(DateTime? d) =>

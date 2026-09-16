@@ -11,6 +11,7 @@ import 'package:vero360_app/Home/story_service.dart';
 import 'package:vero360_app/Home/story_ring_widget.dart';
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 import 'package:vero360_app/utils/profile_open_helper.dart';
+import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
@@ -40,6 +41,9 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   bool _isPaused = false;
   bool _sendingReply = false;
   bool _replyFocused = false;
+  bool _deleting = false;
+  int _ownViewerCount = 0;
+  bool _loadingOwnViews = false;
   late AnimationController _progressController;
   final StoryService _storyService = StoryService();
   final TextEditingController _replyController = TextEditingController();
@@ -90,6 +94,10 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   void _recordViewForCurrentSlide() {
     final items = _items;
     if (_currentIndex < 0 || _currentIndex >= items.length) return;
+    if (_isOwnStory) {
+      _loadOwnViewerCount();
+      return;
+    }
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
     final viewerName = user.displayName ?? user.email ?? 'Someone';
@@ -100,6 +108,234 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
       viewerName: viewerName,
       viewerProfileImageUrl: user.photoURL,
     ).then((_) => _refreshUnviewedState(user.uid));
+  }
+
+  Future<void> _loadOwnViewerCount() async {
+    if (!_isOwnStory) return;
+    final items = _items;
+    if (_currentIndex < 0 || _currentIndex >= items.length) return;
+    final storyId = items[_currentIndex].storyId;
+    setState(() => _loadingOwnViews = true);
+    try {
+      final count = await _storyService.getStoryViewerCount(storyId);
+      if (!mounted) return;
+      setState(() {
+        _ownViewerCount = count;
+        _loadingOwnViews = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loadingOwnViews = false);
+    }
+  }
+
+  Future<void> _showOwnViewersSheet() async {
+    final items = _items;
+    if (_currentIndex < 0 || _currentIndex >= items.length) return;
+    _progressController.stop();
+    setState(() => _isPaused = true);
+    final storyId = items[_currentIndex].storyId;
+    final viewers = await _storyService.getStoryViewers(storyId);
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.55,
+        minChildSize: 0.3,
+        maxChildSize: 0.92,
+        expand: false,
+        builder: (_, scrollController) => Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 14),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              Row(
+                children: [
+                  const Icon(Icons.visibility_outlined, size: 22),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Views (${viewers.length})',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Expanded(
+                child: viewers.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'No views yet',
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                      )
+                    : ListView.builder(
+                        controller: scrollController,
+                        itemCount: viewers.length,
+                        itemBuilder: (_, i) {
+                          final v = viewers[i];
+                          final initial = (v.viewerName.isNotEmpty
+                                  ? v.viewerName[0]
+                                  : '?')
+                              .toUpperCase();
+                          final avatar = (v.viewerProfileImageUrl != null &&
+                                  v.viewerProfileImageUrl!.trim().isNotEmpty)
+                              ? CircleAvatar(
+                                  backgroundImage:
+                                      NetworkImage(v.viewerProfileImageUrl!),
+                                )
+                              : CircleAvatar(
+                                  backgroundColor:
+                                      const Color(0xFFFF8A00).withValues(alpha: 0.25),
+                                  child: Text(
+                                    initial,
+                                    style: const TextStyle(
+                                      color: Color(0xFFFF8A00),
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                );
+                          return ListTile(
+                            leading: avatar,
+                            title: Text(
+                              v.viewerName.isEmpty ? 'Unknown' : v.viewerName,
+                              style: const TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                            subtitle: Text(_formatViewedAt(v.viewedAt)),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted) return;
+    setState(() {
+      _ownViewerCount = viewers.length;
+      _isPaused = false;
+    });
+    _progressController.forward();
+  }
+
+  String _formatViewedAt(DateTime viewedAt) {
+    final d = DateTime.now().difference(viewedAt);
+    if (d.inMinutes < 1) return 'Just now';
+    if (d.inMinutes < 60) return '${d.inMinutes}m ago';
+    if (d.inHours < 24) return '${d.inHours}h ago';
+    return '${d.inDays}d ago';
+  }
+
+  Future<void> _confirmDeleteCurrentStory() async {
+    if (!_isOwnStory || _deleting) return;
+    final items = _items;
+    if (_currentIndex < 0 || _currentIndex >= items.length) return;
+    _progressController.stop();
+    setState(() => _isPaused = true);
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete status?'),
+        content: const Text(
+          'This status will be removed for everyone. You can’t undo this.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text(
+              'Delete',
+              style: TextStyle(color: Colors.red, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) {
+      if (mounted) {
+        setState(() => _isPaused = false);
+        _progressController.forward();
+      }
+      return;
+    }
+
+    final item = items[_currentIndex];
+    setState(() => _deleting = true);
+    try {
+      await _storyService.deleteStory(item.storyId);
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Status deleted',
+        isSuccess: true,
+        errorMessage: '',
+      );
+      final remaining = List<MerchantStoryItem>.from(_items)
+        ..removeWhere((e) => e.storyId == item.storyId);
+      if (remaining.isEmpty) {
+        final nextGroups = List<MerchantStoryGroup>.from(_groups)
+          ..removeAt(_groupIndex);
+        if (nextGroups.isEmpty) {
+          Navigator.of(context).pop();
+          return;
+        }
+        final nextIndex = _groupIndex.clamp(0, nextGroups.length - 1);
+        setState(() {
+          _groups = nextGroups;
+          _groupIndex = nextIndex;
+          _currentIndex = 0;
+          _deleting = false;
+          _isPaused = false;
+        });
+        _pageController.jumpToPage(0);
+        _restartProgress();
+        _recordViewForCurrentSlide();
+        return;
+      }
+      final nextIndex = _currentIndex.clamp(0, remaining.length - 1);
+      setState(() {
+        _groups[_groupIndex] = _currentGroup.copyWith(items: remaining);
+        _currentIndex = nextIndex;
+        _deleting = false;
+        _isPaused = false;
+      });
+      _pageController.jumpToPage(nextIndex);
+      _restartProgress();
+      _recordViewForCurrentSlide();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _deleting = false;
+        _isPaused = false;
+      });
+      _progressController.forward();
+      ToastHelper.showCustomToast(
+        context,
+        'Could not delete status',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
+    }
   }
 
   Future<void> _refreshUnviewedState(String viewerId) async {
@@ -270,14 +506,86 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (_groups.length > 1 && !_replyFocused) _buildGroupsTray(),
-                    if (_groups.length > 1 && !_replyFocused)
-                      const SizedBox(height: 8),
                     if (!_isOwnStory) _buildReplyBar(),
-                    if (_isOwnStory) const SizedBox(height: 16),
+                    if (_isOwnStory) _buildOwnStoryBar(),
                   ],
                 ),
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOwnStoryBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.45),
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: InkWell(
+                onTap: _showOwnViewersSheet,
+                borderRadius: BorderRadius.circular(20),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.visibility_rounded,
+                          color: Colors.white, size: 22),
+                      const SizedBox(width: 8),
+                      if (_loadingOwnViews)
+                        const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      else
+                        Text(
+                          '$_ownViewerCount view${_ownViewerCount == 1 ? '' : 's'}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 15,
+                          ),
+                        ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        Icons.keyboard_arrow_up_rounded,
+                        color: Colors.white.withValues(alpha: 0.8),
+                        size: 20,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              tooltip: 'Delete status',
+              onPressed: _deleting ? null : _confirmDeleteCurrentStory,
+              icon: _deleting
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.delete_outline_rounded,
+                      color: Colors.white, size: 24),
             ),
           ],
         ),
@@ -331,7 +639,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  _currentGroup.merchantName,
+                  _isOwnStory ? 'My status' : _currentGroup.merchantName,
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -345,6 +653,13 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
               ],
             ),
           ),
+          if (_isOwnStory)
+            IconButton(
+              tooltip: 'Delete',
+              onPressed: _deleting ? null : _confirmDeleteCurrentStory,
+              icon: const Icon(Icons.delete_outline_rounded,
+                  color: Colors.white, size: 24),
+            ),
         ],
       ),
     );
@@ -388,92 +703,6 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                 ),
               );
             }),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildGroupsTray() {
-    return SizedBox(
-      height: 78,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        itemCount: _groups.length,
-        itemBuilder: (context, i) {
-          final g = _groups[i];
-          final isActive = i == _groupIndex;
-          return Padding(
-            padding: const EdgeInsets.only(right: 10),
-            child: GestureDetector(
-              onTap: () {
-                if (i == _groupIndex) return;
-                setState(() {
-                  _groupIndex = i;
-                  _currentIndex = 0;
-                });
-                _pageController.jumpToPage(0);
-                _restartProgress();
-                _recordViewForCurrentSlide();
-              },
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 52,
-                    height: 52,
-                    decoration: isActive
-                        ? BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 2),
-                          )
-                        : null,
-                    child: Container(
-                      padding: EdgeInsets.all(g.hasUnviewed ? 2.5 : 1.5),
-                      decoration: StoryRingDecoration.ring(
-                        hasStories: true,
-                        hasUnviewed: g.hasUnviewed,
-                      ),
-                      child: ClipOval(
-                        child: g.merchantImageUrl != null &&
-                                g.merchantImageUrl!.isNotEmpty
-                            ? Image.network(
-                                g.merchantImageUrl!,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => Container(
-                                  color: Colors.white24,
-                                  child: const Icon(Icons.store,
-                                      color: Colors.white, size: 20),
-                                ),
-                              )
-                            : Container(
-                                color: Colors.white24,
-                                child: const Icon(Icons.store,
-                                    color: Colors.white, size: 20),
-                              ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  SizedBox(
-                    width: 56,
-                    child: Text(
-                      g.merchantName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.9),
-                        fontSize: 10,
-                        fontWeight:
-                            isActive ? FontWeight.w800 : FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
           );
         },
       ),
@@ -633,6 +862,9 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
           'storyId': item.storyId,
           'merchantId': merchantId,
           if (caption != null && caption.isNotEmpty) 'storyCaption': caption,
+          if (item.mediaUrl.trim().isNotEmpty)
+            'storyMediaUrl': item.mediaUrl.trim(),
+          'storyMediaType': item.mediaType,
         },
       );
 

@@ -1,6 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
+import 'package:vero360_app/features/DigitalServices/digital_services_catalog.dart';
+import 'package:vero360_app/features/DigitalServices/netflix_plans.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_product_amount_page.dart';
+import 'package:vero360_app/features/DigitalServices/presentation/netflix_plan_picker_page.dart';
 
 class DigitalServicesPage extends StatefulWidget {
   final void Function({
@@ -22,6 +27,7 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
   static const _bg = Color(0xFFFFFBF6);
 
   final _searchCtrl = TextEditingController();
+  final _catalog = DigitalServicesCatalog.instance;
   String _category = 'all';
   String _query = '';
   late final AnimationController _enter;
@@ -29,6 +35,8 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
   @override
   void initState() {
     super.initState();
+    _catalog.addListener(_onCatalog);
+    unawaited(_catalog.ensureStarted());
     _enter = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 700),
@@ -40,15 +48,24 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
     });
   }
 
+  void _onCatalog() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _catalog.removeListener(_onCatalog);
     _searchCtrl.dispose();
     _enter.dispose();
     super.dispose();
   }
 
+  List<DigitalProduct> get _all => _catalog.allProducts;
+
   List<DigitalProduct> get _filtered {
-    return kAllDigitalProducts.where((p) {
+    return _all.where((p) {
+      // Plans are chosen via the Netflix hub picker, not as separate tiles.
+      if (p.isNetflixPlan) return false;
       final catOk = _category == 'all' || p.category == _category;
       if (!catOk) return false;
       if (_query.isEmpty) return true;
@@ -59,6 +76,24 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
   }
 
   void _openProduct(DigitalProduct p) {
+    if (p.isNetflixHub || isNetflixHubKey(p.key)) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => NetflixPlanPickerPage(
+            onSelectPlan: (plan) {
+              // Keep plan picker under checkout so Back returns here.
+              widget.onContinueCheckout(
+                product: plan,
+                selectedUsd: 0,
+                payMethod: DigitalPayMethod.paychangu,
+              );
+            },
+          ),
+        ),
+      );
+      return;
+    }
+
     // Fixed-price streaming codes skip the USD amount picker.
     if (!p.usesAmountPicker) {
       widget.onContinueCheckout(
@@ -90,8 +125,11 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
     );
   }
 
-  List<DigitalProduct> get _featured => kAllDigitalProducts
-      .where((p) => p.category == 'gift_cards' || p.category == 'gaming')
+  List<DigitalProduct> get _featured => _all
+      .where((p) =>
+          p.category == 'gift_cards' ||
+          p.category == 'gaming' ||
+          p.category == 'crypto')
       .take(6)
       .toList();
 
@@ -268,7 +306,7 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
                     children: [
                       _HeaderStat(
                         icon: Icons.bolt_rounded,
-                        label: '${kAllDigitalProducts.length}+ codes',
+                        label: '${_all.length}+ codes',
                       ),
                       const _HeaderStat(
                         icon: Icons.lock_rounded,
@@ -613,11 +651,12 @@ class _GiftCardTileState extends State<_GiftCardTile> {
                         ),
                       ),
                       Center(
-                        child: p.logoAsset != null
+                        child: p.imageUrl != null &&
+                                p.imageUrl!.trim().isNotEmpty
                             ? ClipRRect(
                                 borderRadius: BorderRadius.circular(10),
-                                child: Image.asset(
-                                  p.logoAsset!,
+                                child: Image.network(
+                                  p.imageUrl!,
                                   width: compact ? 36 : 42,
                                   height: compact ? 36 : 42,
                                   fit: BoxFit.cover,
@@ -628,11 +667,26 @@ class _GiftCardTileState extends State<_GiftCardTile> {
                                   ),
                                 ),
                               )
-                            : Icon(
-                                p.icon ?? Icons.card_giftcard_rounded,
-                                color: Colors.white,
-                                size: compact ? 28 : 32,
-                              ),
+                            : p.logoAsset != null
+                                ? ClipRRect(
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: Image.asset(
+                                      p.logoAsset!,
+                                      width: compact ? 36 : 42,
+                                      height: compact ? 36 : 42,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => Icon(
+                                        p.icon ?? Icons.card_giftcard_rounded,
+                                        color: Colors.white,
+                                        size: compact ? 28 : 32,
+                                      ),
+                                    ),
+                                  )
+                                : Icon(
+                                    p.icon ?? Icons.card_giftcard_rounded,
+                                    color: Colors.white,
+                                    size: compact ? 28 : 32,
+                                  ),
                       ),
                     ],
                   ),
@@ -674,6 +728,27 @@ class _GiftCardTileState extends State<_GiftCardTile> {
                                   p.priceLabel,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: compact ? 11 : 12,
+                                    fontWeight: FontWeight.w800,
+                                    color: const Color(0xFFFF6B00),
+                                  ),
+                                ),
+                              ] else if (p.isNetflixHub) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Choose a plan',
+                                  maxLines: 1,
+                                  style: TextStyle(
+                                    fontSize: compact ? 11 : 12,
+                                    fontWeight: FontWeight.w800,
+                                    color: const Color(0xFFFF6B00),
+                                  ),
+                                ),
+                              ] else if (p.category == 'streaming') ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  '…',
                                   style: TextStyle(
                                     fontSize: compact ? 11 : 12,
                                     fontWeight: FontWeight.w800,

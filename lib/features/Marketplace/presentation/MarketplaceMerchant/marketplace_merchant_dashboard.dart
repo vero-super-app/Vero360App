@@ -5,7 +5,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
+import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode, compute;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -18,6 +18,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:crypto/crypto.dart' show sha256;
 
 import 'package:image_picker/image_picker.dart';
+import 'package:image/image.dart' as img;
 import 'package:mime/mime.dart';
 
 import 'package:geolocator/geolocator.dart';
@@ -28,13 +29,17 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' show MediaType;
 import 'package:vero360_app/features/Marketplace/presentation/widgets/PostlatestArrival.dart';
+import 'package:vero360_app/widgets/vero_coin_icon_button.dart';
 import 'package:vero360_app/features/Promotions/presentation/Postpromotion.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_moderation.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_promote_service.dart';
 
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
+import 'package:vero360_app/GernalServices/marketplace_stock_reminder_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_seller_loader.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_id_resolver.dart';
 import 'package:vero360_app/GernalServices/profile_photo_cache.dart';
@@ -98,27 +103,27 @@ SliverGridDelegate _merchantItemsGridDelegate(BuildContext context) {
       MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.8).scale(14) /
           14.0;
 
-  // Lower ratio = taller cells (more room for status / reject reason).
-  var ratio = 0.72;
+  // Lower ratio = taller cells (room for status, promote, actions, reject reason).
+  var ratio = 0.62;
   var spacing = 12.0;
   if (w < 330) {
-    ratio = 0.48;
+    ratio = 0.40;
     spacing = 8;
   } else if (w < 360) {
-    ratio = 0.52;
+    ratio = 0.44;
     spacing = 8;
   } else if (w < 400) {
-    ratio = 0.58;
+    ratio = 0.50;
     spacing = 10;
   } else if (w < 430) {
-    ratio = 0.64;
+    ratio = 0.56;
     spacing = 10;
   }
 
   if (textScale > 1.08) {
     ratio -= 0.06 * ((textScale - 1.0) * 2).clamp(0.0, 1.0);
   }
-  ratio = ratio.clamp(0.42, 0.78);
+  ratio = ratio.clamp(0.40, 0.72);
 
   return SliverGridDelegateWithFixedCrossAxisCount(
     crossAxisCount: 2,
@@ -203,6 +208,8 @@ class _MarketplaceMerchantDashboardState
   // Create form state
   bool _isActive = true;
   bool _submitting = false;
+  /// Share to Vero360 Facebook Page when listing goes live (default on).
+  bool _postToFacebook = true;
 
   LocalMedia? _cover;
 
@@ -867,6 +874,15 @@ class _MarketplaceMerchantDashboardState
       _initialLoadComplete = true;
       if (_items.isNotEmpty) _loadingItems = false;
     });
+
+    final mid = (_auth.currentUser?.uid ?? _uid).trim();
+    if (mid.isNotEmpty) {
+      unawaited(
+        MarketplaceStockReminderService.nudgeActiveOutOfStockListings(
+          merchantUid: mid,
+        ),
+      );
+    }
   }
 
   void _hydrateItemsFromLocalCache() {
@@ -1499,7 +1515,7 @@ class _MarketplaceMerchantDashboardState
   }
 
   Future<void> _saveBusinessDescription(String raw) async {
-    final desc = raw.trim();
+    final desc = DescriptionContactMask.mask(raw.trim());
     if (desc.length > _kBusinessDescMaxLen) {
       _toastErr('Keep it under $_kBusinessDescMaxLen characters.');
       return;
@@ -2897,8 +2913,8 @@ class _MarketplaceMerchantDashboardState
   Future<void> _pickMorePhotos() async {
     try {
       final files = await _picker.pickMultiImage(
-        imageQuality: 88,
-        maxWidth: 2048,
+        imageQuality: 80,
+        maxWidth: 1600,
       );
 
       if (files.isEmpty) return;
@@ -2962,7 +2978,17 @@ class _MarketplaceMerchantDashboardState
     return 'CouldnG??t post your listing. Please try again.';
   }
 
-  // ----------------- CREATE item -----------------
+  // ----------------- CREATE item (fast path) -----------------
+  Future<Uint8List> _compressForMarketplaceUpload(Uint8List raw) async {
+    // Skip CPU work when already small enough for a quick upload.
+    if (raw.lengthInBytes <= 220000) return raw;
+    try {
+      return await compute(_compressMarketplaceBytesIsolate, raw);
+    } catch (_) {
+      return raw;
+    }
+  }
+
   Future<void> _create() async {
     // Sync lock BEFORE any await so one tap cannot post twice on slow networks.
     if (_submitting) return;
@@ -3004,7 +3030,8 @@ class _MarketplaceMerchantDashboardState
         _toastErr('Missing user id G?? sign in and try again.');
         return;
       }
-      final sellerId = await _getNestUserId();
+      // Never block posting on /users/me — use cache/JWT only.
+      final sellerId = await _getNestUserId(allowNetwork: false);
       final merchantDisplay = _displayBusinessName();
       final effectiveSellerId =
           (sellerId != null && sellerId.trim().isNotEmpty)
@@ -3012,53 +3039,65 @@ class _MarketplaceMerchantDashboardState
               : firebaseUid;
 
       final svc = MarketplaceService();
+      final uploadToken = await AuthHandler.getTokenForApi();
+
+      // Shrink photos off the UI isolate, then upload them in parallel.
+      final coverRaw = _cover!.bytes;
+      final galleryRaw = List<LocalMedia>.from(_gallery);
+      final compressedList = await Future.wait<Uint8List>([
+        _compressForMarketplaceUpload(coverRaw),
+        ...galleryRaw.map((m) => _compressForMarketplaceUpload(m.bytes)),
+      ]);
+      final coverBytes = compressedList.first;
+      final galleryBytes = compressedList.length > 1
+          ? compressedList.sublist(1)
+          : <Uint8List>[];
+
       String? coverUrl;
       String? coverBase64;
-      String? coverHash;
       final galleryUrls = <String>[];
       final galleryBase64 = <String>[];
-      final galleryHashes = <String>[];
 
-      // Prefer backend upload URLs; fall back to base64 in Firestore if server is unreachable.
       try {
-        coverUrl = await svc.uploadBytes(
-          _cover!.bytes,
-          filename: _cover!.filename ?? 'cover.jpg',
-          mimeType: _cover!.mime,
-        );
-        coverHash = await svc.computeVisualHash(_cover!.bytes);
-
-        for (final m in _gallery) {
-          final url = await svc.uploadBytes(
-            m.bytes,
-            filename: m.filename.isNotEmpty ? m.filename : 'gallery.jpg',
-            mimeType: m.mime,
-          );
-          galleryUrls.add(url);
-          final gHash = await svc.computeVisualHash(m.bytes);
-          if (gHash != null) galleryHashes.add(gHash);
+        final uploadFutures = <Future<String>>[
+          svc.uploadBytes(
+            coverBytes,
+            filename: _cover!.filename ?? 'cover.jpg',
+            mimeType: 'image/jpeg',
+            token: uploadToken,
+            timeout: const Duration(seconds: 30),
+          ),
+          for (var i = 0; i < galleryRaw.length; i++)
+            svc.uploadBytes(
+              galleryBytes[i],
+              filename: galleryRaw[i].filename.isNotEmpty
+                  ? galleryRaw[i].filename
+                  : 'gallery_$i.jpg',
+              mimeType: 'image/jpeg',
+              token: uploadToken,
+              timeout: const Duration(seconds: 30),
+            ),
+        ];
+        final uploaded = await Future.wait(uploadFutures);
+        coverUrl = uploaded.first;
+        if (galleryRaw.isNotEmpty) {
+          galleryUrls.addAll(uploaded.sublist(1));
         }
       } catch (uploadErr) {
-        debugPrint('Backend upload failed, saving to Firestore as base64: $uploadErr');
-        if (_cover!.bytes.length > 450000) {
+        debugPrint(
+            'Backend upload failed, saving to Firestore as base64: $uploadErr');
+        if (coverBytes.length > 450000) {
           throw StateError(
             'Image upload failed and the photo is too large to save offline. '
             'Check internet and that your backend server is running.',
           );
         }
-        coverBase64 = base64Encode(_cover!.bytes);
-        coverHash = await svc.computeVisualHash(_cover!.bytes);
-        for (final m in _gallery) {
-          galleryBase64.add(base64Encode(m.bytes));
-          final gHash = await svc.computeVisualHash(m.bytes);
-          if (gHash != null) galleryHashes.add(gHash);
+        coverBase64 = base64Encode(coverBytes);
+        for (final bytes in galleryBytes) {
+          if (bytes.length > 200000) continue;
+          galleryBase64.add(base64Encode(bytes));
         }
       }
-
-      final imageHashes = <String>{
-        if (coverHash != null) coverHash,
-        ...galleryHashes,
-      }.toList();
 
       final data = <String, dynamic>{
         'name': _name.text.trim(),
@@ -3067,12 +3106,10 @@ class _MarketplaceMerchantDashboardState
         if (coverBase64 != null) 'image': coverBase64,
         if (galleryUrls.isNotEmpty) 'galleryUrls': galleryUrls,
         if (galleryBase64.isNotEmpty) 'gallery': galleryBase64,
-        if (coverHash != null) 'imageHash': coverHash,
-        if (galleryHashes.isNotEmpty) 'galleryHashes': galleryHashes,
-        if (imageHashes.isNotEmpty) 'imageHashes': imageHashes,
-        'description': _desc.text.trim().isEmpty ? null : _desc.text.trim(),
+        'description': _desc.text.trim().isEmpty
+            ? null
+            : DescriptionContactMask.mask(_desc.text.trim()),
         'location': _location.text.trim(),
-        // Always pending until Cloud Function auto-moderation approves.
         'isActive': false,
         'reviewStatus': 'pending',
         'category': _category ?? 'other',
@@ -3086,13 +3123,48 @@ class _MarketplaceMerchantDashboardState
         'serviceType': 'marketplace',
         'stockQuantity': _stockQty,
         'quantity': _stockQty,
+        'postToFacebook': _postToFacebook,
       };
 
-      await _firestore.collection('marketplace_items').add(data);
+      final docRef =
+          await _firestore.collection('marketplace_items').add(data);
       debugPrint('Firestore write OK G?? marketplace_items (pending review)');
 
+      // Visual hashes for duplicate detection — never block the submit UX.
+      final hashCover = coverBytes;
+      final hashGallery = List<Uint8List>.from(galleryBytes);
+      unawaited(() async {
+        try {
+          final coverHash = await svc.computeVisualHash(hashCover);
+          final gHashes = <String>[];
+          for (final b in hashGallery) {
+            final h = await svc.computeVisualHash(b);
+            if (h != null) gHashes.add(h);
+          }
+          final imageHashes = <String>{
+            if (coverHash != null) coverHash,
+            ...gHashes,
+          }.toList();
+          if (imageHashes.isEmpty) return;
+          await docRef.set({
+            if (coverHash != null) 'imageHash': coverHash,
+            if (gHashes.isNotEmpty) 'galleryHashes': gHashes,
+            'imageHashes': imageHashes,
+          }, SetOptions(merge: true));
+        } catch (_) {}
+      }());
+
       if (!mounted) return;
-      _toastOk('Submitted for review. WeG??ll notify you when itG??s live.');
+      ToastHelper.showCustomToast(
+        context,
+        'Submitted for review. We’ll notify you when it’s live.',
+        isSuccess: true,
+        errorMessage: 'Submitted',
+        showFacebook: _postToFacebook,
+        facebookMessage: _postToFacebook
+            ? 'Once approved, we’ll also share this on the Vero360 Facebook Page.'
+            : null,
+      );
 
       _name.clear();
       _price.clear();
@@ -3103,6 +3175,7 @@ class _MarketplaceMerchantDashboardState
       _cover = null;
       _gallery.clear();
       _isActive = true;
+      _postToFacebook = true;
       _category = 'other';
 
       setState(() {});
@@ -3219,8 +3292,8 @@ class _MarketplaceMerchantDashboardState
             Future<void> pickNewCoverFrom(ImageSource src) async {
               final x = await _picker.pickImage(
                 source: src,
-                maxWidth: 1800,
-                imageQuality: 90,
+                maxWidth: 1600,
+                imageQuality: 80,
               );
               if (x == null) return;
 
@@ -3400,7 +3473,7 @@ class _MarketplaceMerchantDashboardState
                   'quantity': stockQty,
                   'updatedAt': FieldValue.serverTimestamp(),
                 };
-                final desc = descCtrl.text.trim();
+                final desc = DescriptionContactMask.mask(descCtrl.text.trim());
                 if (desc.isEmpty) {
                   patch['description'] = FieldValue.delete();
                 } else {
@@ -3936,6 +4009,12 @@ class _MarketplaceMerchantDashboardState
       ),
       backgroundColor: _brandOrange,
       actions: [
+        const VeroCoinIconButton(
+          size: 36,
+          iconSize: 18,
+          badgeBackground: Colors.white,
+          badgeTextColor: Color(0xFFD94F00),
+        ),
         Padding(
           padding: const EdgeInsets.only(right: 8),
           child: Stack(
@@ -4657,33 +4736,34 @@ class _MarketplaceMerchantDashboardState
                           ),
                           Container(
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 5,
+                              horizontal: 7,
+                              vertical: 2,
                             ),
                             decoration: BoxDecoration(
                               color: badgeBg,
                               borderRadius: BorderRadius.circular(999),
-                              border: Border.all(color: badgeBorder),
+                              border: Border.all(color: badgeBorder, width: 0.8),
                             ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Container(
-                                  width: 6,
-                                  height: 6,
+                                  width: 5,
+                                  height: 5,
                                   decoration: BoxDecoration(
                                     color: badgeFg,
                                     shape: BoxShape.circle,
                                   ),
                                 ),
-                                const SizedBox(width: 6),
+                                const SizedBox(width: 4),
                                 Text(
                                   badgeLabel,
                                   style: TextStyle(
                                     color: badgeFg,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 11,
-                                    letterSpacing: 0.1,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 10,
+                                    height: 1.1,
+                                    letterSpacing: 0.05,
                                   ),
                                 ),
                               ],
@@ -4942,7 +5022,7 @@ class _MarketplaceMerchantDashboardState
                           borderRadius: BorderRadius.circular(999),
                         ),
                         child: Text(
-                          _isShopOpenNow ? 'OPEN' : 'CLOSED',
+                          _isShopOpenNow ? 'We are open' : 'We are closed',
                           style: TextStyle(
                             fontWeight: FontWeight.w900,
                             fontSize: 12,
@@ -5376,13 +5456,42 @@ class _MarketplaceMerchantDashboardState
   }
 
 
-  // ----------------- G?Top itemsG? replaced: list ALL merchant items -----------------
+  // ----------------- "My Items" on Dashboard — with promote -----------------
   Widget _buildAllClientItemsSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('My Items',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'My Items',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+              ),
+            ),
+            TextButton.icon(
+              onPressed: () => _marketplaceTabs.animateTo(2),
+              icon: const Icon(Icons.campaign_rounded, size: 18),
+              label: const Text(
+                'Promote',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              style: TextButton.styleFrom(
+                foregroundColor: _brandOrange,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Tap the megaphone on a live item to boost it.',
+          style: TextStyle(
+            color: Colors.grey.shade700,
+            fontWeight: FontWeight.w600,
+            fontSize: 12.5,
+          ),
+        ),
         const SizedBox(height: 10),
         if (_loadingItems)
           const _ItemsGridSkeleton(count: 6)
@@ -5403,10 +5512,39 @@ class _MarketplaceMerchantDashboardState
             physics: const NeverScrollableScrollPhysics(),
             itemCount: _items.length,
             gridDelegate: _merchantItemsGridDelegate(context),
-            itemBuilder: (_, i) => _ModernItemMiniCard(item: _items[i]),
+            itemBuilder: (_, i) {
+              final it = _items[i];
+              return _ModernItemMiniCard(
+                item: it,
+                busy: _busyRow,
+                onPromote: () => _promoteItem(it),
+              );
+            },
           ),
       ],
     );
+  }
+
+  Future<void> _promoteItem(Map<String, dynamic> it) async {
+    final id = (it['id'] ?? '').toString().trim();
+    if (id.isEmpty) return;
+    final canPromote =
+        _itemReviewStatus(it) == 'approved' && it['isActive'] == true;
+    if (!canPromote) {
+      ToastHelper.showCustomToast(
+        context,
+        'Only live (approved) items can be promoted.',
+        isSuccess: false,
+        errorMessage: 'Cannot promote',
+      );
+      return;
+    }
+    await MarketplacePromoteService.presentPromoteSheet(
+      context: context,
+      itemId: id,
+      item: it,
+    );
+    await _loadItems(showLoading: false);
   }
 
   // ----------------- G?? Add Item Tab (with multi-photos) -----------------
@@ -5529,44 +5667,46 @@ class _MarketplaceMerchantDashboardState
               ),
               const SizedBox(height: 10),
               if (_gallery.isNotEmpty)
-                GridView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: _gallery.length,
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 4,
-                    crossAxisSpacing: 10,
-                    mainAxisSpacing: 10,
-                  ),
-                  itemBuilder: (_, i) {
-                    final m = _gallery[i];
-                    return Stack(
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: Image.memory(
-                            m.bytes,
-                            width: double.infinity,
-                            height: double.infinity,
-                            fit: BoxFit.cover,
-                          ),
-                        ),
-                        Positioned(
-                          top: 6,
-                          right: 6,
-                          child: InkWell(
-                            onTap: () => _removeGalleryAt(i),
-                            child: const CircleAvatar(
-                              radius: 12,
-                              backgroundColor: Colors.black54,
-                              child: Icon(Icons.close,
-                                  size: 14, color: Colors.white),
+                SizedBox(
+                  height: 96,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _gallery.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 10),
+                    itemBuilder: (_, i) {
+                      final m = _gallery[i];
+                      return SizedBox(
+                        width: 96,
+                        height: 96,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Image.memory(
+                                m.bytes,
+                                fit: BoxFit.cover,
+                                gaplessPlayback: true,
+                              ),
                             ),
-                          ),
+                            Positioned(
+                              top: 4,
+                              right: 4,
+                              child: InkWell(
+                                onTap: () => _removeGalleryAt(i),
+                                child: const CircleAvatar(
+                                  radius: 12,
+                                  backgroundColor: Colors.black54,
+                                  child: Icon(Icons.close,
+                                      size: 14, color: Colors.white),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
 
               const SizedBox(height: 14),
@@ -5689,6 +5829,34 @@ class _MarketplaceMerchantDashboardState
                   ),
                 ),
               ),
+              const SizedBox(height: 10),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                value: _postToFacebook,
+                activeThumbColor: _brandOrange,
+                secondary: const FacebookLogoMark(size: 22),
+                title: const Text(
+                  'Also post on Facebook',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                ),
+                subtitle: Text(
+                  'Share on the Vero360 Facebook Page once approved.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+                onChanged: _submitting
+                    ? null
+                    : (v) => setState(() => _postToFacebook = v),
+              ),
+              if (_postToFacebook) ...[
+                const SizedBox(height: 8),
+                const FacebookShareHint(
+                  message:
+                      'Once approved, this listing is also shared on the Vero360 Facebook Page to help more buyers find you.',
+                ),
+              ],
               const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
@@ -5703,7 +5871,11 @@ class _MarketplaceMerchantDashboardState
                               strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.upload_rounded),
                   label: Text(
-                    _submitting ? 'PostingG?' : 'Post on Marketplace',
+                    _submitting
+                        ? 'Posting…'
+                        : (_postToFacebook
+                            ? 'Post on Marketplace + Facebook'
+                            : 'Post on Marketplace'),
                     style: const TextStyle(fontWeight: FontWeight.w900),
                   ),
                 ),
@@ -5812,6 +5984,9 @@ class _MarketplaceMerchantDashboardState
                         busy: _busyRow,
                         onDelete: () => _deleteItem(filtered[i]),
                         onEdit: () => _openEditItemSheet(filtered[i]),
+                        onPromote: () async {
+                          await _promoteItem(filtered[i]);
+                        },
                       ),
                     ),
         ),
@@ -5954,8 +6129,8 @@ class _MarketplaceMerchantDashboardState
   Future<void> _pickCover(ImageSource src) async {
     final x = await _picker.pickImage(
       source: src,
-      imageQuality: 90,
-      maxWidth: 2048,
+      imageQuality: 80,
+      maxWidth: 1600,
     );
     if (x == null) return;
     final bytes = await x.readAsBytes();
@@ -6089,8 +6264,8 @@ class _MarketplaceMerchantDashboardState
       }
       final x = await _picker.pickImage(
         source: ImageSource.camera,
-        imageQuality: 88,
-        maxWidth: 2048,
+        imageQuality: 80,
+        maxWidth: 1600,
       );
       if (x == null) return;
       final bytes = await x.readAsBytes();
@@ -6419,12 +6594,24 @@ String? _coverImageSourceFromItem(Map<String, dynamic> item) {
 
 class _ModernItemMiniCard extends StatelessWidget {
   final Map<String, dynamic> item;
-  const _ModernItemMiniCard({required this.item});
+  final bool busy;
+  final VoidCallback? onPromote;
+
+  const _ModernItemMiniCard({
+    required this.item,
+    this.busy = false,
+    this.onPromote,
+  });
 
   @override
   Widget build(BuildContext context) {
     final statusLabel = _MarketplaceMerchantDashboardState._reviewLabel(item);
     final statusColor = _MarketplaceMerchantDashboardState._reviewColor(item);
+    final canPromote =
+        _MarketplaceMerchantDashboardState._itemReviewStatus(item) ==
+                'approved' &&
+            item['isActive'] == true;
+    final isBoosted = MarketplacePromoteService.isPromotedNow(item);
 
     return Container(
       decoration: BoxDecoration(
@@ -6439,69 +6626,139 @@ class _ModernItemMiniCard extends StatelessWidget {
           final padH = narrow ? 8.0 : 10.0;
           final padV = narrow ? 5.0 : 7.0;
 
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+          return Stack(
             children: [
-              Expanded(
-                flex: 6,
-                child: _ImageAny(_coverImageSourceFromItem(item)),
-              ),
-              Expanded(
-                flex: 4,
-                child: Padding(
-                  padding: EdgeInsets.fromLTRB(padH, padV, padH, padV),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        (item['name'] ?? 'Unknown').toString(),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: narrow ? 12.0 : 13.5,
-                          height: 1.15,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        mwk0(item['price']),
-                        style: TextStyle(
-                          fontWeight: FontWeight.w900,
-                          color: Colors.green,
-                          fontSize: narrow ? 11.5 : 13.0,
-                          height: 1.15,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 2),
-                      Expanded(
-                        child: Row(
-                          children: [
-                            Icon(Icons.circle,
-                                size: narrow ? 8 : 10, color: statusColor),
-                            SizedBox(width: narrow ? 4 : 6),
-                            Flexible(
-                              child: Text(
-                                statusLabel,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  color: Colors.black54,
-                                  fontSize: narrow ? 10.5 : 12,
-                                  height: 1.15,
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    flex: 5,
+                    child: _ImageAny(_coverImageSourceFromItem(item)),
+                  ),
+                  Expanded(
+                    flex: 5,
+                    child: Padding(
+                      padding: EdgeInsets.fromLTRB(padH, padV, padH, padV),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            (item['name'] ?? 'Unknown').toString(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: narrow ? 12.0 : 13.5,
+                              height: 1.15,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            mwk0(item['price']),
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              color: Colors.green,
+                              fontSize: narrow ? 11.5 : 13.0,
+                              height: 1.15,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 2),
+                          Row(
+                            children: [
+                              Icon(Icons.circle,
+                                  size: narrow ? 8 : 10, color: statusColor),
+                              SizedBox(width: narrow ? 4 : 6),
+                              Flexible(
+                                child: Text(
+                                  statusLabel,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.black54,
+                                    fontSize: narrow ? 10.5 : 12,
+                                    height: 1.15,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const Spacer(),
+                          // Promote action below item details
+                          SizedBox(
+                            width: double.infinity,
+                            height: narrow ? 28 : 30,
+                            child: Material(
+                              color: canPromote
+                                  ? const Color(0xFFFF8A00)
+                                  : const Color(0xFFE5E7EB),
+                              borderRadius: BorderRadius.circular(10),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(10),
+                                onTap: (!busy &&
+                                        canPromote &&
+                                        onPromote != null)
+                                    ? onPromote
+                                    : () {
+                                        if (onPromote != null) onPromote!();
+                                      },
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.campaign_rounded,
+                                      size: narrow ? 14 : 16,
+                                      color: canPromote
+                                          ? Colors.white
+                                          : Colors.black45,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      isBoosted ? 'Boosted' : 'Promote',
+                                      style: TextStyle(
+                                        color: canPromote
+                                            ? Colors.white
+                                            : Colors.black45,
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: narrow ? 11 : 12,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
+                  ),
+                ],
+              ),
+              if (isBoosted)
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: narrow ? 8 : 10,
+                      vertical: narrow ? 3 : 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF8A00),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      'Promoted',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: narrow ? 10 : 11,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
                   ),
                 ),
-              ),
             ],
           );
         },
@@ -6515,12 +6772,14 @@ class _ItemCard extends StatelessWidget {
   final bool busy;
   final VoidCallback onDelete;
   final VoidCallback onEdit;
+  final VoidCallback? onPromote;
 
   const _ItemCard({
     required this.item,
     required this.busy,
     required this.onDelete,
     required this.onEdit,
+    this.onPromote,
   });
 
   @override
@@ -6532,6 +6791,11 @@ class _ItemCard extends StatelessWidget {
             'rejected';
     final rejectReason = (item['rejectedReason'] ?? '').toString().trim();
     final showRejectReason = isRejected && rejectReason.isNotEmpty;
+    final canPromote =
+        _MarketplaceMerchantDashboardState._itemReviewStatus(item) ==
+                'approved' &&
+            item['isActive'] == true;
+    final isBoosted = MarketplacePromoteService.isPromotedNow(item);
 
     // Flex layout: image shrinks; text never overflows the grid cell.
     return Material(
@@ -6544,12 +6808,12 @@ class _ItemCard extends StatelessWidget {
         child: LayoutBuilder(
           builder: (context, c) {
             final narrow = c.maxWidth < 168;
-            final padH = narrow ? 8.0 : 10.0;
-            final padV = narrow ? 5.0 : 7.0;
-            final nameSize = narrow ? 12.0 : 13.5;
-            final priceSize = narrow ? 11.5 : 13.0;
-            final metaSize = narrow ? 10.5 : 12.0;
-            final reasonSize = narrow ? 9.5 : 10.5;
+            final padH = narrow ? 6.0 : 8.0;
+            final padV = narrow ? 4.0 : 5.0;
+            final nameSize = narrow ? 11.5 : 13.0;
+            final priceSize = narrow ? 11.0 : 12.5;
+            final metaSize = narrow ? 10.0 : 11.5;
+            final reasonSize = narrow ? 9.0 : 10.0;
 
             return Stack(
               children: [
@@ -6565,61 +6829,111 @@ class _ItemCard extends StatelessWidget {
                       child: Padding(
                         padding: EdgeInsets.fromLTRB(padH, padV, padH, padV),
                         child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Text(
-                              (item['name'] ?? 'Unknown').toString(),
-                              style: TextStyle(
-                                fontWeight: FontWeight.w900,
-                                fontSize: nameSize,
-                                height: 1.15,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              mwk0(item['price']),
-                              style: TextStyle(
-                                fontWeight: FontWeight.w900,
-                                color: Colors.green,
-                                fontSize: priceSize,
-                                height: 1.15,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              (item['category'] ?? 'other').toString(),
-                              style: TextStyle(
-                                color: Colors.black54,
-                                fontWeight: FontWeight.w800,
-                                fontSize: metaSize,
-                                height: 1.15,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            if (showRejectReason) ...[
-                              const SizedBox(height: 2),
-                              Expanded(
-                                child: Align(
-                                  alignment: Alignment.topLeft,
-                                  child: Text(
-                                    rejectReason,
-                                    style: TextStyle(
-                                      color: Colors.red.shade700,
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: reasonSize,
-                                      height: 1.2,
+                            Expanded(
+                              child: LayoutBuilder(
+                                builder: (context, textConstraints) {
+                                  return FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    alignment: Alignment.topLeft,
+                                    child: ConstrainedBox(
+                                      constraints: BoxConstraints(
+                                        maxWidth: textConstraints.maxWidth,
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            (item['name'] ?? 'Unknown')
+                                                .toString(),
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w900,
+                                              fontSize: nameSize,
+                                              height: 1.1,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          const SizedBox(height: 1),
+                                          Text(
+                                            mwk0(item['price']),
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w900,
+                                              color: Colors.green,
+                                              fontSize: priceSize,
+                                              height: 1.1,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          const SizedBox(height: 1),
+                                          Text(
+                                            (item['category'] ?? 'other')
+                                                .toString(),
+                                            style: TextStyle(
+                                              color: Colors.black54,
+                                              fontWeight: FontWeight.w800,
+                                              fontSize: metaSize,
+                                              height: 1.1,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          if (showRejectReason) ...[
+                                            const SizedBox(height: 1),
+                                            Text(
+                                              rejectReason,
+                                              style: TextStyle(
+                                                color: Colors.red.shade700,
+                                                fontWeight: FontWeight.w700,
+                                                fontSize: reasonSize,
+                                                height: 1.1,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ],
+                                        ],
+                                      ),
                                     ),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
+                                  );
+                                },
                               ),
-                            ],
+                            ),
+                            const SizedBox(height: 2),
+                            SizedBox(
+                              height: 28,
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  if (canPromote && onPromote != null) ...[
+                                    _iconBtn(
+                                      icon: Icons.campaign_rounded,
+                                      color: const Color(0xFFFF8A00),
+                                      onTap: busy ? null : onPromote,
+                                      compact: true,
+                                    ),
+                                    const SizedBox(width: 10),
+                                  ],
+                                  _iconBtn(
+                                    icon: Icons.edit,
+                                    color: const Color(0xFF16284C),
+                                    onTap: onEdit,
+                                    compact: true,
+                                  ),
+                                  const SizedBox(width: 10),
+                                _iconBtn(
+                                    icon: Icons.delete,
+                                    color: Colors.red,
+                                    onTap: busy ? null : onDelete,
+                                    compact: true,
+                                  ),
+                                ],
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -6629,44 +6943,48 @@ class _ItemCard extends StatelessWidget {
                 Positioned(
                   top: 8,
                   left: 8,
-                  child: Container(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: narrow ? 8 : 10,
-                      vertical: narrow ? 4 : 5,
-                    ),
-                    decoration: BoxDecoration(
-                      color: statusColor,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      statusLabel,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: narrow ? 10.5 : 12,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _iconBtn(
-                        icon: Icons.edit,
-                        color: const Color(0xFF16284C),
-                        onTap: onEdit,
-                        compact: narrow,
+                      Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: narrow ? 8 : 10,
+                          vertical: narrow ? 4 : 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: statusColor,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          statusLabel,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: narrow ? 10.5 : 12,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
                       ),
-                      SizedBox(width: narrow ? 4 : 6),
-                      _iconBtn(
-                        icon: Icons.delete,
-                        color: Colors.red,
-                        onTap: busy ? null : onDelete,
-                        compact: narrow,
-                      ),
+                      if (isBoosted) ...[
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: narrow ? 8 : 10,
+                            vertical: narrow ? 3 : 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFF8A00),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            'Promoted',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: narrow ? 10 : 11,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -6684,20 +7002,21 @@ class _ItemCard extends StatelessWidget {
     required VoidCallback? onTap,
     bool compact = false,
   }) {
-    final size = compact ? 28.0 : 32.0;
-    return Container(
-      decoration: BoxDecoration(
+    final size = compact ? 26.0 : 30.0;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Material(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.black12),
-      ),
-      child: IconButton(
-        icon: Icon(icon),
-        iconSize: compact ? 15 : 17,
-        padding: EdgeInsets.zero,
-        constraints: BoxConstraints.tightFor(width: size, height: size),
-        color: color,
-        onPressed: onTap,
+        shape: const CircleBorder(
+          side: BorderSide(color: Colors.black12),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          customBorder: const CircleBorder(),
+          child: Icon(icon, size: compact ? 14 : 16, color: color),
+        ),
       ),
     );
   }
@@ -7267,5 +7586,36 @@ class _MarketplacePhoneSheetState extends State<_MarketplacePhoneSheet> {
         ),
       ),
     );
+  }
+}
+
+/// Isolate entry for marketplace upload compression (must be top-level).
+Uint8List _compressMarketplaceBytesIsolate(Uint8List raw) {
+  try {
+    final decoded = img.decodeImage(raw);
+    if (decoded == null) return raw;
+    const maxSide = 1280;
+    var im = decoded;
+    if (im.width > maxSide || im.height > maxSide) {
+      if (im.width >= im.height) {
+        im = img.copyResize(
+          im,
+          width: maxSide,
+          interpolation: img.Interpolation.linear,
+        );
+      } else {
+        im = img.copyResize(
+          im,
+          height: maxSide,
+          interpolation: img.Interpolation.linear,
+        );
+      }
+    }
+    final out = Uint8List.fromList(img.encodeJpg(im, quality: 72));
+    return out.lengthInBytes > 0 && out.lengthInBytes < raw.lengthInBytes
+        ? out
+        : raw;
+  } catch (_) {
+    return raw;
   }
 }

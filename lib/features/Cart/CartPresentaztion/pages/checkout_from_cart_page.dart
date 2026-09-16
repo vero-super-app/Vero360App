@@ -20,12 +20,16 @@ import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_order_model.dart';
+import 'package:vero360_app/features/Restraurants/Models/food_order_number.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_courier_dispatch.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_my_orders_page.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/restaurant_service.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
+import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/GernalServices/order_service.dart' as order_svc;
+import 'package:vero360_app/GernalServices/vero_rewards_service.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierService/courier_city.dart';
@@ -33,6 +37,7 @@ import 'package:vero360_app/utils/merchant_contact_display.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/modern_confirm_dialog.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
+import 'package:vero360_app/widgets/vero_spin_reward_prompt.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 class CheckoutFromCartPage extends StatefulWidget {
@@ -81,6 +86,24 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       _items.fold(0.0, (sum, item) => sum + (item.price * item.quantity));
 
   double get _total => max(0.0, _subtotal);
+
+  int? get _maxFoodPrepMinutes {
+    if (!_isFoodCheckout) return null;
+    var max = 0;
+    for (final it in _items) {
+      final m = it.prepTimeMinutes;
+      if (m != null && m > max) max = m;
+    }
+    return max > 0 ? max : null;
+  }
+
+  String get _itemsSectionSubtitle {
+    final count =
+        '${_items.length} item${_items.length == 1 ? '' : 's'} in this order';
+    final prep = _maxFoodPrepMinutes;
+    if (prep != null) return '$count · up to $prep min prep';
+    return count;
+  }
 
   bool get _isFoodCheckout =>
       widget.foodCheckoutMode ||
@@ -381,6 +404,12 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     if (_isFoodCheckout) {
       _deliveryType = DeliveryType.veroCourier;
     }
+    for (var i = 0; i < _items.length; i++) {
+      final it = _items[i];
+      if (it.isFood && it.maxOrderQty > 0 && it.quantity > it.maxOrderQty) {
+        _items[i] = it.copyWith(quantity: it.maxOrderQty);
+      }
+    }
     for (final it in _items) {
       _qtyCtrls[_qtyKey(it)] =
           TextEditingController(text: '${it.quantity}');
@@ -429,7 +458,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       if (showStockToast) {
         ToastHelper.showCustomToast(
           context,
-          'Only $maxQ available',
+          it.isFood ? 'Only $maxQ available for this dish.' : 'Only $maxQ available',
           isSuccess: false,
           errorMessage: '',
         );
@@ -847,6 +876,13 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     setState(() => _paying = true);
 
     try {
+      await PayChanguConfig.initialize();
+      if (!PayChanguConfig.isConfigured) {
+        throw Exception(
+          'Payment is not configured. Add PAYCHANGU_SECRET_TEST to .env.',
+        );
+      }
+
       final prefs = await SharedPreferences.getInstance();
       final email = prefs.getString('email') ?? 'customer@example.com';
       final name = prefs.getString('name') ?? 'Customer';
@@ -868,12 +904,8 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
 
       final response = await http
           .post(
-            Uri.parse('https://api.paychangu.com/payment'),
-            headers: {
-              'Accept': 'application/json',
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u',
-            },
+            PayChanguConfig.paymentUri,
+            headers: PayChanguConfig.authHeaders,
             body: json.encode({
               'tx_ref': txRef,
               'first_name': firstName,
@@ -912,6 +944,16 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
               cartItemsForMerchantCredit: _items,
               shippingAddress: _deliveryType == DeliveryType.pickup ? null : _defaultAddr,
               deliveryType: _deliveryType,
+              onSuccessNavigate: _isFoodCheckout
+                  ? (root) {
+                      Navigator.of(root).pushAndRemoveUntil(
+                        MaterialPageRoute(
+                          builder: (_) => const FoodMyOrdersPage(),
+                        ),
+                        (route) => route.isFirst,
+                      );
+                    }
+                  : null,
             ),
           ));
         } else {
@@ -968,10 +1010,14 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   @override
   Widget build(BuildContext context) {
     final foodCityOk = !_isFoodCheckout || _foodCourierCity != null;
+    final stockOk = !_items.any(
+      (it) => it.maxOrderQty < 1 || it.quantity > it.maxOrderQty,
+    );
     final canPay = !_paying &&
         _items.isNotEmpty &&
         !_hasMixedCart &&
         foodCityOk &&
+        stockOk &&
         (_deliveryType == DeliveryType.pickup || _defaultAddr != null);
 
     return Scaffold(
@@ -1082,8 +1128,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                 ],
                 _section(
                   title: 'Your items',
-                  subtitle:
-                      '${_items.length} item${_items.length == 1 ? '' : 's'} in this order',
+                  subtitle: _itemsSectionSubtitle,
                   child: ListView.separated(
                     itemCount: _items.length,
                     shrinkWrap: true,
@@ -1134,6 +1179,42 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                                     fontSize: 12.5,
                                   ),
                                 ),
+                                if (it.isFood && it.maxOrderQty < 99999) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    it.maxOrderQty < 1
+                                        ? 'Out of stock'
+                                        : 'Only ${it.maxOrderQty} available',
+                                    style: TextStyle(
+                                      color: it.maxOrderQty < 1
+                                          ? Colors.red.shade700
+                                          : Colors.grey.shade600,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 11.5,
+                                    ),
+                                  ),
+                                ],
+                                if (it.isFood && it.prepTimeLabel != null) ...[
+                                  const SizedBox(height: 4),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.schedule_rounded,
+                                        size: 12,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        it.prepTimeLabel!,
+                                        style: TextStyle(
+                                          color: Colors.grey.shade600,
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 11.5,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
                                 const SizedBox(height: 8),
                                 Row(
                                   children: [
@@ -1854,11 +1935,12 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
 
   Future<void> _checkPaymentStatus() async {
     try {
+      await PayChanguConfig.initialize();
       final response = await http.get(
-        Uri.parse('https://api.paychangu.com/transaction/verify/${widget.txRef}'),
+        PayChanguConfig.verifyUri(widget.txRef),
         headers: {
           'Accept': 'application/json',
-          'Authorization': 'Bearer SEC-TEST-MwiucQ5HO8rCVIWzykcMK13UkXTdsO7u',
+          'Authorization': PayChanguConfig.authorizationToken,
         },
       );
 
@@ -1890,8 +1972,10 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
 
   Future<void> _createBackendOrders(OrderStatus status) async {
     try {
-      final items = widget.cartItemsForMerchantCredit;
-      if (items == null || items.isEmpty) return;
+      final raw = widget.cartItemsForMerchantCredit;
+      if (raw == null || raw.isEmpty) return;
+      final items = raw.where((e) => !e.isFood).toList();
+      if (items.isEmpty) return;
 
       // For pickup we don't send an addressId (backend receives 0).
       final addressForOrder =
@@ -1945,6 +2029,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
 
     try {
       final ref = FirebaseFirestore.instance.collection('food_orders').doc();
+      final orderNumber = generateFoodOrderNumber();
       final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
       final prefs = await SharedPreferences.getInstance();
       final addr = widget.shippingAddress;
@@ -1976,6 +2061,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
           unitPriceMwk: fc.totalMwk,
           quantity: 1,
           notes: fc.customerNote,
+          imageUrl: fc.foodImageUrl,
         ));
       } else {
         merchantId = foodLines.first.merchantId;
@@ -2006,15 +2092,30 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         deliveryLng = prefs.getDouble('food_dropoff_lng') ?? addr?.lng;
         for (final line in foodLines) {
           lineItems.add(FoodOrderLineItem(
-            menuItemId: '${line.item}',
+            menuItemId: (line.listingDocId?.trim().isNotEmpty == true)
+                ? line.listingDocId!.trim()
+                : '${line.item}',
             name: line.name,
             unitPriceMwk: line.price,
             quantity: line.quantity,
             variant: line.variant,
             notes: line.notes ?? line.comment,
             addOns: line.addOns,
+            imageUrl: line.image.trim().isEmpty ? null : line.image.trim(),
           ));
         }
+      }
+
+      String? coverImageUrl;
+      for (final line in lineItems) {
+        final img = line.imageUrl?.trim() ?? '';
+        if (img.isNotEmpty) {
+          coverImageUrl = img;
+          break;
+        }
+      }
+      if (coverImageUrl == null && fc?.foodImageUrl?.trim().isNotEmpty == true) {
+        coverImageUrl = fc!.foodImageUrl!.trim();
       }
 
       final subtotalMwk =
@@ -2042,6 +2143,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
 
       final order = FoodOrder(
         id: ref.id,
+        orderNumber: orderNumber,
         restaurantId: restaurantId,
         merchantId: merchantId,
         customerUid: uid,
@@ -2063,11 +2165,13 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         deliveryMethod: FoodCourierDispatch.methodLabel,
         courierProvider: FoodCourierDispatch.provider,
         pickupAddress: pickupAddress,
+        coverImageUrl: coverImageUrl,
       );
 
       await ref.set({
         ...order.toJson(),
         'orderId': ref.id,
+        'orderNumber': orderNumber,
         'customerId': uid,
         // Legacy dashboard fields until the merchant UI is updated.
         'totalAmount': totalMwk,
@@ -2076,6 +2180,8 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
                   'name': e.name,
                   'price': e.unitPriceMwk,
                   'quantity': e.quantity,
+                  if (e.imageUrl != null && e.imageUrl!.trim().isNotEmpty)
+                    'imageUrl': e.imageUrl!.trim(),
                   if (e.variant != null) 'variant': e.variant,
                   if (e.notes != null) 'notes': e.notes,
                   if (e.addOns.isNotEmpty) 'addOns': e.addOns,
@@ -2099,8 +2205,33 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         merchantName: merchantName,
         foodName: summaryName,
         grossAmountMwk: totalMwk,
-        orderNumber: ref.id,
+        orderNumber: orderNumber,
       );
+
+      final itemsSummary = lineItems.length == 1
+          ? lineItems.first.name
+          : lineItems
+              .take(3)
+              .map((e) => e.quantity > 1 ? '${e.quantity}x ${e.name}' : e.name)
+              .join(', ');
+
+      await OrderPartyNotificationService.publishNewFoodOrderToMerchant(
+        merchantUid: merchantId,
+        customerName: customerName,
+        orderNumber: orderNumber,
+        orderId: ref.id,
+        itemsSummary: itemsSummary,
+        totalMwk: totalMwk,
+      );
+      if (uid.isNotEmpty) {
+        await OrderPartyNotificationService.publishFoodOrderPlacedToBuyer(
+          buyerUid: uid,
+          orderNumber: orderNumber,
+          orderId: ref.id,
+          restaurantName: merchantName,
+          itemsSummary: itemsSummary,
+        );
+      }
     } catch (e) {
       debugPrint('[InAppPaymentPage] food_orders write failed: $e');
       if (widget.rootContext.mounted) {
@@ -2137,6 +2268,25 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     final cartItems = widget.cartItemsForMerchantCredit ?? const <CartModel>[];
     final foodItems = cartItems.where((e) => e.isFood).toList();
     final marketItems = cartItems.where((e) => !e.isFood).toList();
+    final esc = widget.accommodationEscrow;
+
+    // Earn a Vero spin after successful marketplace / food / stay payment.
+    final spinSource = (food != null || foodItems.isNotEmpty)
+        ? VeroRewardsService.sourceFood
+        : (marketItems.isNotEmpty ||
+                (widget.cartItemsForMerchantCredit?.isNotEmpty == true))
+            ? VeroRewardsService.sourceMarketplace
+            : (esc != null)
+                ? VeroRewardsService.sourceAccommodation
+                : null;
+    if (spinSource != null) {
+      unawaited(
+        VeroSpinRewardPrompt.grantAndPrompt(
+          source: spinSource,
+          reference: widget.txRef,
+        ),
+      );
+    }
 
     if (food != null || foodItems.isNotEmpty) {
       unawaited(_persistFoodOrderAfterPayment(cartFoodItems: foodItems));
@@ -2164,11 +2314,13 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (widget.rootContext.mounted) {
           Navigator.of(widget.rootContext).pop();
+          Navigator.of(widget.rootContext).push(
+            MaterialPageRoute(builder: (_) => const FoodMyOrdersPage()),
+          );
         }
       });
       return;
     }
-    final esc = widget.accommodationEscrow;
     if (esc != null) {
       unawaited(OrderEscrowService.createHoldForAccommodationBooking(
         txRef: widget.txRef,

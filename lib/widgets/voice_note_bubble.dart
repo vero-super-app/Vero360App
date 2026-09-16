@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 ///
 /// Play is never blocked on a full download: local/cached files play instantly,
 /// otherwise we stream the URL immediately and cache in the background.
+/// Supports x1 / x1.5 / x2 speed and scrubbing by sliding on the waveform.
 class VoiceNoteBubble extends StatefulWidget {
   final String messageId;
   final String url;
@@ -93,7 +94,6 @@ class VoiceNoteCache {
           return null;
         }
 
-        // Write without flush — much faster; OS will persist soon enough.
         await file.writeAsBytes(res.bodyBytes);
         _memory[key] = file.path;
         return file.path;
@@ -110,7 +110,6 @@ class VoiceNoteCache {
   }
 
   static void warmMany(Iterable<String> urls) {
-    // Prefer newest notes first (callers usually pass chronological order).
     final list = urls
         .map((u) => u.trim())
         .where((u) => u.isNotEmpty)
@@ -130,21 +129,27 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
   static String? _activeMessageId;
   static String? _loadedSourceKey;
   static bool _playerConfigured = false;
+  static double _sharedRate = 1.0;
   static StreamSubscription<Duration>? _positionSub;
   static StreamSubscription<void>? _completeSub;
   static StreamSubscription<PlayerState>? _stateSub;
   static StreamSubscription<Duration>? _durationSub;
 
+  static const _rates = <double>[1.0, 1.5, 2.0];
+
   bool _playing = false;
   bool _preparing = false;
+  bool _scrubbing = false;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   String? _cachedPath;
+  double _rate = 1.0;
 
   @override
   void initState() {
     super.initState();
     _duration = Duration(milliseconds: widget.durationMs);
+    _rate = _sharedRate;
     if (_activeMessageId == widget.messageId) {
       _playing = _sharedPlayer?.state == PlayerState.playing;
     }
@@ -236,11 +241,12 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
   }
 
   void _attachListeners(AudioPlayer player) {
-    // Fire-and-forget cancel+reattach so play isn't blocked.
     unawaited(_detachListeners().then((_) {
       if (_activeMessageId != widget.messageId) return;
       _positionSub = player.onPositionChanged.listen((pos) {
-        if (!mounted || _activeMessageId != widget.messageId) return;
+        if (!mounted || _activeMessageId != widget.messageId || _scrubbing) {
+          return;
+        }
         setState(() => _position = pos);
       });
       _completeSub = player.onPlayerComplete.listen((_) {
@@ -261,21 +267,16 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
     }));
   }
 
-  /// Prefer local/cached file; otherwise stream URL immediately (no wait).
   Source _instantSource() {
     final local = widget.localPath?.trim();
     if (local != null && local.isNotEmpty && File(local).existsSync()) {
       return DeviceFileSource(local);
     }
-    final cached =
-        _cachedPath ?? VoiceNoteCache.peek(widget.url.trim());
-    if (cached != null &&
-        cached.isNotEmpty &&
-        File(cached).existsSync()) {
+    final cached = _cachedPath ?? VoiceNoteCache.peek(widget.url.trim());
+    if (cached != null && cached.isNotEmpty && File(cached).existsSync()) {
       _cachedPath = cached;
       return DeviceFileSource(cached);
     }
-    // Stream now — cache continues in background for next tap.
     unawaited(_warmInBackground());
     return UrlSource(widget.url.trim());
   }
@@ -286,22 +287,71 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
     return source.toString();
   }
 
+  Future<void> _applyRate(AudioPlayer player) async {
+    try {
+      await player.setPlaybackRate(_sharedRate);
+    } catch (e) {
+      if (kDebugMode) debugPrint('[VoiceNote] setPlaybackRate: $e');
+    }
+  }
+
+  Future<void> _cycleSpeed() async {
+    final idx = _rates.indexOf(_sharedRate);
+    final next = _rates[(idx < 0 ? 0 : idx + 1) % _rates.length];
+    _sharedRate = next;
+    if (mounted) setState(() => _rate = next);
+    final player = _sharedPlayer;
+    if (player != null && _activeMessageId == widget.messageId) {
+      await _applyRate(player);
+    }
+  }
+
+  String get _speedLabel {
+    if (_rate == 1.0) return '1x';
+    if (_rate == 1.5) return '1.5x';
+    return '2x';
+  }
+
+  Future<void> _seekToFraction(double fraction) async {
+    final total = _duration.inMilliseconds > 0
+        ? _duration
+        : Duration(milliseconds: widget.durationMs);
+    if (total.inMilliseconds <= 0) return;
+    final ms =
+        (total.inMilliseconds * fraction.clamp(0.0, 1.0)).round();
+    final target = Duration(milliseconds: ms);
+    setState(() => _position = target);
+    final player = _sharedPlayer;
+    if (player == null || _activeMessageId != widget.messageId) return;
+    try {
+      await player.seek(target);
+    } catch (e) {
+      if (kDebugMode) debugPrint('[VoiceNote] seek: $e');
+    }
+  }
+
+  void _scrubFromLocal(Offset local, double width) {
+    if (width <= 0) return;
+    final fraction = (local.dx / width).clamp(0.0, 1.0);
+    unawaited(_seekToFraction(fraction));
+  }
+
   Future<void> _togglePlayback() async {
     if (!_hasSource) return;
 
-    // Pause current note instantly.
     if (_playing && _activeMessageId == widget.messageId) {
       await _sharedPlayer?.pause();
       if (mounted) setState(() => _playing = false);
       return;
     }
 
-    // Optimistic UI — don't wait for buffering before flipping the icon.
     if (mounted) {
       setState(() {
         _playing = true;
         _preparing = true;
-        _position = Duration.zero;
+        if (_activeMessageId != widget.messageId) {
+          _position = Duration.zero;
+        }
       });
     }
 
@@ -315,9 +365,8 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
       _activeMessageId = widget.messageId;
       _attachListeners(player);
 
-      if (sameNote &&
-          sameSource &&
-          player.state == PlayerState.paused) {
+      if (sameNote && sameSource && player.state == PlayerState.paused) {
+        await _applyRate(player);
         await player.resume();
         if (mounted) setState(() => _preparing = false);
         return;
@@ -325,12 +374,12 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
 
       if (sameSource && player.state == PlayerState.completed) {
         await player.seek(Duration.zero);
+        await _applyRate(player);
         await player.resume();
         if (mounted) setState(() => _preparing = false);
         return;
       }
 
-      // Stop previous note only if switching — don't dispose the player.
       if (!sameNote && _loadedSourceKey != null) {
         try {
           await player.stop();
@@ -338,12 +387,13 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
       }
 
       _loadedSourceKey = sourceKey;
-      // play() starts as soon as the player has enough buffered data.
       await player.play(source, volume: 1.0);
+      await _applyRate(player);
       if (mounted) {
         setState(() {
           _playing = true;
           _preparing = false;
+          _rate = _sharedRate;
         });
       }
     } catch (e) {
@@ -366,7 +416,9 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
   }
 
   double get _progress {
-    final total = _duration.inMilliseconds;
+    final total = _duration.inMilliseconds > 0
+        ? _duration.inMilliseconds
+        : widget.durationMs;
     if (total <= 0) return 0;
     return (_position.inMilliseconds / total).clamp(0.0, 1.0);
   }
@@ -379,14 +431,14 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
         : Colors.black.withValues(alpha: 0.12);
     final active = widget.isMine ? Colors.white : const Color(0xFFFF8A00);
 
-    final displayDuration = _playing
+    final displayDuration = (_playing || _scrubbing || _position > Duration.zero)
         ? _position
         : (_duration.inMilliseconds > 0
             ? _duration
             : Duration(milliseconds: widget.durationMs));
 
     return SizedBox(
-      width: 220,
+      width: 240,
       child: Row(
         children: [
           Material(
@@ -423,18 +475,47 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(99),
-                  child: LinearProgressIndicator(
-                    value: (_playing || _position > Duration.zero)
-                        ? _progress
-                        : 0,
-                    minHeight: 4,
-                    backgroundColor: track,
-                    valueColor: AlwaysStoppedAnimation<Color>(active),
-                  ),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final w = constraints.maxWidth;
+                    return GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onHorizontalDragStart: (_) {
+                        setState(() => _scrubbing = true);
+                      },
+                      onHorizontalDragUpdate: (d) {
+                        _scrubFromLocal(d.localPosition, w);
+                      },
+                      onHorizontalDragEnd: (_) {
+                        setState(() => _scrubbing = false);
+                      },
+                      onTapDown: (d) {
+                        _scrubFromLocal(d.localPosition, w);
+                      },
+                      child: SizedBox(
+                        height: 22,
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(99),
+                            child: LinearProgressIndicator(
+                              value: (_playing ||
+                                      _scrubbing ||
+                                      _position > Duration.zero)
+                                  ? _progress
+                                  : 0,
+                              minHeight: 4,
+                              backgroundColor: track,
+                              valueColor:
+                                  AlwaysStoppedAnimation<Color>(active),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 4),
                 Row(
                   children: [
                     Icon(
@@ -449,6 +530,30 @@ class _VoiceNoteBubbleState extends State<VoiceNoteBubble> {
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
                         color: fg.withValues(alpha: 0.9),
+                      ),
+                    ),
+                    const Spacer(),
+                    GestureDetector(
+                      onTap: _cycleSpeed,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: widget.isMine
+                              ? Colors.white.withValues(alpha: 0.22)
+                              : const Color(0xFFFF8A00).withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(99),
+                        ),
+                        child: Text(
+                          _speedLabel,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: fg,
+                          ),
+                        ),
                       ),
                     ),
                   ],

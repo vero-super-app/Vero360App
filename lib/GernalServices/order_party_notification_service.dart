@@ -5,12 +5,11 @@ import 'package:flutter/foundation.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 
-/// Cross-user order alerts via Firestore. Each target device should subscribe in
-/// [NotificationService] and mark docs consumed after showing a local notification.
+/// Cross-user order alerts via Firestore. Content is shown in the Vero360 Team
+/// chat; [NotificationService] only increments the badge count (`notifCounted`).
 ///
 /// **Firestore rules:** allow authenticated `create` on [collectionName] with a
 /// `toUid` field, and `read`/`update` only when `resource.data.toUid == request.auth.uid`.
-/// Add a composite index on (`toUid`, `consumed`) for the listener query.
 class OrderPartyNotificationService {
   OrderPartyNotificationService._();
 
@@ -40,7 +39,8 @@ class OrderPartyNotificationService {
         'toUid': uid,
         'title': 'Your order has shipped',
         'body':
-            '$orderSeg$itemSeg has been shipped. Check progress in Delivered orders.',
+            '$orderSeg$itemSeg has been shipped. Open Received Parcel to track '
+            'progress and confirm when it arrives.',
         'payload': {
           'type': 'order_update',
           'orderId': orderId,
@@ -51,6 +51,7 @@ class OrderPartyNotificationService {
         },
         'createdAt': FieldValue.serverTimestamp(),
         'consumed': false,
+        'read': false,
       });
     } catch (e) {
       debugPrint('[OrderPartyNotification] publishShippedToBuyer: $e');
@@ -96,6 +97,73 @@ class OrderPartyNotificationService {
       });
     } catch (e) {
       debugPrint('[OrderPartyNotification] publishFundsReleasedToMerchant: $e');
+    }
+  }
+
+  /// Kitchen merchant: a customer paid for a food order.
+  static Future<void> publishNewFoodOrderToMerchant({
+    required String merchantUid,
+    required String customerName,
+    required String orderNumber,
+    required String orderId,
+    required String itemsSummary,
+    required double totalMwk,
+  }) async {
+    final uid = merchantUid.trim();
+    if (uid.isEmpty) return;
+    final on = _veroOrderNo(orderNumber);
+    final who = customerName.trim().isEmpty ? 'A customer' : customerName.trim();
+    final items = itemsSummary.trim().isEmpty ? 'food' : itemsSummary.trim();
+    try {
+      await FirebaseFirestore.instance.collection(collectionName).add({
+        'toUid': uid,
+        'title': 'New food order',
+        'body': '$who has ordered $items',
+        'payload': {
+          'type': 'food_order',
+          'orderId': orderId,
+          'orderNumber': on,
+          'status': 'pending',
+        },
+        'createdAt': FieldValue.serverTimestamp(),
+        'consumed': false,
+      });
+    } catch (e) {
+      debugPrint('[OrderPartyNotification] publishNewFoodOrderToMerchant: $e');
+    }
+  }
+
+  /// Buyer: food order placed successfully.
+  static Future<void> publishFoodOrderPlacedToBuyer({
+    required String buyerUid,
+    required String orderNumber,
+    required String orderId,
+    required String restaurantName,
+    required String itemsSummary,
+  }) async {
+    final uid = buyerUid.trim();
+    if (uid.isEmpty) return;
+    final on = _veroOrderNo(orderNumber);
+    final kitchen =
+        restaurantName.trim().isEmpty ? 'the kitchen' : restaurantName.trim();
+    final items = itemsSummary.trim().isEmpty ? 'your order' : itemsSummary.trim();
+    final orderSeg = on.isEmpty ? 'Your food order' : 'Order $on';
+    try {
+      await FirebaseFirestore.instance.collection(collectionName).add({
+        'toUid': uid,
+        'title': 'Food order placed',
+        'body': '$orderSeg from $kitchen is confirmed — $items.',
+        'payload': {
+          'type': 'food_order_placed',
+          'orderId': orderId,
+          'orderNumber': on,
+          'status': 'pending',
+        },
+        'createdAt': FieldValue.serverTimestamp(),
+        'consumed': false,
+      });
+    } catch (e) {
+      debugPrint('[OrderPartyNotification] publishFoodOrderPlacedToBuyer: $e');
     }
   }
 
@@ -326,6 +394,318 @@ class OrderPartyNotificationService {
       }
     } catch (e) {
       debugPrint('[OrderPartyNotification] publishCourierStatusToSender: $e');
+    }
+  }
+
+  /// Vero360 Team → buyer + merchant right after a paid marketplace order is held.
+  static Future<void> publishPaidOrderTeamMessages({
+    required String buyerUid,
+    required String merchantUid,
+    required String orderNumber,
+    required String itemName,
+    required String orderId,
+  }) async {
+    final on = _veroOrderNo(orderNumber);
+    final item = itemName.trim();
+    final itemSeg = item.isEmpty ? '' : ' — $item';
+    final orderSeg = on.isEmpty ? 'your order' : 'order $on';
+
+    final buyer = buyerUid.trim();
+    if (buyer.isNotEmpty) {
+      try {
+        await FirebaseFirestore.instance.collection(collectionName).add({
+          'toUid': buyer,
+          'title': 'Vero360 Team',
+          'body':
+              'Your $orderSeg$itemSeg is confirmed and paid. '
+              'When it ships, open Received Parcel to track and confirm receipt. '
+              'If it is late, you can also remind the merchant from that order.',
+          'payload': {
+            'type': 'order_team_tip',
+            'orderId': orderId,
+            'orderNumber': on,
+            'role': 'buyer',
+            'action': 'received_parcel',
+            NotificationStore.kPayloadBadgeRoute:
+                NotificationStore.kBadgeReceived,
+          },
+          'createdAt': FieldValue.serverTimestamp(),
+          'consumed': false,
+          'read': false,
+          'from': 'vero360_team',
+        });
+      } catch (e) {
+        debugPrint('[OrderPartyNotification] paidOrder buyer tip: $e');
+      }
+    }
+
+    final merchant = merchantUid.trim();
+    if (merchant.isNotEmpty) {
+      try {
+        await FirebaseFirestore.instance.collection(collectionName).add({
+          'toUid': merchant,
+          'title': 'Vero360 Team',
+          'body':
+              'New paid $orderSeg$itemSeg. Open Send Parcel, pack and ship, '
+              'then upload courier proof so the buyer can confirm on Received Parcel.',
+          'payload': {
+            'type': 'order_team_tip',
+            'orderId': orderId,
+            'orderNumber': on,
+            'role': 'merchant',
+            'action': 'send_parcel',
+            NotificationStore.kPayloadBadgeRoute:
+                NotificationStore.kBadgeShipped,
+          },
+          'createdAt': FieldValue.serverTimestamp(),
+          'consumed': false,
+          'read': false,
+          'from': 'vero360_team',
+        });
+      } catch (e) {
+        debugPrint('[OrderPartyNotification] paidOrder merchant tip: $e');
+      }
+    }
+  }
+
+  /// Buyer asked the merchant to ship (also used for once-a-day reminders).
+  static Future<void> publishShipReminderToMerchant({
+    required String merchantUid,
+    required String orderNumber,
+    required String itemName,
+    required String orderId,
+    String buyerName = '',
+  }) async {
+    final uid = merchantUid.trim();
+    if (uid.isEmpty) return;
+    final on = _veroOrderNo(orderNumber);
+    final item = itemName.trim();
+    final itemSeg = item.isEmpty ? '' : ' — $item';
+    final orderSeg = on.isEmpty ? 'An order' : 'Order $on';
+    final who = buyerName.trim().isEmpty ? 'Your buyer' : buyerName.trim();
+    try {
+      await FirebaseFirestore.instance.collection(collectionName).add({
+        'toUid': uid,
+        'title': 'Vero360 Team — ship reminder',
+        'body':
+            '$who reminded you to ship $orderSeg$itemSeg. '
+            'Open Send Parcel, send the parcel, and upload courier proof.',
+        'payload': {
+          'type': 'ship_reminder',
+          'orderId': orderId,
+          'orderNumber': on,
+          'action': 'send_parcel',
+          NotificationStore.kPayloadBadgeRoute:
+              NotificationStore.kBadgeShipped,
+        },
+        'createdAt': FieldValue.serverTimestamp(),
+        'consumed': false,
+        'read': false,
+        'from': 'vero360_team',
+      });
+    } catch (e) {
+      debugPrint('[OrderPartyNotification] publishShipReminderToMerchant: $e');
+    }
+  }
+
+  /// Daily Vero360 Team nudge for merchants who have not shipped yet.
+  static Future<void> publishTeamShipNudgeToMerchant({
+    required String merchantUid,
+    required String orderNumber,
+    required String itemName,
+    required String orderId,
+  }) async {
+    final uid = merchantUid.trim();
+    if (uid.isEmpty) return;
+    final on = _veroOrderNo(orderNumber);
+    final item = itemName.trim();
+    final itemSeg = item.isEmpty ? '' : ' — $item';
+    final orderSeg = on.isEmpty ? 'a paid order' : 'order $on';
+    try {
+      await FirebaseFirestore.instance.collection(collectionName).add({
+        'toUid': uid,
+        'title': 'Vero360 Team',
+        'body':
+            'Reminder: please ship $orderSeg$itemSeg. '
+            'Buyers are waiting — open Send Parcel and upload courier proof.',
+        'payload': {
+          'type': 'ship_reminder',
+          'orderId': orderId,
+          'orderNumber': on,
+          'source': 'team_nudge',
+          'action': 'send_parcel',
+          NotificationStore.kPayloadBadgeRoute:
+              NotificationStore.kBadgeShipped,
+        },
+        'createdAt': FieldValue.serverTimestamp(),
+        'consumed': false,
+        'read': false,
+        'from': 'vero360_team',
+      });
+    } catch (e) {
+      debugPrint('[OrderPartyNotification] publishTeamShipNudgeToMerchant: $e');
+    }
+  }
+
+  /// Vero360 Team → buyer when the order is fully done (funds released).
+  static Future<void> publishOrderCompletedToBuyer({
+    required String buyerUid,
+    required String orderNumber,
+    required String itemName,
+    required String orderId,
+  }) async {
+    final uid = buyerUid.trim();
+    if (uid.isEmpty) return;
+    final on = _veroOrderNo(orderNumber);
+    final item = itemName.trim();
+    final itemSeg = item.isEmpty ? '' : ' — $item';
+    final orderSeg = on.isEmpty ? 'Your order' : 'Order $on';
+    try {
+      await FirebaseFirestore.instance.collection(collectionName).add({
+        'toUid': uid,
+        'title': 'Vero360 Team',
+        'body':
+            '$orderSeg$itemSeg is complete. You can review it on Received Parcel. '
+            'Thanks for shopping on Vero360.',
+        'payload': {
+          'type': 'order_completed',
+          'orderId': orderId,
+          'orderNumber': on,
+          'action': 'received_parcel',
+          NotificationStore.kPayloadBadgeRoute:
+              NotificationStore.kBadgeReceived,
+        },
+        'createdAt': FieldValue.serverTimestamp(),
+        'consumed': false,
+        'read': false,
+        'from': 'vero360_team',
+      });
+    } catch (e) {
+      debugPrint('[OrderPartyNotification] publishOrderCompletedToBuyer: $e');
+    }
+  }
+
+  /// Vero360 Team → merchant: listing quantity is finished — take it off the shelf.
+  static Future<void> publishOutOfStockShelfReminder({
+    required String merchantUid,
+    required String itemName,
+    String? orderNumber,
+    String? orderId,
+    int? listingSqlId,
+  }) async {
+    final uid = merchantUid.trim();
+    if (uid.isEmpty) return;
+    final name = itemName.trim().isEmpty ? 'your listing' : itemName.trim();
+    final on = _veroOrderNo(orderNumber ?? '');
+    final orderSeg = on.isEmpty ? '' : ' (order $on)';
+    try {
+      await FirebaseFirestore.instance.collection(collectionName).add({
+        'toUid': uid,
+        'title': 'Vero360 Team — out of stock',
+        'body':
+            '“$name”$orderSeg looks sold out. Please remove it from your shelf '
+            'or set quantity to 0 / turn it off so buyers cannot order it again.',
+        'payload': {
+          'type': 'out_of_stock_shelf',
+          'itemName': name,
+          if (orderId != null && orderId.trim().isNotEmpty) 'orderId': orderId,
+          if (listingSqlId != null && listingSqlId > 0) 'listingSqlId': listingSqlId,
+          NotificationStore.kPayloadBadgeRoute:
+              NotificationStore.kBadgePostArrival,
+        },
+        'createdAt': FieldValue.serverTimestamp(),
+        'consumed': false,
+        'read': false,
+        'from': 'vero360_team',
+      });
+    } catch (e) {
+      debugPrint('[OrderPartyNotification] publishOutOfStockShelfReminder: $e');
+    }
+  }
+
+  /// Followers: a merchant you follow posted a new story.
+  static Future<void> publishStoryPostedToFollowers({
+    required String merchantUid,
+    required String merchantName,
+    String? serviceType,
+  }) async {
+    final mid = merchantUid.trim();
+    if (mid.isEmpty) return;
+    final name =
+        merchantName.trim().isEmpty ? 'A seller you follow' : merchantName.trim();
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('merchant_followers')
+          .doc(mid)
+          .collection('followers')
+          .limit(200)
+          .get();
+      if (snap.docs.isEmpty) return;
+
+      final batch = FirebaseFirestore.instance.batch();
+      var writes = 0;
+      for (final doc in snap.docs) {
+        final toUid = (doc.id).trim();
+        if (toUid.isEmpty || toUid == mid) continue;
+        final ref =
+            FirebaseFirestore.instance.collection(collectionName).doc();
+        batch.set(ref, {
+          'toUid': toUid,
+          'title': 'New story',
+          'body': '$name posted a new story. Tap to watch it.',
+          'payload': {
+            'type': 'story_posted',
+            'merchantId': mid,
+            'merchantName': name,
+            if (serviceType != null && serviceType.trim().isNotEmpty)
+              'serviceType': serviceType.trim().toLowerCase(),
+          },
+          'createdAt': FieldValue.serverTimestamp(),
+          'consumed': false,
+          'read': false,
+        });
+        writes++;
+        // Firestore batch max 500; stay under for safety.
+        if (writes >= 450) break;
+      }
+      if (writes > 0) await batch.commit();
+    } catch (e) {
+      debugPrint('[OrderPartyNotification] publishStoryPostedToFollowers: $e');
+    }
+  }
+
+  /// Merchant: someone left a star review on their shop.
+  static Future<void> publishNewReviewToMerchant({
+    required String merchantUid,
+    required int rating,
+    String? reviewerName,
+    String? comment,
+  }) async {
+    final uid = merchantUid.trim();
+    if (uid.isEmpty) return;
+    final stars = rating.clamp(1, 5);
+    final who =
+        (reviewerName ?? '').trim().isEmpty ? 'A customer' : reviewerName!.trim();
+    final note = (comment ?? '').trim();
+    final body = note.isEmpty
+        ? '$who rated you $stars★'
+        : '$who rated you $stars★: ${note.length > 80 ? '${note.substring(0, 80)}…' : note}';
+    try {
+      await FirebaseFirestore.instance.collection(collectionName).add({
+        'toUid': uid,
+        'title': 'New review',
+        'body': body,
+        'payload': {
+          'type': 'new_review',
+          'rating': stars,
+          'merchantId': uid,
+        },
+        'createdAt': FieldValue.serverTimestamp(),
+        'consumed': false,
+        'read': false,
+      });
+    } catch (e) {
+      debugPrint('[OrderPartyNotification] publishNewReviewToMerchant: $e');
     }
   }
 

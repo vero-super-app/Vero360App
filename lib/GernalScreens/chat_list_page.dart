@@ -1,15 +1,21 @@
 // lib/screens/chat_list_page.dart
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
-import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
+import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
+import 'package:vero360_app/GernalServices/role_helper.dart';
+import 'package:vero360_app/GernalServices/role_session_service.dart';
+import 'package:vero360_app/GernalScreens/vero_team_chat_page.dart';
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
+import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
 import 'package:vero360_app/widgets/modern_confirm_dialog.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:vero360_app/widgets/messaging_skeleton_loaders.dart';
@@ -25,6 +31,7 @@ class _ChatListPageState extends State<ChatListPage> {
   static const _bg = Color(0xFFF7F8FA);
   static const _ink = Color(0xFF101010);
   static const _maxPinnedChats = 3;
+  static const _kNudgeDismissPref = 'chat_business_profile_nudge_dismissed_ms';
 
   int? _myUserId;
   String? _myEmail;
@@ -47,9 +54,19 @@ class _ChatListPageState extends State<ChatListPage> {
   bool _hydratingNames = false;
   Timer? _nameFlush;
 
+  /// Incomplete merchant shop fields → show Vero360 Team reminder.
+  List<String> _missingProfileFields = const [];
+  bool _showProfileNudge = false;
+
+  /// Latest Vero360 Team messages → one pinned chat row (content opens in chat).
+  List<_VeroTeamInboxItem> _teamInbox = const [];
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _teamInboxSub;
+
   @override
   void initState() {
     super.initState();
+    // Warm Hive so watchThreads can emit disk cache on first frame.
+    unawaited(BackendMessagingCache.initialize());
     _threadsStream = BackendChatService.watchThreads();
     _messageSub = BackendMessagingSocket.messageStream.listen((message) async {
       final chatId = message.chatId.trim();
@@ -59,6 +76,8 @@ class _ChatListPageState extends State<ChatListPage> {
       if (mounted) setState(() {});
     });
     _boot();
+    unawaited(_refreshBusinessProfileNudge());
+    _listenVeroTeamInbox();
   }
 
   @override
@@ -67,6 +86,7 @@ class _ChatListPageState extends State<ChatListPage> {
     _nameFlush?.cancel();
     _messageSub?.cancel();
     _wsConnectionSub?.cancel();
+    _teamInboxSub?.cancel();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -150,11 +170,14 @@ class _ChatListPageState extends State<ChatListPage> {
         _error = null;
         _wsConnected = BackendMessagingSocket.isConnected;
       });
+      unawaited(_refreshBusinessProfileNudge());
+      _listenVeroTeamInbox();
     } catch (e) {
       if (!mounted) return;
       // If user is logged in to Firebase, never block the screen with full error
       if (FirebaseAuth.instance.currentUser != null) {
         setState(() => _error = null);
+        unawaited(_refreshBusinessProfileNudge());
         return;
       }
       final ui = _friendlyChatError(e);
@@ -164,6 +187,484 @@ class _ChatListPageState extends State<ChatListPage> {
         _error = ui.message;
       });
     }
+  }
+
+  String _sanitizePhone(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return '';
+    final lower = t.toLowerCase();
+    if (lower.contains('firebase') || lower.startsWith('+firebase')) return '';
+    return t;
+  }
+
+  Future<void> _refreshBusinessProfileNudge() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      if (mounted) {
+        setState(() {
+          _showProfileNudge = false;
+          _missingProfileFields = const [];
+        });
+      }
+      return;
+    }
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final dismissedMs = prefs.getInt(_kNudgeDismissPref) ?? 0;
+      final dismissedRecently = dismissedMs > 0 &&
+          DateTime.now().millisecondsSinceEpoch - dismissedMs <
+              const Duration(hours: 24).inMilliseconds;
+
+      final uid = user.uid;
+      final snaps = await Future.wait([
+        FirebaseFirestore.instance.collection('users').doc(uid).get(),
+        FirebaseFirestore.instance
+            .collection('marketplace_merchants')
+            .doc(uid)
+            .get(),
+      ]);
+      final userData = snaps[0].data() ?? <String, dynamic>{};
+      final merchantData = snaps[1].data() ?? <String, dynamic>{};
+      final hasMerchantDoc = snaps[1].exists;
+
+      final role = RoleSessionService.readCachedRole(prefs);
+      final isMerchant = role == RoleHelper.merchant ||
+          RoleHelper.isMerchant(userData) ||
+          hasMerchantDoc ||
+          prefs.getBool('is_merchant') == true;
+
+      if (!isMerchant) {
+        if (mounted) {
+          setState(() {
+            _showProfileNudge = false;
+            _missingProfileFields = const [];
+          });
+        }
+        return;
+      }
+
+      String pick(List<dynamic> values) {
+        for (final v in values) {
+          final s = (v ?? '').toString().trim();
+          if (s.isNotEmpty) return s;
+        }
+        return '';
+      }
+
+      final businessName = pick([
+        merchantData['businessName'],
+        merchantData['business_name'],
+        merchantData['merchantName'],
+        merchantData['companyName'],
+        merchantData['name'],
+        userData['businessName'],
+        userData['merchantName'],
+        prefs.getString('businessName'),
+        prefs.getString('merchant_business_name'),
+      ]);
+
+      final hours = pick([
+        merchantData['openingHours'],
+        userData['openingHours'],
+        prefs.getString('merchant_shop_opening_hours'),
+        prefs.getString('merchant_shop_hours'),
+        prefs.getString('shop_hours'),
+      ]);
+
+      final phone = _sanitizePhone(pick([
+        merchantData['phone'],
+        merchantData['phoneNumber'],
+        userData['phone'],
+        userData['phoneNumber'],
+        prefs.getString('merchant_profile_phone'),
+        prefs.getString('phone'),
+        user.phoneNumber,
+      ]));
+
+      final location = pick([
+        merchantData['businessLocation'],
+        merchantData['address'],
+        merchantData['listingLocation'],
+        merchantData['location'],
+        userData['businessLocation'],
+        userData['address'],
+        prefs.getString('merchant_business_location'),
+      ]);
+
+      final missing = <String>[];
+      if (businessName.isEmpty) missing.add('business name');
+      if (hours.isEmpty) missing.add('business hours');
+      if (phone.isEmpty) missing.add('phone number');
+      if (location.isEmpty) missing.add('shop location');
+
+      if (!mounted) return;
+      setState(() {
+        _missingProfileFields = missing;
+        _showProfileNudge = missing.isNotEmpty && !dismissedRecently;
+      });
+    } catch (_) {
+      // Soft fail — never block messaging.
+    }
+  }
+
+  Future<void> _dismissProfileNudge() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(
+      _kNudgeDismissPref,
+      DateTime.now().millisecondsSinceEpoch,
+    );
+    if (mounted) setState(() => _showProfileNudge = false);
+  }
+
+  Future<void> _openBusinessProfileSetup() async {
+    final email = (_myEmail ??
+            FirebaseAuth.instance.currentUser?.email ??
+            '')
+        .trim();
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MarketplaceMerchantDashboard(
+          email: email,
+          merchantUid: FirebaseAuth.instance.currentUser?.uid,
+          onBackToHomeTab: () {},
+        ),
+      ),
+    );
+    if (!mounted) return;
+    // Clear dismiss so completed profile hides; incomplete still shows.
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kNudgeDismissPref);
+    await _refreshBusinessProfileNudge();
+  }
+
+  Widget _buildVeroTeamProfileNudge() {
+    if (!_showProfileNudge || _missingProfileFields.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final missingLabel = _missingProfileFields.join(', ');
+    return Material(
+      color: Colors.white,
+      child: InkWell(
+        onTap: _openBusinessProfileSetup,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+          decoration: const BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: Color(0xFFECEEF2)),
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF0E0),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: _brandOrange.withValues(alpha: 0.35),
+                  ),
+                ),
+                alignment: Alignment.center,
+                child: Image.asset(
+                  'assets/logo_mark.png',
+                  width: 30,
+                  height: 30,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const Icon(
+                    Icons.storefront_rounded,
+                    color: _brandOrange,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Vero360 Team',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 15.5,
+                              color: _ink,
+                            ),
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _brandOrange.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: const Text(
+                            'Setup',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w800,
+                              color: _brandOrange,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      'Finish setting up your business profile — add your $missingLabel so buyers can find and trust your shop.',
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        height: 1.3,
+                        color: Colors.grey.shade700,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Tap to finish →',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w800,
+                        color: _brandOrange,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Remind me later',
+                onPressed: _dismissProfileNudge,
+                icon: Icon(Icons.close_rounded, color: Colors.grey.shade500),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _listenVeroTeamInbox() {
+    _teamInboxSub?.cancel();
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) {
+      if (mounted) setState(() => _teamInbox = const []);
+      return;
+    }
+
+    _teamInboxSub = FirebaseFirestore.instance
+        .collection(OrderPartyNotificationService.collectionName)
+        .where('toUid', isEqualTo: uid)
+        .snapshots()
+        .listen((snap) {
+      final items = <_VeroTeamInboxItem>[];
+        for (final doc in snap.docs) {
+        final data = doc.data();
+        if (data['cleared'] == true) continue;
+        final title = (data['title'] ?? 'Vero360 Team').toString().trim();
+        final body = (data['body'] ?? '').toString().trim();
+        if (body.isEmpty && title.isEmpty) continue;
+
+        DateTime? at;
+        final rawAt = data['createdAt'];
+        if (rawAt is Timestamp) at = rawAt.toDate();
+
+        Map<String, dynamic>? payload;
+        final rawPayload = data['payload'];
+        if (rawPayload is Map) {
+          payload = Map<String, dynamic>.from(
+            rawPayload.map((k, v) => MapEntry(k.toString(), v)),
+          );
+        }
+
+        final unread =
+            data['read'] != true && data['consumed'] != true;
+
+        items.add(
+          _VeroTeamInboxItem(
+            id: doc.id,
+            title: title.isEmpty ? VeroTeamChatPage.displayName : title,
+            body: body,
+            createdAt: at,
+            unread: unread,
+            payload: payload,
+          ),
+        );
+      }
+      items.sort((a, b) {
+        final aa = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final bb = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return bb.compareTo(aa);
+      });
+      if (!mounted) return;
+      setState(() => _teamInbox = items);
+    }, onError: (_) {
+      // Soft fail — never block messaging.
+    });
+  }
+
+  bool get _showVeroTeamChatRow {
+    final q = _searchCtrl.text.trim().toLowerCase();
+    if (q.isEmpty) return true;
+    const name = 'vero360 team';
+    return name.contains(q) || q.contains('vero');
+  }
+
+  int get _teamUnreadCount =>
+      _teamInbox.where((e) => e.unread).length;
+
+  Future<void> _openVeroTeamChat() async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const VeroTeamChatPage()),
+    );
+  }
+
+  Widget _buildVeroTeamChatRow() {
+    final latest = _teamInbox.isEmpty ? null : _teamInbox.first;
+    final unread = _teamUnreadCount;
+    final preview = (latest?.body ?? '').trim().isNotEmpty
+        ? latest!.body
+        : 'Tips on Send Parcel and Received Parcel';
+    final at = latest?.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+
+    return Material(
+      color: unread > 0 ? const Color(0xFFFFF9F2) : const Color(0xFFFFFBF5),
+      child: InkWell(
+        onTap: _openVeroTeamChat,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF0E0),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: _brandOrange.withValues(alpha: 0.35),
+                  ),
+                ),
+                alignment: Alignment.center,
+                child: Image.asset(
+                  'assets/logo_mark.png',
+                  width: 30,
+                  height: 30,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const Icon(
+                    Icons.support_agent_rounded,
+                    color: _brandOrange,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.push_pin_rounded,
+                          size: 14,
+                          color: _brandOrange.withValues(alpha: 0.9),
+                        ),
+                        const SizedBox(width: 4),
+                        const Expanded(
+                          child: Text(
+                            VeroTeamChatPage.displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 16,
+                              color: _ink,
+                              letterSpacing: -0.2,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _fmtTime(at),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: unread > 0
+                                ? _brandOrange
+                                : const Color(0xFF6B7280),
+                            fontWeight: unread > 0
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            preview,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13.5,
+                              height: 1.25,
+                              color: unread > 0
+                                  ? const Color(0xFF374151)
+                                  : const Color(0xFF6B7280),
+                              fontWeight: unread > 0
+                                  ? FontWeight.w600
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        if (unread > 0) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            constraints: const BoxConstraints(minWidth: 20),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _brandOrange,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              unread > 99 ? '99+' : '$unread',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   String _pinnedPrefsKey(int userId) => 'chat_list_pinned_$userId';
@@ -406,6 +907,7 @@ class _ChatListPageState extends State<ChatListPage> {
       body: Column(
         children: [
           _buildWhatsAppSearch(),
+          _buildVeroTeamProfileNudge(),
           Expanded(
             child: StreamBuilder<List<BackendChatThread>>(
         stream: _threadsStream,
@@ -424,14 +926,38 @@ class _ChatListPageState extends State<ChatListPage> {
           }
 
           if (!snap.hasData) {
+            final fbSignedIn = FirebaseAuth.instance.currentUser != null;
+            if (snap.hasError && fbSignedIn) {
+              // Still show Vero360 Team chat when peer threads fail to load.
+              if (_showVeroTeamChatRow) {
+                return ListView(
+                  children: [
+                    _buildVeroTeamChatRow(),
+                    const Divider(
+                      height: 1,
+                      indent: 76,
+                      endIndent: 16,
+                      color: Color(0xFFECEEF2),
+                    ),
+                  ],
+                );
+              }
+              return const _EmptyState(
+                icon: Icons.chat_bubble_outline_rounded,
+                title: 'No chats yet',
+                subtitle: 'When you message someone, the conversation appears here.',
+              );
+            }
             return const ChatListSkeleton();
           }
 
           final threads = snap.data ?? const [];
           _schedulePeerNameHydration(threads, me);
           final tiles = _mapThreads(threads, me);
+          final showTeam = _showVeroTeamChatRow;
+          final totalCount = tiles.length + (showTeam ? 1 : 0);
 
-          if (tiles.isEmpty) {
+          if (totalCount == 0) {
             final q = _searchCtrl.text.trim();
             return _EmptyState(
               icon: q.isEmpty
@@ -452,9 +978,16 @@ class _ChatListPageState extends State<ChatListPage> {
                 await Future<void>.delayed(const Duration(milliseconds: 200));
               },
               child: ListView.separated(
-                padding: const EdgeInsets.fromLTRB(0, 4, 0, 24),
+                padding: EdgeInsets.fromLTRB(
+                  0,
+                  4,
+                  0,
+                  // Clear floating bottom nav when this tab uses extendBody.
+                  MediaQuery.paddingOf(context).bottom + 96,
+                ),
+                physics: const AlwaysScrollableScrollPhysics(),
                 cacheExtent: 480,
-                itemCount: tiles.length,
+                itemCount: totalCount,
                 separatorBuilder: (_, __) => const Divider(
                   height: 1,
                   indent: 76,
@@ -462,7 +995,10 @@ class _ChatListPageState extends State<ChatListPage> {
                   color: Color(0xFFECEEF2),
                 ),
                 itemBuilder: (_, i) {
-                  final tile = tiles[i];
+                  if (showTeam && i == 0) {
+                    return _buildVeroTeamChatRow();
+                  }
+                  final tile = tiles[showTeam ? i - 1 : i];
                   return Slidable(
                     key: ValueKey(tile.threadId),
                     startActionPane: ActionPane(
@@ -513,11 +1049,13 @@ class _ChatListPageState extends State<ChatListPage> {
                               peerName: tile.peerName,
                               peerAvatarUrl: tile.avatarUrl,
                               productContext: tile.product,
-                              peerMerchantId: tile.product?.merchantId,
+                              peerMerchantId: tile.peerFirebaseUid ??
+                                  tile.product?.merchantId,
                               peerUserId: tile.peerUserId,
                             ),
                           ),
                         );
+                        BackendChatService.clearThreadUnread(tile.threadId);
                         BackendChatService.setActiveChatId(null);
                         BackendChatService.refreshThreads();
                       },
@@ -691,6 +1229,7 @@ class _ThreadTile {
   final String searchKey;
   final bool isPinned;
   final int? peerUserId;
+  final String? peerFirebaseUid;
 
   const _ThreadTile({
     required this.threadId,
@@ -707,6 +1246,7 @@ class _ThreadTile {
     required this.searchKey,
     this.isPinned = false,
     this.peerUserId,
+    this.peerFirebaseUid,
   });
 
   factory _ThreadTile.fromThread(
@@ -723,61 +1263,19 @@ class _ThreadTile {
       myEmail: myEmail,
       myName: myName,
     );
-    final threadTitle = (t.name ?? '').trim();
-    final myEmailNorm = (myEmail ?? '').trim().toLowerCase();
-    final myNameNorm = (myName ?? '').trim().toLowerCase();
-    final myEmailLocal = myEmailNorm.contains('@')
-        ? myEmailNorm.split('@').first
-        : myEmailNorm;
-
-    bool looksLikeMe(String raw) {
-      final n = raw.trim().toLowerCase();
-      if (n.isEmpty) return false;
-      if (myNameNorm.isNotEmpty && n == myNameNorm) return true;
-      if (myEmailNorm.isNotEmpty && n == myEmailNorm) return true;
-      if (myEmailLocal.isNotEmpty && n == myEmailLocal) return true;
-      return false;
-    }
-
-    bool usablePeerName(String raw) {
-      final n = raw.trim();
-      if (n.isEmpty || looksLikeMe(n) || ChatParticipant.isPlaceholderName(n)) {
-        return false;
-      }
-      if (n.contains('@')) return false;
-      final email = (otherParticipant?.email ?? '').trim();
-      if (ChatParticipant.looksLikeEmailLocalName(n, email)) return false;
-      return true;
-    }
 
     var peerName = (resolvedBusinessName ?? '').trim();
-    if (!usablePeerName(peerName)) {
-      peerName = (otherParticipant?.preferredDisplayName ?? '').trim();
+    final resolvedOk = peerName.isNotEmpty &&
+        !ChatParticipant.isPlaceholderName(peerName) &&
+        peerName.toLowerCase() != (myName ?? '').trim().toLowerCase();
+    if (!resolvedOk) {
+      peerName = BackendChatService.peerDisplayNameForThread(
+        t,
+        me,
+        myEmail: myEmail,
+        myName: myName,
+      );
     }
-    if (!usablePeerName(peerName)) {
-      peerName = (otherParticipant?.businessName ?? '').trim();
-    }
-    if (!usablePeerName(peerName)) {
-      peerName = (otherParticipant?.name ?? '').trim();
-    }
-    if (!usablePeerName(peerName)) {
-      if (threadTitle.isNotEmpty &&
-          threadTitle.toLowerCase() != 'direct' &&
-          usablePeerName(threadTitle)) {
-        peerName = threadTitle;
-      } else {
-        for (final p in t.participants) {
-          if (me > 0 && p.id > 0 && p.id == me) continue;
-          if (looksLikeMe(p.name) || looksLikeMe(p.email)) continue;
-          final candidate = (p.businessName ?? p.preferredDisplayName).trim();
-          if (usablePeerName(candidate)) {
-            peerName = candidate;
-            break;
-          }
-        }
-      }
-    }
-    if (!usablePeerName(peerName)) peerName = 'Contact';
 
     final product = t.lastProductTag;
     final display = BackendChatService.describeLastMessagePreview(
@@ -795,8 +1293,12 @@ class _ThreadTile {
     // Prefer the peer's name for the row title; product name is secondary label.
     final title = peerName;
     final peerLabel = product != null ? product.name : null;
-    final avatarUrl = (otherParticipant?.profilePicture ?? t.avatarUrl ?? '')
-        .trim();
+    final avatarUrl = BackendChatService.peerAvatarUrlForThread(
+      t,
+      me,
+      myEmail: myEmail,
+      myName: myName,
+    );
 
     return _ThreadTile(
       threadId: t.id,
@@ -821,6 +1323,10 @@ class _ThreadTile {
       peerUserId: otherParticipant != null && otherParticipant.id > 0
           ? otherParticipant.id
           : null,
+      peerFirebaseUid: () {
+        final uid = (otherParticipant?.firebaseUid ?? '').trim();
+        return RegExp(r'^[A-Za-z0-9_-]{20,}$').hasMatch(uid) ? uid : null;
+      }(),
     );
   }
 }
@@ -1096,6 +1602,78 @@ class _ChatRow extends StatelessWidget {
   static const _muted = Color(0xFF6B7280);
   static const _brandOrange = Color(0xFFFF8A00);
 
+  void _viewAvatar(BuildContext context) {
+    final url = tile.avatarUrl.trim();
+    final name = (tile.peerLabel ?? tile.title).trim();
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (ctx) {
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.all(18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (name.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Text(
+                    name,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 18,
+                    ),
+                  ),
+                ),
+              AspectRatio(
+                aspectRatio: 1,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: url.isNotEmpty
+                      ? InteractiveViewer(
+                          minScale: 0.8,
+                          maxScale: 4,
+                          child: ResilientCachedNetworkImage(
+                            url: url,
+                            fit: BoxFit.contain,
+                          ),
+                        )
+                      : Container(
+                          color: const Color(0xFF1F2937),
+                          alignment: Alignment.center,
+                          child: Text(
+                            name.isNotEmpty ? name[0].toUpperCase() : '?',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 72,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextButton.icon(
+                onPressed: () => Navigator.pop(ctx),
+                icon: const Icon(Icons.close, color: Colors.white),
+                label: const Text(
+                  'Close',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final unread = tile.unreadCount > 0;
@@ -1114,9 +1692,13 @@ class _ChatRow extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              _ChatAvatar(
-                name: tile.peerLabel ?? tile.title,
-                imageUrl: tile.avatarUrl,
+              GestureDetector(
+                onTap: () => _viewAvatar(context),
+                behavior: HitTestBehavior.opaque,
+                child: _ChatAvatar(
+                  name: tile.peerLabel ?? tile.title,
+                  imageUrl: tile.avatarUrl,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -1280,3 +1862,22 @@ class _ThreadPreviewLine extends StatelessWidget {
     );
   }
 }
+
+class _VeroTeamInboxItem {
+  final String id;
+  final String title;
+  final String body;
+  final DateTime? createdAt;
+  final bool unread;
+  final Map<String, dynamic>? payload;
+
+  const _VeroTeamInboxItem({
+    required this.id,
+    required this.title,
+    required this.body,
+    required this.createdAt,
+    required this.unread,
+    this.payload,
+  });
+}
+

@@ -6,12 +6,12 @@ import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
-import 'package:vero360_app/config/map_style_constants.dart';
 import 'package:vero360_app/providers/ride_share/nearby_vehicles_provider.dart';
 import 'package:vero360_app/GernalServices/nearby_vehicles_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/GernalServices/location_permission_helper.dart';
 import 'package:vero360_app/utils/low_ram_android.dart';
+import 'package:vero360_app/utils/vero_map_style.dart';
 
 class MapViewWidget extends ConsumerStatefulWidget {
   final Function(GoogleMapController) onMapCreated;
@@ -55,6 +55,9 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget>
   late CameraPosition _initialCameraPosition;
   BitmapDescriptor _taxiMarkerIcon = BitmapDescriptor.defaultMarker;
   bool _myLocationEnabled = false;
+
+  /// Satellite + labels by default; user can cycle satellite / hybrid / normal.
+  MapType _mapType = VeroMapStyle.mapType;
 
   bool get _nearbyEnabled => !widget.trackingMode && widget.showNearbyVehicles;
 
@@ -109,19 +112,8 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget>
   }
 
   Future<void> _loadMapStyle() async {
-    try {
-      final styleString = await MapStyleConstants.loadMapStyle();
-      if (styleString.isNotEmpty && mounted) {
-        setState(() {});
-        if (kDebugMode) {
-          debugPrint('[MapViewWidget] Map style loaded successfully');
-        }
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[MapViewWidget] Error loading map style: $e');
-      }
-    }
+    // Custom style asset was removed; keep default Google style.
+    // Loading a missing asset only adds noise and never applies on Android anyway.
   }
 
   Future<void> _loadTaxiMarkerIcon() async {
@@ -205,14 +197,16 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget>
           widget.initialPosition!.latitude,
           widget.initialPosition!.longitude,
         ),
-        zoom: 15,
+        zoom: VeroMapStyle.defaultZoom,
+        tilt: VeroMapStyle.tilt,
+        bearing: 0,
       );
       _addUserMarker();
     } else {
       // Last resort: first-ever launch with no cached GPS — default to Lilongwe, Malawi
-      _initialCameraPosition = const CameraPosition(
-        target: LatLng(-13.9626, 33.7707),
-        zoom: 12,
+      _initialCameraPosition = VeroMapStyle.camera(
+        target: const LatLng(-13.9626, 33.7707),
+        zoom: 14,
       );
     }
   }
@@ -240,7 +234,46 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget>
   void _onMapCreated(GoogleMapController controller) {
     _mapController = controller;
     widget.onMapCreated(controller);
+    // Re-apply 3D tilt after the native map is ready (some devices reset tilt).
+    Future.delayed(const Duration(milliseconds: 350), () async {
+      if (!mounted || _mapController == null) return;
+      final target = _initialCameraPosition.target;
+      try {
+        await _mapController!.animateCamera(
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: target,
+              zoom: VeroMapStyle.defaultZoom,
+              tilt: VeroMapStyle.tilt,
+              bearing: 0,
+            ),
+          ),
+        );
+      } catch (_) {}
+    });
   }
+
+  void _cycleMapType() {
+    setState(() {
+      _mapType = switch (_mapType) {
+        MapType.hybrid => MapType.satellite,
+        MapType.satellite => MapType.normal,
+        _ => MapType.hybrid,
+      };
+    });
+  }
+
+  String get _mapTypeLabel => switch (_mapType) {
+        MapType.satellite => 'Satellite',
+        MapType.normal => 'Map',
+        _ => 'Hybrid',
+      };
+
+  IconData get _mapTypeIcon => switch (_mapType) {
+        MapType.satellite => Icons.satellite_alt_rounded,
+        MapType.normal => Icons.map_rounded,
+        _ => Icons.layers_rounded,
+      };
 
   void addMarker({
     required String markerId,
@@ -430,17 +463,15 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget>
   void animateToPosition(
     double latitude,
     double longitude, {
-    double zoom = 15.0,
+    double zoom = VeroMapStyle.defaultZoom,
     Duration duration = const Duration(milliseconds: 800),
   }) {
     Future.delayed(const Duration(milliseconds: 50), () {
       if (mounted) {
         _mapController?.animateCamera(
-          CameraUpdate.newCameraPosition(
-            CameraPosition(
-              target: LatLng(latitude, longitude),
-              zoom: zoom,
-            ),
+          VeroMapStyle.cameraUpdate(
+            target: LatLng(latitude, longitude),
+            zoom: zoom,
           ),
         );
       }
@@ -481,6 +512,44 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget>
 
   @override
   Widget build(BuildContext context) {
+    final mapStack = Stack(
+      children: [
+        _buildGoogleMap(),
+        Positioned(
+          top: 16,
+          left: 16,
+          child: Material(
+            color: Colors.white,
+            elevation: 3,
+            borderRadius: BorderRadius.circular(10),
+            child: InkWell(
+              onTap: _cycleMapType,
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(_mapTypeIcon, size: 18, color: const Color(0xFFFF8A00)),
+                    const SizedBox(width: 6),
+                    Text(
+                      _mapTypeLabel,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+
     if (_nearbyEnabled) {
       final nearbyTaxisState = ref.watch(nearbyVehiclesProvider);
 
@@ -494,7 +563,7 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget>
 
       return Stack(
         children: [
-          _buildGoogleMap(),
+          mapStack,
           if (nearbyTaxisState.vehicles.isNotEmpty)
             Positioned(
               top: 16,
@@ -534,30 +603,31 @@ class _MapViewWidgetState extends ConsumerState<MapViewWidget>
       );
     }
 
-    return _buildGoogleMap();
+    return mapStack;
   }
 
   Widget _buildGoogleMap() {
     final isiOS = defaultTargetPlatform == TargetPlatform.iOS;
+    final lowRam = LowRamAndroid.isAndroid;
     return GoogleMap(
       onMapCreated: _onMapCreated,
       initialCameraPosition: _initialCameraPosition,
       markers: _markers,
       polylines: _polylines,
-      mapType: isiOS ? MapType.normal : MapType.hybrid,
-      style: (!LowRamAndroid.isAndroid &&
-              !isiOS &&
-              MapStyleConstants.mapStyle.isNotEmpty)
-          ? MapStyleConstants.mapStyle
-          : null,
+      mapType: _mapType,
       myLocationEnabled: _myLocationEnabled,
       myLocationButtonEnabled: _myLocationEnabled,
-      zoomControlsEnabled: !LowRamAndroid.isAndroid,
+      zoomControlsEnabled: !lowRam,
       mapToolbarEnabled: false,
-      compassEnabled: !LowRamAndroid.isAndroid,
-      buildingsEnabled: !isiOS && !LowRamAndroid.isAndroid,
+      compassEnabled: !lowRam,
+      // 3D buildings (best on normal/hybrid where Google provides them).
+      buildingsEnabled: !isiOS && !lowRam,
       indoorViewEnabled: false,
       trafficEnabled: false,
+      tiltGesturesEnabled: true,
+      rotateGesturesEnabled: true,
+      zoomGesturesEnabled: true,
+      scrollGesturesEnabled: true,
     );
   }
 

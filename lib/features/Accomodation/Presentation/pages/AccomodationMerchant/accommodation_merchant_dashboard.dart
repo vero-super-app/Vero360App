@@ -28,12 +28,15 @@ import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_promote_service.dart';
 import 'package:vero360_app/utils/app_wallet_pin.dart';
 import 'package:vero360_app/Home/homepage.dart';
 import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/utils/app_logger.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/vero_coin_icon_button.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_amenities.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
@@ -106,6 +109,8 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
   AccommodationPricePeriod _selectedPricePeriod =
       AccommodationPricePeriod.night;
   bool _submitting = false;
+  /// Share to Vero360 Facebook Page after publish (default on).
+  bool _postToFacebook = true;
   _PropertyMedia? _cover;
   final List<_PropertyMedia> _gallery = [];
   final Set<String> _selectedAmenities = {};
@@ -723,6 +728,35 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                     ),
                   ],
                   const SizedBox(height: 24),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    value: _postToFacebook,
+                    activeThumbColor: _orange,
+                    secondary: const FacebookLogoMark(size: 22),
+                    title: const Text(
+                      'Also post on Facebook',
+                      style:
+                          TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                    ),
+                    subtitle: Text(
+                      'Share this stay on the Vero360 Facebook Page.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                    onChanged: _submitting
+                        ? null
+                        : (v) => setState(() => _postToFacebook = v),
+                  ),
+                  if (_postToFacebook) ...[
+                    const SizedBox(height: 8),
+                    const FacebookShareHint(
+                      message:
+                          'After you publish, we can also share this stay on the Vero360 Facebook Page to help grow your guests.',
+                    ),
+                  ],
+                  const SizedBox(height: 10),
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton(
@@ -785,8 +819,9 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                                   galleryUrls
                                       .add(await widget.onUploadPhoto(m));
                                 }
-                                final desc =
-                                    _descriptionController.text.trim();
+                                final desc = DescriptionContactMask.mask(
+                                  _descriptionController.text.trim(),
+                                );
                                 final created = await widget
                                     .accommodationApi
                                     .createAccommodation(
@@ -829,6 +864,7 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                                     'galleryUrls': galleryUrls,
                                     'amenities':
                                         _selectedAmenities.toList(growable: false),
+                                    'postToFacebook': _postToFacebook,
                                   },
                                 );
                               } catch (e) {
@@ -1252,6 +1288,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         final row = _accommodationRowFromApi(a);
         final fsMeta = fsByApiId[a.id];
         if (fsMeta != null) {
+          row['firestoreDocId'] = fsMeta['id'];
           row['capacity'] = (fsMeta['capacity'] ?? row['capacity']);
           row['pricingPeriod'] =
               (fsMeta['pricingPeriod'] ?? row['pricingPeriod']);
@@ -1259,6 +1296,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
           row['hostelGender'] =
               (fsMeta['hostelGender'] ?? row['hostelGender']);
           row['roomType'] = (fsMeta['roomType'] ?? row['roomType']);
+          row['promotedUntil'] = fsMeta['promotedUntil'];
         }
         return row;
       }).toList();
@@ -1384,6 +1422,63 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         ],
       ),
     );
+  }
+
+  /// Firestore doc id for promote boost writes on `accommodation_rooms`.
+  String? _firestoreRoomDocId(Map<String, dynamic> room) {
+    final explicit = (room['firestoreDocId'] ?? '').toString().trim();
+    if (explicit.isNotEmpty) return explicit;
+    final id = (room['id'] ?? '').toString().trim();
+    if (id.isEmpty) return null;
+    // API numeric ids are not Firestore document ids.
+    if (int.tryParse(id) != null) return null;
+    return id;
+  }
+
+  Future<void> _promoteProperty(Map<String, dynamic> room) async {
+    var fsId = _firestoreRoomDocId(room);
+    if (fsId == null || fsId.isEmpty) {
+      // Ensure a Firestore mirror exists so boost fields have a home.
+      final apiId = _apiAccommodationId(room);
+      if (apiId == null) {
+        _toastErr('Save this property first, then promote it.');
+        return;
+      }
+      try {
+        final existing = await _firestore
+            .collection('accommodation_rooms')
+            .where('apiAccommodationId', isEqualTo: apiId)
+            .limit(1)
+            .get();
+        if (existing.docs.isNotEmpty) {
+          fsId = existing.docs.first.id;
+        } else {
+          final doc = await _firestore.collection('accommodation_rooms').add({
+            ...Map<String, dynamic>.from(room)
+              ..remove('_fromApi')
+              ..remove('id'),
+            'apiAccommodationId': apiId,
+            'merchantId': _uid,
+            'isActive': true,
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+          fsId = doc.id;
+        }
+        room['firestoreDocId'] = fsId;
+      } catch (e) {
+        _toastErr('Could not prepare property for promote.');
+        return;
+      }
+    }
+
+    await MarketplacePromoteService.presentPromoteSheet(
+      context: context,
+      itemId: fsId,
+      item: room,
+      vertical: PromoteVertical.accommodation,
+    );
+    await _loadRooms();
   }
 
   Future<void> _confirmDeleteProperty(Map<String, dynamic> room) async {
@@ -1861,6 +1956,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
               .toList() ??
           <String>[];
       final amenities = parseAccommodationAmenities(payload['amenities']);
+      final postToFacebook = (payload['postToFacebook'] as bool?) ?? true;
       final newId = (created is Map && created['id'] != null)
           ? created['id'].toString()
           : 'api-${DateTime.now().millisecondsSinceEpoch}';
@@ -1904,14 +2000,26 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
               'apiAccommodationId': apiNumeric,
               'pricingPeriod': pricingPeriod,
               'capacity': capacity,
+              'price': price,
+              'pricePerNight': price,
+              'isActive': true,
+              'published': true,
+              'isAvailable': isAvailable,
               if (hostelGender != null && hostelGender.isNotEmpty)
                 'hostelGender': hostelGender,
               if (roomType != null && roomType.isNotEmpty) 'roomType': roomType,
-              'isAvailable': isAvailable,
               if (amenities.isNotEmpty) 'amenities': amenities,
               if (name.isNotEmpty) 'name': name,
               if (location.isNotEmpty) 'location': location,
               if (desc.isNotEmpty) 'description': desc,
+              if (coverUrl.isNotEmpty) 'image': coverUrl,
+              if (coverUrl.isNotEmpty) 'imageUrl': coverUrl,
+              if (galleryUrls.isNotEmpty) 'galleryUrls': galleryUrls,
+              'accommodationType': selectedType,
+              'type': selectedType,
+              'postToFacebook': postToFacebook,
+              'createdAt': FieldValue.serverTimestamp(),
+              'updatedAt': FieldValue.serverTimestamp(),
             },
             SetOptions(merge: true),
           ),
@@ -1927,6 +2035,10 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         'Property added successfully',
         isSuccess: true,
         errorMessage: '',
+        showFacebook: postToFacebook,
+        facebookMessage: postToFacebook
+            ? 'We’ll also share this stay on the Vero360 Facebook Page.'
+            : null,
       );
     });
   }
@@ -2748,8 +2860,9 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                         id: apiId,
                                         name: name,
                                         location: location,
-                                        description: descriptionController.text
-                                            .trim(),
+                                        description: DescriptionContactMask.mask(
+                                          descriptionController.text.trim(),
+                                        ),
                                         pricePerNight: price,
                                         capacity: normalizedRooms,
                                         pricingPeriod:
@@ -2780,6 +2893,10 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                               'pricingPeriod':
                                                   selectedPricePeriod.apiValue,
                                               'capacity': normalizedRooms,
+                                              'price': price,
+                                              'pricePerNight': price,
+                                              'isActive': true,
+                                              'published': true,
                                               if (selectedType == 'hostel')
                                                 'hostelGender': hostelGender,
                                               if (selectedType == 'hostel')
@@ -2792,8 +2909,18 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                               'name': name,
                                               'location': location,
                                               'description':
-                                                  descriptionController.text
-                                                      .trim(),
+                                                  DescriptionContactMask.mask(
+                                                descriptionController.text
+                                                    .trim(),
+                                              ),
+                                              if (coverUrl.toString().trim().isNotEmpty)
+                                                'image': coverUrl,
+                                              if (coverUrl.toString().trim().isNotEmpty)
+                                                'imageUrl': coverUrl,
+                                              if (galleryUrls.isNotEmpty)
+                                                'galleryUrls': galleryUrls,
+                                              'updatedAt':
+                                                  FieldValue.serverTimestamp(),
                                             },
                                             SetOptions(merge: true),
                                           ),
@@ -2804,7 +2931,9 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                       updated['name'] = name;
                                       updated['location'] = location;
                                       updated['description'] =
-                                          descriptionController.text.trim();
+                                          DescriptionContactMask.mask(
+                                        descriptionController.text.trim(),
+                                      );
                                       updated['price'] = price;
                                       updated['pricePerNight'] = price;
                                       updated['capacity'] = normalizedRooms;
@@ -3585,6 +3714,12 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
       ),
       backgroundColor: _brandOrange,
       actions: [
+        const VeroCoinIconButton(
+          size: 36,
+          iconSize: 18,
+          badgeBackground: Colors.white,
+          badgeTextColor: Color(0xFFD94F00),
+        ),
         Padding(
           padding: const EdgeInsets.only(right: 8),
           child: Tooltip(
@@ -6104,6 +6239,23 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                   materialTapTargetSize:
                                       MaterialTapTargetSize.shrinkWrap,
                                 ),
+                                if (MarketplacePromoteService.isPromotedNow(
+                                    room))
+                                  const Chip(
+                                    label: Text(
+                                      'Promoted',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                    backgroundColor: Color(0xFFFF8A00),
+                                    padding: EdgeInsets.zero,
+                                    visualDensity: VisualDensity.compact,
+                                    materialTapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                  ),
                                 if (typeKey == 'hotel' || typeKey == 'lodge')
                                   Chip(
                                     label: Text(
@@ -6229,6 +6381,22 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                     Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        if (canEditApi ||
+                            (room['firestoreDocId'] ?? room['id'])
+                                .toString()
+                                .trim()
+                                .isNotEmpty)
+                          IconButton(
+                            icon: Icon(
+                              Icons.campaign_rounded,
+                              color: MarketplacePromoteService.isPromotedNow(
+                                      room)
+                                  ? const Color(0xFFFF8A00)
+                                  : Colors.grey.shade800,
+                            ),
+                            tooltip: 'Promote / boost',
+                            onPressed: () => _promoteProperty(room),
+                          ),
                         if (canEditApi)
                           IconButton(
                             icon: Icon(

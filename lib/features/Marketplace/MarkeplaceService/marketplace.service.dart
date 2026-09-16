@@ -16,6 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/config/api_config.dart';
@@ -422,6 +423,15 @@ class MarketplaceService {
     final id = sqlId ?? _stablePositiveIdFromString(doc.id);
 
     final createdAt = MarketplaceTime.parseCreatedAt(data['createdAt']);
+    DateTime? promotedUntil;
+    final rawPromo = data['promotedUntil'];
+    if (rawPromo is Timestamp) {
+      promotedUntil = rawPromo.toDate();
+    } else if (rawPromo is DateTime) {
+      promotedUntil = rawPromo;
+    } else if (rawPromo != null) {
+      promotedUntil = DateTime.tryParse(rawPromo.toString());
+    }
 
     return MarketplaceDetailModel(
       id: id,
@@ -437,10 +447,15 @@ class MarketplaceService {
       sellerOpeningHours: data['sellerOpeningHours']?.toString(),
       sellerStatus: data['sellerStatus']?.toString(),
       sellerBusinessDescription: data['sellerBusinessDescription']?.toString(),
-      sellerRating: (data['sellerRating'] is num)
-          ? (data['sellerRating'] as num).toDouble()
-          : double.tryParse('${data['sellerRating']}'),
-      sellerLogoUrl: data['sellerLogoUrl']?.toString(),
+      sellerRating: () {
+        final r = data['sellerRating'] ?? data['averageRating'] ?? data['rating'];
+        if (r is num) return r.toDouble();
+        return double.tryParse('$r');
+      }(),
+
+
+
+
       serviceProviderId: data['serviceProviderId']?.toString(),
       sellerUserId: data['sellerUserId']?.toString(),
       merchantId: data['merchantId']?.toString(),
@@ -451,6 +466,7 @@ class MarketplaceService {
       firestoreDocId: doc.id,
       serviceType: data['serviceType']?.toString() ?? 'marketplace',
       createdAt: createdAt,
+      promotedUntil: promotedUntil,
     );
   }
 
@@ -593,8 +609,21 @@ class MarketplaceService {
       }
 
       matches.sort((a, b) {
+        final byPromo =
+            (b.item.isPromotedNow ? 1 : 0).compareTo(a.item.isPromotedNow ? 1 : 0);
+        if (byPromo != 0) return byPromo;
         final byVision = b.visionScore.compareTo(a.visionScore);
         if (byVision != 0) return byVision;
+        final byCredit = MerchantCredit.feedScore(
+          b.item.sellerRating,
+          reviewCount: b.item.sellerReviewCount,
+        ).compareTo(
+          MerchantCredit.feedScore(
+            a.item.sellerRating,
+            reviewCount: a.item.sellerReviewCount,
+          ),
+        );
+        if (byCredit != 0) return byCredit;
         final aVis = a.visualDistance != _noVisualDistance;
         final bVis = b.visualDistance != _noVisualDistance;
         if (aVis && bVis) {

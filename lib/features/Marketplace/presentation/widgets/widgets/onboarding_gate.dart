@@ -76,8 +76,8 @@ class _OnboardingGateState extends State<OnboardingGate> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      // Plain cream — bootstrap already showed the branded splash.
-      return const ColoredBox(color: Color(0xFFFFFBF6));
+      // Soft brand wash — bootstrap already showed the logo.
+      return const ColoredBox(color: Color(0xFFFFF8F2));
     }
     if (!_onboardingDone) {
       return AppOnboardingPage(

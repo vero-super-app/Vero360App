@@ -1,15 +1,14 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
-import 'dart:async';
-import 'dart:convert';
 
-import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 
-/// Cross-device chat alerts via Firestore (recipient app shows local notification).
-/// Complements WebSocket real-time delivery when the recipient app is backgrounded.
+/// Cross-device chat alerts via Firestore → Cloud Function → FCM.
+/// Critical when the recipient app is backgrounded or killed (WebSocket is offline).
+///
+/// Single push transport only — do not also call Nest `/notifications/send`
+/// (that previously caused duplicate FCM deliveries for every message).
 class ChatNotificationService {
   ChatNotificationService._();
 
@@ -23,15 +22,40 @@ class ChatNotificationService {
     String? recipientFirebaseUid,
     int? recipientUserId,
   }) async {
-    final fromUid = FirebaseAuth.instance.currentUser?.uid;
-    if (fromUid == null || fromUid.isEmpty) return;
+    final fromUid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    if (fromUid.isEmpty) return;
 
-    var toUid = (recipientFirebaseUid ?? '').trim();
-    if (!_looksLikeFirebaseUid(toUid) && recipientUserId != null) {
+    var toUid = await BackendChatService.resolvePeerFirebaseUid(
+      chatId: chatId,
+      peerUserId: recipientUserId,
+      hintFirebaseUid: recipientFirebaseUid,
+    );
+    toUid = (toUid ?? '').trim();
+
+    // Last-resort legacy lookup (kept for older user docs).
+    if (!_looksLikeFirebaseUid(toUid) &&
+        recipientUserId != null &&
+        recipientUserId > 0) {
       toUid = await _firebaseUidForBackendUser(recipientUserId) ?? '';
     }
-    if (!_looksLikeFirebaseUid(toUid)) return;
-    if (toUid == fromUid) return;
+
+    if (!_looksLikeFirebaseUid(toUid)) {
+      if (kDebugMode) {
+        debugPrint(
+          '[ChatNotificationService] skip push — no recipient Firebase UID '
+          '(chatId=$chatId peerUserId=$recipientUserId)',
+        );
+      }
+      return;
+    }
+    if (toUid == fromUid) {
+      if (kDebugMode) {
+        debugPrint(
+          '[ChatNotificationService] skip push — recipient resolved to self',
+        );
+      }
+      return;
+    }
 
     final safeSender = senderName.trim().isEmpty ? 'Someone' : senderName.trim();
     final preview = _previewBody(body);
@@ -45,22 +69,23 @@ class ChatNotificationService {
         'payload': {
           'type': 'new_message',
           'chatId': chatId,
+          'badgeRoute': 'messages',
+          'senderName': safeSender,
+          'title': safeSender,
         },
         'createdAt': FieldValue.serverTimestamp(),
         'consumed': false,
       });
+      if (kDebugMode) {
+        debugPrint(
+          '[ChatNotificationService] chat_message_alerts written → $toUid',
+        );
+      }
     } catch (e) {
       if (kDebugMode) {
         debugPrint('[ChatNotificationService] Firestore alert failed: $e');
       }
     }
-
-    unawaited(_requestBackendPush(
-      recipientFirebaseUid: toUid,
-      title: safeSender,
-      body: preview,
-      chatId: chatId,
-    ));
   }
 
   static String _previewBody(String raw) {
@@ -78,60 +103,18 @@ class ChatNotificationService {
   static Future<String?> _firebaseUidForBackendUser(int userId) async {
     if (userId <= 0) return null;
     try {
-      final snap = await FirebaseFirestore.instance
-          .collection('users')
-          .where('userId', isEqualTo: userId)
-          .limit(1)
-          .get();
-      if (snap.docs.isNotEmpty) return snap.docs.first.id;
-    } catch (_) {}
-
-    try {
-      final snap = await FirebaseFirestore.instance
-          .collection('users')
-          .where('id', isEqualTo: userId)
-          .limit(1)
-          .get();
-      if (snap.docs.isNotEmpty) return snap.docs.first.id;
-    } catch (_) {}
-
-    return null;
-  }
-
-  /// Best-effort server push (no-op if endpoint unavailable).
-  static Future<void> _requestBackendPush({
-    required String recipientFirebaseUid,
-    required String title,
-    required String body,
-    required String chatId,
-  }) async {
-    try {
-      await BackendChatService.ensureAuth();
-      final token = await BackendChatService.getAuthToken();
-      final uri = ApiConfig.endpoint('/api/v1/notifications/send');
-      final res = await http
-          .post(
-            uri,
-            headers: {
-              'Authorization': 'Bearer $token',
-              'Content-Type': 'application/json',
-            },
-            body: jsonEncode({
-              'toFirebaseUid': recipientFirebaseUid,
-              'title': title,
-              'body': body,
-              'data': {
-                'type': 'new_message',
-                'chatId': chatId,
-              },
-            }),
-          )
-          .timeout(const Duration(seconds: 8));
-      if (kDebugMode && res.statusCode >= 400) {
-        debugPrint(
-          '[ChatNotificationService] backend push ${res.statusCode}',
-        );
+      for (final field in ['userId', 'id', 'backendUserId', 'nestUserId']) {
+        final snap = await FirebaseFirestore.instance
+            .collection('users')
+            .where(field, isEqualTo: userId)
+            .limit(1)
+            .get();
+        if (snap.docs.isNotEmpty) {
+          final id = snap.docs.first.id.trim();
+          if (_looksLikeFirebaseUid(id)) return id;
+        }
       }
     } catch (_) {}
+    return null;
   }
 }

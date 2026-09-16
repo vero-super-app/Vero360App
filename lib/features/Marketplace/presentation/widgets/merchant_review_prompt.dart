@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
@@ -27,6 +29,28 @@ class MerchantReviewPrompt {
 
   static String _merchantDoneKey(int merchantId) =>
       'merchant_review_done_v1_$merchantId';
+
+  /// Clears local "already rated" flag so the user can rate again after delete.
+  static Future<void> clearDoneForMerchant(int merchantId) async {
+    if (merchantId <= 0) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_merchantDoneKey(merchantId));
+  }
+
+  /// Prefer a Firebase UID-looking value for notifications / listing sync.
+  static String? _bestMerchantFirebaseUid({
+    String? merchantRef,
+    String? sellerUserId,
+    String? serviceProviderId,
+  }) {
+    bool looksLikeUid(String s) =>
+        s.length >= 20 && !RegExp(r'^\d+$').hasMatch(s);
+    for (final raw in [sellerUserId, merchantRef, serviceProviderId]) {
+      final v = (raw ?? '').trim();
+      if (looksLikeUid(v)) return v;
+    }
+    return null;
+  }
 
   static Future<({int merchantId, int customerId})?> _resolveReviewIds({
     String? merchantRef,
@@ -89,6 +113,9 @@ class MerchantReviewPrompt {
   }
 
   /// Returns true if a review was submitted.
+  ///
+  /// [force] ignores a previous "Not now" dismissal for this chat so buyers can
+  /// still rate from the menu after messaging.
   static Future<bool> maybeShow(
     BuildContext context, {
     required String merchantName,
@@ -98,31 +125,51 @@ class MerchantReviewPrompt {
     String? serviceProviderId,
     String? sellerUserId,
     int? merchantBackendId,
+    bool force = false,
   }) async {
     final key = contextKey.trim();
     if (key.isEmpty) return false;
     final name = merchantName.trim().isEmpty ? 'this seller' : merchantName.trim();
 
     final prefs = await SharedPreferences.getInstance();
-    if (prefs.getBool(_prefsKey(key)) == true) return false;
+    if (!force && prefs.getBool(_prefsKey(key)) == true) return false;
 
-    final ids = await _resolveReviewIds(
-      merchantRef: merchantRef,
-      serviceProviderId: serviceProviderId,
-      sellerUserId: sellerUserId,
-      merchantBackendId: merchantBackendId,
-    );
-    if (ids != null &&
-        await _customerAlreadyReviewedMerchant(
+    // Resolve IDs with a hard timeout so chat/order flows never hang silently
+    // before the sheet appears (or before we decide to skip).
+    ({int merchantId, int customerId})? ids;
+    try {
+      ids = await _resolveReviewIds(
+        merchantRef: merchantRef,
+        serviceProviderId: serviceProviderId,
+        sellerUserId: sellerUserId,
+        merchantBackendId: merchantBackendId,
+      ).timeout(const Duration(seconds: 4));
+    } catch (_) {
+      ids = null;
+    }
+
+    if (ids != null) {
+      try {
+        final already = await _customerAlreadyReviewedMerchant(
           merchantId: ids.merchantId,
           customerId: ids.customerId,
-        )) {
-      await _markReviewHandled(
-        prefs,
-        contextKey: key,
-        merchantId: ids.merchantId,
-      );
-      return false;
+        ).timeout(const Duration(seconds: 3));
+        if (already) {
+          await _markReviewHandled(
+            prefs,
+            contextKey: key,
+            merchantId: ids.merchantId,
+          );
+          if (force && context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('You already rated this seller.')),
+            );
+          }
+          return false;
+        }
+      } catch (_) {
+        // Network blip — still offer the sheet.
+      }
     }
 
     if (!context.mounted) return false;
@@ -138,6 +185,7 @@ class MerchantReviewPrompt {
     );
 
     // Remember we asked (even if skipped) so we don't nag every back press.
+    // Manual "Rate seller" uses force=true and can reopen.
     await prefs.setBool(_prefsKey(key), true);
 
     if (draft == null || !context.mounted) return false;
@@ -165,6 +213,11 @@ class MerchantReviewPrompt {
         customerId: customerId,
         rating: draft.rating,
         comment: draft.comment,
+        merchantFirebaseUid: _bestMerchantFirebaseUid(
+          merchantRef: merchantRef,
+          sellerUserId: sellerUserId,
+          serviceProviderId: serviceProviderId,
+        ),
       );
 
       await _markReviewHandled(
@@ -197,6 +250,12 @@ class MerchantReviewPrompt {
         msg =
             'This seller is not marked as a merchant on the server yet. '
             'Ask them to open their Merchant dashboard once, then try again.';
+      } else if (lower.contains('merchant not found') ||
+          lower.contains('not found') ||
+          lower.contains('could not find this seller')) {
+        msg =
+            'Could not find this seller’s account for reviews. '
+            'Open their shop from chat, then try Rate seller again.';
       } else if (lower.contains('log in again') ||
           lower.contains('resolve your account')) {
         msg =

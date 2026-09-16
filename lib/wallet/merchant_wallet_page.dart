@@ -8,6 +8,7 @@ import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 import 'package:vero360_app/GeneralModels/wallet_model.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/utils/app_wallet_pin.dart';
+import 'package:vero360_app/utils/kyc_gate.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 
 class MerchantWalletPage extends StatefulWidget {
@@ -35,6 +36,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   bool _isUnlocked = false;
   bool _unlockFailed = false;
   bool _isProcessingPayout = false;
+  bool _openingPayout = false;
   List<WalletTransaction> _recentTransactions = [];
   
   // Form controllers
@@ -175,6 +177,18 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
       }
     } catch (e) {
       print('Error loading merchant data: $e');
+    }
+  }
+
+  Future<void> _onRequestPayoutPressed() async {
+    if (_openingPayout || _isProcessingPayout) return;
+    setState(() => _openingPayout = true);
+    try {
+      final ok = await KycGate.ensureVerifiedForWithdraw(context);
+      if (!ok || !mounted) return;
+      _showPayoutDialog();
+    } finally {
+      if (mounted) setState(() => _openingPayout = false);
     }
   }
 
@@ -565,6 +579,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   }
 
   Future<void> _requestPayout() async {
+    if (_isProcessingPayout) return;
     if (!_formKey.currentState!.validate()) return;
     
     if (_selectedPayoutMethod == 'bank' && _selectedBankIndex == null) {
@@ -575,6 +590,9 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
     setState(() => _isProcessingPayout = true);
     
     try {
+      // Re-check KYC at submit time (cannot cash out without verification).
+      await KycGate.assertVerifiedForPayout(uid: widget.merchantId);
+
       final amount = double.parse(_amountController.text);
       final payoutRef = 'PAYOUT-${DateTime.now().millisecondsSinceEpoch}';
       
@@ -840,11 +858,26 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton.icon(
-                            onPressed: _walletBalance >= 1000
-                                ? _showPayoutDialog
+                            onPressed: (_walletBalance >= 1000 &&
+                                    !_openingPayout &&
+                                    !_isProcessingPayout)
+                                ? _onRequestPayoutPressed
                                 : null,
-                            icon: const Icon(Icons.payment),
-                            label: const Text('Request Payout'),
+                            icon: _openingPayout
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Color(0xFFFF8A00),
+                                    ),
+                                  )
+                                : const Icon(Icons.payment),
+                            label: Text(
+                              _openingPayout
+                                  ? 'Opening…'
+                                  : 'Request Payout',
+                            ),
                             style: ElevatedButton.styleFrom(
                               foregroundColor: const Color(0xFFFF8A00),
                               backgroundColor: Colors.white,

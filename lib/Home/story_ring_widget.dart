@@ -17,7 +17,10 @@ abstract final class StoryRingColors {
 class StoryRingDecoration {
   static BoxDecoration ring({required bool hasStories, required bool hasUnviewed}) {
     if (!hasStories) {
-      return const BoxDecoration(shape: BoxShape.circle);
+      return BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: const Color(0xFFE0E0E0), width: 2),
+      );
     }
     final color = hasUnviewed ? StoryRingColors.unviewed : StoryRingColors.viewed;
     return BoxDecoration(
@@ -104,7 +107,8 @@ class StoryProfileRing extends StatelessWidget {
   Widget _buildRing(BuildContext context, MerchantStoryRingState state) {
     final hasStories = state.hasStories;
     final hasUnviewed = state.hasUnviewed;
-    final ringPadding = hasStories ? 3.0 : 0.0;
+    // Keep a thin inset so the empty gray ring (add-story) stays visible.
+    final ringPadding = hasStories ? 3.0 : 2.0;
     final innerSize = size - ringPadding * 2;
 
     return InkWell(
@@ -122,11 +126,11 @@ class StoryProfileRing extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: hasStories ? Colors.white : Colors.transparent,
+            color: Colors.white,
           ),
-          padding: hasStories ? const EdgeInsets.all(2) : EdgeInsets.zero,
+          padding: const EdgeInsets.all(2),
           child: ClipOval(
-            child: child ?? _defaultAvatar(innerSize, state),
+            child: child ?? _defaultAvatar(innerSize - 4, state),
           ),
         ),
       ),
@@ -219,6 +223,12 @@ class StoryListRing extends StatelessWidget {
   final List<MerchantStoryGroup> allGroups;
   final int index;
   final double size;
+  final bool isOwn;
+  final int? ownViewCount;
+  /// WhatsApp / Instagram-style green + on your own ring.
+  final bool showAddBadge;
+  final VoidCallback? onAddStory;
+  final VoidCallback? onNoStoriesTap;
 
   const StoryListRing({
     super.key,
@@ -226,39 +236,108 @@ class StoryListRing extends StatelessWidget {
     required this.allGroups,
     required this.index,
     this.size = 64,
+    this.isOwn = false,
+    this.ownViewCount,
+    this.showAddBadge = false,
+    this.onAddStory,
+    this.onNoStoriesTap,
   });
 
   @override
   Widget build(BuildContext context) {
+    final hasStories = group.items.isNotEmpty;
+    final label = isOwn
+        ? (hasStories ? 'Your story' : 'Add story')
+        : group.merchantName;
+    final viewerGroups = allGroups.where((g) => g.items.isNotEmpty).toList();
+
     return Padding(
       padding: const EdgeInsets.only(right: 16),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          StoryProfileRing(
-            merchantId: group.merchantId,
-            merchantName: group.merchantName,
-            merchantImageUrl: group.merchantImageUrl,
-            size: size,
-            allGroups: allGroups,
-            fixedGroup: group,
-            placeholderIcon: Icons.store_rounded,
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              StoryProfileRing(
+                merchantId: group.merchantId,
+                merchantName: group.merchantName,
+                merchantImageUrl: group.merchantImageUrl,
+                size: size,
+                allGroups: viewerGroups.isNotEmpty ? viewerGroups : null,
+                fixedGroup: group,
+                placeholderIcon:
+                    isOwn ? Icons.person_rounded : Icons.store_rounded,
+                onNoStoriesTap: onNoStoriesTap,
+              ),
+              if (showAddBadge)
+                Positioned(
+                  bottom: 0,
+                  right: 0,
+                  child: GestureDetector(
+                    onTap: onAddStory,
+                    behavior: HitTestBehavior.opaque,
+                    child: Container(
+                      width: 22,
+                      height: 22,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.12),
+                            blurRadius: 4,
+                            offset: const Offset(0, 1),
+                          ),
+                        ],
+                      ),
+                      child: Container(
+                        margin: const EdgeInsets.all(1.5),
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF25D366),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.add,
+                          size: 14,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
           const SizedBox(height: 6),
           SizedBox(
             width: size + 20,
             child: Text(
-              group.merchantName,
+              label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF101010),
+                fontWeight: isOwn ? FontWeight.w800 : FontWeight.w600,
+                color: const Color(0xFF101010),
               ),
             ),
           ),
+          if (isOwn && ownViewCount != null && hasStories) ...[
+            const SizedBox(height: 2),
+            Text(
+              '${ownViewCount!} view${ownViewCount == 1 ? '' : 's'}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[600],
+              ),
+            ),
+          ],
         ],
       ),
     );

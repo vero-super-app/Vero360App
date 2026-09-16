@@ -9,6 +9,7 @@ import 'package:vero360_app/features/Restraurants/RestraurantsService/restaurant
 import 'package:vero360_app/features/VeroCourier/Model/courier.models.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/courier_widgets.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierService/vero_courier_service.dart';
+import 'package:vero360_app/utils/vero_map_style.dart';
 
 const Color _veroOrange = Color(0xFFFF8A00);
 const Color _ink = Color(0xFF1A1109);
@@ -120,9 +121,7 @@ class _FoodOrderTrackingPageState extends State<FoodOrderTrackingPage> {
     if (points.isEmpty) return;
     if (points.length == 1) {
       await map.animateCamera(
-        CameraUpdate.newCameraPosition(
-          CameraPosition(target: points.first, zoom: 17.2),
-        ),
+        VeroMapStyle.cameraUpdate(target: points.first),
       );
       return;
     }
@@ -248,14 +247,19 @@ class _FoodOrderTrackingPageState extends State<FoodOrderTrackingPage> {
         children: [
           Expanded(
             child: GoogleMap(
-              initialCameraPosition: CameraPosition(
+              initialCameraPosition: VeroMapStyle.camera(
                 target: mapTarget,
-                zoom: dropoff != null ? 17.2 : 13,
+                zoom: dropoff != null
+                    ? VeroMapStyle.defaultZoom
+                    : VeroMapStyle.cityZoom,
               ),
-              mapType: MapType.hybrid,
+              mapType: VeroMapStyle.mapType,
               myLocationEnabled: true,
               myLocationButtonEnabled: true,
               zoomControlsEnabled: false,
+              buildingsEnabled: true,
+              tiltGesturesEnabled: true,
+              rotateGesturesEnabled: true,
               markers: markers,
               onMapCreated: (c) {
                 _map = c;

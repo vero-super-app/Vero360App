@@ -445,14 +445,19 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<Map<String, dynamic>> _buildQuickResultFromUser(User user) async {
     final email = user.email ?? _identifier.text.trim();
 
-    // Start token + Firestore together; await separately so one failure doesn’t drop the other.
-    final tokenFut = user.getIdToken(false);
+    // Force-refresh so social login always gets a usable JWT even after
+    // a flaky first token fetch.
+    final tokenFut = user.getIdToken(true);
     final snapFut = _firestore.collection('users').doc(user.uid).get();
     String? role;
     String? token;
     try {
       token = await tokenFut;
-    } catch (_) {}
+    } catch (_) {
+      try {
+        token = await user.getIdToken(false);
+      } catch (_) {}
+    }
     String? merchantService;
     try {
       final snap = await snapFut.timeout(const Duration(milliseconds: 1200));
@@ -755,7 +760,7 @@ class _LoginScreenState extends State<LoginScreen> {
       if (user == null) {
         ToastHelper.showCustomToast(
           context,
-          'Apple sign-in was cancelled or is not available on this device.',
+          'Apple sign-in was cancelled.',
           isSuccess: false,
           errorMessage: '',
         );
@@ -766,6 +771,16 @@ class _LoginScreenState extends State<LoginScreen> {
       final result = await _buildQuickResultFromUser(user);
       await _handleAuthResult(result);
       unawaited(_buildResultFromUser(user));
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        (e.message ?? '').trim().isNotEmpty
+            ? e.message!.trim()
+            : 'Apple sign-in failed. Please try again.',
+        isSuccess: false,
+        errorMessage: '',
+      );
     } catch (e) {
       if (!mounted) return;
       ToastHelper.showCustomToast(

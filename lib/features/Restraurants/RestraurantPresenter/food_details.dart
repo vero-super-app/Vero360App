@@ -23,10 +23,12 @@ import 'package:vero360_app/GeneralPages/address.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_share_link.dart';
+import 'package:vero360_app/utils/vero_map_style.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_checkout_page.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_engagement_service.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_review_service.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_service.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierService/courier_city.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/map_location_picker_screen.dart';
@@ -701,6 +703,9 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
         notes: note.isEmpty ? null : note,
         addOns: addOns,
         location: item.listingLocation,
+        availableStock: item.quantity,
+        prepTimeMinutes: item.effectivePrepTimeMinutes,
+        listingDocId: item.firestoreListingId,
       );
 
       await cart.addToCart(cartItem);
@@ -778,6 +783,9 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
         notes: note.isEmpty ? null : note,
         addOns: _selectedAddOnNames,
         location: item.listingLocation,
+        availableStock: item.quantity,
+        prepTimeMinutes: item.effectivePrepTimeMinutes,
+        listingDocId: item.firestoreListingId,
       );
 
       if (!mounted) return;
@@ -1080,23 +1088,29 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
             ),
             if (_deliveryLat != null && _deliveryLng != null) ...[
               const SizedBox(height: 8),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(14),
-                child: SizedBox(
-                  height: 140,
-                  width: double.infinity,
+              // Avoid ClipRRect around GoogleMap — it blanks tiles on Android.
+              SizedBox(
+                height: 140,
+                width: double.infinity,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: Colors.black12),
+                  ),
                   child: GoogleMap(
                     key: ValueKey(
                       'pin-${_deliveryLat!.toStringAsFixed(5)}-${_deliveryLng!.toStringAsFixed(5)}',
                     ),
-                    initialCameraPosition: CameraPosition(
+                    initialCameraPosition: VeroMapStyle.camera(
                       target: LatLng(_deliveryLat!, _deliveryLng!),
-                      zoom: 17.5,
                     ),
-                    mapType: MapType.normal,
-                    liteModeEnabled: true,
+                    mapType: VeroMapStyle.mapType,
+                    liteModeEnabled: false,
                     myLocationEnabled: false,
                     zoomControlsEnabled: false,
+                    buildingsEnabled: true,
+                    tiltGesturesEnabled: true,
+                    rotateGesturesEnabled: true,
                     markers: {
                       Marker(
                         markerId: const MarkerId('food_dropoff'),
@@ -1121,7 +1135,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     final heroImages = _heroImages;
     final cat    = ((item.category ?? 'Meals').trim().isEmpty)
         ? 'Meals' : item.category!.trim();
-    final desc   = item.description?.trim() ?? '';
+    final desc = DescriptionContactMask.mask(item.description?.trim() ?? '');
     final mq     = MediaQuery.of(context);
 
     // How tall the orange dome is
@@ -1264,6 +1278,28 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                                 fontSize: 14,
                                 color: Colors.grey.shade500,
                                 fontWeight: FontWeight.w500)),
+
+                        if (item.effectivePrepTimeMinutes != null) ...[
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.schedule_rounded,
+                                size: 16,
+                                color: Colors.grey.shade600,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                '${item.effectivePrepTimeMinutes} min prep',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.grey.shade700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
 
                         if (item.variants.isNotEmpty) ...[
                           const SizedBox(height: 16),
@@ -2208,6 +2244,11 @@ class _KitchenExplorePageState extends State<_KitchenExplorePage> {
   }
 
   Future<void> _blockRestaurant() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      _toast('Please log in to block a restaurant.', false);
+      return;
+    }
     final mid = _merchantId;
     if (mid.isEmpty) {
       _toast('Cannot block this restaurant yet.', false);
@@ -2919,7 +2960,7 @@ class _KitchenExplorePageState extends State<_KitchenExplorePage> {
                       if (_description.trim().isNotEmpty) ...[
                         const SizedBox(height: 12),
                         Text(
-                          _description.trim(),
+                          DescriptionContactMask.mask(_description.trim()),
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             color: Colors.grey.shade700,

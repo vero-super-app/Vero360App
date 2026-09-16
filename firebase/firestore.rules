@@ -19,10 +19,93 @@ service cloud.firestore {
       );
     }
 
+    function isOwnerUid(data) {
+      return isSignedIn() && (
+        data.merchantId == request.auth.uid ||
+        data.sellerUserId == request.auth.uid ||
+        data.ownerId == request.auth.uid ||
+        data.userId == request.auth.uid ||
+        data.hostUid == request.auth.uid
+      );
+    }
+
+    // Clients may leave review as-is or send back to pending — never self-approve.
+    function reviewStatusClientOk() {
+      let next = request.resource.data.get('reviewStatus', '');
+      let prev = resource.data.get('reviewStatus', '');
+      return next == prev
+        || next == 'pending'
+        || next == '';
+    }
+
+    function createReviewNotApproved() {
+      let rs = request.resource.data.get('reviewStatus', 'pending');
+      return rs == 'pending' || rs == '' || rs == 'draft';
+    }
+
+    // Paid boost fields — only Cloud Functions (Admin SDK) may set/extend these.
+    function promotionBoostFieldsUntouched() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny([
+          'promotedUntil',
+          'promotionPlanId',
+          'promotionPaidAt',
+          'promotionTxRef'
+        ]);
+    }
+
+    function paidPromoStatuses() {
+      return ['paid', 'active', 'fulfilled'];
+    }
+
+    function isPaidPromoStatus(s) {
+      return s in paidPromoStatuses();
+    }
+
     match /marketplace_items/{itemId} {
       allow read: if true;
-      allow create: if isMarketplaceOwner(request.resource.data);
-      allow update, delete: if isMarketplaceOwner(resource.data);
+      allow create: if isMarketplaceOwner(request.resource.data)
+        && createReviewNotApproved()
+        && !request.resource.data.keys().hasAny([
+          'promotedUntil',
+          'promotionPlanId',
+          'promotionPaidAt',
+          'promotionTxRef'
+        ]);
+      allow update: if isMarketplaceOwner(resource.data)
+        && reviewStatusClientOk()
+        && promotionBoostFieldsUntouched();
+      allow delete: if isMarketplaceOwner(resource.data);
+    }
+
+    match /food_menu_items/{itemId} {
+      allow read: if true;
+      allow create: if isOwnerUid(request.resource.data)
+        && createReviewNotApproved();
+      allow update: if isOwnerUid(resource.data)
+        && reviewStatusClientOk()
+        && promotionBoostFieldsUntouched();
+      allow delete: if isOwnerUid(resource.data);
+    }
+
+    match /accommodation_rooms/{itemId} {
+      allow read: if true;
+      allow create: if isOwnerUid(request.resource.data)
+        && createReviewNotApproved();
+      allow update: if isOwnerUid(resource.data)
+        && reviewStatusClientOk()
+        && promotionBoostFieldsUntouched();
+      allow delete: if isOwnerUid(resource.data);
+    }
+
+    match /accommodations/{itemId} {
+      allow read: if true;
+      allow create: if isOwnerUid(request.resource.data)
+        && createReviewNotApproved();
+      allow update: if isOwnerUid(resource.data)
+        && reviewStatusClientOk()
+        && promotionBoostFieldsUntouched();
+      allow delete: if isOwnerUid(resource.data);
     }
 
     match /merchant_stories/{storyId} {
@@ -31,6 +114,15 @@ service cloud.firestore {
         && request.resource.data.merchantId == request.auth.uid;
       allow update, delete: if isSignedIn()
         && resource.data.merchantId == request.auth.uid;
+
+      match /viewers/{viewerId} {
+        allow read: if true;
+        allow create, update: if isSignedIn()
+          && request.auth.uid == viewerId;
+        allow delete: if isSignedIn()
+          && get(/databases/$(database)/documents/merchant_stories/$(storyId)).data.merchantId
+            == request.auth.uid;
+      }
     }
 
     match /merchant_wallets/{merchantId} {
@@ -79,7 +171,7 @@ service cloud.firestore {
       }
     }
 
-    // Homepage paid adverts — public read; any signed-in user (incl. anonymous) can post.
+    // Homepage paid adverts — public read; owner create/update (payment trust TBD).
     match /homepage_adverts/{advertId} {
       allow read: if true;
       allow create: if isSignedIn()
@@ -89,6 +181,81 @@ service cloud.firestore {
         ]);
       allow update: if isSignedIn()
         && resource.data.userId == request.auth.uid;
+    }
+
+    // Marketplace product promote (top boost + Facebook ad orders).
+    // Paid/active only via Cloud Function activateMarketplacePromotion (Admin SDK).
+    match /marketplace_promotions/{promoId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.resource.data.merchantId == request.auth.uid
+        && request.resource.data.status == 'pending_payment';
+      allow update: if isSignedIn()
+        && resource.data.merchantId == request.auth.uid
+        && !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['paymentVerifiedAt', 'paymentVerifiedBy'])
+        && (
+          (
+            !isPaidPromoStatus(request.resource.data.status)
+            && (
+              request.resource.data.status == resource.data.status
+              || request.resource.data.status in ['cancelled', 'failed', 'pending_payment']
+            )
+          )
+          || (
+            // After CF activation: merchant may only stamp platform-fee bookkeeping.
+            isPaidPromoStatus(resource.data.status)
+            && request.resource.data.status == resource.data.status
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly([
+                'platformFeeCredited',
+                'platformFeeAmount',
+                'platformFeeMode',
+                'platformFeeCreditedAt',
+                'updatedAt'
+              ])
+          )
+        );
+    }
+
+    // Free Nest-style promos (Postpromotion.dart) — owner only; must stamp merchantId.
+    match /merchant_promotions/{promoId} {
+      allow read: if true;
+      allow create: if isSignedIn()
+        && request.resource.data.merchantId == request.auth.uid;
+      allow update, delete: if isSignedIn()
+        && resource.data.merchantId == request.auth.uid;
+    }
+
+    match /latest_arrivals/{arrivalId} {
+      allow read: if true;
+      allow create: if isSignedIn()
+        && request.resource.data.merchantId == request.auth.uid;
+      allow update, delete: if isSignedIn()
+        && resource.data.merchantId == request.auth.uid;
+    }
+
+    // Vero Coin / Points — owner only.
+    match /vero_rewards/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Digital services USD rate + subscription/gift-card prices (admin writes via Admin SDK).
+    match /app_config/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Home search-bar crawl ticker (admin writes via Admin SDK / web panel).
+    match /homepage_crawls/{crawlId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Admin → Vero360 Team chat broadcasts (everyone).
+    match /vero_team_broadcasts/{broadcastId} {
+      allow read: if isSignedIn();
+      allow write: if false;
     }
 
     // Other app collections (chat, notifications, etc.) — signed-in users only.

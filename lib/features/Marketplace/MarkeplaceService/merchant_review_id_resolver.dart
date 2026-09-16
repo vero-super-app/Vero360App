@@ -6,7 +6,6 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
-import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovider_service.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
@@ -58,130 +57,20 @@ class MerchantReviewIdResolver {
     }
   }
 
-  /// Resolve Nest user id for viewing + writing reviews.
-  static Future<int> resolveMerchantId({
-    required String merchantRef,
-    String? serviceProviderId,
-    String? sellerUserId,
-    int? preResolvedBackendId,
-  }) async {
-    final trimmedRef = merchantRef.trim();
-    final trimmedSeller = (sellerUserId ?? '').trim();
-    final trimmedSp = (serviceProviderId ?? '').trim();
-
-    // 0) Check in-memory cache first
-    for (final key in [trimmedRef, trimmedSeller, trimmedSp]) {
-      if (key.isNotEmpty && _cache.containsKey(key)) {
-        final cached = _cache[key];
-        if (cached != null && cached > 0) return cached;
-      }
-    }
-
-    final candidates = <int>[];
-
-    void addCandidate(int? id) {
-      if (id == null || id <= 0) return;
-      if (!candidates.contains(id)) candidates.add(id);
-    }
-
-    // 1) Explicit Nest id from caller (orders / warm cache / product backend ID).
-    addCandidate(preResolvedBackendId);
-    addCandidate(_parsePositiveInt(trimmedRef));
-    addCandidate(_parsePositiveInt(trimmedSeller));
-    addCandidate(_parsePositiveInt(trimmedSp));
-
-    if (candidates.isNotEmpty) {
-      final res = candidates.first;
-      _remember(res, [trimmedRef, trimmedSeller, trimmedSp]);
-      return res;
-    }
-
-    // 2) Collect all UID candidates to inspect in Firestore & Backend
-    final uidCandidates = <String>{};
-    for (final raw in [trimmedRef, trimmedSeller, trimmedSp]) {
-      if (raw.isNotEmpty && raw.toLowerCase() != 'unknown' && _looksLikeFirebaseUid(raw)) {
-        uidCandidates.add(raw);
-      }
-    }
-
-    // Look up from Firestore documents and queries
-    for (final uid in uidCandidates) {
-      final id = await _lookupBackendIdFromFirestore(uid);
-      addCandidate(id);
-    }
-
-    if (candidates.isNotEmpty) {
-      final res = candidates.first;
-      _remember(res, [trimmedRef, trimmedSeller, trimmedSp]);
-      return res;
-    }
-
-    // Look up from Backend User endpoints (works for logged-in and guests)
-    for (final uid in uidCandidates) {
-      final id = await _lookupUserIdByFirebaseUid(uid);
-      addCandidate(id);
-    }
-
-    if (candidates.isNotEmpty) {
-      final res = candidates.first;
-      _remember(res, [trimmedRef, trimmedSeller, trimmedSp]);
-      return res;
-    }
-
-    // 3) Service Provider lookup if available
-    if (trimmedSp.isNotEmpty) {
-      final spId = await _lookupFromServiceProvider(trimmedSp);
-      addCandidate(spId);
-    }
-
-    if (candidates.isNotEmpty) {
-      final res = candidates.first;
-      _remember(res, [trimmedRef, trimmedSeller, trimmedSp]);
-      return res;
-    }
-
-    // 4) Check if current user is the merchant viewing their own profile
-    final currentFbUser = FirebaseAuth.instance.currentUser;
-    if (currentFbUser != null) {
-      final currentUid = currentFbUser.uid.trim();
-      if (currentUid == trimmedRef ||
-          currentUid == trimmedSeller ||
-          currentUid == trimmedSp) {
-        final ownId = await _getOwnBackendUserId();
-        addCandidate(ownId);
-      }
-    }
-
-    if (candidates.isNotEmpty) {
-      final res = candidates.first;
-      _remember(res, [trimmedRef, trimmedSeller, trimmedSp]);
-      return res;
-    }
-
-    // 5) Search Firestore marketplace_items by merchantId/sellerUserId
-    for (final ref in [trimmedRef, trimmedSeller, trimmedSp]) {
-      if (ref.isNotEmpty && ref.toLowerCase() != 'unknown') {
-        final itemId = await _lookupBackendIdFromItems(ref);
-        addCandidate(itemId);
-      }
-    }
-
-    if (candidates.isNotEmpty) {
-      final res = candidates.first;
-      _remember(res, [trimmedRef, trimmedSeller, trimmedSp]);
-      return res;
-    }
-
-    throw const ApiException(
-      message:
-          'Could not find this seller’s review profile. Pull to refresh or open the shop again.',
-    );
-  }
+  static void clearCache() => _cache.clear();
 
   /// Call before POST /reviews. Throws a clear error if Nest user isn’t merchant.
   static Future<void> ensureMerchantEligibleForReview(int merchantId) async {
+    if (merchantId <= 0) {
+      throw const ApiException(
+        message: 'Could not find this seller’s account for reviews.',
+      );
+    }
     final profile = await _fetchUserProfile(merchantId);
-    if (profile == null) return; // offline / 403 / guest — let API handle validation
+    if (profile == null) {
+      // Profile missing or unreachable — still try create; API is source of truth.
+      return;
+    }
     if (_isMerchantRole(profile)) return;
     throw const ApiException(
       message:
@@ -220,15 +109,146 @@ class MerchantReviewIdResolver {
 
   static int? _extractBackendId(Map<String, dynamic>? data) {
     if (data == null) return null;
+    // Only Nest *user* ids — never shopId / serviceProviderRecordId / doc id
+    // (those caused POST /reviews → 404 Merchant not found).
     return _parsePositiveInt(data['backendUserId']) ??
-        _parsePositiveInt(data['userId']) ??
-        _parsePositiveInt(data['merchantUserId']) ??
-        _parsePositiveInt(data['merchantBackendId']) ??
         _parsePositiveInt(data['nestUserId']) ??
-        _parsePositiveInt(data['ownerId']) ??
-        _parsePositiveInt(data['serviceProviderRecordId']) ??
-        _parsePositiveInt(data['shopId']) ??
-        _parsePositiveInt(data['id']);
+        _parsePositiveInt(data['merchantBackendId']) ??
+        _parsePositiveInt(data['merchantUserId']) ??
+        _parsePositiveInt(data['userId']) ??
+        _parsePositiveInt(data['ownerId']);
+  }
+
+  /// True when Nest will accept this id as a reviewable merchant.
+  static Future<bool> _isReviewableMerchantId(int merchantId) async {
+    if (merchantId <= 0) return false;
+    final profile = await _fetchUserProfile(merchantId);
+    if (profile == null) return false;
+    return _isMerchantRole(profile);
+  }
+
+  /// Resolve Nest user id for viewing + writing reviews.
+  static Future<int> resolveMerchantId({
+    required String merchantRef,
+    String? serviceProviderId,
+    String? sellerUserId,
+    int? preResolvedBackendId,
+  }) async {
+    final trimmedRef = merchantRef.trim();
+    final trimmedSeller = (sellerUserId ?? '').trim();
+    final trimmedSp = (serviceProviderId ?? '').trim();
+
+    // 0) Check in-memory cache first (re-verify — stale SP/shop ids caused 404s).
+    for (final key in [trimmedRef, trimmedSeller, trimmedSp]) {
+      if (key.isNotEmpty && _cache.containsKey(key)) {
+        final cached = _cache[key];
+        if (cached != null && cached > 0) {
+          if (await _isReviewableMerchantId(cached)) return cached;
+          _cache.remove(key);
+        }
+      }
+    }
+
+    final candidates = <int>[];
+
+    void addCandidate(int? id) {
+      if (id == null || id <= 0) return;
+      if (!candidates.contains(id)) candidates.add(id);
+    }
+
+    final uidCandidates = <String>{};
+    for (final raw in [trimmedRef, trimmedSeller, trimmedSp]) {
+      if (raw.isNotEmpty &&
+          raw.toLowerCase() != 'unknown' &&
+          _looksLikeFirebaseUid(raw)) {
+        uidCandidates.add(raw);
+      }
+    }
+
+    // 1) Validated Nest user id from Firebase UID (most reliable for /reviews).
+    for (final uid in uidCandidates) {
+      try {
+        if (await _hasSession()) {
+          await BackendChatService.ensureAuth();
+          final validated =
+              await BackendChatService.getUserIdByFirebaseUidValidated(
+            uid,
+            quiet: true,
+          );
+          addCandidate(validated);
+        }
+      } catch (_) {}
+      final raw = await _lookupUserIdByFirebaseUid(uid);
+      addCandidate(raw);
+    }
+
+    // 2) Firestore merchant/user docs (Nest user fields only).
+    for (final uid in uidCandidates) {
+      final id = await _lookupBackendIdFromFirestore(uid);
+      addCandidate(id);
+    }
+
+    // 3) Chat peer / product owner Nest id.
+    addCandidate(preResolvedBackendId);
+    addCandidate(_parsePositiveInt(trimmedRef));
+    if (!_looksLikeFirebaseUid(trimmedSeller)) {
+      addCandidate(_parsePositiveInt(trimmedSeller));
+    }
+    if (!_looksLikeFirebaseUid(trimmedSp)) {
+      addCandidate(_parsePositiveInt(trimmedSp));
+    }
+
+    // 4) marketplace_items.merchantBackendId
+    for (final ref in [trimmedRef, trimmedSeller, trimmedSp]) {
+      if (ref.isNotEmpty && ref.toLowerCase() != 'unknown') {
+        final itemId = await _lookupBackendIdFromItems(ref);
+        addCandidate(itemId);
+      }
+    }
+
+    // 5) Own account (merchant viewing self)
+    final currentFbUser = FirebaseAuth.instance.currentUser;
+    if (currentFbUser != null) {
+      final currentUid = currentFbUser.uid.trim();
+      if (currentUid == trimmedRef ||
+          currentUid == trimmedSeller ||
+          currentUid == trimmedSp) {
+        addCandidate(await _getOwnBackendUserId());
+      }
+    }
+
+    if (candidates.isEmpty) {
+      throw ApiException(
+        message:
+            'Could not find this seller’s account for reviews. '
+            'Open their shop once, then try rating again.',
+      );
+    }
+
+    // Prefer an id Nest recognizes as a merchant role.
+    var sawNonMerchantUser = false;
+    for (final id in candidates) {
+      final profile = await _fetchUserProfile(id);
+      if (profile == null) continue;
+      if (_isMerchantRole(profile)) {
+        _remember(id, [trimmedRef, trimmedSeller, trimmedSp]);
+        return id;
+      }
+      sawNonMerchantUser = true;
+    }
+
+    if (sawNonMerchantUser) {
+      throw const ApiException(
+        message:
+            'This seller is not marked as a merchant on the server yet. '
+            'Ask them to open their Merchant dashboard once, then try again.',
+      );
+    }
+
+    // Profiles unreachable (offline) — try first candidate; API will validate.
+    final fallback = candidates.first;
+    _remember(fallback, [trimmedRef, trimmedSeller, trimmedSp]);
+    return fallback;
   }
 
   static Future<int?> _lookupBackendIdFromFirestore(String firebaseUid) async {
@@ -397,27 +417,6 @@ class MerchantReviewIdResolver {
           }
         } catch (_) {}
       }
-    } catch (_) {}
-
-    return null;
-  }
-
-  static Future<int?> _lookupFromServiceProvider(String spRef) async {
-    final trimmed = spRef.trim();
-    if (trimmed.isEmpty) return null;
-
-    final numeric = _parsePositiveInt(trimmed);
-    if (numeric != null) {
-      try {
-        final sp = await ServiceProviderServicess.fetchById(numeric);
-        if (sp?.id != null && sp!.id! > 0) return sp.id;
-      } catch (_) {}
-      return numeric;
-    }
-
-    try {
-      final sp = await ServiceProviderServicess.fetchByNumber(trimmed);
-      if (sp?.id != null && sp!.id! > 0) return sp.id;
     } catch (_) {}
 
     return null;

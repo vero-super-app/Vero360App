@@ -3,7 +3,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart'
-    show kIsWeb, kReleaseMode, defaultTargetPlatform, TargetPlatform;
+    show kIsWeb, kReleaseMode, kDebugMode, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -11,6 +11,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:app_links/app_links.dart';
 
 // Firebase
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -24,7 +25,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 // Pages
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
-import 'package:vero360_app/features/onboarding/presentation/widgets/onboarding_gate.dart';
+import 'package:vero360_app/features/Marketplace/presentation/widgets/widgets/onboarding_gate.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/cartpage.dart';
 import 'package:vero360_app/GeneralPages/profile_from_link_page.dart';
 import 'package:vero360_app/Home/CustomersProfilepage.dart';
@@ -34,7 +35,9 @@ import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_share_link.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_share_link.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/food_share_navigation.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_share_navigation.dart';
+import 'package:vero360_app/features/Restraurants/Models/food_share_link.dart';
 import 'package:vero360_app/GernalServices/merchant_identity.dart';
 import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
@@ -54,11 +57,15 @@ import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
 import 'package:vero360_app/GernalServices/engagement_notification_service.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
+import 'package:vero360_app/GernalServices/vero_rewards_service.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
+import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:google_maps_flutter_android/google_maps_flutter_android.dart';
+import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platform_interface.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/utils/low_ram_android.dart';
 import 'package:vero360_app/utils/session_local_cache.dart';
@@ -67,16 +74,32 @@ import 'package:vero360_app/widgets/vero_launch_splash.dart';
 
 final GlobalKey<NavigatorState> navKey = appNavKey;
 
-/// Lower raster resolution on Android so Adreno sharedmem stays under budget.
+/// Do NOT wrap the whole app in a reduced [MediaQuery.devicePixelRatio].
+/// That breaks Google Maps / other Android platform views (blank map tiles).
+/// Image-cache caps in [main] already protect low-RAM GPUs.
 Widget _androidGpuSoftened(BuildContext context, Widget? child) {
-  final content = child ?? const SizedBox.shrink();
-  if (!LowRamAndroid.isAndroid) return content;
-  final mq = MediaQuery.of(context);
-  if (mq.devicePixelRatio <= LowRamAndroid.maxDpr) return content;
-  return MediaQuery(
-    data: mq.copyWith(devicePixelRatio: LowRamAndroid.maxDpr),
-    child: content,
-  );
+  return child ?? const SizedBox.shrink();
+}
+
+/// Android Maps: prefer texture composition (default). Avoid forcing hybrid
+/// surface mode unless needed — hybrid + clipped parents blanks many OEM maps.
+Future<void> _configureAndroidGoogleMaps() async {
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+  try {
+    final mapsImplementation = GoogleMapsFlutterPlatform.instance;
+    if (mapsImplementation is! GoogleMapsFlutterAndroid) return;
+    try {
+      await mapsImplementation.initializeWithRenderer(AndroidMapRenderer.latest);
+    } catch (_) {
+      // Already initialized or unsupported.
+    }
+    // Texture Layer Hybrid Composition (false) is the current recommended default.
+    mapsImplementation.useAndroidViewSurface = false;
+  } catch (e) {
+    if (kDebugMode) {
+      debugPrint('[GoogleMaps] Android configure failed: $e');
+    }
+  }
 }
 
 bool _isPasswordResetDeepLink(Uri uri) {
@@ -186,6 +209,51 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       } catch (_) {}
     }
   }
+
+  // Chat message: show a tray notification when payload is data-only
+  // (notification+data is already displayed by the OS while killed/backgrounded).
+  final chatType = data['type']?.toString();
+  if ((chatType == 'new_message' || chatType == 'chat_message') &&
+      message.notification == null) {
+    try {
+      final plugin = local_notif.FlutterLocalNotificationsPlugin();
+      const android =
+          local_notif.AndroidInitializationSettings('@mipmap/ic_launcher');
+      await plugin.initialize(
+        const local_notif.InitializationSettings(android: android),
+      );
+      const channel = local_notif.AndroidNotificationChannel(
+        'high_importance_channel',
+        'High Importance Notifications',
+        description: 'Chat and alerts',
+        importance: local_notif.Importance.high,
+      );
+      await plugin
+          .resolvePlatformSpecificImplementation<
+              local_notif.AndroidFlutterLocalNotificationsPlugin>()
+          ?.createNotificationChannel(channel);
+
+      final title = data['title']?.toString() ?? 'New message';
+      final body = data['body']?.toString() ?? 'Sent you a message';
+      final chatId = data['chatId']?.toString() ?? '';
+      await plugin.show(
+        chatId.isNotEmpty ? chatId.hashCode.abs() : title.hashCode.abs(),
+        title,
+        body,
+        local_notif.NotificationDetails(
+          android: local_notif.AndroidNotificationDetails(
+            channel.id,
+            channel.name,
+            channelDescription: channel.description,
+            importance: local_notif.Importance.high,
+            priority: local_notif.Priority.high,
+            icon: '@mipmap/ic_launcher',
+          ),
+        ),
+        payload: jsonEncode(Map<String, dynamic>.from(data)),
+      );
+    } catch (_) {}
+  }
 }
 
 FirebaseOptions get _kFirebaseOptions => kFirebaseOptions;
@@ -266,6 +334,10 @@ Future<void> main() async {
     PaintingBinding.instance.imageCache.maximumSizeBytes = 48 << 20;
   }
 
+  // Must run before any GoogleMap widget is created.
+  await _configureAndroidGoogleMaps();
+  unawaited(GoogleMapsConfig.initialize());
+
   void launchApp() {
     // Cap decoded-image cache — Redmi 8A / 2GB Adreno dies on GPU texture OOM.
     if (LowRamAndroid.isAndroid) {
@@ -331,7 +403,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
 
   /// Brand flash — keep short so home arrives in ~1s.
   static const _minLauncher = Duration(milliseconds: 450);
-  static const _splashBg = Color(0xFFFFFBF6);
+  static const _splashBg = Color(0xFFFFF8F2);
 
   @override
   void initState() {
@@ -339,12 +411,15 @@ class _AppBootstrapState extends State<AppBootstrap> {
     _bootFuture = _boot();
 
     unawaited(GoogleMapsConfig.initialize());
+    unawaited(PayChanguConfig.initialize());
 
-    // Stagger notification init so 2GB phones finish first paint without LMK.
+    // Register FCM background handler as soon as Firebase is usable.
+    // Must happen before process can receive background messages.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(() async {
-        await Future<void>.delayed(const Duration(milliseconds: 2400));
         try {
+          await _ensureFirebaseHealthy(quiet: true);
+          // Warm push path quickly (token + channels) — don't wait 2.4s.
           await NotificationService.instance.initialize();
           NotificationService.setNavigatorKey(navKey);
         } catch (_) {}
@@ -374,6 +449,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
 
       try {
         await GoogleMapsConfig.initialize();
+        await PayChanguConfig.initialize();
       } catch (_) {}
 
       if (mounted) {
@@ -641,6 +717,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       onGuestHome: () {
         if (mounted) _currentShell = 'customer';
       },
+      onShellRole: (role) {
+        if (!mounted) return;
+        _currentShell = role == RoleHelper.merchant
+            ? 'merchant'
+            : (role == RoleHelper.driver ? 'driver' : 'customer');
+      },
     );
     // Bootstrap already mounted the right shell — skip remount flash.
     if (widget.onboardingDoneHint && widget.initialShell != null) {
@@ -669,64 +751,212 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           await OrderEscrowService.processDueAutoReleasesForSignedInUser();
         } catch (_) {}
       }());
+      // Vero Coin visits for customers + merchants + drivers.
+      unawaited(VeroRewardsService.recordAppOpen());
     });
   }
 
   Future<void> _initDeepLinks() async {
     _appLinks = AppLinks();
+
+    final prefs = await SharedPreferences.getInstance();
+    final bootAt = DateTime.now().millisecondsSinceEpoch;
+    final prevBoot = prefs.getInt(_dlBootAtKey) ?? 0;
+    // Hot restart re-runs Dart in the same Android Activity (gap is seconds).
+    final hotRestart =
+        prevBoot > 0 && (bootAt - prevBoot) < _dlHotRestartWindowMs;
+    await prefs.setInt(_dlBootAtKey, bootAt);
+
+    Uri? initial;
+    try {
+      initial = await _appLinks.getInitialLink();
+    } catch (_) {}
+
+    if (kDebugMode) {
+      debugPrint(
+        '[DeepLink] boot hotRestart=$hotRestart initial=$initial',
+      );
+    }
+
+    await _sub?.cancel();
     _sub = _appLinks.uriLinkStream.listen((uri) {
-      if (_isPasswordResetDeepLink(uri)) {
-        _openPasswordResetFromDeepLink(uri);
-      } else if (uri.scheme == 'vero360' &&
-          uri.host == 'users' &&
-          uri.path == '/me') {
-        navKey.currentState?.push(
-          MaterialPageRoute(builder: (_) => const ProfileFromLinkPage()),
-        );
-      } else if (uri.scheme == 'vero360' && uri.host == 'payment-complete') {
-        // PayChangu redirects here after payment – go to My Orders; keep root so back stays in app
-        navKey.currentState?.pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const OrdersPage()),
-          (route) => route.isFirst,
-        );
-      } else if (isAccommodationShareUri(uri)) {
-        _openAccommodationFromShare(uri);
-      } else if (isMarketplaceProductShareUri(uri) ||
-          isMarketplaceShopShareUri(uri)) {
-        unawaited(
-          MarketplaceShareNavigation.openFromUri(
-            uri,
-            CartServiceProvider.getInstance(),
-          ),
-        );
-      }
+      unawaited(_onDeepLinkStreamEvent(
+        uri: uri,
+        initial: initial,
+        hotRestart: hotRestart,
+        bootAt: bootAt,
+      ));
     }, onError: (_) {});
 
-    try {
-      final initial = await _appLinks.getInitialLink();
-      if (initial != null) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_isPasswordResetDeepLink(initial)) {
-            _openPasswordResetFromDeepLink(initial);
-          } else if (isAccommodationShareUri(initial)) {
-            _openAccommodationFromShare(initial);
-          } else if (isMarketplaceProductShareUri(initial) ||
-              isMarketplaceShopShareUri(initial)) {
-            unawaited(
-              MarketplaceShareNavigation.openFromUri(
-                initial,
-                CartServiceProvider.getInstance(),
-              ),
-            );
-          }
-        });
+    if (initial == null) return;
+
+    if (_isContentShareDeepLink(initial)) {
+      if (hotRestart || await _wasContentDeepLinkRecentlyOpened(initial)) {
+        if (kDebugMode) {
+          debugPrint(
+            '[DeepLink] skip sticky content initial: $initial',
+          );
+        }
+        return;
       }
+      await _markInitialDeepLinkHandled(initial);
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _dispatchDeepLink(initial!);
+    });
+  }
+
+  Future<void> _onDeepLinkStreamEvent({
+    required Uri uri,
+    required Uri? initial,
+    required bool hotRestart,
+    required int bootAt,
+  }) async {
+    if (_isContentShareDeepLink(uri)) {
+      if (hotRestart) {
+        if (kDebugMode) {
+          debugPrint('[DeepLink] skip content on hot restart: $uri');
+        }
+        return;
+      }
+
+      final ageMs = DateTime.now().millisecondsSinceEpoch - bootAt;
+      // app_links re-sends getInitialLink into the stream on listen — ignore that
+      // echo; getInitialLink handler already opened it on a real cold start.
+      if (ageMs < 8000 &&
+          initial != null &&
+          _sameContentDeepLink(uri, initial)) {
+        if (kDebugMode) {
+          debugPrint('[DeepLink] skip stream boot echo: $uri');
+        }
+        return;
+      }
+    }
+
+    await _markInitialDeepLinkHandled(uri);
+    _dispatchDeepLink(uri);
+  }
+
+  void _dispatchDeepLink(Uri uri) {
+    if (_isPasswordResetDeepLink(uri)) {
+      _openPasswordResetFromDeepLink(uri);
+      return;
+    }
+    if (uri.scheme == 'vero360' &&
+        uri.host == 'users' &&
+        uri.path == '/me') {
+      navKey.currentState?.push(
+        MaterialPageRoute(builder: (_) => const ProfileFromLinkPage()),
+      );
+      return;
+    }
+    if (uri.scheme == 'vero360' && uri.host == 'payment-complete') {
+      navKey.currentState?.pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const OrdersPage()),
+        (route) => route.isFirst,
+      );
+      return;
+    }
+    if (isAccommodationShareUri(uri)) {
+      _openAccommodationFromShare(uri);
+      return;
+    }
+    if (isFoodShareUri(uri)) {
+      unawaited(FoodShareNavigation.openFromUri(uri));
+      return;
+    }
+    if (isMarketplaceProductShareUri(uri) || isMarketplaceShopShareUri(uri)) {
+      unawaited(
+        MarketplaceShareNavigation.openFromUri(
+          uri,
+          CartServiceProvider.getInstance(),
+        ),
+      );
+    }
+  }
+
+  static const _dlHandledUriKey = 'deeplink_initial_handled_uri';
+  static const _dlHandledAtKey = 'deeplink_initial_handled_at';
+  static const _dlBootAtKey = 'deeplink_init_boot_at';
+  static const _dlHotRestartWindowMs = 2 * 60 * 1000;
+  static const _dlStickySuppressMs = 30 * 60 * 1000;
+
+  bool _isContentShareDeepLink(Uri uri) =>
+      isAccommodationShareUri(uri) ||
+      isFoodShareUri(uri) ||
+      isMarketplaceProductShareUri(uri) ||
+      isMarketplaceShopShareUri(uri);
+
+  bool _sameContentDeepLink(Uri a, Uri b) {
+    final shopA = marketplaceShopIdFromShareUri(a);
+    final shopB = marketplaceShopIdFromShareUri(b);
+    if (shopA != null && shopB != null) return shopA == shopB;
+    final prodA = marketplaceProductIdFromShareUri(a);
+    final prodB = marketplaceProductIdFromShareUri(b);
+    if (prodA != null && prodB != null) return prodA == prodB;
+    return a.scheme == b.scheme &&
+        a.host.toLowerCase() == b.host.toLowerCase() &&
+        a.path == b.path;
+  }
+
+  Future<bool> _wasContentDeepLinkRecentlyOpened(Uri uri) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final lastUri = prefs.getString(_dlHandledUriKey);
+      if (lastUri == null || lastUri.isEmpty) return false;
+      if (!_sameContentDeepLink(Uri.parse(lastUri), uri)) return false;
+      final lastAt = prefs.getInt(_dlHandledAtKey) ?? 0;
+      final age = DateTime.now().millisecondsSinceEpoch - lastAt;
+      return age >= 0 && age < _dlStickySuppressMs;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _markInitialDeepLinkHandled(Uri uri) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_dlHandledUriKey, uri.toString());
+      await prefs.setInt(
+        _dlHandledAtKey,
+        DateTime.now().millisecondsSinceEpoch,
+      );
     } catch (_) {}
   }
 
   void _openAccommodationFromShare(Uri uri) {
-    final id = accommodationIdFromShareUri(uri);
+    unawaited(_openAccommodationFromShareAsync(uri));
+  }
+
+  Future<void> _openAccommodationFromShareAsync(Uri uri) async {
+    var id = accommodationIdFromShareUri(uri);
+    final ref = accommodationRefFromShareUri(uri);
     final q = accommodationSearchQueryFromShareUri(uri);
+
+    // Facebook posts often use Firestore room doc ids (e.g. uid_123).
+    if ((id == null || id <= 0) && ref != null && ref.isNotEmpty) {
+      try {
+        final db = FirebaseFirestore.instance;
+        DocumentSnapshot<Map<String, dynamic>>? doc;
+        final room = await db.collection('accommodation_rooms').doc(ref).get();
+        if (room.exists) {
+          doc = room;
+        } else {
+          final acc = await db.collection('accommodations').doc(ref).get();
+          if (acc.exists) doc = acc;
+        }
+        final data = doc?.data();
+        if (data != null) {
+          id = int.tryParse(
+                '${data['accommodationId'] ?? data['sqlId'] ?? data['id'] ?? ''}',
+              ) ??
+              (ref.contains('_') ? int.tryParse(ref.split('_').last) : null);
+        }
+      } catch (_) {}
+    }
+
+    if (!mounted) return;
     navKey.currentState?.push(
       MaterialPageRoute(
         builder: (_) => AccommodationMainPage(

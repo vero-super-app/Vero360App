@@ -12,7 +12,9 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
+import 'package:vero360_app/GernalServices/vero_rewards_service.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
+import 'package:vero360_app/widgets/vero_spin_reward_prompt.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
@@ -90,12 +92,16 @@ class _RideCompletionScreenState extends ConsumerState<RideCompletionScreen>
           .read(rideShareHttpServiceProvider)
           .selectCashPayment(widget.ride.id);
       if (!mounted) return;
+      unawaited(
+        VeroSpinRewardPrompt.grantAndPrompt(
+          source: VeroRewardsService.sourceRide,
+          reference: 'ride_${widget.ride.id}',
+        ),
+      );
       onDone();
       scaffold.showSnackBar(
         const SnackBar(
-          content: Text(
-            'Pay the driver in cash. You can book another ride now.',
-          ),
+          content: Text('Pay the driver in cash. You can book another ride now.'),
           backgroundColor: primaryColor,
         ),
       );
@@ -311,6 +317,12 @@ class _RideCompletionScreenState extends ConsumerState<RideCompletionScreen>
     }
     onDone();
     if (!mounted) return;
+    unawaited(
+      VeroSpinRewardPrompt.grantAndPrompt(
+        source: VeroRewardsService.sourceRide,
+        reference: 'ride_${ride.id}',
+      ),
+    );
     scaffold.showSnackBar(
       const SnackBar(
         content: Text('Payment successful!'),

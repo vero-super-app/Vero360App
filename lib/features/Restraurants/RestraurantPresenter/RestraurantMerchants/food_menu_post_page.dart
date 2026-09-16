@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_categories.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 /// Add or edit a dish in the merchant's Firestore `food_menu_items`.
@@ -46,6 +47,8 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
   String? _category;
   bool _isAvailable = true;
   bool _submitting = false;
+  /// Share to Vero360 Facebook Page after create (default on).
+  bool _postToFacebook = true;
 
   final _variantRows = <_NamedPriceRow>[];
   final _addOnRows = <_NamedPriceRow>[];
@@ -305,12 +308,15 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
         'merchantId': uid,
         'name': _name.text.trim(),
         'price': double.tryParse(_price.text.trim()) ?? 0,
-        'description': _desc.text.trim().isEmpty ? null : _desc.text.trim(),
+        'description': _desc.text.trim().isEmpty
+            ? null
+            : DescriptionContactMask.mask(_desc.text.trim()),
         'imageUrl': cover,
         'gallery': gallery,
         'galleryUrls': gallery,
         'category': _category,
         'isAvailable': _isAvailable,
+        'isActive': true,
         'quantity': quantity,
         if (businessName.isNotEmpty) 'businessName': businessName,
         if (restaurantId != null && restaurantId.isNotEmpty)
@@ -327,6 +333,7 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
       } else {
         await _db.collection('food_menu_items').add({
           ...payload,
+          'postToFacebook': _postToFacebook,
           'createdAt': FieldValue.serverTimestamp(),
         });
       }
@@ -337,6 +344,10 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
         _isEdit ? 'Menu item updated.' : 'Dish added to your menu.',
         isSuccess: true,
         errorMessage: 'Saved',
+        showFacebook: !_isEdit && _postToFacebook,
+        facebookMessage: !_isEdit && _postToFacebook
+            ? 'We’ll also share this dish on the Vero360 Facebook Page.'
+            : null,
       );
       Navigator.of(context).pop(true);
     } catch (e) {
@@ -510,32 +521,75 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
               ),
             ],
           ),
-          child: FilledButton.icon(
-            style: FilledButton.styleFrom(
-              backgroundColor: _brandOrange,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 15),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-            ),
-            onPressed: _submitting ? null : _submit,
-            icon: _submitting
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (!_isEdit) ...[
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  value: _postToFacebook,
+                  activeThumbColor: _brandOrange,
+                  secondary: const FacebookLogoMark(size: 22),
+                  title: const Text(
+                    'Also post on Facebook',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                  ),
+                  subtitle: Text(
+                    'Share this dish on the Vero360 Facebook Page.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade700,
                     ),
-                  )
-                : Icon(_isEdit ? Icons.save_rounded : Icons.check_rounded),
-            label: Text(
-              _submitting
-                  ? 'Saving…'
-                  : (_isEdit ? 'Save changes' : 'Save to menu'),
-              style: const TextStyle(fontWeight: FontWeight.w900),
-            ),
+                  ),
+                  onChanged: _submitting
+                      ? null
+                      : (v) => setState(() => _postToFacebook = v),
+                ),
+                if (_postToFacebook) ...[
+                  const SizedBox(height: 8),
+                  const FacebookShareHint(
+                    message:
+                        'After you save, we can also share this dish on the Vero360 Facebook Page to help grow your customers.',
+                  ),
+                ],
+                const SizedBox(height: 10),
+              ],
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _brandOrange,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  onPressed: _submitting ? null : _submit,
+                  icon: _submitting
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Icon(_isEdit ? Icons.save_rounded : Icons.check_rounded),
+                  label: Text(
+                    _submitting
+                        ? 'Saving…'
+                        : (_isEdit
+                            ? 'Save changes'
+                            : (_postToFacebook
+                                ? 'Save to menu + Facebook'
+                                : 'Save to menu')),
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),

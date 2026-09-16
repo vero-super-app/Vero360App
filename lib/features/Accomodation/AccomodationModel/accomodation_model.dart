@@ -184,6 +184,12 @@ class Accommodation {
 
   List<String> get amenities => _amenities ?? const [];
 
+  /// Paid Stay feed boost expiry (from Firestore mirror).
+  final DateTime? promotedUntil;
+
+  bool get isPromotedNow =>
+      promotedUntil != null && promotedUntil!.isAfter(DateTime.now());
+
   Accommodation({
     required this.id,
     required this.name,
@@ -199,6 +205,7 @@ class Accommodation {
     this.imageBytes,
     this.gallery = const [],
     List<String>? amenities,
+    this.promotedUntil,
   })  : _pricePeriod = pricePeriod,
         _amenities = amenities;
 
@@ -219,6 +226,27 @@ class Accommodation {
       imageBytes: imageBytes,
       gallery: gallery,
       amenities: _amenities,
+      promotedUntil: promotedUntil,
+    );
+  }
+
+  Accommodation withPromotedUntil(DateTime? until) {
+    return Accommodation(
+      id: id,
+      name: name,
+      location: location,
+      description: description,
+      price: price,
+      pricePeriod: pricePeriod,
+      accommodationType: accommodationType,
+      roomsAvailable: roomsAvailable,
+      owner: owner,
+      hostMerchantUid: hostMerchantUid,
+      image: image,
+      imageBytes: imageBytes,
+      gallery: gallery,
+      amenities: _amenities,
+      promotedUntil: until,
     );
   }
 
@@ -238,6 +266,7 @@ class Accommodation {
       imageBytes: imageBytes,
       gallery: gallery,
       amenities: _amenities,
+      promotedUntil: promotedUntil,
     );
   }
 
@@ -257,6 +286,7 @@ class Accommodation {
       imageBytes: imageBytes,
       gallery: gallery,
       amenities: next,
+      promotedUntil: promotedUntil,
     );
   }
 

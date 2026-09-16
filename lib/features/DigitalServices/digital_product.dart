@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:vero360_app/features/DigitalServices/netflix_plans.dart';
 
-/// Fixed USD → MWK rate for gift-card style products (amount picker).
+/// Fallback USD → MWK rate when Firestore config is unavailable.
 const double kUsdToMwkRate = 4700;
+
+/// Live rate (updated by [DigitalServicesCatalog] from admin panel).
+double digitalServicesUsdToMwkRate = kUsdToMwkRate;
 
 final NumberFormat _usdFmt =
     NumberFormat.currency(locale: 'en_US', symbol: '\$', decimalDigits: 0);
@@ -11,7 +15,7 @@ final NumberFormat _mwkFmt =
 
 String formatUsd(num usd) => _usdFmt.format(usd);
 String formatMwk(num mwk) => _mwkFmt.format(mwk.round());
-double usdToMwk(num usd) => usd * kUsdToMwkRate;
+double usdToMwk(num usd) => usd * digitalServicesUsdToMwkRate;
 
 class DigitalProduct {
   final String key;
@@ -23,12 +27,27 @@ class DigitalProduct {
   final IconData? icon;
   final String? logoAsset;
 
+  /// Remote picture URL (custom crypto / gift cards from admin).
+  final String? imageUrl;
+
   /// Selectable face values in USD (Giftsy-style). Ignored when [fixedMwkPrice] is set.
   final List<double> usdAmounts;
 
   /// Fixed MWK price for subscription codes (Spotify / Apple Music / Netflix / ChatGPT).
   /// When set: skip amount picker and charge this MWK amount via PayChangu.
   final double? fixedMwkPrice;
+
+  /// Custom MWK per unit (USDT / CNY / BNB). Overrides global USD rate when set.
+  final double? mwkPerUnit;
+
+  /// Unit label for amount picker (e.g. USDT, RMB, CNY). Empty → treat as USD.
+  final String? unitLabel;
+
+  /// Max custom ("other") amount in [unitLabel] units (or USD). Set by admin.
+  final double? maxOtherAmount;
+
+  /// When false, product is hidden (admin disabled).
+  final bool active;
 
   const DigitalProduct({
     required this.key,
@@ -39,23 +58,113 @@ class DigitalProduct {
     required this.brandTag,
     this.usdAmounts = const [],
     this.fixedMwkPrice,
+    this.mwkPerUnit,
+    this.unitLabel,
+    this.maxOtherAmount,
     this.icon,
     this.logoAsset,
+    this.imageUrl,
+    this.active = true,
   });
 
-  bool get usesAmountPicker => fixedMwkPrice == null;
+  bool get usesAmountPicker => fixedMwkPrice == null && key != 'netflix';
+
+  /// Homepage Netflix tile — opens plan picker instead of checkout.
+  bool get isNetflixHub => key == 'netflix';
+
+  bool get isNetflixPlan => key.startsWith('netflix_');
 
   double get startingUsd =>
       usdAmounts.isEmpty ? 0 : usdAmounts.reduce((a, b) => a < b ? a : b);
 
+  /// Currency code shown on the custom-amount field (USDT / RMB / USD…).
+  String get amountUnitLabel {
+    final unit = (unitLabel ?? '').trim();
+    if (unit.isNotEmpty) return unit.toUpperCase();
+    return 'USD';
+  }
+
+  /// Admin max for typed amounts. If unset, allow a high default (not a hard $500).
+  double get effectiveMaxOtherAmount {
+    final admin = maxOtherAmount;
+    if (admin != null && admin > 0) return admin;
+    if (usdAmounts.isNotEmpty) {
+      final largest = usdAmounts.reduce((a, b) => a > b ? a : b);
+      return largest > 1000 ? largest : 10000;
+    }
+    return 10000;
+  }
+
+  double get effectiveMinOtherAmount => 1;
+
+  double get effectiveMwkPerUnit =>
+      (mwkPerUnit != null && mwkPerUnit! > 0)
+          ? mwkPerUnit!
+          : digitalServicesUsdToMwkRate;
+
+  double amountToMwk(num amount) => amount * effectiveMwkPerUnit;
+
+  String formatAmount(num amount) {
+    final unit = amountUnitLabel;
+    if (unit != 'USD') {
+      final n = amount == amount.roundToDouble()
+          ? amount.toStringAsFixed(0)
+          : amount.toStringAsFixed(2);
+      return '$n $unit';
+    }
+    return formatUsd(amount);
+  }
+
   String get priceLabel {
-    if (fixedMwkPrice != null) return formatMwk(fixedMwkPrice!);
-    if (usdAmounts.isEmpty) return '';
-    return 'From ${formatUsd(startingUsd)}';
+    if (isNetflixHub) return 'Choose a plan';
+    if (fixedMwkPrice != null && fixedMwkPrice! > 0) {
+      return formatMwk(fixedMwkPrice!);
+    }
+    if (usdAmounts.isEmpty) return '—';
+    return 'From ${formatAmount(startingUsd)}';
+  }
+
+  DigitalProduct copyWith({
+    String? name,
+    String? subtitle,
+    String? brandTag,
+    String? category,
+    Color? accent,
+    List<double>? usdAmounts,
+    double? fixedMwkPrice,
+    bool clearFixedMwkPrice = false,
+    double? mwkPerUnit,
+    bool clearMwkPerUnit = false,
+    String? unitLabel,
+    double? maxOtherAmount,
+    bool clearMaxOtherAmount = false,
+    String? imageUrl,
+    bool? active,
+  }) {
+    return DigitalProduct(
+      key: key,
+      name: name ?? this.name,
+      subtitle: subtitle ?? this.subtitle,
+      category: category ?? this.category,
+      accent: accent ?? this.accent,
+      brandTag: brandTag ?? this.brandTag,
+      usdAmounts: usdAmounts ?? this.usdAmounts,
+      fixedMwkPrice:
+          clearFixedMwkPrice ? null : (fixedMwkPrice ?? this.fixedMwkPrice),
+      mwkPerUnit: clearMwkPerUnit ? null : (mwkPerUnit ?? this.mwkPerUnit),
+      unitLabel: unitLabel ?? this.unitLabel,
+      maxOtherAmount: clearMaxOtherAmount
+          ? null
+          : (maxOtherAmount ?? this.maxOtherAmount),
+      icon: icon,
+      logoAsset: logoAsset,
+      imageUrl: imageUrl ?? this.imageUrl,
+      active: active ?? this.active,
+    );
   }
 }
 
-/// Homepage Digital Services grid — fixed MWK subscription codes (original logic).
+/// Homepage Digital Services grid — metadata only; MWK prices come from admin.
 const List<DigitalProduct> kDigitalProducts = [
   DigitalProduct(
     key: 'spotify',
@@ -66,7 +175,6 @@ const List<DigitalProduct> kDigitalProducts = [
     brandTag: 'Spotify',
     logoAsset: 'assets/brands/spotify.jpg',
     icon: Icons.music_note_rounded,
-    fixedMwkPrice: 8000,
   ),
   DigitalProduct(
     key: 'apple_music',
@@ -77,18 +185,17 @@ const List<DigitalProduct> kDigitalProducts = [
     brandTag: 'Music',
     logoAsset: 'assets/brands/apple_music.png',
     icon: Icons.music_note_rounded,
-    fixedMwkPrice: 8000,
   ),
   DigitalProduct(
     key: 'netflix',
     name: 'Netflix',
-    subtitle: '1-month subscription',
+    subtitle: 'Choose a plan',
     category: 'streaming',
     accent: Color(0xFFE50914),
     brandTag: 'Netflix',
     logoAsset: 'assets/brands/netflix.png',
     icon: Icons.movie_creation_outlined,
-    fixedMwkPrice: 15000,
+    // Hub only — prices live on netflix_* plan products (admin).
   ),
   DigitalProduct(
     key: 'chatgpt_plus',
@@ -99,7 +206,6 @@ const List<DigitalProduct> kDigitalProducts = [
     brandTag: 'GPT',
     logoAsset: 'assets/brands/chatgpt.png',
     icon: Icons.chat_bubble_outline_rounded,
-    fixedMwkPrice: 35000,
   ),
 ];
 
@@ -206,6 +312,7 @@ const List<DigitalProduct> kAllDigitalProducts = [
     usdAmounts: [10, 25, 50, 100],
   ),
   ...kDigitalProducts,
+  ...kNetflixPlanProducts,
 ];
 
 class DigitalCategory {
@@ -219,6 +326,7 @@ class DigitalCategory {
 const List<DigitalCategory> kDigitalCategories = [
   DigitalCategory('all', 'All', Icons.apps_rounded),
   DigitalCategory('gift_cards', 'Gift Cards', Icons.card_giftcard_rounded),
+  DigitalCategory('crypto', 'Crypto / FX', Icons.currency_exchange_rounded),
   DigitalCategory('gaming', 'Gaming', Icons.sports_esports_rounded),
   DigitalCategory('streaming', 'Streaming', Icons.live_tv_rounded),
 ];

@@ -43,9 +43,10 @@ import 'package:vero360_app/settings/Settings.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/ride_history_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/driver_profile_hub_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/become_driver_page.dart';
+import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
-import 'package:vero360_app/GernalServices/role_session_service.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/driver_online_session.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -58,8 +59,9 @@ class ProfilePage extends StatefulWidget {
 }
 
 class _ProfilePageState extends State<ProfilePage> {
-  // --- Brand colors (Vero360 main: orange) ---
+  // --- Brand colors (Vero360 main: orange + navy banner like merchant) ---
   static const Color _veroOrange = Color(0xFFFF8A00);
+  static const Color _brandNavy = Color(0xFF16284C);
   final Color _cardBg = Colors.white;
   final Color _chipGrey = const Color(0xFFF4F5F7);
 
@@ -132,6 +134,47 @@ class _ProfilePageState extends State<ProfilePage> {
 
   void _openDriverCenter() {
     _openBottomSheet(const DriverProfileHubScreen());
+  }
+
+  Future<void> _openPostStory() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      ToastHelper.showCustomToast(
+        context,
+        'Please sign in to post a story',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    final imageUrl = profileUrl.trim().isNotEmpty ? profileUrl.trim() : null;
+    final prefs = await SharedPreferences.getInstance();
+    final role = RoleHelper.normalizeAccountRole(
+          prefs.getString('user_role') ?? prefs.getString('role'),
+        ) ??
+        RoleHelper.customer;
+    final serviceType = switch (role) {
+      RoleHelper.driver => 'ride',
+      RoleHelper.merchant => 'marketplace',
+      _ => 'customer',
+    };
+    final fallbackName = switch (role) {
+      RoleHelper.driver => 'Ride Driver',
+      RoleHelper.merchant => 'Merchant',
+      _ => 'Vero user',
+    };
+    if (!mounted) return;
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => PostStoryPage(
+          merchantId: uid,
+          merchantName:
+              name.trim().isNotEmpty ? name.trim() : fallbackName,
+          merchantImageUrl: imageUrl,
+          serviceType: serviceType,
+        ),
+      ),
+    );
   }
 
   Future<void> _loadUserData() async {
@@ -215,7 +258,7 @@ class _ProfilePageState extends State<ProfilePage> {
       );
       return;
     }
-    if (_switchingDriverMode) return;
+    if (_switchingDriverMode || _isMerchant) return;
 
     if (!enableDriver) {
       final confirmed = await showDialog<bool>(
@@ -242,7 +285,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
       setState(() => _switchingDriverMode = true);
       try {
-        await RoleSessionService.setAccountRole(RoleHelper.customer);
+        await applySessionRole(RoleHelper.customer);
         if (!mounted) return;
         setState(() {
           _isDriver = false;
@@ -283,8 +326,12 @@ class _ProfilePageState extends State<ProfilePage> {
         return;
       }
 
-      await RoleSessionService.setAccountRole(RoleHelper.driver);
+      final switched = await applySessionRole(RoleHelper.driver);
       if (!mounted) return;
+      if (!switched) {
+        setState(() => _switchingDriverMode = false);
+        return;
+      }
       setState(() {
         _isDriver = true;
         _switchingDriverMode = false;
@@ -593,7 +640,9 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _fetchCurrentUser() async {
-    if (!await AuthHandler.isAuthenticated()) {
+    final fbUser = FirebaseAuth.instance.currentUser;
+    final isAuth = fbUser != null || await AuthHandler.isAuthenticated();
+    if (!isAuth) {
       _resetGuestProfile();
       return;
     }
@@ -644,20 +693,33 @@ class _ProfilePageState extends State<ProfilePage> {
                 ? Map<String, dynamic>.from(decoded['data'])
                 : (decoded is Map ? Map<String, dynamic>.from(decoded) : {});
         await _persistUserToPrefs(payload);
-      } else if (response.statusCode == 401 || response.statusCode == 403) {
-        // Ignore stale responses after logout or anonymous sessions.
-        if (gen != _profileFetchGen || !mounted) return;
-        if (!await AuthHandler.isAuthenticated()) return;
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Session expired. Please log in.')),
-        );
       } else {
-        debugPrint(
-            'Failed to fetch user: ${response.statusCode} ${response.body}');
+        // If HTTP fails or returns 401/403, fallback to Firestore if logged into Firebase
+        if (fbUser != null) {
+          try {
+            final doc = await FirebaseFirestore.instance
+                .collection('users')
+                .doc(fbUser.uid)
+                .get();
+            if (doc.exists && doc.data() != null) {
+              await _persistUserToPrefs(doc.data()!);
+            }
+          } catch (_) {}
+        }
       }
     } catch (e) {
       debugPrint('Error fetching user: $e');
+      if (fbUser != null) {
+        try {
+          final doc = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(fbUser.uid)
+              .get();
+          if (doc.exists && doc.data() != null) {
+            await _persistUserToPrefs(doc.data()!);
+          }
+        } catch (_) {}
+      }
     } finally {
       if (mounted && gen == _profileFetchGen) {
         setState(() => _loading = false);
@@ -1343,116 +1405,157 @@ class _ProfilePageState extends State<ProfilePage> {
         }
       },
       onLongPress: _showPhotoSheet,
-      child: CircleAvatar(
-        radius: 26,
-        backgroundColor: Colors.black12,
-        child: ClipOval(
-          child: _profileAvatarImage(size: 52),
-        ),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(2.5),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white.withValues(alpha: 0.35), width: 2),
+            ),
+            child: CircleAvatar(
+              radius: 28,
+              backgroundColor: Colors.white.withValues(alpha: 0.15),
+              child: ClipOval(
+                child: _profileAvatarImage(size: 56),
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: -2,
+            right: -2,
+            child: GestureDetector(
+              onTap: _showPhotoSheet,
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: _veroOrange,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: Colors.white, width: 2),
+                ),
+                child: const Icon(Icons.edit, size: 14, color: Colors.white),
+              ),
+            ),
+          ),
+        ],
       ),
     );
 
-    return Stack(
-      children: [
-        // Rounded navy header background
-        Container(
-          height: 160, // a bit taller to avoid bottom overflow on small screens
-          decoration: BoxDecoration(
-            color: _veroOrange,
-            borderRadius: const BorderRadius.vertical(
-              bottom: Radius.circular(20),
-            ),
+    // Navy banner card — matches merchant dashboard profile header.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22),
+          gradient: LinearGradient(
+            colors: [_brandNavy, _brandNavy.withValues(alpha: 0.86)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.08),
+              blurRadius: 16,
+              offset: const Offset(0, 10),
+            ),
+          ],
         ),
-        // Floating white profile card
-        Positioned.fill(
-          top: 16,
-          child: Align(
-            alignment: Alignment.topCenter,
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 16),
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: _cardBg,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.05),
-                    blurRadius: 12,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  avatar,
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              avatar,
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 18,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      email,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.85),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _displayPhone,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.85),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        Text(name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontWeight: FontWeight.w600, fontSize: 16)),
-                        const SizedBox(height: 2),
-                        Text(email,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                color: Colors.black54, fontSize: 13)),
-                        const SizedBox(height: 2),
-                        Text(_displayPhone,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                color: Colors.black54, fontSize: 13)),
-                        const SizedBox(height: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE7F6EC),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.circle,
+                                  size: 8, color: Colors.green.shade700),
+                              const SizedBox(width: 6),
+                              Text(
+                                'Active',
+                                style: TextStyle(
+                                  color: Colors.green.shade700,
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                         GestureDetector(
                           onTap: _openEditProfile,
                           child: Text(
                             'Edit Profile',
                             style: TextStyle(
-                              color: _veroOrange,
+                              color: Colors.white.withValues(alpha: 0.95),
                               fontSize: 13,
-                              fontWeight: FontWeight.w600,
+                              fontWeight: FontWeight.w700,
+                              decoration: TextDecoration.underline,
+                              decorationColor:
+                                  Colors.white.withValues(alpha: 0.7),
                             ),
                           ),
                         ),
                       ],
                     ),
-                  ),
-                  PopupMenuButton<String>(
-                    icon: const Icon(Icons.more_horiz),
-                    onSelected: (_) {},
-                    itemBuilder: (context) => [
-                      PopupMenuItem<String>(
-                        value: 'active',
-                        enabled: false,
-                        child: Row(
-                          children: [
-                            const Icon(Icons.circle,
-                                size: 10, color: Colors.green),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Active',
-                              style: TextStyle(
-                                color: Colors.green.shade700,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
+            ],
           ),
         ),
-      ],
+      ),
     );
   }
 
@@ -1678,6 +1781,11 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Widget _otherDetailsGrid() {
     final items = <_DetailItem>[
+      _DetailItem(
+        'Post story',
+        Icons.auto_stories_outlined,
+        _openPostStory,
+      ),
       if (_isDriver) ...[
         _DetailItem(
           'My Orders',
@@ -1781,7 +1889,7 @@ class _ProfilePageState extends State<ProfilePage> {
         child: Column(
           children: [
             _topProfileCard(),
-            const SizedBox(height: 52), // space under the floating card
+            const SizedBox(height: 12),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 0),
               child: _driverModeSwitchCard(),

@@ -92,22 +92,88 @@ class _PostStoryPageState extends State<PostStoryPage> {
 
   Future<void> _addSlide(ImageSource source) async {
     if (_posting) return;
-    final Uint8List? bytes = await _pickImage(source);
-    if (bytes == null || !mounted) return;
-    setState(() {
-      _draftSlides.add(_DraftSlide(bytes: bytes));
-    });
+    try {
+      if (source == ImageSource.gallery) {
+        final files = await _picker.pickMultiImage(
+          maxWidth: 1600,
+          imageQuality: 85,
+        );
+        if (files.isEmpty || !mounted) return;
+        var added = 0;
+        var failed = 0;
+        for (final file in files) {
+          final bytes = await _bytesFromPickedFile(file);
+          if (bytes == null) {
+            failed++;
+            continue;
+          }
+          _draftSlides.add(_DraftSlide(bytes: bytes));
+          added++;
+        }
+        if (!mounted) return;
+        setState(() {});
+        if (added > 0 && failed == 0) return;
+        if (added > 0 && failed > 0) {
+          ToastHelper.showCustomToast(
+            context,
+            'Added $added photo${added == 1 ? '' : 's'}; $failed could not be used',
+            isSuccess: true,
+            errorMessage: '',
+          );
+          return;
+        }
+        ToastHelper.showCustomToast(
+          context,
+          'Could not load those photos. Try another photo or take a new one.',
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return;
+      }
+
+      final XFile? file = await _picker.pickImage(
+        source: source,
+        maxWidth: 1600,
+        imageQuality: 85,
+      );
+      if (file == null || !mounted) return; // user cancelled
+      final bytes = await _bytesFromPickedFile(file);
+      if (bytes == null || !mounted) {
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            'Could not load that photo. Try another one.',
+            isSuccess: false,
+            errorMessage: '',
+          );
+        }
+        return;
+      }
+      setState(() {
+        _draftSlides.add(_DraftSlide(bytes: bytes));
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Could not add photo',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
+    }
   }
 
-  Future<Uint8List?> _pickImage(ImageSource source) async {
-    final XFile? file = await _picker.pickImage(
-      source: source,
-      maxWidth: 1024,
-      imageQuality: 80,
-    );
-    if (file == null) return null;
-    final bytes = await file.readAsBytes();
-    return bytes.isEmpty ? null : Uint8List.fromList(bytes);
+  Future<Uint8List?> _bytesFromPickedFile(XFile file) async {
+    try {
+      final raw = await file.readAsBytes();
+      if (raw.isEmpty) return null;
+      final prepared = await StoryService.prepareStoryImageBytes(
+        Uint8List.fromList(raw),
+      );
+      return prepared.isEmpty ? null : prepared;
+    } catch (_) {
+      return null;
+    }
   }
 
   void _removeDraftSlide(int index) {
@@ -128,7 +194,7 @@ class _PostStoryPageState extends State<PostStoryPage> {
           caption: cap.isEmpty ? null : cap,
         );
       }).toList();
-      await _storyService.postStoryBatch(
+      final result = await _storyService.postStoryBatch(
         merchantId: widget.merchantId,
         merchantName: widget.merchantName,
         merchantImageUrl: widget.merchantImageUrl,
@@ -136,17 +202,60 @@ class _PostStoryPageState extends State<PostStoryPage> {
         slides: slides,
       );
       if (!mounted) return;
-      for (final s in _draftSlides) {
-        s.dispose();
+
+      if (result.allSucceeded) {
+        for (final s in _draftSlides) {
+          s.dispose();
+        }
+        _draftSlides.clear();
+        ToastHelper.showCustomToast(
+          context,
+          result.posted == 1
+              ? 'Status posted! Visible for 24 hours.'
+              : '${result.posted} status photos posted! Visible for 24 hours.',
+          isSuccess: true,
+          errorMessage: '',
+        );
+        setState(() {
+          _loadStoriesAndCounts();
+        });
+        return;
       }
-      _draftSlides.clear();
+
+      if (result.partial) {
+        // Keep only slides that failed so the user can retry them.
+        final keep = <_DraftSlide>[];
+        for (var i = 0; i < _draftSlides.length; i++) {
+          if (result.failedIndexes.contains(i)) {
+            keep.add(_draftSlides[i]);
+          } else {
+            _draftSlides[i].dispose();
+          }
+        }
+        _draftSlides
+          ..clear()
+          ..addAll(keep);
+        ToastHelper.showCustomToast(
+          context,
+          'Posted ${result.posted}, ${result.failed} failed — retry remaining',
+          isSuccess: true,
+          errorMessage: result.errors.isEmpty ? '' : result.errors.first,
+        );
+        setState(() {
+          _loadStoriesAndCounts();
+        });
+        return;
+      }
+
+      final detail = result.errors.isNotEmpty
+          ? result.errors.first
+          : 'Please try again with a smaller photo.';
       ToastHelper.showCustomToast(
         context,
-        '${slides.length} story slide(s) posted! Visible for 24 hours.',
-        isSuccess: true,
-        errorMessage: '',
+        'Failed to post story',
+        isSuccess: false,
+        errorMessage: detail,
       );
-      setState(() { _loadStoriesAndCounts(); });
     } catch (e) {
       if (!mounted) return;
       ToastHelper.showCustomToast(
@@ -459,11 +568,16 @@ class _PostStoryPageState extends State<PostStoryPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Your current stories',
+                  'Your current status',
                   style: TextStyle(
                     fontSize: 14,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
                   ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Tap a photo to see who viewed it',
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
                 const SizedBox(height: 8),
                 _buildStoriesList(items, counts),
@@ -578,7 +692,7 @@ class _PostStoryPageState extends State<PostStoryPage> {
                         const SizedBox(width: 12),
                         const Expanded(
                           child: Text(
-                            'Choose from gallery',
+                            'Choose photos',
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w900,
@@ -699,101 +813,201 @@ class _PostStoryPageState extends State<PostStoryPage> {
             },
           ),
         ),
-        const SizedBox(height: 12),
-        ElevatedButton(
-          onPressed: _posting ? null : _postAllSlides,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFFFF8A00),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-          child: _posting
-              ? const SizedBox(
-                  height: 20,
-                  width: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                )
-              : Text('Post all (${_draftSlides.length} slide${_draftSlides.length == 1 ? '' : 's'})'),
+        const SizedBox(height: 8),
+        Text(
+          '${_draftSlides.length} photo${_draftSlides.length == 1 ? '' : 's'} ready · visible 24h after posting',
+          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
         ),
         const SizedBox(height: 16),
       ],
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Post story'),
-        backgroundColor: const Color(0xFFFF8A00),
-        leading: IconButton(
-          icon: const Icon(Icons.close),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
+  Widget _buildBottomActions() {
+    final hasDrafts = _draftSlides.isNotEmpty;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 16,
+            offset: const Offset(0, -4),
+          ),
+        ],
       ),
-      body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const SizedBox(height: 24),
-                    const Icon(Icons.auto_stories_rounded, size: 64, color: Color(0xFFFF8A00)),
-                    const SizedBox(height: 16),
-                    Text(
-                      widget.merchantName,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF101010),
+      child: SafeArea(
+        top: false,
+        child: hasDrafts
+            ? Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _posting ? null : _showAddMediaPicker,
+                      icon: const Icon(Icons.add_photo_alternate_outlined, size: 20),
+                      label: const Text('Add photo'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF101010),
+                        side: BorderSide(color: Colors.grey.shade300),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Your story will be visible for 24 hours',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey[600],
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: ElevatedButton(
+                      onPressed: _posting ? null : _postAllSlides,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFFF8A00),
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
                       ),
+                      child: _posting
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.4,
+                                color: Colors.white,
+                              ),
+                            )
+                          : Text(
+                              'Post now${_draftSlides.length > 1 ? ' (${_draftSlides.length})' : ''}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 15,
+                              ),
+                            ),
                     ),
-                    const SizedBox(height: 24),
-                    _buildComposerSection(),
-                    _buildCurrentStoriesSection(),
-                  ],
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-              child: ElevatedButton.icon(
-                onPressed: _posting ? null : _showAddMediaPicker,
-                icon: _posting
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Icon(Icons.add_photo_alternate_rounded),
-                label: Text(_posting ? 'Posting...' : 'Add photo'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFFF8A00),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ],
+              )
+            : SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _posting ? null : _showAddMediaPicker,
+                  icon: const Icon(Icons.add_photo_alternate_rounded),
+                  label: const Text(
+                    'Add photo',
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFF8A00),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFFAFAFA),
+      appBar: AppBar(
+        title: const Text(
+          'New status',
+          style: TextStyle(fontWeight: FontWeight.w800, color: Colors.white),
         ),
+        backgroundColor: const Color(0xFFFF8A00),
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.close, color: Colors.white),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(20),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          const Color(0xFFFF8A00).withValues(alpha: 0.12),
+                          const Color(0xFFFFB347).withValues(alpha: 0.06),
+                        ],
+                      ),
+                      border: Border.all(color: const Color(0xFFFF8A00).withValues(alpha: 0.18)),
+                    ),
+                    child: Column(
+                      children: [
+                        Container(
+                          width: 72,
+                          height: 72,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white,
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFFFF8A00).withValues(alpha: 0.25),
+                                blurRadius: 16,
+                                offset: const Offset(0, 6),
+                              ),
+                            ],
+                          ),
+                          child: const Icon(
+                            Icons.auto_stories_rounded,
+                            size: 36,
+                            color: Color(0xFFFF8A00),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          widget.merchantName,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF101010),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Share a photo status · disappears in 24 hours',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey[600],
+                            height: 1.35,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  _buildComposerSection(),
+                  _buildCurrentStoriesSection(),
+                ],
+              ),
+            ),
+          ),
+          _buildBottomActions(),
+        ],
       ),
     );
   }

@@ -16,13 +16,21 @@ import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
+import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/chat_notification_service.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/engagement_notification_service.dart';
+import 'package:vero360_app/GeneralPages/Toreceive.dart';
+import 'package:vero360_app/GeneralPages/ToRefund.dart';
+import 'package:vero360_app/GeneralPages/Toship.dart';
+import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/Home/notifications_page.dart';
+import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
+import 'package:vero360_app/GernalScreens/vero_team_chat_page.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_my_orders_page.dart';
 import 'package:vero360_app/features/Promotions/presentation/promotions_page.dart';
 import 'package:vero360_app/features/Promotions/presentation/promo_detail_page.dart';
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
@@ -31,9 +39,13 @@ import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart'
     as market;
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/LatestArrival_page.dart';
+import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
+import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/driver_incoming_ride_from_notification_page.dart';
 import 'package:vero360_app/features/ride_share/presentation/services/driver_ride_offer_inbox.dart';
+import 'package:vero360_app/utils/app_update_checker.dart';
 
 /// Central service for handling Firebase Cloud Messaging (FCM) + local notifications
 class NotificationService {
@@ -236,50 +248,53 @@ class NotificationService {
     }
   }
 
-  /// Listens for [OrderPartyNotificationService] docs so buyers/merchants get
-  /// alerts when the other party ships or confirms escrow (requires Firestore rules
-  /// and a composite index on `toUid` + `consumed`).
+  /// Listens for [OrderPartyNotificationService] docs. Tips appear in the
+  /// Vero360 Team chat; here we only bump the notification badge count
+  /// (no system/local notification banner).
   void _syncOrderPartyAlertListener(User? user) {
     _partyAlertSub?.cancel();
     _partyAlertSub = null;
     if (user == null) return;
 
-    // Single-field query avoids requiring a composite index; filter consumed locally.
+    // Single-field query avoids requiring a composite index; filter counted locally.
     _partyAlertSub = FirebaseFirestore.instance
         .collection(OrderPartyNotificationService.collectionName)
         .where('toUid', isEqualTo: user.uid)
         .snapshots()
         .listen((snap) async {
       for (final change in snap.docChanges) {
-        if (change.type != DocumentChangeType.added &&
-            change.type != DocumentChangeType.modified) {
+        if (change.type != DocumentChangeType.added) {
           continue;
         }
         final d = change.doc.data();
         if (d == null) continue;
-        if (d['consumed'] == true) continue;
-        final title = (d['title'] ?? 'Vero360').toString();
+        if (d['notifCounted'] == true) continue;
+        final title = (d['title'] ?? 'Vero360 Team').toString();
         final body = (d['body'] ?? '').toString();
-        String? payloadStr;
+        Map<String, dynamic> payloadMap = {};
         final rawPayload = d['payload'];
         if (rawPayload is Map) {
           try {
-            final m = Map<String, dynamic>.from(
+            payloadMap = Map<String, dynamic>.from(
               rawPayload.map((k, v) => MapEntry(k.toString(), v)),
             );
-            payloadStr = jsonEncode(m);
           } catch (_) {}
         }
-        await showManualNotification(
+        // Badge / inbox count only — message content stays in Vero360 Team chat.
+        await NotificationStore.instance.addNotification(
+          id: 'party_${change.doc.id}',
           title: title,
-          body: body,
-          payload: payloadStr,
+          body: body.isEmpty ? 'New message from Vero360 Team' : body,
+          payload: {
+            ...payloadMap,
+            'openChat': 'vero360_team',
+          },
         );
         try {
-          await change.doc.reference.update({'consumed': true});
+          await change.doc.reference.update({'notifCounted': true});
         } catch (e) {
           if (kDebugMode) {
-            debugPrint('[NotificationService] party alert consume failed: $e');
+            debugPrint('[NotificationService] party alert count failed: $e');
           }
         }
       }
@@ -291,6 +306,10 @@ class NotificationService {
   }
 
   /// Incoming chat messages published by [ChatNotificationService] for this user.
+  ///
+  /// Consume + refresh only — do not show a second local banner here.
+  /// Foreground banners come from WebSocket; background/killed from FCM
+  /// (`onChatMessageAlertCreated`). Showing here duplicated those paths.
   void _syncChatAlertListener(User? user) {
     _chatAlertSub?.cancel();
     _chatAlertSub = null;
@@ -310,15 +329,13 @@ class NotificationService {
         final fromUid = (d['fromUid'] ?? '').toString();
         if (fromUid == user.uid) continue;
 
-        final title = (d['title'] ?? 'New message').toString();
-        final body = (d['body'] ?? '').toString();
         final payload = d['payload'];
         final chatId = payload is Map
-            ? (payload['chatId'] ?? '').toString()
+            ? (payload['chatId'] ?? '').toString().trim()
             : '';
 
-        if (chatId.isNotEmpty &&
-            BackendChatService.activeChatId == chatId) {
+        final active = (BackendChatService.activeChatId ?? '').trim();
+        if (chatId.isNotEmpty && active.isNotEmpty && chatId == active) {
           try {
             await change.doc.reference.update({'consumed': true});
           } catch (_) {}
@@ -326,11 +343,6 @@ class NotificationService {
         }
 
         BackendChatService.refreshThreads();
-        await showNewChatMessageNotification(
-          senderName: title,
-          body: body.isEmpty ? 'Sent you a message' : body,
-          chatId: chatId.isEmpty ? change.doc.id : chatId,
-        );
         try {
           await change.doc.reference.update({'consumed': true});
         } catch (e) {
@@ -563,6 +575,34 @@ class NotificationService {
     }
 
     final id = message.messageId ?? 'fcm_${message.hashCode}_${DateTime.now().millisecondsSinceEpoch}';
+    // Chat alerts: WS shows the foreground tray banner; FCM notification payload
+    // already drives the iOS system banner when presentation options are on.
+    // Showing another local here doubles banners (especially on iOS).
+    if (type == 'new_message') {
+      BackendChatService.refreshThreads();
+      final chatId = (data['chatId'] ?? data['chat_id'] ?? '').toString().trim();
+      final active = (BackendChatService.activeChatId ?? '').trim();
+      if (chatId.isNotEmpty && active.isNotEmpty && chatId == active) {
+        return;
+      }
+      // iOS: OS already displayed the FCM `notification` payload.
+      if (!kIsWeb &&
+          defaultTargetPlatform == TargetPlatform.iOS &&
+          notification != null) {
+        return;
+      }
+      try {
+        await showNewChatMessageNotification(
+          senderName: title,
+          body: body,
+          chatId: chatId.isEmpty ? id : chatId,
+        );
+      } catch (e) {
+        if (kDebugMode) debugPrint('Chat FCM notify failed: $e');
+      }
+      return;
+    }
+
     try {
       NotificationStore.instance.addNotification(
         id: id,
@@ -619,12 +659,27 @@ class NotificationService {
   void _addToStoreIfNeeded(RemoteMessage message) {
     if (!_payloadBelongsToCurrentUser(message.data)) return;
     final n = message.notification;
+    final data = message.data;
+    final type = (data['type'] as String?)?.toLowerCase() ?? '';
+    final title = n?.title ?? data['title'] as String? ?? 'Notification';
+    final body = n?.body ?? data['body'] as String? ?? '';
+    if (type == 'new_message') {
+      final chatId = (data['chatId'] ?? data['chat_id'] ?? '').toString().trim();
+      unawaited(showNewChatMessageNotification(
+        senderName: title,
+        body: body.isEmpty ? 'Sent you a message' : body,
+        chatId: chatId.isEmpty
+            ? (message.messageId ?? 'chat')
+            : chatId,
+      ));
+      return;
+    }
     final id = message.messageId ?? 'fcm_${message.hashCode}_${DateTime.now().millisecondsSinceEpoch}';
     NotificationStore.instance.addNotification(
       id: id,
-      title: n?.title ?? 'Notification',
-      body: n?.body ?? '',
-      payload: message.data,
+      title: title,
+      body: body,
+      payload: data,
     );
   }
 
@@ -779,9 +834,155 @@ class NotificationService {
   //  Navigation logic (customize based on your needs)
   // ───────────────────────────────────────────────
 
+  /// Routes the user from an in-app or push notification payload.
+  static void navigateFromPayload(
+    BuildContext context,
+    Map<String, dynamic> data,
+  ) {
+    instance._navigateWithNavigator(Navigator.of(context), data);
+  }
+
   void _navigateBasedOnPayload(Map<String, dynamic> data) {
     final navigator = _navKey?.currentState;
     if (navigator == null) return;
+    _navigateWithNavigator(navigator, data);
+  }
+
+  void _openChatThread(
+    NavigatorState navigator,
+    Map<String, dynamic> data,
+    String chatId,
+  ) {
+    var peerName = (data['senderName'] ??
+            data['peerName'] ??
+            data['title'] ??
+            '')
+        .toString()
+        .trim();
+    var avatarRaw =
+        (data['peerAvatarUrl'] ?? data['avatarUrl'] ?? '').toString().trim();
+    final merchantRaw =
+        (data['peerMerchantId'] ?? data['merchantId'] ?? '').toString().trim();
+    var peerUserId = int.tryParse(
+      (data['peerUserId'] ?? data['senderId'] ?? '').toString().trim(),
+    );
+
+    // Notification-centre payloads often lack the name — resolve from inbox cache.
+    final cached = BackendChatService.findCachedThreadById(chatId);
+    if (cached != null) {
+      final resolved = BackendChatService.cachedPeerLabelForChat(chatId);
+      if (_isPlaceholderChatPeerName(peerName) &&
+          resolved != null &&
+          !_isPlaceholderChatPeerName(resolved.name)) {
+        peerName = resolved.name;
+      }
+      if (avatarRaw.isEmpty && resolved != null && resolved.avatarUrl.isNotEmpty) {
+        avatarRaw = resolved.avatarUrl;
+      }
+      if ((peerUserId == null || peerUserId <= 0) &&
+          resolved != null &&
+          (resolved.peerUserId ?? 0) > 0) {
+        peerUserId = resolved.peerUserId;
+      }
+    }
+
+    BackendChatService.setActiveChatId(chatId);
+    unawaited(BackendMessagingSocket.connect().catchError((_) {}));
+    navigator
+        .push(
+      MaterialPageRoute(
+        builder: (_) => MessagePageBackendApi(
+          peerId: chatId,
+          peerName: _isPlaceholderChatPeerName(peerName) ? 'Chat' : peerName,
+          peerAvatarUrl: avatarRaw.isEmpty ? null : avatarRaw,
+          peerMerchantId: merchantRaw.isEmpty ? null : merchantRaw,
+          peerUserId: peerUserId,
+        ),
+      ),
+    )
+        .then((_) {
+      BackendChatService.clearThreadUnread(chatId);
+      BackendChatService.setActiveChatId(null);
+      BackendChatService.refreshThreads();
+    });
+  }
+
+  static bool _isPlaceholderChatPeerName(String raw) {
+    final n = raw.trim().toLowerCase();
+    return n.isEmpty ||
+        n == 'chat' ||
+        n == 'chats' ||
+        n == 'someone' ||
+        n == 'contact' ||
+        n == 'new message' ||
+        n == 'vero360';
+  }
+
+  bool _tryNavigateFromBadgeRoute(
+    NavigatorState navigator,
+    String? badgeRoute,
+    Map<String, dynamic> data,
+  ) {
+    final route = (badgeRoute ?? '').trim().toLowerCase();
+    if (route.isEmpty) return false;
+
+    switch (route) {
+      case NotificationStore.kBadgeRefund:
+        navigator.push(
+          MaterialPageRoute(builder: (_) => const ToRefundPage()),
+        );
+        return true;
+      case NotificationStore.kBadgeReceived:
+        navigator.push(
+          MaterialPageRoute(builder: (_) => const DeliveredOrdersPage()),
+        );
+        return true;
+      case NotificationStore.kBadgeShipped:
+        navigator.push(
+          MaterialPageRoute(builder: (_) => const ToShipPage()),
+        );
+        return true;
+      case NotificationStore.kBadgeMyOrders:
+        navigator.push(
+          MaterialPageRoute(
+            builder: (_) => OrdersPage(
+              initialOrderId: data['orderId']?.toString(),
+              initialOrderNumber: data['orderNumber']?.toString(),
+              initialStatus: data['status']?.toString(),
+            ),
+          ),
+        );
+        return true;
+      case NotificationStore.kBadgePromotions:
+        unawaited(_openPromotionTarget(navigator, data));
+        return true;
+      case NotificationStore.kBadgePostArrival:
+        unawaited(_openArrivalTarget(navigator, data));
+        return true;
+      case NotificationStore.kBadgeAppUpdate:
+      case 'quick_app_update':
+      case 'store_update':
+        unawaited(_openAppStoreUpdate());
+        return true;
+      case NotificationStore.kBadgeVeroTeam:
+      case 'vero360_team':
+        return false; // handled via openChat / type in _navigateWithNavigator
+      default:
+        return false;
+    }
+  }
+
+  void _navigateWithNavigator(
+    NavigatorState navigator,
+    Map<String, dynamic> data,
+  ) {
+    final openChat = (data['openChat'] ?? '').toString().trim().toLowerCase();
+    if (openChat == 'vero360_team' || openChat == VeroTeamChatPage.threadId) {
+      navigator.push(
+        MaterialPageRoute(builder: (_) => const VeroTeamChatPage()),
+      );
+      return;
+    }
 
     final type = (data['type'] as String?)?.toLowerCase();
     final badgeRoute = (data['badgeRoute'] as String?)?.toLowerCase() ??
@@ -811,10 +1012,39 @@ class NotificationService {
         break;
 
       case 'new_message':
-        if (kDebugMode) debugPrint("→ Open chat");
-        navigator.push(MaterialPageRoute(
-          builder: (_) => const ChatListPage(),
-        ));
+      case 'chat_message':
+        final chatId =
+            (data['chatId'] ?? data['threadId'] ?? '').toString().trim();
+        if (chatId.isNotEmpty) {
+          if (kDebugMode) debugPrint('→ Open chat thread ($chatId)');
+          _openChatThread(navigator, data, chatId);
+        } else {
+          if (kDebugMode) debugPrint('→ Open chat list');
+          navigator.push(
+            MaterialPageRoute(builder: (_) => const ChatListPage()),
+          );
+        }
+        break;
+
+      case 'refund_request':
+      case 'refund_update':
+        if (kDebugMode) debugPrint('→ Open refund');
+        final refundOrderId = data['orderId']?.toString();
+        if (refundOrderId != null && refundOrderId.trim().isNotEmpty) {
+          navigator.push(
+            MaterialPageRoute(
+              builder: (_) => OrdersPage(
+                initialOrderId: refundOrderId,
+                initialOrderNumber: data['orderNumber']?.toString(),
+                initialStatus: data['status']?.toString(),
+              ),
+            ),
+          );
+        } else {
+          navigator.push(
+            MaterialPageRoute(builder: (_) => const ToRefundPage()),
+          );
+        }
         break;
 
       case 'order_update':
@@ -831,6 +1061,13 @@ class NotificationService {
         ));
         break;
 
+      case 'food_order_placed':
+        if (kDebugMode) debugPrint('→ Open food my orders');
+        navigator.push(
+          MaterialPageRoute(builder: (_) => const FoodMyOrdersPage()),
+        );
+        break;
+
       case 'food_order':
       case 'new_food_order':
         if (kDebugMode) debugPrint("→ Open food merchant dashboard");
@@ -838,11 +1075,53 @@ class NotificationService {
         openVeroMainShell(navigator.context, email: email, tabIndex: 4);
         break;
 
+      case 'story_posted':
+        if (kDebugMode) debugPrint('→ Open home for story');
+        final storyEmail = FirebaseAuth.instance.currentUser?.email ?? '';
+        openVeroMainShell(navigator.context, email: storyEmail, tabIndex: 0);
+        break;
+
+      case 'new_review':
+        if (kDebugMode) debugPrint('→ Open merchant reviews / dashboard');
+        final reviewEmail = FirebaseAuth.instance.currentUser?.email ?? '';
+        openVeroMainShell(navigator.context, email: reviewEmail, tabIndex: 4);
+        break;
+
+      case 'marketplace_moderation':
+        if (kDebugMode) debugPrint('→ Open marketplace listing (moderation)');
+        final modStatus =
+            (data['status'] ?? '').toString().trim().toLowerCase();
+        final modTitle =
+            (data['title'] ?? '').toString().trim().toLowerCase();
+        final modBody =
+            (data['body'] ?? '').toString().trim().toLowerCase();
+        final isRejected = modStatus == 'rejected' ||
+            modTitle.contains('not approved') ||
+            modBody.contains('not approved') ||
+            modBody.contains('rejected');
+        if (isRejected) {
+          final email = FirebaseAuth.instance.currentUser?.email ?? '';
+          navigator.push(
+            MaterialPageRoute(
+              builder: (_) => MarketplaceMerchantDashboard(
+                email: email,
+                merchantUid: FirebaseAuth.instance.currentUser?.uid,
+                onBackToHomeTab: () {},
+              ),
+            ),
+          );
+        } else {
+          unawaited(_openMarketplaceTarget(navigator, data));
+        }
+        break;
+
       case 'accommodation_booking':
-        if (kDebugMode) debugPrint("→ Open notifications (stay booking)");
-        navigator.push(MaterialPageRoute(
-          builder: (_) => const NotificationsPage(),
-        ));
+        if (kDebugMode) debugPrint('→ Open stay bookings');
+        navigator.push(
+          MaterialPageRoute(
+            builder: (_) => const AccommodationMainPage(initialTabIndex: 1),
+          ),
+        );
         break;
 
       case 'promo_digest':
@@ -866,6 +1145,42 @@ class NotificationService {
         unawaited(_openMarketplaceTarget(navigator, data));
         break;
 
+      case 'admin_broadcast':
+      case 'admin':
+        if (badgeRoute == NotificationStore.kBadgeAppUpdate ||
+            badgeRoute == 'quick_app_update' ||
+            badgeRoute == 'store_update') {
+          unawaited(_openAppStoreUpdate());
+        } else if ((data['promoId']?.toString() ?? '').trim().isNotEmpty ||
+            badgeRoute == NotificationStore.kBadgePromotions) {
+          unawaited(_openPromotionTarget(navigator, data));
+        } else if ((data['arrivalId']?.toString() ?? '').trim().isNotEmpty ||
+            badgeRoute == NotificationStore.kBadgePostArrival) {
+          unawaited(_openArrivalTarget(navigator, data));
+        } else if (badgeRoute == 'marketplace' ||
+            badgeRoute == 'quick_marketplace') {
+          unawaited(_openMarketplaceTarget(navigator, data));
+        } else {
+          navigator.push(
+            MaterialPageRoute(builder: (_) => const NotificationsPage()),
+          );
+        }
+        break;
+
+      case 'app_update':
+      case 'store_update':
+        if (kDebugMode) debugPrint('→ Open store for app update');
+        unawaited(_openAppStoreUpdate());
+        break;
+
+      case 'vero_team':
+      case 'vero360_team':
+        if (kDebugMode) debugPrint('→ Open Vero360 Team chat');
+        navigator.push(
+          MaterialPageRoute(builder: (_) => const VeroTeamChatPage()),
+        );
+        break;
+
       case 'engagement':
         // Generic keep-alive — route by badge / ids if present.
         if ((data['promoId']?.toString() ?? '').trim().isNotEmpty ||
@@ -880,6 +1195,28 @@ class NotificationService {
         break;
 
       default:
+        if (_tryNavigateFromBadgeRoute(navigator, badgeRoute, data)) {
+          break;
+        }
+        if ((data['orderId']?.toString() ?? '').trim().isNotEmpty ||
+            (data['orderNumber']?.toString() ?? '').trim().isNotEmpty) {
+          navigator.push(
+            MaterialPageRoute(
+              builder: (_) => OrdersPage(
+                initialOrderId: data['orderId']?.toString(),
+                initialOrderNumber: data['orderNumber']?.toString(),
+                initialStatus: data['status']?.toString(),
+              ),
+            ),
+          );
+          break;
+        }
+        final chatId =
+            (data['chatId'] ?? data['threadId'] ?? '').toString().trim();
+        if (chatId.isNotEmpty) {
+          _openChatThread(navigator, data, chatId);
+          break;
+        }
         if ((data['promoId']?.toString() ?? '').trim().isNotEmpty ||
             badgeRoute == NotificationStore.kBadgePromotions) {
           unawaited(_openPromotionTarget(navigator, data));
@@ -890,11 +1227,21 @@ class NotificationService {
             .trim()
             .isNotEmpty) {
           unawaited(_openMarketplaceTarget(navigator, data));
-        } else {
-          navigator.push(MaterialPageRoute(
-            builder: (_) => const NotificationsPage(),
-          ));
+        } else if (kDebugMode) {
+          debugPrint('→ No route for notification type=$type');
         }
+    }
+  }
+
+  /// Open Play Store (Android) or App Store (iOS) when an update push is tapped.
+  Future<void> _openAppStoreUpdate() async {
+    try {
+      final ok = await AppUpdateChecker.openStoreForThisPlatform();
+      if (!ok && kDebugMode) {
+        debugPrint('→ Could not open store for app update');
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('→ openStoreForThisPlatform failed: $e');
     }
   }
 
@@ -902,32 +1249,32 @@ class NotificationService {
     NavigatorState navigator,
     Map<String, dynamic> data,
   ) async {
-    final rawId = (data['promoId'] ?? data['id'] ?? '').toString().trim();
-    final promoId = int.tryParse(rawId);
-    if (promoId != null && promoId > 0) {
-      try {
-        final promos = await PromoService().fetchActivePromos();
-        PromoModel? match;
-        for (final p in promos) {
-          if (p.id == promoId) {
-            match = p;
-            break;
-          }
-        }
-        if (match != null && navigator.mounted) {
-          navigator.push(MaterialPageRoute(
-            builder: (_) => PromoDetailPage(promo: match!),
-          ));
-          return;
-        }
-      } catch (e) {
-        if (kDebugMode) debugPrint('Open promo target failed: $e');
-      }
-    }
     if (!navigator.mounted) return;
     navigator.push(MaterialPageRoute(
       builder: (_) => const PromotionsPage(),
     ));
+
+    final rawId = (data['promoId'] ?? data['id'] ?? '').toString().trim();
+    final promoId = int.tryParse(rawId);
+    if (promoId == null || promoId <= 0) return;
+
+    try {
+      final promos = await PromoService().fetchActivePromos();
+      PromoModel? match;
+      for (final p in promos) {
+        if (p.id == promoId) {
+          match = p;
+          break;
+        }
+      }
+      if (match != null && navigator.mounted) {
+        navigator.push(MaterialPageRoute(
+          builder: (_) => PromoDetailPage(promo: match!),
+        ));
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('Open promo target failed: $e');
+    }
   }
 
   Future<void> _openArrivalTarget(
@@ -955,32 +1302,103 @@ class NotificationService {
         (data['marketplaceItemId'] ?? data['itemId'] ?? data['id'] ?? '')
             .toString()
             .trim();
-    if (docId.isNotEmpty) {
-      try {
-        final doc = await FirebaseFirestore.instance
-            .collection('marketplace_items')
-            .doc(docId)
-            .get();
-        if (doc.exists && navigator.mounted) {
-          final item = _marketplaceItemFromFirestore(doc);
-          navigator.push(MaterialPageRoute(
-            builder: (_) => DetailsPage(
-              item: item,
-              cartService: CartServiceProvider.getInstance(),
-            ),
-          ));
-          return;
-        }
-      } catch (e) {
-        if (kDebugMode) debugPrint('Open marketplace target failed: $e');
-      }
-    }
+    final cart = CartServiceProvider.getInstance();
     if (!navigator.mounted) return;
+
+    if (docId.isEmpty) {
+      navigator.push(MaterialPageRoute(
+        builder: (_) => MarketPage(cartService: cart),
+      ));
+      return;
+    }
+
+    final open = await _resolveMarketplaceOpen(docId);
+    if (!navigator.mounted) return;
+
+    if (open.kind == _MarketplaceOpenKind.sellerManage) {
+      final email = FirebaseAuth.instance.currentUser?.email ?? '';
+      navigator.push(
+        MaterialPageRoute(
+          builder: (_) => MarketplaceMerchantDashboard(
+            email: email,
+            merchantUid: FirebaseAuth.instance.currentUser?.uid,
+            onBackToHomeTab: () {},
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (open.kind == _MarketplaceOpenKind.unavailable) {
+      ScaffoldMessenger.maybeOf(navigator.context)?.showSnackBar(
+        const SnackBar(content: Text('This listing is no longer available.')),
+      );
+      navigator.push(MaterialPageRoute(
+        builder: (_) => MarketPage(cartService: cart),
+      ));
+      return;
+    }
+
     navigator.push(MaterialPageRoute(
-      builder: (_) => MarketPage(
-        cartService: CartServiceProvider.getInstance(),
+      builder: (_) => _MarketplaceNotificationDestination(
+        cartService: cart,
+        resolveFuture: Future.value(open.item),
       ),
     ));
+  }
+
+  Future<_MarketplaceOpenResult> _resolveMarketplaceOpen(String docId) async {
+    final sqlId = int.tryParse(docId);
+    if (sqlId != null && sqlId > 0) {
+      try {
+        final item = await MarketplaceService().getItemDetails(sqlId);
+        if (item != null) {
+          return _MarketplaceOpenResult.item(item);
+        }
+      } catch (e) {
+        if (kDebugMode) debugPrint('Resolve marketplace SQL item failed: $e');
+      }
+    }
+
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('marketplace_items')
+          .doc(docId)
+          .get();
+      if (!doc.exists) return const _MarketplaceOpenResult.unavailable();
+      final data = doc.data() ?? <String, dynamic>{};
+      final review =
+          (data['reviewStatus'] ?? '').toString().trim().toLowerCase();
+      final inactive = data['isActive'] == false;
+      final blocked = review == 'pending' || review == 'rejected' || inactive;
+      if (blocked) {
+        if (_isCurrentUserMarketplaceSeller(data)) {
+          return const _MarketplaceOpenResult.sellerManage();
+        }
+        // Rejected/pending must not open as a public product page.
+        return const _MarketplaceOpenResult.unavailable();
+      }
+      return _MarketplaceOpenResult.item(_marketplaceItemFromFirestore(doc));
+    } catch (e) {
+      if (kDebugMode) debugPrint('Resolve marketplace Firestore item failed: $e');
+    }
+    return const _MarketplaceOpenResult.unavailable();
+  }
+
+  bool _isCurrentUserMarketplaceSeller(Map<String, dynamic> data) {
+    final uid = (FirebaseAuth.instance.currentUser?.uid ?? '').trim();
+    if (uid.isEmpty) return false;
+    for (final key in const [
+      'sellerUserId',
+      'merchantId',
+      'firebaseUid',
+      'ownerId',
+      'uid',
+    ]) {
+      final v = (data[key] ?? '').toString().trim();
+      if (v.isNotEmpty && v == uid) return true;
+    }
+    return false;
   }
 
   market.MarketplaceDetailModel _marketplaceItemFromFirestore(
@@ -1038,30 +1456,39 @@ class NotificationService {
   /// `quick_my_orders`, `quick_shipped`, `quick_received`, `quick_refund`, `quick_promotions`,
   /// `quick_post_arrival` (see [NotificationStore] constants).
 
-  /// Push / in-app alert when a new chat message arrives (WebSocket path).
+  /// Push / in-app alert when a new chat message arrives (WebSocket / Firestore / FCM).
   Future<void> showNewChatMessageNotification({
     required String senderName,
     required String body,
     required String chatId,
   }) async {
     if (FirebaseAuth.instance.currentUser == null) return;
-    final payload = jsonEncode({
+    final safeChatId = chatId.trim().isEmpty ? 'chat' : chatId.trim();
+    final safeSender =
+        senderName.trim().isEmpty ? 'Someone' : senderName.trim();
+    final payloadMap = <String, dynamic>{
       'type': 'new_message',
-      'chatId': chatId,
-    });
-    final id = 'chat_${chatId}_${DateTime.now().millisecondsSinceEpoch}';
-    await NotificationStore.instance.addNotification(
+      'chatId': safeChatId,
+      'badgeRoute': 'messages',
+      // Keep name in payload so notification-centre / tray taps open with title.
+      'senderName': safeSender,
+      'title': safeSender,
+    };
+    final payload = jsonEncode(payloadMap);
+    // Stable-enough id so rapid WS+Firestore+FCM copies collapse in the store.
+    final id =
+        'chat_${safeChatId}_${safeSender.hashCode}_${body.trim().hashCode}';
+    final added = await NotificationStore.instance.addNotification(
       id: id,
-      title: senderName,
+      title: safeSender,
       body: body,
-      payload: {
-        'type': 'new_message',
-        'chatId': chatId,
-      },
+      payload: payloadMap,
     );
+    // Skip second tray banner when WS/Firestore/FCM all fire for the same message.
+    if (!added) return;
     await _showLocalNotification(
-      id: chatId.hashCode.abs(),
-      title: senderName,
+      id: safeChatId.hashCode.abs(),
+      title: safeSender,
       body: body,
       payload: payload,
     );
@@ -1224,4 +1651,53 @@ class NotificationService {
       );
     }
   }
+}
+
+/// Shows a loading screen immediately, then product detail or marketplace home.
+class _MarketplaceNotificationDestination extends StatelessWidget {
+  const _MarketplaceNotificationDestination({
+    required this.cartService,
+    required this.resolveFuture,
+  });
+
+  final CartService cartService;
+  final Future<market.MarketplaceDetailModel?> resolveFuture;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<market.MarketplaceDetailModel?>(
+      future: resolveFuture,
+      builder: (context, snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('Marketplace')),
+            body: const Center(child: CircularProgressIndicator()),
+          );
+        }
+        final item = snap.data;
+        if (item != null) {
+          return DetailsPage(item: item, cartService: cartService);
+        }
+        return MarketPage(cartService: cartService);
+      },
+    );
+  }
+}
+
+enum _MarketplaceOpenKind { item, sellerManage, unavailable }
+
+class _MarketplaceOpenResult {
+  final _MarketplaceOpenKind kind;
+  final market.MarketplaceDetailModel? item;
+
+  const _MarketplaceOpenResult._(this.kind, this.item);
+
+  const _MarketplaceOpenResult.unavailable()
+      : this._(_MarketplaceOpenKind.unavailable, null);
+
+  const _MarketplaceOpenResult.sellerManage()
+      : this._(_MarketplaceOpenKind.sellerManage, null);
+
+  factory _MarketplaceOpenResult.item(market.MarketplaceDetailModel item) =>
+      _MarketplaceOpenResult._(_MarketplaceOpenKind.item, item);
 }

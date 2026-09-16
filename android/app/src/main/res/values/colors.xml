@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="vero_splash_bg">#FFFBF6</color>
+    <color name="vero_splash_bg">#FFF8F2</color>
     <color name="vero_splash_orange">#FFFF6B00</color>
+	<color name="ic_launcher_background">#FFFFFF</color>
 </resources>

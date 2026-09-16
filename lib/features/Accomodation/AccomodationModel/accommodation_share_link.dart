@@ -33,7 +33,8 @@ String accommodationShareUrl({
   ).toString();
 }
 
-int? accommodationIdFromShareUri(Uri uri) {
+/// Path segment after /accommodation|stay|stays/ (numeric API id or Firestore doc id).
+String? accommodationRefFromShareUri(Uri uri) {
   final host = uri.host.toLowerCase();
   final segs = uri.pathSegments
       .map((s) => s.trim())
@@ -43,21 +44,24 @@ int? accommodationIdFromShareUri(Uri uri) {
   if (uri.scheme == 'vero360' &&
       (host == 'accommodation' || host == 'stay' || host == 'stays')) {
     if (segs.isEmpty) return null;
-    return int.tryParse(segs.first);
+    return segs.first;
   }
 
   final isVeroHost = host == 'vero360.app' || host == 'www.vero360.app';
-  if (!isVeroHost && uri.scheme != 'https' && uri.scheme != 'http') {
-    return null;
-  }
   if (isVeroHost &&
       segs.length >= 2 &&
       (segs.first == 'accommodation' ||
           segs.first == 'stay' ||
           segs.first == 'stays')) {
-    return int.tryParse(segs[1]);
+    return segs[1];
   }
   return null;
+}
+
+int? accommodationIdFromShareUri(Uri uri) {
+  final ref = accommodationRefFromShareUri(uri);
+  if (ref == null || ref.isEmpty) return null;
+  return int.tryParse(ref);
 }
 
 String? accommodationSearchQueryFromShareUri(Uri uri) {
@@ -70,7 +74,7 @@ String? accommodationSearchQueryFromShareUri(Uri uri) {
 }
 
 bool isAccommodationShareUri(Uri uri) {
-  if (accommodationIdFromShareUri(uri) != null) return true;
+  if (accommodationRefFromShareUri(uri) != null) return true;
   final host = uri.host.toLowerCase();
   final segs = uri.pathSegments.map((s) => s.toLowerCase()).toList();
   if (uri.scheme == 'vero360' &&

@@ -282,7 +282,7 @@ class _CustomerServicePageState extends State<CustomerServicePage> {
   Widget? _pageForAction(_BotAction action) {
     switch (action) {
       case _BotAction.openRide:
-        return RideShareEntryResolver.buildLandingPage(isDriverHome: false);
+        return RideShareEntryResolver.buildLandingPage();
       case _BotAction.openBike:
         return const BikeRideShareMapScreen();
       case _BotAction.openFood:

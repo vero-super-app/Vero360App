@@ -24,6 +24,7 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_moderation.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
 
 import '../../../../utils/toasthelper.dart';
 import 'marketplace_edit_page.dart';
@@ -65,6 +66,8 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
 
   bool _isActive = true;
   bool _submitting = false;
+  /// Share to Vero360 Facebook Page when the listing goes live (default on).
+  bool _postToFacebook = true;
   int _stockQty = 1;
 
   static const List<String> _kCategories = <String>[
@@ -519,6 +522,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     _gallery.clear();
     _videos.clear();
     _isActive = true;
+    _postToFacebook = true;
     final ic = widget.initialCategory?.trim().toLowerCase();
     _category = (ic != null && ic.isNotEmpty && _kCategories.contains(ic))
         ? ic
@@ -769,8 +773,9 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         if (galleryUrls.isNotEmpty) 'galleryUrls': galleryUrls,
         if (galleryBase64.isNotEmpty) 'gallery': galleryBase64,
         if (videoUrls.isNotEmpty) 'videos': videoUrls,
-        'description':
-            _desc.text.trim().isEmpty ? null : _desc.text.trim(),
+        'description': _desc.text.trim().isEmpty
+            ? null
+            : DescriptionContactMask.mask(_desc.text.trim()),
         'location': _location.text.trim(),
         'isActive': false,
         'reviewStatus': 'pending',
@@ -783,9 +788,47 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         if (firebaseUid.isNotEmpty) 'firebaseUid': firebaseUid,
         'merchantName': merchantName,
         'serviceType': serviceType,
+        'postToFacebook': _postToFacebook,
         if (_listingLat != null) 'latitude': _listingLat,
         if (_listingLng != null) 'longitude': _listingLng,
       };
+
+      // Stamp current seller rating onto the listing for marketplace ranking.
+      try {
+        final mid = (firebaseUid.isNotEmpty ? firebaseUid : effectiveSellerId)
+            .toString()
+            .trim();
+        if (mid.isNotEmpty) {
+          DocumentSnapshot<Map<String, dynamic>>? mSnap;
+          try {
+            mSnap = await _db.collection('marketplace_merchants').doc(mid).get();
+          } catch (_) {}
+          mSnap ??= await _db.collection('users').doc(mid).get();
+          final md = mSnap.data() ?? const <String, dynamic>{};
+          final r = md['sellerRating'] ?? md['averageRating'] ?? md['rating'];
+          double? rating;
+          if (r is num) {
+            rating = r.toDouble();
+          } else if (r != null) {
+            rating = double.tryParse(r.toString());
+          }
+          if (rating != null && rating > 0) {
+            final rc = md['sellerReviewCount'] ??
+                md['reviewCount'] ??
+                md['reviewsCount'];
+            var count = 0;
+            if (rc is num) {
+              count = rc.toInt();
+            } else if (rc != null) {
+              count = int.tryParse(rc.toString()) ?? 0;
+            }
+            data['sellerRating'] = rating;
+            data['averageRating'] = rating;
+            data['sellerReviewCount'] = count;
+            data['reviewCount'] = count;
+          }
+        }
+      } catch (_) {}
 
       debugPrint('Writing marketplace_items to Firestore (pending review)…');
       final docRef = await _db.collection('marketplace_items').add(data);
@@ -827,6 +870,10 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
         successMsg,
         isSuccess: true,
         errorMessage: 'Submitted',
+        showFacebook: _postToFacebook,
+        facebookMessage: _postToFacebook
+            ? 'Once approved, we’ll also share this on the Vero360 Facebook Page.'
+            : null,
       );
 
       _resetAfterCreate();
@@ -1707,6 +1754,34 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                 ),
                 const SizedBox(height: 12),
 
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  value: _postToFacebook,
+                  activeThumbColor: _brandOrange,
+                  secondary: const FacebookLogoMark(size: 22),
+                  title: const Text(
+                    'Also post on Facebook',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                  ),
+                  subtitle: Text(
+                    'Share on the Vero360 Facebook Page once approved.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                  onChanged: _submitting
+                      ? null
+                      : (v) => setState(() => _postToFacebook = v),
+                ),
+                if (_postToFacebook) ...[
+                  const SizedBox(height: 8),
+                  const FacebookShareHint(
+                    message:
+                        'Once approved, we can also share this listing on the Vero360 Facebook Page to help grow your customers.',
+                  ),
+                ],
+                const SizedBox(height: 10),
                 FilledButton.icon(
                   style: _filledBtnStyle(),
                   onPressed: canCreate ? _create : null,
@@ -1720,7 +1795,13 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                           ),
                         )
                       : const Icon(Icons.save),
-                  label: Text(_submitting ? 'Posting…' : 'Post on Marketplace'),
+                  label: Text(
+                    _submitting
+                        ? 'Posting…'
+                        : (_postToFacebook
+                            ? 'Post on Marketplace + Facebook'
+                            : 'Post on Marketplace'),
+                  ),
                 ),
                     ],
                   ),

@@ -56,3 +56,18 @@ app.*.map.json
 .env
 .env.*
 !.env.example
+
+# Android signing / secrets — never commit
+*.jks
+*.keystore
+*.jks.bak
+android/upload-keystore.jks.bak
+android/upload_certificate.pem
+android/*.pem
+android/key.properties
+android/local.properties
+
+# Gradle / Kotlin local state
+android/.gradle/
+android/.kotlin/
+**/key.properties

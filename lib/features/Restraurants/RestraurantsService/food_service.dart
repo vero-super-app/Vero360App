@@ -8,6 +8,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
+import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/restaurant_model.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
@@ -19,6 +20,7 @@ class FoodService {
     double? latitude,
     double? longitude,
     double radiusKm = 30,
+    bool attachPrep = true,
   }) async {
     try {
       // Kick API + both Firestore sources in parallel so images can paint sooner.
@@ -41,7 +43,9 @@ class FoodService {
         results[2],
       );
 
-      final withPrep = await _attachRestaurantPrep(merged);
+      final withPrep = attachPrep
+          ? await _attachRestaurantPrep(merged)
+          : merged;
 
       return prioritizeNearUser(
         withPrep,
@@ -248,44 +252,51 @@ class FoodService {
     double? longitude,
     double radiusKm = 30,
   }) {
+    List<FoodModel> base;
     if (latitude == null || longitude == null || items.isEmpty) {
-      return List<FoodModel>.from(items);
-    }
+      base = List<FoodModel>.from(items);
+    } else {
+      final r = radiusKm.clamp(1.0, 200.0);
+      final inRadius = <FoodModel>[];
+      final noCoords = <FoodModel>[];
+      final outRadius = <FoodModel>[];
 
-    final r = radiusKm.clamp(1.0, 200.0);
-    final inRadius = <FoodModel>[];
-    final noCoords = <FoodModel>[];
-    final outRadius = <FoodModel>[];
-
-    for (final f in items) {
-      if (f.latitude == null || f.longitude == null) {
-        noCoords.add(f);
-        continue;
+      for (final f in items) {
+        if (f.latitude == null || f.longitude == null) {
+          noCoords.add(f);
+          continue;
+        }
+        final d = distanceKm(latitude, longitude, f.latitude!, f.longitude!);
+        if (d != null && d <= r) {
+          inRadius.add(f);
+        } else {
+          outRadius.add(f);
+        }
       }
-      final d = distanceKm(latitude, longitude, f.latitude!, f.longitude!);
-      if (d != null && d <= r) {
-        inRadius.add(f);
+
+      int byDistance(FoodModel a, FoodModel b) {
+        final da = distanceKm(latitude, longitude, a.latitude!, a.longitude!) ??
+            double.infinity;
+        final db = distanceKm(latitude, longitude, b.latitude!, b.longitude!) ??
+            double.infinity;
+        return da.compareTo(db);
+      }
+
+      inRadius.sort(byDistance);
+      outRadius.sort(byDistance);
+
+      // Local food first; far kitchens only after nearby + unknown-coords.
+      if (inRadius.isNotEmpty) {
+        base = [...inRadius, ...noCoords, ...outRadius];
       } else {
-        outRadius.add(f);
+        base = [...outRadius, ...noCoords];
       }
     }
 
-    int byDistance(FoodModel a, FoodModel b) {
-      final da = distanceKm(latitude, longitude, a.latitude!, a.longitude!) ??
-          double.infinity;
-      final db = distanceKm(latitude, longitude, b.latitude!, b.longitude!) ??
-          double.infinity;
-      return da.compareTo(db);
-    }
-
-    inRadius.sort(byDistance);
-    outRadius.sort(byDistance);
-
-    // Local food first; far kitchens only after nearby + unknown-coords.
-    if (inRadius.isNotEmpty) {
-      return [...inRadius, ...noCoords, ...outRadius];
-    }
-    return [...outRadius, ...noCoords];
+    // Paid boosts always float above distance ranking (stable within groups).
+    final promoted = base.where((e) => e.isPromotedNow).toList();
+    final rest = base.where((e) => !e.isPromotedNow).toList();
+    return [...promoted, ...rest];
   }
 
   /// Items within [radiusKm] of the user (empty if none / no location).
@@ -339,6 +350,8 @@ class FoodService {
   ) {
     final copy = List<FoodModel>.from(items);
     copy.sort((a, b) {
+      final byPromo = (b.isPromotedNow ? 1 : 0).compareTo(a.isPromotedNow ? 1 : 0);
+      if (byPromo != 0) return byPromo;
       final aHas = a.latitude != null && a.longitude != null;
       final bHas = b.latitude != null && b.longitude != null;
       if (!aHas && !bHas) return 0;
@@ -357,6 +370,7 @@ class FoodService {
     double? latitude,
     double? longitude,
     double radiusKm = 30,
+    bool attachPrep = true,
   }) async {
     final q = query.trim().toLowerCase();
 
@@ -366,6 +380,7 @@ class FoodService {
         latitude: latitude,
         longitude: longitude,
         radiusKm: radiusKm,
+        attachPrep: attachPrep,
       );
     }
 
@@ -373,6 +388,7 @@ class FoodService {
       latitude: latitude,
       longitude: longitude,
       radiusKm: radiusKm,
+      attachPrep: attachPrep,
     );
 
     final filtered = all.where((f) {
@@ -767,5 +783,62 @@ class FoodService {
     } catch (_) {
       return items;
     }
+  }
+
+  /// Applies merchant-posted stock caps to food cart lines (same rules as food details).
+  Future<List<CartModel>> applyStockCapsToCartLines(List<CartModel> lines) async {
+    if (lines.isEmpty) return lines;
+    if (!lines.any((e) => e.isFood)) return lines;
+
+    List<FoodModel> catalog = const [];
+    try {
+      catalog = await fetchFoodItems();
+    } catch (_) {}
+
+    return lines
+        .map((line) {
+          if (!line.isFood) return line;
+          final match = _matchFoodForCartLine(line, catalog);
+          final stock = match?.quantity ?? line.availableStock;
+          final prep =
+              match?.effectivePrepTimeMinutes ?? line.prepTimeMinutes;
+          return _capCartLineStock(line, stock).copyWith(
+            prepTimeMinutes: prep,
+          );
+        })
+        .toList();
+  }
+
+  FoodModel? _matchFoodForCartLine(CartModel line, List<FoodModel> catalog) {
+    final mid = line.merchantId.trim();
+    final name = line.name.trim().toLowerCase();
+    FoodModel? byId;
+    FoodModel? byName;
+    for (final f in catalog) {
+      if (f.id == line.item) {
+        if (mid.isEmpty || (f.merchantId?.trim() ?? '') == mid) return f;
+        byId ??= f;
+      }
+      if (name.isNotEmpty &&
+          f.FoodName.trim().toLowerCase() == name &&
+          (mid.isEmpty || (f.merchantId?.trim() ?? '') == mid)) {
+        byName ??= f;
+      }
+    }
+    return byId ?? byName;
+  }
+
+  CartModel _capCartLineStock(CartModel line, int? stock) {
+    final maxQ = stock == null ? 99999 : stock.clamp(0, 99999);
+    var qty = line.quantity;
+    if (maxQ <= 0) {
+      qty = 1;
+    } else {
+      qty = qty.clamp(1, maxQ);
+    }
+    return line.copyWith(
+      availableStock: stock,
+      quantity: qty,
+    );
   }
 }

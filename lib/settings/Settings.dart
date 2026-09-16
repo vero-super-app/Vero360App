@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/painting.dart';
 
@@ -35,8 +36,8 @@ import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
-import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/become_driver_page.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/driver_online_session.dart';
 import 'package:vero360_app/Quickservices/customerservice.dart';
 import 'package:vero360_app/Quickservices/help_center_live_chat.dart';
 
@@ -308,7 +309,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
       setState(() => _switchingDriverMode = true);
       try {
-        await RoleSessionService.setAccountRole(RoleHelper.customer);
+        await applySessionRole(RoleHelper.customer);
         if (!mounted) return;
         setState(() {
           _isDriver = false;
@@ -348,8 +349,12 @@ class _SettingsPageState extends State<SettingsPage> {
         return;
       }
 
-      await RoleSessionService.setAccountRole(RoleHelper.driver);
+      final switched = await applySessionRole(RoleHelper.driver);
       if (!mounted) return;
+      if (!switched) {
+        setState(() => _switchingDriverMode = false);
+        return;
+      }
       setState(() {
         _isDriver = true;
         _switchingDriverMode = false;
@@ -1663,8 +1668,12 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _shareApp() async {
     _maybeHaptic();
     try {
-      const storeUrl =
-          'https://play.google.com/store/apps/details?id=com.vero265.app';
+      final check = await AppUpdateChecker.check();
+      final storeUrl = check.storeUrl.trim().isNotEmpty
+          ? check.storeUrl.trim()
+          : (defaultTargetPlatform == TargetPlatform.iOS
+              ? AppUpdateChecker.appStoreSearchUrl()
+              : AppUpdateChecker.playStoreUrl(AppUpdateChecker.playStoreId));
       final text = _t(
         'Try Vero360 – one app for VeroRide,marketplace, food, transport,accomodation and more. $storeUrl',
         'Yesani Vero360 – pulogalamu imodzi ya msika, chakudya, mayendedwe, ndi zina. $storeUrl',
@@ -1938,6 +1947,7 @@ class _SettingsPageState extends State<SettingsPage> {
         final oauthCred = OAuthProvider('apple.com').credential(
           idToken: appleAuth.apple.identityToken,
           rawNonce: appleAuth.rawNonce,
+          accessToken: appleAuth.apple.authorizationCode,
         );
         await user.reauthenticateWithCredential(oauthCred);
         return true;
@@ -2542,8 +2552,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   icon: Icons.apps_outlined,
                   title: _t('App version', 'Mtundu wa pulogalamu'),
                   subtitle: _t(
-                    'v$_appVersion ($_buildNumber) · Tap to check for updates',
-                    'v$_appVersion ($_buildNumber) · Dinani kuyang\'ana zatsopano',
+                    'v$_appVersion · Tap to check for updates',
+                    'v$_appVersion · Dinani kuyang\'ana zatsopano',
                   ),
                   onTap: _checkForAppUpdates,
                 ),
@@ -2912,7 +2922,7 @@ class AboutUsPage extends StatelessWidget {
                     const Icon(Icons.info_outline, size: 18),
                     const SizedBox(width: 8),
                     Text(
-                      'Version v$appVersion ($buildNumber)',
+                      'Version v$appVersion',
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                   ],

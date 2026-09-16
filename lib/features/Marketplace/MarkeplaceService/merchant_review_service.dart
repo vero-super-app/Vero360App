@@ -1,8 +1,15 @@
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_id_resolver.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
+import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 
 class MerchantReviewService {
   const MerchantReviewService();
@@ -82,7 +89,9 @@ class MerchantReviewService {
   Future<MerchantReviewSummary> getMerchantReviewSummary(int merchantId) async {
     try {
       final summary = await getMerchantSummary(merchantId);
-      if (summary.count > 0 || summary.average > 0) return summary;
+      // Trust summary only when it still has reviews. A leftover average with
+      // count 0 (after deletes) must be recomputed from the live list.
+      if (summary.count > 0) return summary;
     } catch (_) {}
 
     final reviews = await getMerchantReviews(merchantId);
@@ -143,25 +152,155 @@ class MerchantReviewService {
     required int customerId,
     required int rating,
     required String comment,
+    String? merchantFirebaseUid,
+    String? reviewerName,
   }) async {
-    final res = await ApiClient.post(
-      '/reviews',
-      body: jsonEncode({
-        'merchantId': merchantId,
-        'customerId': customerId,
-        'rating': rating.clamp(1, 5),
-        'comment': comment.trim(),
-      }),
-      timeout: _fastTimeout,
-    );
-    invalidateCache(merchantId);
-    return MerchantReview.fromJson(_unwrapMap(jsonDecode(res.body)));
+    if (merchantId <= 0) {
+      throw const ApiException(message: 'Could not find this seller for reviews.');
+    }
+    if (customerId <= 0) {
+      throw const ApiException(
+        message: 'Please log in to leave a review.',
+        requiresLogin: true,
+      );
+    }
+    if (merchantId == customerId) {
+      throw const ApiException(message: 'You can’t rate your own shop.');
+    }
+
+    try {
+      final res = await ApiClient.post(
+        '/reviews',
+        body: jsonEncode({
+          'merchantId': merchantId,
+          'customerId': customerId,
+          'rating': rating.clamp(1, 5),
+          'comment': comment.trim(),
+        }),
+        timeout: _fastTimeout,
+      );
+      invalidateCache(merchantId);
+      final review = MerchantReview.fromJson(_unwrapMap(jsonDecode(res.body)));
+
+      final mid = (merchantFirebaseUid ?? '').trim();
+      if (mid.isNotEmpty) {
+        final who = (reviewerName ?? '').trim().isNotEmpty
+            ? reviewerName!.trim()
+            : (FirebaseAuth.instance.currentUser?.displayName ?? 'A customer');
+        unawaited(
+          OrderPartyNotificationService.publishNewReviewToMerchant(
+            merchantUid: mid,
+            rating: rating.clamp(1, 5),
+            reviewerName: who,
+            comment: comment,
+          ),
+        );
+        unawaited(
+          syncSellerRatingToListings(
+            merchantFirebaseUid: mid,
+            merchantBackendId: merchantId,
+          ),
+        );
+      }
+
+      return review;
+    } on ApiException catch (e) {
+      final lower = (e.backendMessage ?? e.message).toLowerCase();
+      if (e.statusCode == 404 || lower.contains('merchant not found')) {
+        MerchantReviewIdResolver.clearCache();
+        throw ApiException(
+          message:
+              'Could not find this seller’s merchant account (id $merchantId). '
+              'Ask them to open Merchant dashboard once, then try again.',
+          statusCode: e.statusCode,
+          backendMessage: e.backendMessage,
+        );
+      }
+      rethrow;
+    }
+  }
+
+  /// Writes latest review average onto merchant + listing docs so feed ranking
+  /// can prioritize highly reviewed sellers. Also clears rating when reviews
+  /// are gone (e.g. after the last review is deleted).
+  static Future<void> syncSellerRatingToListings({
+    required String merchantFirebaseUid,
+    int? merchantBackendId,
+  }) async {
+    final uid = merchantFirebaseUid.trim();
+    if (uid.isEmpty) return;
+    try {
+      final service = const MerchantReviewService();
+      MerchantReviewSummary summary;
+      if (merchantBackendId != null && merchantBackendId > 0) {
+        summary = await service.getMerchantReviewSummary(merchantBackendId);
+      } else {
+        return;
+      }
+      final count = summary.count < 0 ? 0 : summary.count;
+      final avg = count > 0 ? summary.average : 0.0;
+
+      final db = FirebaseFirestore.instance;
+      final patch = <String, dynamic>{
+        'sellerRating': avg,
+        'averageRating': avg,
+        'sellerReviewCount': count,
+        'reviewCount': count,
+        'ratingUpdatedAt': FieldValue.serverTimestamp(),
+      };
+
+      try {
+        await db.collection('marketplace_merchants').doc(uid).set(
+          {
+            ...patch,
+            'rating': avg,
+          },
+          SetOptions(merge: true),
+        );
+      } catch (_) {}
+
+      try {
+        await db.collection('users').doc(uid).set(
+          {
+            'sellerRating': avg,
+            'averageRating': avg,
+            'reviewCount': count,
+          },
+          SetOptions(merge: true),
+        );
+      } catch (_) {}
+
+      Future<void> patchQuery(Query<Map<String, dynamic>> q) async {
+        final snap = await q.limit(40).get();
+        if (snap.docs.isEmpty) return;
+        final batch = db.batch();
+        for (final d in snap.docs) {
+          batch.set(d.reference, patch, SetOptions(merge: true));
+        }
+        await batch.commit();
+      }
+
+      await Future.wait([
+        patchQuery(
+          db
+              .collection('marketplace_items')
+              .where('sellerUserId', isEqualTo: uid),
+        ),
+        patchQuery(
+          db.collection('marketplace_items').where('merchantId', isEqualTo: uid),
+        ),
+      ]);
+    } catch (e) {
+      debugPrint('[MerchantReviewService] syncSellerRatingToListings: $e');
+    }
   }
 
   Future<MerchantReview> updateReview({
     required String reviewId,
     required int rating,
     required String comment,
+    int? merchantBackendId,
+    String? merchantFirebaseUid,
   }) async {
     final res = await ApiClient.put(
       '/reviews/$reviewId',
@@ -171,11 +310,36 @@ class MerchantReviewService {
       }),
       timeout: _fastTimeout,
     );
+    final mid = merchantBackendId ?? 0;
+    if (mid > 0) invalidateCache(mid);
+    final uid = (merchantFirebaseUid ?? '').trim();
+    if (uid.isNotEmpty && mid > 0) {
+      unawaited(
+        syncSellerRatingToListings(
+          merchantFirebaseUid: uid,
+          merchantBackendId: mid,
+        ),
+      );
+    }
     return MerchantReview.fromJson(_unwrapMap(jsonDecode(res.body)));
   }
 
-  Future<void> deleteReview(String reviewId) async {
+  Future<void> deleteReview({
+    required String reviewId,
+    int? merchantBackendId,
+    String? merchantFirebaseUid,
+  }) async {
     await ApiClient.delete('/reviews/$reviewId', timeout: _fastTimeout);
+    final mid = merchantBackendId ?? 0;
+    if (mid > 0) invalidateCache(mid);
+    final uid = (merchantFirebaseUid ?? '').trim();
+    if (uid.isNotEmpty && mid > 0) {
+      // Await so listing/shop rating clears before UI reloads.
+      await syncSellerRatingToListings(
+        merchantFirebaseUid: uid,
+        merchantBackendId: mid,
+      );
+    }
   }
 
   Future<MerchantReview> likeReview(String reviewId) async {

@@ -20,6 +20,7 @@ import 'package:vero360_app/GernalServices/merchant_phone_resolver.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
+import 'package:vero360_app/GernalServices/order_shipping_reminder_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/utils/merchant_contact_display.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
@@ -133,6 +134,7 @@ class _ToShipPageState extends State<ToShipPage> {
         merchantUid,
         merchantOrders: list,
       ));
+      unawaited(_nudgeUnshippedOrders(list, merchantUid));
     }
     // Don't block first paint on phone lookups.
     unawaited(() async {
@@ -153,6 +155,28 @@ class _ToShipPageState extends State<ToShipPage> {
       } catch (_) {}
     }());
     return list;
+  }
+
+  Future<void> _nudgeUnshippedOrders(
+    List<OrderItem> list,
+    String merchantUid,
+  ) async {
+    final toShip = list.where((o) {
+      return o.status == OrderStatus.confirmed &&
+          o.paymentStatus == PaymentStatus.paid;
+    }).take(8);
+    for (final o in toShip) {
+      try {
+        final esc = await OrderEscrowService.fetchEscrow(o.id);
+        if (esc == null || !esc.isAwaitingShipment) continue;
+        await OrderShippingReminderService.maybeTeamNudgeMerchant(
+          orderId: o.id,
+          merchantUid: merchantUid,
+          orderNumber: o.orderNumber,
+          itemName: o.itemName,
+        );
+      } catch (_) {}
+    }
   }
 
   String _displayMerchantPhone(OrderItem o) {

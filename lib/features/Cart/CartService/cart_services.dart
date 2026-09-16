@@ -236,6 +236,8 @@ class CartService {
       if (item.addOns.isNotEmpty) 'addOns': item.addOns,
       if (item.location != null && item.location!.trim().isNotEmpty)
         'location': item.location!.trim(),
+      if (item.prepTimeMinutes != null && item.prepTimeMinutes! > 0)
+        'prepTimeMinutes': item.prepTimeMinutes,
     };
   }
 
@@ -475,6 +477,12 @@ class CartService {
           location: (data['location'] ?? '').toString().trim().isEmpty
               ? null
               : (data['location'] ?? '').toString().trim(),
+          prepTimeMinutes: () {
+            final raw = data['prepTimeMinutes'];
+            if (raw == null) return null;
+            final m = raw is num ? raw.toInt() : int.tryParse('$raw');
+            return (m != null && m > 0) ? m : null;
+          }(),
         );
       }).toList();
 

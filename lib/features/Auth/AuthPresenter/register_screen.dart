@@ -76,11 +76,6 @@ const List<MerchantService> kMerchantServices = [
   //   name: 'Vero Bike',
   //   icon: Icons.pedal_bike_rounded,
   // ),
-  // MerchantService(
-  //   key: 'airport_pickup',
-  //   name: 'Airport Pickup',
-  //   icon: Icons.flight_takeoff_rounded,
-  // ),
 ];
 
 class RegisterScreen extends StatefulWidget {

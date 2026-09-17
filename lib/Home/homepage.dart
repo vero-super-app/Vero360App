@@ -212,7 +212,6 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
   }
 
   List<ServiceGuideStep> get _guideSteps => kQuickGuideServices
-      .where((item) => item.keyId != 'airport_pickup')
       .map((item) => ServiceGuideStep(
             keyId:       item.keyId,
             title:       item.label,
@@ -367,7 +366,6 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
 
   Future<void> _maybeShowServicesHint() async {
     final prefs = await SharedPreferences.getInstance();
-    // v2 = guide without Airport Pickup, with Support next to Stay.
     final seen  = prefs.getBool('home_services_hint_v2') ?? false;
     if (seen || !mounted) return;
     await Future.delayed(const Duration(milliseconds: 900));
@@ -378,7 +376,6 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
   Future<void> _finishServicesGuide() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('home_services_hint_v2', true);
-    // Clear legacy key so old Airport guide state cannot linger.
     await prefs.remove('home_services_hint_v1');
     if (!mounted) return;
     setState(() {

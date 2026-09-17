@@ -16,6 +16,10 @@ import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/GernalScreens/vero_team_chat_page.dart';
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/marketplace_merchant_dashboard.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantPresenter/RestraurantMerchants/food_merchant_dashboard.dart';
+import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
+import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
+import 'package:vero360_app/GernalServices/merchant_identity.dart';
 import 'package:vero360_app/widgets/modern_confirm_dialog.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:vero360_app/widgets/messaging_skeleton_loaders.dart';
@@ -318,22 +322,60 @@ class _ChatListPageState extends State<ChatListPage> {
   }
 
   Future<void> _openBusinessProfileSetup() async {
-    final email = (_myEmail ??
-            FirebaseAuth.instance.currentUser?.email ??
-            '')
-        .trim();
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => MarketplaceMerchantDashboard(
-          email: email,
-          merchantUid: FirebaseAuth.instance.currentUser?.uid,
+    if (!mounted) return;
+    final user = FirebaseAuth.instance.currentUser;
+    final email = (_myEmail ?? user?.email ?? '').trim();
+    final uid = (user?.uid ?? '').trim();
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+
+    final service = normalizeMerchantServiceKey(
+          uid.isNotEmpty
+              ? prefs.getString(MerchantIdentityStore.prefsServiceKeyForUid(uid))
+              : null,
+        ) ??
+        normalizeMerchantServiceKey(prefs.getString('merchant_service')) ??
+        normalizeMerchantServiceKey(
+          prefs.getString('session_intended_merchant_service'),
+        ) ??
+        'marketplace';
+
+    final safeEmail =
+        email.isNotEmpty ? email : (user?.email ?? 'merchant@vero360.app');
+
+    Widget page;
+    switch (service) {
+      case 'food':
+        page = FoodMerchantDashboard(
+          email: safeEmail,
+          merchantUid: uid.isEmpty ? null : uid,
+          embeddedInMainNav: true,
+          initialInnerTab: 3, // Profile
+        );
+        break;
+      case 'accommodation':
+        page = AccommodationMerchantDashboard(
+          email: safeEmail,
+          merchantUid: uid.isEmpty ? null : uid,
+          embeddedInMainNav: true,
+          initialInnerTab: 3, // Profile
+        );
+        break;
+      default:
+        page = MarketplaceMerchantDashboard(
+          email: safeEmail,
+          merchantUid: uid.isEmpty ? null : uid,
+          embeddedInMainNav: true,
+          initialInnerTab: 3, // Profile
           onBackToHomeTab: () {},
-        ),
-      ),
+        );
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => page),
     );
     if (!mounted) return;
     // Clear dismiss so completed profile hides; incomplete still shows.
-    final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kNudgeDismissPref);
     await _refreshBusinessProfileNudge();
   }

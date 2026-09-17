@@ -52,11 +52,14 @@ class FoodMerchantDashboard extends StatefulWidget {
   final String? merchantUid;
   /// When [Bottomnavbar] already wraps this screen (tab 4), hide the bar to avoid duplicates.
   final bool embeddedInMainNav;
+  /// Inner TabBar: 0 Dashboard, 1 Post food, 2 Orders, 3 Profile.
+  final int initialInnerTab;
   const FoodMerchantDashboard({
     super.key,
     required this.email,
     this.merchantUid,
     this.embeddedInMainNav = false,
+    this.initialInnerTab = 0,
   });
 
   @override
@@ -177,7 +180,11 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
   @override
   void initState() {
     super.initState();
-    _foodTabs = TabController(length: 4, vsync: this);
+    _foodTabs = TabController(
+      length: 4,
+      vsync: this,
+      initialIndex: widget.initialInnerTab.clamp(0, 3),
+    );
     _bootstrapIdentityFast();
     unawaited(_loadMerchantData(showLoader: false));
     // Orders are live via snapshots(); wallet/reviews are less time-critical.
@@ -1475,17 +1482,21 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
 
   AppBar _buildFoodAppBar() {
     return AppBar(
+      titleSpacing: 0,
       title: const Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
           Icon(Icons.restaurant_rounded, color: Colors.white, size: 22),
           SizedBox(width: 8),
-          Text(
-            'Restaurant Dashboard',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w900,
-              fontSize: 18,
+          Expanded(
+            child: Text(
+              'Restaurant Dashboard',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+                fontSize: 18,
+              ),
             ),
           ),
         ],

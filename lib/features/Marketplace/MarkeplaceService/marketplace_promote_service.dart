@@ -675,6 +675,155 @@ class MarketplacePromoteService {
     );
   }
 
+  /// After a successful post — teach first-time (and returning) sellers about boost.
+  static Future<void> presentPostSuccessBoostPrompt({
+    required BuildContext context,
+    required String itemId,
+    required Map<String, dynamic> item,
+    PromoteVertical vertical = PromoteVertical.marketplace,
+  }) async {
+    if (!context.mounted || itemId.trim().isEmpty) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final seenBefore = prefs.getBool('vero_boost_tip_seen_v1') ?? false;
+    await prefs.setBool('vero_boost_tip_seen_v1', true);
+    if (!context.mounted) return;
+
+    final noun = vertical.noun;
+    final feed = vertical.feedLabel;
+    final pending = (item['reviewStatus']?.toString() ?? '') == 'pending' ||
+        item['isActive'] != true;
+
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return Padding(
+          padding: EdgeInsets.fromLTRB(
+            20,
+            12,
+            20,
+            20 + MediaQuery.of(ctx).padding.bottom,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.black12,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                width: 56,
+                height: 56,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF7ED),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(
+                  Icons.campaign_rounded,
+                  color: Color(0xFFFF8A00),
+                  size: 30,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                seenBefore ? 'Boost this $noun?' : 'New: boost your $noun',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 20,
+                  color: Color(0xFF111111),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                seenBefore
+                    ? 'Promote this $noun so more buyers see it at the top of $feed.'
+                    : 'Did you know? You can boost any $noun to the top of $feed. '
+                        'Look for the megaphone / Promote button on your items.',
+                style: TextStyle(
+                  color: Colors.grey.shade700,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14.5,
+                  height: 1.4,
+                ),
+              ),
+              if (pending) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.black12),
+                  ),
+                  child: Text(
+                    'Your $noun is under review. You can pick a boost package now — '
+                    'it helps as soon as the listing goes live.',
+                    style: TextStyle(
+                      color: Colors.grey.shade800,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 18),
+              FilledButton.icon(
+                onPressed: () => Navigator.of(ctx).pop('boost'),
+                icon: const Icon(Icons.rocket_launch_rounded),
+                label: const Text(
+                  'Boost / Promote',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFFF8A00),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop('later'),
+                child: Text(
+                  'Not now',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (action != 'boost' || !context.mounted) return;
+    await presentPromoteSheet(
+      context: context,
+      itemId: itemId,
+      item: item,
+      vertical: vertical,
+    );
+  }
+
   static String _fmtWhen(DateTime dt) {
     final local = dt.toLocal();
     String two(int n) => n.toString().padLeft(2, '0');

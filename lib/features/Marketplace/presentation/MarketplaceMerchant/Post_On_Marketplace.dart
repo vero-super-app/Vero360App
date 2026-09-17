@@ -24,6 +24,7 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_moderation.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_promote_service.dart';
 import 'package:vero360_app/utils/description_contact_mask.dart';
 
 import '../../../../utils/toasthelper.dart';
@@ -875,6 +876,21 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
             ? 'Once approved, we’ll also share this on the Vero360 Facebook Page.'
             : null,
       );
+
+      final boostItem = <String, dynamic>{
+        ...data,
+        'id': docRef.id,
+        'name': data['name'],
+      };
+      // Let the toast show briefly, then teach / offer boost.
+      await Future<void>.delayed(const Duration(milliseconds: 450));
+      if (mounted) {
+        await MarketplacePromoteService.presentPostSuccessBoostPrompt(
+          context: context,
+          itemId: docRef.id,
+          item: boostItem,
+        );
+      }
 
       _resetAfterCreate();
       _tabs.animateTo(1);

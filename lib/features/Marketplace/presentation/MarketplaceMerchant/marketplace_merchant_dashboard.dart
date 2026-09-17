@@ -164,6 +164,8 @@ class MarketplaceMerchantDashboard extends StatefulWidget {
   /// When true, this dashboard is shown as a tab inside the main app bottom nav;
   /// hide our own bottom nav to avoid two overlapping bars.
   final bool embeddedInMainNav;
+  /// Inner TabBar index: 0 Dashboard, 1 Add Item, 2 My Items, 3 Profile.
+  final int initialInnerTab;
 
   const MarketplaceMerchantDashboard({
     super.key,
@@ -171,6 +173,7 @@ class MarketplaceMerchantDashboard extends StatefulWidget {
     required void Function() onBackToHomeTab,
     this.merchantUid,
     this.embeddedInMainNav = false,
+    this.initialInnerTab = 0,
   });
 
   /// Drop My Items memory on logout / account switch.
@@ -803,8 +806,17 @@ class _MarketplaceMerchantDashboardState
   @override
   void initState() {
     super.initState();
-    if (widget.embeddedInMainNav) _selectedIndex = 4;
-    _marketplaceTabs = TabController(length: 4, vsync: this);
+    // Standalone push (e.g. chat “finish business profile”) must show dashboard
+    // content (index 4), not the merchant shell Home tab (index 0).
+    if (widget.embeddedInMainNav || widget.initialInnerTab > 0) {
+      _selectedIndex = 4;
+    }
+    final startTab = widget.initialInnerTab.clamp(0, 3);
+    _marketplaceTabs = TabController(
+      length: 4,
+      vsync: this,
+      initialIndex: startTab,
+    );
     _marketplaceTabs.addListener(() {
       if (_marketplaceTabs.indexIsChanging) return;
       // My Items tab: ensure cached list is visible immediately.
@@ -3166,6 +3178,20 @@ class _MarketplaceMerchantDashboardState
             : null,
       );
 
+      final boostItem = <String, dynamic>{
+        ...data,
+        'id': docRef.id,
+        'name': data['name'],
+      };
+      await Future<void>.delayed(const Duration(milliseconds: 450));
+      if (mounted) {
+        await MarketplacePromoteService.presentPostSuccessBoostPrompt(
+          context: context,
+          itemId: docRef.id,
+          item: boostItem,
+        );
+      }
+
       _name.clear();
       _price.clear();
       _location.clear();
@@ -3988,21 +4014,25 @@ class _MarketplaceMerchantDashboardState
 
   AppBar _buildDashboardAppBar() {
     return AppBar(
-      title: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: const [
+      titleSpacing: 0,
+      title: const Row(
+        children: [
           Icon(
             Icons.storefront_rounded,
             color: Colors.white,
             size: 22,
           ),
           SizedBox(width: 8),
-          Text(
-            'Merchant Dashboard',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w900,
-              fontSize: 18,
+          Expanded(
+            child: Text(
+              'Merchant Dashboard',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+                fontSize: 18,
+              ),
             ),
           ),
         ],

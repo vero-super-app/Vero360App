@@ -1781,7 +1781,7 @@ class InAppPaymentPage extends StatefulWidget {
   /// Delivery type chosen during checkout (needed for pending orders, etc.).
   final DeliveryType deliveryType;
   /// When true, on payment success only pop the webview (don't navigate to Orders).
-  /// Use for airport pickup and other flows where caller handles post-payment UI.
+  /// Use for flows where the caller handles post-payment UI.
   final bool popOnlyOnSuccess;
 
   /// When set, runs after a successful payment (webview popped). Skips the default

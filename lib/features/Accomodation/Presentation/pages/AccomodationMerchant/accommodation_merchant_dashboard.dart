@@ -924,12 +924,15 @@ class AccommodationMerchantDashboard extends StatefulWidget {
   final String email;
   final String? merchantUid;
   final bool embeddedInMainNav;
+  /// Inner TabBar: 0 Dashboard … 3 Profile.
+  final int initialInnerTab;
 
   const AccommodationMerchantDashboard({
     super.key,
     required this.email,
     this.merchantUid,
     this.embeddedInMainNav = false,
+    this.initialInnerTab = 0,
   });
 
   @override
@@ -1096,8 +1099,10 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   List<String> _servicesOffered = [];
   List<dynamic> _rooms = [];
   List<dynamic> _reviews = [];
-  bool _isLoading = true;
-  bool _initialLoadComplete = false;
+  /// Section loading for properties only — never block the whole dashboard chrome.
+  bool _roomsLoading = false;
+  bool _isLoading = false;
+  bool _initialLoadComplete = true;
   String _uid = '';
   String _businessName = '';
   double _walletBalance = 0;
@@ -1141,10 +1146,20 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   @override
   void initState() {
     super.initState();
-    if (widget.embeddedInMainNav) _selectedIndex = 4;
-    _accommodationTabs = TabController(length: 4, vsync: this);
-    _loadMerchantData();
-    // No periodic refresh – data updates only on pull-to-refresh
+    if (widget.embeddedInMainNav || widget.initialInnerTab > 0) {
+      _selectedIndex = 4;
+    }
+    _accommodationTabs = TabController(
+      length: 4,
+      vsync: this,
+      initialIndex: widget.initialInnerTab.clamp(0, 3),
+    );
+    _bootstrapFast();
+    // Heavy network after first frame so chrome paints immediately.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_loadMerchantData(showLoading: false));
+    });
   }
 
   @override
@@ -1152,6 +1167,30 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     _accommodationTabs?.dispose();
     _bookingSearchController.dispose();
     super.dispose();
+  }
+
+  /// Instant Auth / email paint — same idea as marketplace/food dashboards.
+  void _bootstrapFast() {
+    final user = _auth.currentUser;
+    final pinned = (widget.merchantUid ?? '').trim();
+    _uid = pinned.isNotEmpty ? pinned : (user?.uid ?? '');
+    if (user != null) {
+      final email = (user.email ?? widget.email).trim();
+      if (email.isNotEmpty) _merchantEmail = email;
+      final phone = (user.phoneNumber ?? '').trim();
+      if (phone.isNotEmpty) _merchantPhone = phone;
+      final photo = (user.photoURL ?? '').trim();
+      if (photo.isNotEmpty) _merchantProfileUrl = photo;
+      final display = (user.displayName ?? '').trim();
+      if (display.isNotEmpty && !display.contains('@')) {
+        _businessName = display;
+      }
+    }
+    if (_businessName.isEmpty) {
+      _businessName = _fallbackBusinessLabel;
+    }
+    _isLoading = false;
+    _initialLoadComplete = true;
   }
 
   /// Firestore dashboard snapshot (recent orders, merchant doc subset).
@@ -1181,6 +1220,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
       if (fromMerchant != null && fromMerchant.isNotEmpty) {
         unawaited(prefs.setString('business_name', fromMerchant));
       }
+      final services = merchantMap?['servicesOffered'] as List<dynamic>?;
       if (!mounted) return;
       setState(() {
         _merchantData = merchantMap;
@@ -1189,6 +1229,9 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         _status = dashboardData['merchant']?['status'] ?? 'pending';
         if (fromMerchant != null && fromMerchant.isNotEmpty) {
           _businessName = fromMerchant;
+        }
+        if (services != null) {
+          _servicesOffered = services.map((e) => e.toString()).toList();
         }
       });
     } catch (e) {
@@ -1199,56 +1242,60 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   Future<void> _loadMerchantData({bool showLoading = true}) async {
     if (!mounted) return;
 
-    if (showLoading) setState(() => _isLoading = true);
-    
     final prefs = await SharedPreferences.getInstance();
-    _uid = ((widget.merchantUid ?? '').trim().isNotEmpty)
-        ? widget.merchantUid!.trim()
-        : (_auth.currentUser?.uid ?? prefs.getString('uid') ?? '');
-    _businessName = (prefs.getString('business_name') ?? '').trim();
+    final pinned = (widget.merchantUid ?? '').trim();
+    _uid = pinned.isNotEmpty
+        ? pinned
+        : (_auth.currentUser?.uid ?? prefs.getString('uid') ?? _uid);
+    final prefsName = (prefs.getString('business_name') ?? '').trim();
+    if (prefsName.isNotEmpty &&
+        (_businessNameIsPlaceholder || _businessName.isEmpty)) {
+      _businessName = prefsName;
+    }
     if (_businessName.isEmpty) {
       _businessName = _fallbackBusinessLabel;
     }
 
-    if (_uid.isNotEmpty) {
-      try {
-        // Wave 1: Firestore + properties + wallet + profile (typically faster than HTTP API).
-        await Future.wait<void>([
-          _fetchAndApplyMerchantDashboard(prefs),
-          _loadRooms(),
-          _loadWalletBalance(),
-          _loadProfileFromAuthAndFirestore(),
-        ]);
-        await _calculateAvailableRooms();
-      } catch (e) {
-        debugPrint('Error loading accommodation data: $e');
-      }
-
-      // Show the dashboard as soon as core data is in; don’t block on Vero API + extras.
-      if (mounted && showLoading) {
-        setState(() => _isLoading = false);
-      }
-
-      try {
-        await Future.wait<void>([
-          _loadVeroMerchantBookings(),
-          _loadServicesOffered(),
-          _loadReviews(),
-        ]);
-      } catch (e) {
-        debugPrint('Error loading secondary accommodation data: $e');
-      }
-    }
-
+    // Never block the whole page on network — paint tabs immediately.
     if (mounted) {
       setState(() {
-        if (showLoading) _isLoading = false;
+        _isLoading = false;
         _initialLoadComplete = true;
+        _roomsLoading = true;
       });
     }
+
+    if (_uid.isEmpty) {
+      if (mounted) setState(() => _roomsLoading = false);
+      return;
+    }
+
+    try {
+      // Wave 1: fast Firestore paths only (rooms + wallet + profile + merchant doc).
+      await Future.wait<void>([
+        _loadRooms(includeApi: false),
+        _loadWalletBalance(),
+        _loadProfileFromAuthAndFirestore(),
+        _fetchAndApplyMerchantDashboard(prefs),
+      ]);
+    } catch (e) {
+      debugPrint('Error loading accommodation core data: $e');
+    }
+
+    if (mounted) setState(() => _roomsLoading = false);
+
+    // Wave 2: API merge + bookings/reviews — never hold the spinner.
+    unawaited(Future.wait<void>([
+      _loadRooms(includeApi: true),
+      _loadVeroMerchantBookings(),
+      _loadReviews(),
+    ]).catchError((e, _) {
+      debugPrint('Error loading secondary accommodation data: $e');
+      return <void>[];
+    }));
   }
 
-  Future<void> _loadRooms() async {
+  Future<void> _loadRooms({bool includeApi = true}) async {
     try {
       final email = (_auth.currentUser?.email ?? widget.email).trim();
 
@@ -1257,12 +1304,16 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
           .where('merchantId', isEqualTo: _uid)
           .get();
 
-      final Future<List<Accommodation>> apiFuture = email.isNotEmpty
-          ? _accommodationApi.fetchOwnedByEmail(email).catchError((e, _) {
-              print('Error loading API properties: $e');
-              return <Accommodation>[];
-            })
-          : Future<List<Accommodation>>.value([]);
+      final Future<List<Accommodation>> apiFuture = includeApi && email.isNotEmpty
+          ? _accommodationApi
+              .fetchOwnedByEmail(email, allowNetworkFetch: true)
+              .catchError((e, _) {
+            debugPrint('Error loading API properties: $e');
+            return <Accommodation>[];
+          })
+          : Future<List<Accommodation>>.value(
+              _ownedFromMemoryCache(email),
+            );
 
       final results = await Future.wait<Object?>([fsFuture, apiFuture]);
       final snapshot = results[0]! as QuerySnapshot<Map<String, dynamic>>;
@@ -1311,14 +1362,30 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         return true;
       }).toList();
 
-      if (mounted) {
-        setState(() {
+      if (!mounted) return;
+      setState(() {
+        // When refreshing API later, keep FS-only rows if API returned empty
+        // but we already painted FS rooms.
+        if (includeApi || apiRows.isNotEmpty || _rooms.isEmpty) {
           _rooms = [...apiRows, ...fsFiltered];
-        });
-      }
+        } else if (!includeApi) {
+          _rooms = fsFiltered;
+        }
+        _recomputeAvailableRooms();
+      });
     } catch (e) {
-      print('Error loading properties: $e');
+      debugPrint('Error loading properties: $e');
     }
+  }
+
+  List<Accommodation> _ownedFromMemoryCache(String email) {
+    final e = email.trim().toLowerCase();
+    if (e.isEmpty) return const [];
+    final cached = AccommodationService.peekMemoryAll();
+    if (cached == null || cached.isEmpty) return const [];
+    return cached
+        .where((a) => (a.owner?.email ?? '').trim().toLowerCase() == e)
+        .toList();
   }
 
   int? _apiAccommodationId(Map<String, dynamic> room) {
@@ -3082,19 +3149,18 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   }
 
   Future<void> _calculateAvailableRooms() async {
+    if (!mounted) return;
+    setState(_recomputeAvailableRooms);
+  }
+
+  void _recomputeAvailableRooms() {
     try {
-      final availableRooms = _rooms.where((room) {
+      _availableRooms = _rooms.where((room) {
         final roomMap = room as Map<String, dynamic>;
         return roomMap['isAvailable'] == true;
       }).length;
-      
-      if (mounted) {
-        setState(() {
-          _availableRooms = availableRooms;
-        });
-      }
-    } catch (e) {
-      print('Error calculating available rooms: $e');
+    } catch (_) {
+      _availableRooms = 0;
     }
   }
 
@@ -3693,21 +3759,25 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
 
   AppBar _buildDashboardAppBar() {
     return AppBar(
+      titleSpacing: 0,
       title: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
+          const Icon(
             Icons.hotel_rounded,
             color: Colors.white,
             size: 22,
           ),
           const SizedBox(width: 8),
-          Text(
-            _initialLoadComplete ? 'Accommodation Dashboard' : 'Loading…',
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w900,
-              fontSize: 18,
+          Expanded(
+            child: Text(
+              _initialLoadComplete ? 'Accommodation Dashboard' : 'Loading…',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+                fontSize: 18,
+              ),
             ),
           ),
         ],
@@ -3844,20 +3914,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   }
 
   Widget _buildDashboardContent() {
-    if (_isLoading) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 20),
-            Text('Loading accommodation dashboard...'),
-          ],
-        ),
-      );
-    }
-
-    // Mirror MarketplaceMerchantDashboard: tabs for dashboard / properties / bookings
+    // Always show tabs immediately — section loaders fill in data.
     if (_accommodationTabs == null) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -6086,7 +6143,18 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
           ],
         ),
         const SizedBox(height: 10),
-        if (displayRooms.isEmpty)
+        if (_roomsLoading && displayRooms.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 28),
+            child: Center(
+              child: SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              ),
+            ),
+          )
+        else if (displayRooms.isEmpty)
           const Card(
             child: Padding(
               padding: EdgeInsets.all(20),

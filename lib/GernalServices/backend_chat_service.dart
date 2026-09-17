@@ -15,6 +15,7 @@ import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
 import 'package:vero360_app/GernalServices/chat_receipt_service.dart';
+import 'package:vero360_app/utils/chat_offplatform_detector.dart';
 
 /// Backend `@IsUUID('4')` rejects anything else (v5, `order-shipping-…`, etc.).
 final _uuidV4Re = RegExp(
@@ -621,6 +622,8 @@ class BackendChatService {
         kind: ChatLastMessagePreviewKind.video,
       );
     }
+    // Match in-chat masking so phone numbers never leak in the chat list.
+    t = ChatOffPlatformDetector.maskPhones(t);
     if (t.length > 80) {
       return ChatLastMessagePreview(
         label: '${t.substring(0, 80)}…',

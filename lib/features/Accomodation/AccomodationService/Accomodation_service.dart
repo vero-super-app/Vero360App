@@ -396,14 +396,27 @@ class AccommodationService {
     );
   }
 
-  /// Lists accommodations from `/accommodations/all` owned by [ownerEmail] (case-insensitive).
-  Future<List<Accommodation>> fetchOwnedByEmail(String ownerEmail) async {
+  /// Lists accommodations owned by [ownerEmail].
+  /// Prefers in-memory Discover cache so merchant dashboards do not wait on
+  /// a full `/accommodations/all` download when cache is warm.
+  Future<List<Accommodation>> fetchOwnedByEmail(
+    String ownerEmail, {
+    bool allowNetworkFetch = true,
+  }) async {
     final e = ownerEmail.trim().toLowerCase();
     if (e.isEmpty) return [];
-    final all = await fetch();
-    return all
+
+    List<Accommodation> filter(List<Accommodation> all) => all
         .where((a) => (a.owner?.email ?? '').trim().toLowerCase() == e)
         .toList();
+
+    final cached = peekMemoryAll();
+    if (cached != null && cached.isNotEmpty) {
+      return filter(cached);
+    }
+    if (!allowNetworkFetch) return [];
+    final all = await fetch();
+    return filter(all);
   }
 
   // Optional compatibility method

@@ -13,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
+import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
@@ -355,12 +356,65 @@ class HomepageAdvertService {
   }
 }
 
-/// Sliding homepage adverts + always-on "Advertise here" slide.
+/// Sliding homepage adverts + sell banners + always-on "Advertise here" slide.
 class HomepageAdvertsSection extends StatefulWidget {
   const HomepageAdvertsSection({super.key});
 
   @override
   State<HomepageAdvertsSection> createState() => _HomepageAdvertsSectionState();
+}
+
+class _SellBannerSlide {
+  final String title;
+  final String body;
+  final String ctaLabel;
+  final String imageUrl;
+
+  const _SellBannerSlide({
+    required this.title,
+    required this.body,
+    required this.ctaLabel,
+    required this.imageUrl,
+  });
+
+  static const fallback = _SellBannerSlide(
+    title: 'Start selling on Vero360',
+    body:
+        'Create a merchant account, list your products or services, and reach customers across Malawi.',
+    ctaLabel: 'Sell now',
+    imageUrl: '',
+  );
+}
+
+Stream<List<_SellBannerSlide>> _watchSellBanners() {
+  return FirebaseFirestore.instance
+      .collection('sell_banners')
+      .where('active', isEqualTo: true)
+      .limit(12)
+      .snapshots()
+      .map((snap) {
+    final docs = [...snap.docs];
+    docs.sort((a, b) {
+      final ao = (a.data()['sortOrder'] as num?)?.toInt() ?? 0;
+      final bo = (b.data()['sortOrder'] as num?)?.toInt() ?? 0;
+      return ao.compareTo(bo);
+    });
+    if (docs.isEmpty) return const [_SellBannerSlide.fallback];
+    return docs.map((doc) {
+      final data = doc.data();
+      final title = (data['title']?.toString() ?? '').trim();
+      final body = (data['body'] ?? data['subtitle'] ?? data['description'] ?? '')
+          .toString()
+          .trim();
+      final cta = (data['ctaLabel']?.toString() ?? '').trim();
+      return _SellBannerSlide(
+        title: title.isEmpty ? _SellBannerSlide.fallback.title : title,
+        body: body,
+        ctaLabel: cta.isEmpty ? _SellBannerSlide.fallback.ctaLabel : cta,
+        imageUrl: (data['imageUrl']?.toString() ?? '').trim(),
+      );
+    }).toList();
+  });
 }
 
 class _HomepageAdvertsSectionState extends State<HomepageAdvertsSection> {
@@ -385,6 +439,14 @@ class _HomepageAdvertsSectionState extends State<HomepageAdvertsSection> {
     if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const AdvertiseHerePage()),
+    );
+  }
+
+  void _openMerchantSignup() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const RegisterScreen(initialRole: UserRole.merchant),
+      ),
     );
   }
 
@@ -759,47 +821,60 @@ class _HomepageAdvertsSectionState extends State<HomepageAdvertsSection> {
   Widget build(BuildContext context) {
     return StreamBuilder<List<HomepageAdvert>>(
       stream: HomepageAdvertService.watchActiveAdverts(),
-      builder: (context, snap) {
-        final ads = snap.data ?? const <HomepageAdvert>[];
-        // Last slide is always the advertise CTA.
-        final count = ads.length + 1;
-        final pageIndex = _index.clamp(0, count - 1);
+      builder: (context, adsSnap) {
+        final ads = adsSnap.data ?? const <HomepageAdvert>[];
+        return StreamBuilder<List<_SellBannerSlide>>(
+          stream: _watchSellBanners(),
+          builder: (context, sellSnap) {
+            final sells = sellSnap.data ?? const [_SellBannerSlide.fallback];
+            // Ads → sell banners → always-on advertise CTA.
+            final count = ads.length + sells.length + 1;
+            final pageIndex = _index.clamp(0, count - 1);
 
-        // Same footprint as homepage [_PromoBanner]: 16 inset, ~104 tall.
-        return Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: CarouselSlider.builder(
-                itemCount: count,
-                options: CarouselOptions(
-                  height: 104,
-                  viewportFraction: 1,
-                  enableInfiniteScroll: count > 1,
-                  autoPlay: count > 1,
-                  autoPlayInterval: const Duration(seconds: 2),
-                  autoPlayAnimationDuration:
-                      const Duration(milliseconds: 650),
-                  enlargeCenterPage: false,
-                  padEnds: false,
-                  onPageChanged: (i, _) => setState(() => _index = i),
+            // Same footprint as homepage [_PromoBanner]: 16 inset, ~104 tall.
+            return Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: CarouselSlider.builder(
+                    itemCount: count,
+                    options: CarouselOptions(
+                      height: 104,
+                      viewportFraction: 1,
+                      enableInfiniteScroll: count > 1,
+                      autoPlay: count > 1,
+                      autoPlayInterval: const Duration(seconds: 2),
+                      autoPlayAnimationDuration:
+                          const Duration(milliseconds: 650),
+                      enlargeCenterPage: false,
+                      padEnds: false,
+                      onPageChanged: (i, _) => setState(() => _index = i),
+                    ),
+                    itemBuilder: (_, i, __) {
+                      if (i < ads.length) {
+                        return _AdvertSlide(
+                          advert: ads[i],
+                          onTap: () => _openAdvert(ads[i]),
+                        );
+                      }
+                      final sellIndex = i - ads.length;
+                      if (sellIndex < sells.length) {
+                        return _SellCtaSlide(
+                          banner: sells[sellIndex],
+                          onTap: _openMerchantSignup,
+                        );
+                      }
+                      return _AdvertiseCtaSlide(onTap: _openAdvertise);
+                    },
+                  ),
                 ),
-                itemBuilder: (_, i, __) {
-                  if (i == ads.length) {
-                    return _AdvertiseCtaSlide(onTap: _openAdvertise);
-                  }
-                  return _AdvertSlide(
-                    advert: ads[i],
-                    onTap: () => _openAdvert(ads[i]),
-                  );
-                },
-              ),
-            ),
-            if (count > 1) ...[
-              const SizedBox(height: 8),
-              _AdvertDots(count: count, index: pageIndex),
-            ],
-          ],
+                if (count > 1) ...[
+                  const SizedBox(height: 8),
+                  _AdvertDots(count: count, index: pageIndex),
+                ],
+              ],
+            );
+          },
         );
       },
     );
@@ -931,6 +1006,154 @@ class _AdvertDots extends StatelessWidget {
           ),
         );
       }),
+    );
+  }
+}
+
+class _SellCtaSlide extends StatelessWidget {
+  final _SellBannerSlide banner;
+  final VoidCallback onTap;
+  const _SellCtaSlide({required this.banner, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Color(0xFF9A3412),
+              Color(0xFFEA580C),
+              Color(0xFFF97316),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: _AdColors.brandOrange.withOpacity(0.40),
+              blurRadius: 20,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: Stack(
+            children: [
+              Positioned(
+                right: -20,
+                top: -20,
+                child: Container(
+                  width: 130,
+                  height: 130,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withOpacity(0.10),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: -10,
+                bottom: -30,
+                child: Container(
+                  width: 90,
+                  height: 90,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withOpacity(0.06),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 14, 12),
+                child: Row(
+                  children: [
+                    if (banner.imageUrl.isNotEmpty) ...[
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.network(
+                          banner.imageUrl,
+                          width: 56,
+                          height: 56,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            width: 56,
+                            height: 56,
+                            color: Colors.white24,
+                            alignment: Alignment.center,
+                            child: const Icon(
+                              Icons.storefront_rounded,
+                              color: Colors.white,
+                              size: 22,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                    ],
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            banner.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 15,
+                              height: 1.15,
+                            ),
+                          ),
+                          if (banner.body.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              banner.body,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.9),
+                                fontWeight: FontWeight.w500,
+                                fontSize: 12,
+                                height: 1.25,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Material(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        child: Text(
+                          banner.ctaLabel,
+                          style: const TextStyle(
+                            color: Color(0xFF9A3412),
+                            fontWeight: FontWeight.w900,
+                            fontSize: 12.5,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

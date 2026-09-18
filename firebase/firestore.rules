@@ -252,6 +252,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Sell-on-Vero360 homepage banners (admin writes via web panel).
+    match /sell_banners/{bannerId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     // Admin → Vero360 Team chat broadcasts (everyone).
     match /vero_team_broadcasts/{broadcastId} {
       allow read: if isSignedIn();

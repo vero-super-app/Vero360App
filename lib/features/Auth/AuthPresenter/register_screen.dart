@@ -79,7 +79,11 @@ const List<MerchantService> kMerchantServices = [
 ];
 
 class RegisterScreen extends StatefulWidget {
-  const RegisterScreen({super.key});
+  const RegisterScreen({super.key, this.initialRole});
+
+  /// Prefill role when opened from sell banner / deep links.
+  final UserRole? initialRole;
+
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
 }
@@ -114,6 +118,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _socialLoading = false;
 
   Timer? _dummyTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initialRole;
+    if (initial != null) _role = initial;
+  }
 
   @override
   void dispose() {

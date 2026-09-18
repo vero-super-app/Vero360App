@@ -53,6 +53,12 @@ android {
         versionName = flutter.versionName
         multiDexEnabled = true
 
+        // Redmi 8A / 2GB: 32-bit ARM only (smaller APK + lower RAM).
+        // Do not also pass Flutter `--split-per-abi` — AGP rejects both together.
+        ndk {
+            abiFilters += listOf("armeabi-v7a")
+        }
+
         // Load Google Maps API key from .env, with built-in fallback for local/CI.
         val googleMapsKey = envProperties.getProperty("GOOGLE_MAPS_API_KEY", "")
             ?.trim()

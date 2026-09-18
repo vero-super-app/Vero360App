@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../vero360web"
+		},
+		{
+			"path": "../vero-backend"
+		}
+	],
+	"settings": {}
+}

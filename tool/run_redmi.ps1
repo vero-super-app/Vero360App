@@ -68,12 +68,18 @@ Invoke-Adb -Args @('uninstall', 'com.vero265.app') -AllowFail | Out-Null
 Invoke-Adb -Args @('uninstall', 'com.vero.vero360') -AllowFail | Out-Null
 
 Write-Host 'Building armeabi-v7a release APK (smallest)...'
-flutter build apk --release --split-per-abi --target-platform=android-arm
+# ndk.abiFilters already pins armeabi-v7a in android/app/build.gradle.kts.
+# Do not use --split-per-abi with abiFilters (AGP conflict).
+flutter build apk --release --target-platform=android-arm
 if ($LASTEXITCODE -ne 0) { throw "flutter build failed ($LASTEXITCODE)" }
 
-$apk = 'build\app\outputs\flutter-apk\app-armeabi-v7a-release.apk'
-if (-not (Test-Path $apk)) {
-  throw "APK not found: $apk"
+$apkCandidates = @(
+  'build\app\outputs\flutter-apk\app-armeabi-v7a-release.apk',
+  'build\app\outputs\flutter-apk\app-release.apk'
+)
+$apk = $apkCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $apk) {
+  throw "APK not found. Looked for: $($apkCandidates -join ', ')"
 }
 
 $sizeMb = [math]::Round((Get-Item $apk).Length / 1MB, 1)

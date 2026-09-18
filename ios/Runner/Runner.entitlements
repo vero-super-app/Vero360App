@@ -5,7 +5,7 @@
 	<!-- Required for FCM / APNs. Signing profile selects development vs production. -->
 	<key>aps-environment</key>
 	<string>development</string>
-	<!-- Sign in with Apple -->
+	<!-- Required for Sign in with Apple (App Review Guideline 2.1 / ASAuthorization error 1000 without this). -->
 	<key>com.apple.developer.applesignin</key>
 	<array>
 		<string>Default</string>

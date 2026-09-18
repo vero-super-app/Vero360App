@@ -126,6 +126,55 @@ class FirebaseAuthService {
     }
   }
 
+  /// Apple credential + raw nonce for Firebase reauthentication flows.
+  Future<({AuthorizationCredentialAppleID apple, String rawNonce})?>
+      getAppleCredentialWithNonce() async {
+    try {
+      if (!Platform.isIOS && !Platform.isMacOS) {
+        throw FirebaseAuthException(
+          code: 'apple-unsupported',
+          message: 'Apple Sign-In is only available on iPhone and iPad.',
+        );
+      }
+
+      final available = await SignInWithApple.isAvailable();
+      if (!available) {
+        throw FirebaseAuthException(
+          code: 'apple-unavailable',
+          message:
+              'Apple Sign-In is not available on this device. Try again or use email.',
+        );
+      }
+
+      final rawNonce = _generateNonce();
+      final nonce = _sha256of(rawNonce);
+      final appleCred = await SignInWithApple.getAppleIDCredential(
+        scopes: [
+          AppleIDAuthorizationScopes.email,
+          AppleIDAuthorizationScopes.fullName,
+        ],
+        nonce: nonce,
+      );
+
+      if (appleCred.identityToken == null ||
+          appleCred.identityToken!.isEmpty) {
+        throw FirebaseAuthException(
+          code: 'missing-id-token',
+          message:
+              'Apple sign-in failed. Please try again or use email to sign in.',
+        );
+      }
+
+      return (apple: appleCred, rawNonce: rawNonce);
+    } on SignInWithAppleAuthorizationException catch (e) {
+      if (e.code == AuthorizationErrorCode.canceled) return null;
+      throw FirebaseAuthException(
+        code: 'apple-sign-in',
+        message: _appleUserMessage(e),
+      );
+    }
+  }
+
   static String _appleUserMessage(SignInWithAppleAuthorizationException e) {
     switch (e.code) {
       case AuthorizationErrorCode.canceled:

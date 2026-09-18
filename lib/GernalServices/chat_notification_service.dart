@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
 
 /// Cross-device chat alerts via Firestore → Cloud Function → FCM.
 /// Critical when the recipient app is backgrounded or killed (WebSocket is offline).
@@ -57,8 +58,9 @@ class ChatNotificationService {
       return;
     }
 
-    final safeSender = senderName.trim().isEmpty ? 'Someone' : senderName.trim();
-    final preview = _previewBody(body);
+    final rawSender = senderName.trim().isEmpty ? 'Someone' : senderName.trim();
+    final safeSender = DescriptionContactMask.mask(rawSender);
+    final preview = DescriptionContactMask.mask(_previewBody(body));
 
     try {
       await FirebaseFirestore.instance.collection(collectionName).add({

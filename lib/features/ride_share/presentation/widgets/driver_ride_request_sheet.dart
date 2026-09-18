@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:vero360_app/GernalServices/driver_request_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
 
 /// Light ride-request card shared by overlay popup and accept dialog.
 class DriverRideRequestSheet extends StatelessWidget {
@@ -354,6 +355,10 @@ class DriverRideRequestSheet extends StatelessWidget {
 String shortPassengerName(String name) {
   final trimmed = name.trim();
   if (trimmed.isEmpty || trimmed == 'Unknown') return 'Passenger';
+  // Hide full phone numbers in ride request UI (e.g. 0991234567 → 0991******).
+  if (DescriptionContactMask.containsPhone(trimmed)) {
+    return DescriptionContactMask.mask(trimmed);
+  }
   final parts = trimmed.split(RegExp(r'\s+'));
   if (parts.length == 1) return parts.first;
   final last = parts.last;

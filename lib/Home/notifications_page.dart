@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
 
 class NotificationsPage extends StatefulWidget {
   const NotificationsPage({super.key});
@@ -325,7 +326,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  n.title,
+                                  DescriptionContactMask.mask(n.title),
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
@@ -336,7 +337,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
                                 if (n.body.trim().isNotEmpty) ...[
                                   const SizedBox(height: 4),
                                   Text(
-                                    n.body,
+                                    DescriptionContactMask.mask(n.body),
                                     maxLines: 3,
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(

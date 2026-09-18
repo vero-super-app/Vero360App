@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_notification_provider.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
 
 /// Badge widget showing notification count
 class NotificationBadge extends ConsumerWidget {
@@ -268,7 +269,9 @@ class _NotificationItem extends ConsumerWidget {
                       ),
                     ),
                     Text(
-                      notification.rideRequest.passengerName,
+                      DescriptionContactMask.mask(
+                        notification.rideRequest.passengerName,
+                      ),
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.grey[600],

@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/GeneralModels/order_model.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
 
 /// Single notification item (in-app + from push).
 class AppNotificationItem {
@@ -372,8 +373,8 @@ class NotificationStore extends ChangeNotifier {
     }
     _items.add(AppNotificationItem(
       id: id,
-      title: title,
-      body: body,
+      title: DescriptionContactMask.mask(title),
+      body: DescriptionContactMask.mask(body),
       payload: payload,
     ));
     await _save();

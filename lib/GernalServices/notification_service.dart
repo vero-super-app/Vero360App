@@ -20,6 +20,7 @@ import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/chat_notification_service.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/engagement_notification_service.dart';
+import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/GeneralPages/Toreceive.dart';
 import 'package:vero360_app/GeneralPages/ToRefund.dart';
 import 'package:vero360_app/GeneralPages/Toship.dart';
@@ -563,8 +564,8 @@ class NotificationService {
       try {
         await _showLocalNotification(
           id: message.hashCode.abs(),
-          title: title,
-          body: body,
+          title: DescriptionContactMask.mask(title),
+          body: DescriptionContactMask.mask(body),
           payload: jsonEncode(data),
           rideRequest: true,
         );
@@ -801,10 +802,12 @@ class NotificationService {
     bool rideRequest = false,
   }) async {
     final channel = rideRequest ? _rideRequestChannel : _highPriorityChannel;
+    final safeTitle = DescriptionContactMask.mask(title);
+    final safeBody = DescriptionContactMask.mask(body);
     await _localNotifications.show(
       id,
-      title,
-      body,
+      safeTitle,
+      safeBody,
       NotificationDetails(
         android: AndroidNotificationDetails(
           channel.id,
@@ -1464,8 +1467,10 @@ class NotificationService {
   }) async {
     if (FirebaseAuth.instance.currentUser == null) return;
     final safeChatId = chatId.trim().isEmpty ? 'chat' : chatId.trim();
-    final safeSender =
+    final rawSender =
         senderName.trim().isEmpty ? 'Someone' : senderName.trim();
+    final safeSender = DescriptionContactMask.mask(rawSender);
+    final safeBody = DescriptionContactMask.mask(body);
     final payloadMap = <String, dynamic>{
       'type': 'new_message',
       'chatId': safeChatId,
@@ -1477,11 +1482,11 @@ class NotificationService {
     final payload = jsonEncode(payloadMap);
     // Stable-enough id so rapid WS+Firestore+FCM copies collapse in the store.
     final id =
-        'chat_${safeChatId}_${safeSender.hashCode}_${body.trim().hashCode}';
+        'chat_${safeChatId}_${safeSender.hashCode}_${safeBody.trim().hashCode}';
     final added = await NotificationStore.instance.addNotification(
       id: id,
       title: safeSender,
-      body: body,
+      body: safeBody,
       payload: payloadMap,
     );
     // Skip second tray banner when WS/Firestore/FCM all fire for the same message.
@@ -1489,7 +1494,7 @@ class NotificationService {
     await _showLocalNotification(
       id: safeChatId.hashCode.abs(),
       title: safeSender,
-      body: body,
+      body: safeBody,
       payload: payload,
     );
   }

@@ -1435,20 +1435,20 @@ class _NearbySection extends StatefulWidget {
 }
 
 class _NearbyItem {
-  final String emoji;
+  final IconData icon;
   final String name;
   final String rating;
   final String serviceKey;
-  const _NearbyItem(this.emoji, this.name, this.rating, this.serviceKey);
+  const _NearbyItem(this.icon, this.name, this.rating, this.serviceKey);
 }
 
 class _NearbySectionState extends State<_NearbySection> {
   static const _items = [
-    _NearbyItem('🚗', 'Vero Ride nearby', '4.8', 'taxi'),
-    _NearbyItem('🛒', 'Marketplace nearby', '4.7', 'mainmarketplace'),
-    _NearbyItem('🍔', 'Food & Restaurants', '4.6', 'food'),
-    _NearbyItem('🏨', 'Stays nearby', '4.7', 'accommodation'),
-    _NearbyItem('🚲', 'Vero Bike nearby', '4.9', 'vero_bike'),
+    _NearbyItem(Icons.local_taxi_rounded, 'Vero Ride nearby', '4.8', 'taxi'),
+    _NearbyItem(Icons.storefront_rounded, 'Marketplace nearby', '4.7', 'mainmarketplace'),
+    _NearbyItem(Icons.restaurant_rounded, 'Food & Restaurants', '4.6', 'food'),
+    _NearbyItem(Icons.hotel_rounded, 'Stays nearby', '4.7', 'accommodation'),
+    _NearbyItem(Icons.two_wheeler_rounded, 'Vero Bike nearby', '4.9', 'vero_bike'),
   ];
   int _index = 0;
 
@@ -1479,7 +1479,7 @@ class _NearbySectionState extends State<_NearbySection> {
           itemBuilder: (_, i, __) {
             final it = _items[i];
             return _NearbyCard(
-              emoji:  it.emoji,
+              icon:   it.icon,
               name:   it.name,
               rating: it.rating,
               onOpen: () => widget.onOpenService(it.serviceKey),
@@ -1494,10 +1494,11 @@ class _NearbySectionState extends State<_NearbySection> {
 }
 
 class _NearbyCard extends StatelessWidget {
-  final String emoji, name, rating;
+  final IconData icon;
+  final String name, rating;
   final VoidCallback onOpen;
   const _NearbyCard({
-    required this.emoji,
+    required this.icon,
     required this.name,
     required this.rating,
     required this.onOpen,
@@ -1525,11 +1526,11 @@ class _NearbyCard extends StatelessWidget {
           Container(
             width: 46, height: 46,
             decoration: BoxDecoration(
-              color:  AppColors.brandOrangePale,
-              shape:  BoxShape.circle,
-              border: Border.all(color: AppColors.brandOrangeSoft),
+              color:        AppColors.brandOrangePale,
+              borderRadius: BorderRadius.circular(14),
             ),
-            child: Center(child: Text(emoji, style: const TextStyle(fontSize: 20))),
+            alignment: Alignment.center,
+            child: Icon(icon, size: 24, color: AppColors.brandOrangeDeep),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -1845,11 +1846,11 @@ class _NearYouCarouselState extends State<_NearYouCarousel> {
   @override
   Widget build(BuildContext context) {
     final items = const [
-      _NearbyItem('🚗', 'Vero Ride nearby', '4.8', 'taxi'),
-      _NearbyItem('🛒', 'Marketplace nearby', '4.7', 'mainmarketplace'),
-      _NearbyItem('🍔', 'Food & Restaurants', '4.6', 'food'),
-      _NearbyItem('🏨', 'Stays nearby', '4.7', 'accommodation'),
-      _NearbyItem('🚲', 'Vero Bike nearby', '4.9', 'vero_bike'),
+      _NearbyItem(Icons.local_taxi_rounded, 'Vero Ride nearby', '4.8', 'taxi'),
+      _NearbyItem(Icons.storefront_rounded, 'Marketplace nearby', '4.7', 'mainmarketplace'),
+      _NearbyItem(Icons.restaurant_rounded, 'Food & Restaurants', '4.6', 'food'),
+      _NearbyItem(Icons.hotel_rounded, 'Stays nearby', '4.7', 'accommodation'),
+      _NearbyItem(Icons.two_wheeler_rounded, 'Vero Bike nearby', '4.9', 'vero_bike'),
     ];
 
     return _Section(
@@ -1903,7 +1904,7 @@ class _NearYouCarouselState extends State<_NearYouCarousel> {
                   itemBuilder: (_, i, __) {
                     final it = items[i];
                     return _ProviderCard(
-                      emoji: it.emoji,
+                      icon: it.icon,
                       name: it.name,
                       rating: it.rating,
                       onOpen: () => _openNearby(context, it.serviceKey),
@@ -1919,10 +1920,11 @@ class _NearYouCarouselState extends State<_NearYouCarousel> {
 }
 
 class _ProviderCard extends StatelessWidget {
-  final String emoji, name, rating;
+  final IconData icon;
+  final String name, rating;
   final VoidCallback onOpen;
   const _ProviderCard({
-    required this.emoji,
+    required this.icon,
     required this.name,
     required this.rating,
     required this.onOpen,
@@ -1943,10 +1945,15 @@ class _ProviderCard extends StatelessWidget {
         padding: const EdgeInsets.all(14),
         child: Row(
           children: [
-            CircleAvatar(
-              radius: 20,
-              backgroundColor: AppColors.brandOrangePale,
-              child: Text(emoji, style: const TextStyle(fontSize: 18)),
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: AppColors.brandOrangePale,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              alignment: Alignment.center,
+              child: Icon(icon, size: 22, color: AppColors.brandOrangeDeep),
             ),
             const SizedBox(width: 10),
             Expanded(

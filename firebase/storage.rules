@@ -52,6 +52,16 @@ service firebase.storage {
         && request.resource.size < 8 * 1024 * 1024;
     }
 
+    // Sell banners + site announcements (admin panel uploads via Admin SDK).
+    match /sell_banners/{fileName} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /site_announcements/{fileName} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     // Deny everything else (production default)
     match /{allPaths=**} {
       allow read, write: if false;

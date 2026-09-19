@@ -2965,6 +2965,12 @@ class PolicyPage extends StatelessWidget {
       'assets/documents/Vero360_Privacy_Policy.pdf';
   static const String _merchantTermsAsset =
       'assets/documents/Vero360_Merchant_Terms_Conditions.pdf';
+  static const String _cybersecurityPolicyAsset =
+      'assets/documents/Vero360_Cybersecurity_Fraud_Prevention_Customer_Protection_Policy.pdf';
+  static const String _refundPolicyAsset =
+      'assets/documents/Vero360_Refund_Policy.pdf';
+  static const String _subscriptionPaymentPolicyAsset =
+      'assets/documents/Vero360_Subscription_Payment_Policy_v2.pdf';
 
   static const Color _cream = Color(0xFFFFFBF6);
   static const Color _ink = Color(0xFF101010);
@@ -3304,6 +3310,30 @@ class PolicyPage extends StatelessWidget {
                   title: 'Merchant Terms & Conditions',
                   subtitle: 'Merchant terms (PDF)',
                   assetPath: _merchantTermsAsset,
+                ),
+                const SizedBox(height: 10),
+                _docTile(
+                  context,
+                  icon: Icons.security_outlined,
+                  title: 'Cybersecurity & Fraud Prevention',
+                  subtitle: 'Customer protection policy (PDF)',
+                  assetPath: _cybersecurityPolicyAsset,
+                ),
+                const SizedBox(height: 10),
+                _docTile(
+                  context,
+                  icon: Icons.replay_circle_filled_outlined,
+                  title: 'Refund Policy',
+                  subtitle: 'Vero360 refund policy (PDF)',
+                  assetPath: _refundPolicyAsset,
+                ),
+                const SizedBox(height: 10),
+                _docTile(
+                  context,
+                  icon: Icons.payments_outlined,
+                  title: 'Subscription & Payment Policy',
+                  subtitle: 'Subscription and payment terms (PDF)',
+                  assetPath: _subscriptionPaymentPolicyAsset,
                 ),
               ],
             ),

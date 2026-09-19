@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +11,8 @@ import 'package:vero360_app/features/ride_share/presentation/providers/ride_life
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_completion_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
+import 'package:vero360_app/features/ride_share/ride_share_contact_catalog.dart';
+import 'package:vero360_app/features/ride_share/ride_share_no_driver_help.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 class VehicleTypeOption {
@@ -63,6 +67,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
     with SingleTickerProviderStateMixin {
   String? _selectedVehicleClass;
   bool _isSearching = false;
+  bool _noDriversFound = false;
   String? _errorMessage;
   Ride? _unpaidRide;
   double _distance = 0.0;
@@ -81,6 +86,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
       duration: const Duration(milliseconds: 600),
     );
     _animationController.forward();
+    unawaited(RideShareContactCatalog.instance.ensureStarted());
     _calculateDistanceAndFares();
   }
 
@@ -199,6 +205,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
     setState(() {
       _selectedVehicleClass = vehicleClass;
       _isSearching = true;
+      _noDriversFound = false;
       _errorMessage = null;
     });
 
@@ -236,14 +243,12 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
     final result = ref.read(rideLifecycleProvider);
 
     switch (result) {
-      case RideCancelled(:final ride):
-        Navigator.pop(context);
-        ToastHelper.showCustomToast(
-          context,
-          'No drivers available',
-          isSuccess: false,
-          errorMessage: ride.cancellationReason ?? 'No drivers found in your area',
-        );
+      case RideCancelled():
+        setState(() {
+          _isSearching = false;
+          _noDriversFound = true;
+        });
+        ref.read(rideLifecycleProvider.notifier).reset();
 
       case RideActive(:final ride):
         Navigator.pop(context);
@@ -318,10 +323,27 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
     });
   }
 
+  void _retryAfterNoDrivers() {
+    setState(() {
+      _noDriversFound = false;
+      _isSearching = false;
+      _selectedVehicleClass = null;
+    });
+    ref.read(rideLifecycleProvider.notifier).reset();
+  }
+
+  String get _pickupLocationLabel => RideShareNoDriverHelp.locationLabel(
+        name: widget.pickupPlace.name,
+        address: widget.pickupPlace.address,
+      );
+
   @override
   Widget build(BuildContext context) {
     if (_isSearching) {
       return _buildSearchingState();
+    }
+    if (_noDriversFound) {
+      return _buildNoDriversState();
     }
 
     final screenHeight = MediaQuery.of(context).size.height;
@@ -829,6 +851,40 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
                   ),
                 ],
               ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildNoDriversState() {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.80,
+      minChildSize: 0.80,
+      maxChildSize: 0.80,
+      builder: (context, scrollController) {
+        return Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: const BorderRadius.vertical(
+              top: Radius.circular(24),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.1),
+                blurRadius: 24,
+                offset: const Offset(0, -4),
+              ),
+            ],
+          ),
+          child: SingleChildScrollView(
+            controller: scrollController,
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+            child: NoDriverHelpPanel(
+              locationLabel: _pickupLocationLabel,
+              showHandle: true,
+              onTryAgain: _retryAfterNoDrivers,
             ),
           ),
         );

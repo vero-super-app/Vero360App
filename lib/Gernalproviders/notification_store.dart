@@ -81,6 +81,8 @@ class NotificationStore extends ChangeNotifier {
   static const String kBadgeAppUpdate = 'app_update';
   /// Opens Vero360 Team chat (admin broadcasts).
   static const String kBadgeVeroTeam = 'vero_team';
+  /// Opens Customer Support / Help Center (homepage Support tile).
+  static const String kBadgeCustomerSupport = 'customer_support';
 
   /// Maps order notifications to the correct dashboard tile (merchant vs buyer).
   static String badgeRouteForOrderStatus(

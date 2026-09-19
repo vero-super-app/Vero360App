@@ -50,6 +50,7 @@ import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
+import 'package:vero360_app/GernalServices/help_center_chat_service.dart';
 import 'package:vero360_app/Home/notifications_page.dart';
 import 'package:vero360_app/Home/story_section.dart';
 import 'package:vero360_app/Home/homepage_adverts.dart';
@@ -591,6 +592,11 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       case 'customer_service':
       case 'support':
       case 'help':
+        unawaited(NotificationStore.instance
+            .markBadgeRouteAsRead(NotificationStore.kBadgeCustomerSupport));
+        unawaited(
+            NotificationStore.instance.markBadgeRouteAsRead('customer_service'));
+        unawaited(NotificationStore.instance.markBadgeRouteAsRead('support'));
         page = const CustomerServicePage();
         break;
       case 'taxi':
@@ -1327,6 +1333,14 @@ class _MiniIconsGrid extends StatelessWidget {
           ),
           itemBuilder: (_, i) {
             final m = items[i];
+            if (m.keyId == 'customer_service') {
+              return _SupportServiceTile(
+                tileKey: tileKeys[m.keyId],
+                icon: m.icon,
+                label: m.label,
+                onTap: () => onOpen(m.keyId),
+              );
+            }
             return _MiniIconTile(
               tileKey: tileKeys[m.keyId],
               icon:    m.icon,
@@ -1345,11 +1359,13 @@ class _MiniIconTile extends StatefulWidget {
   final IconData     icon;
   final String       label;
   final VoidCallback onTap;
+  final int          badgeCount;
   const _MiniIconTile({
     this.tileKey,
     required this.icon,
     required this.label,
     required this.onTap,
+    this.badgeCount = 0,
   });
 
   @override
@@ -1387,19 +1403,51 @@ class _MiniIconTileState extends State<_MiniIconTile> with SingleTickerProviderS
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: AppColors.brandOrangePale,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              alignment: Alignment.center,
-              child: Icon(
-                widget.icon,
-                size: 28,
-                color: AppColors.brandOrangeDeep,
-              ),
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: AppColors.brandOrangePale,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(
+                    widget.icon,
+                    size: 28,
+                    color: AppColors.brandOrangeDeep,
+                  ),
+                ),
+                if (widget.badgeCount > 0)
+                  Positioned(
+                    right: -4,
+                    top: -4,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 5,
+                        vertical: 2,
+                      ),
+                      constraints: const BoxConstraints(minWidth: 18),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEF4444),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.white, width: 1.5),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        widget.badgeCount > 99 ? '99+' : '${widget.badgeCount}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          height: 1.1,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(height: 6),
             Flexible(
@@ -1419,6 +1467,53 @@ class _MiniIconTileState extends State<_MiniIconTile> with SingleTickerProviderS
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Support tile with live unread count (Help Center replies + support notifications).
+class _SupportServiceTile extends StatelessWidget {
+  final Key? tileKey;
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _SupportServiceTile({
+    this.tileKey,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  int _notifSupportCount() {
+    final store = NotificationStore.instance;
+    return store.unreadCountForBadgeRoute(NotificationStore.kBadgeCustomerSupport) +
+        store.unreadCountForBadgeRoute('customer_service') +
+        store.unreadCountForBadgeRoute('support');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: NotificationStore.instance,
+      builder: (context, _) {
+        final notifCount = _notifSupportCount();
+        return StreamBuilder<int>(
+          stream: HelpCenterChatService.watchUnreadForVisitor(),
+          initialData: 0,
+          builder: (context, snap) {
+            final chatCount = snap.data ?? 0;
+            final total = chatCount + notifCount;
+            return _MiniIconTile(
+              tileKey: tileKey,
+              icon: icon,
+              label: label,
+              badgeCount: total,
+              onTap: onTap,
+            );
+          },
+        );
+      },
     );
   }
 }

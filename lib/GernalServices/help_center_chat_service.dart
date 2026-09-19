@@ -67,6 +67,7 @@ class HelpCenterChatService {
       'updatedAt': FieldValue.serverTimestamp(),
       'lastMessage': '',
       'unreadForAgent': 0,
+      'unreadForVisitor': 0,
       'source': 'app',
       'type': 'help_center',
       if (FirebaseAuth.instance.currentUser?.uid != null)
@@ -95,6 +96,51 @@ class HelpCenterChatService {
         .orderBy('createdAt', descending: false)
         .snapshots()
         .map((snap) => snap.docs.map(HelpCenterMessage.fromDoc).toList());
+  }
+
+  /// Unread Help Center replies waiting for the visitor (same pattern as Messages).
+  static Stream<int> watchUnreadForVisitor() async* {
+    try {
+      final id = await resolveSessionId();
+      yield* _sessions.doc(id).snapshots().map((snap) {
+        final raw = snap.data()?['unreadForVisitor'];
+        if (raw is num) return raw.toInt().clamp(0, 999);
+        return 0;
+      });
+    } catch (_) {
+      yield 0;
+    }
+  }
+
+  static Future<int> unreadForVisitorOnce() async {
+    try {
+      final id = await resolveSessionId();
+      final snap = await _sessions.doc(id).get();
+      final raw = snap.data()?['unreadForVisitor'];
+      if (raw is num) return raw.toInt().clamp(0, 999);
+    } catch (_) {}
+    return 0;
+  }
+
+  /// Clear visitor unread when the user opens Help Center live chat.
+  static Future<void> markVisitorRead() async {
+    try {
+      final id = await resolveSessionId();
+      final snap = await _sessions.doc(id).get();
+      final raw = snap.data()?['unreadForVisitor'];
+      if (raw is! num || raw.toInt() <= 0) return;
+      await _sessions.doc(id).set(
+        {
+          'unreadForVisitor': 0,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[HelpCenterChat] markVisitorRead failed: $e');
+      }
+    }
   }
 
   static Future<void> sendText({

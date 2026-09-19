@@ -76,6 +76,8 @@ class _HelpCenterLiveChatPageState extends State<HelpCenterLiveChatPage> {
         visitorName: _name,
         visitorEmail: _email,
       );
+      // Viewing this thread — clear Support badge like opening Messages.
+      unawaited(HelpCenterChatService.markVisitorRead());
       if (!mounted) return;
       setState(() {
         _sessionId = id;
@@ -86,6 +88,8 @@ class _HelpCenterLiveChatPageState extends State<HelpCenterLiveChatPage> {
         setState(() => _messages = msgs);
         _scrollToEnd();
         _maybeSendInitial();
+        // Keep badge cleared while the user is in the live chat.
+        unawaited(HelpCenterChatService.markVisitorRead());
       });
     } catch (e) {
       if (!mounted) return;

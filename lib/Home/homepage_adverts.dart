@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:carousel_slider/carousel_slider.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -419,6 +420,43 @@ Stream<List<_SellBannerSlide>> _watchSellBanners() {
 
 class _HomepageAdvertsSectionState extends State<HomepageAdvertsSection> {
   int _index = 0;
+  final Set<String> _warmedSellImageUrls = <String>{};
+  StreamSubscription<List<_SellBannerSlide>>? _sellWarmSub;
+
+  @override
+  void initState() {
+    super.initState();
+    // Warm sell-banner thumbnails into disk/memory cache before the carousel
+    // reaches those slides (avoids slow first paint from full-size Image.network).
+    _sellWarmSub = _watchSellBanners().listen(_warmSellBannerImages);
+  }
+
+  @override
+  void dispose() {
+    _sellWarmSub?.cancel();
+    super.dispose();
+  }
+
+  void _warmSellBannerImages(List<_SellBannerSlide> sells) {
+    for (final s in sells) {
+      final url = s.imageUrl.trim();
+      if (url.isEmpty || !_warmedSellImageUrls.add(url)) continue;
+      // Decode at thumbnail size — sell banners are shown at 56×56.
+      final provider = CachedNetworkImageProvider(
+        url,
+        maxWidth: 112,
+        maxHeight: 112,
+      );
+      final stream =
+          provider.resolve(const ImageConfiguration(devicePixelRatio: 2));
+      late final ImageStreamListener listener;
+      listener = ImageStreamListener(
+        (ImageInfo _, bool __) => stream.removeListener(listener),
+        onError: (Object _, StackTrace? __) => stream.removeListener(listener),
+      );
+      stream.addListener(listener);
+    }
+  }
 
   Future<void> _openAdvertise() async {
     final ok = await HomepageAdvertService.isProperlyLoggedIn();
@@ -1075,22 +1113,15 @@ class _SellCtaSlide extends StatelessWidget {
                     if (banner.imageUrl.isNotEmpty) ...[
                       ClipRRect(
                         borderRadius: BorderRadius.circular(12),
-                        child: Image.network(
-                          banner.imageUrl,
+                        child: ResilientCachedNetworkImage(
+                          url: banner.imageUrl,
                           width: 56,
                           height: 56,
                           fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
-                            width: 56,
-                            height: 56,
-                            color: Colors.white24,
-                            alignment: Alignment.center,
-                            child: const Icon(
-                              Icons.storefront_rounded,
-                              color: Colors.white,
-                              size: 22,
-                            ),
-                          ),
+                          memCacheWidth: 112,
+                          memCacheHeight: 112,
+                          showSpinner: false,
+                          placeholderColor: Colors.white24,
                         ),
                       ),
                       const SizedBox(width: 12),

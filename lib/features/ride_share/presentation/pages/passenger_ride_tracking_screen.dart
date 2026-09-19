@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -14,6 +16,7 @@ import 'package:vero360_app/features/ride_share/presentation/widgets/ride_comple
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_in_ride_ui.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_messaging_sheet.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
+import 'package:vero360_app/features/ride_share/ride_share_no_driver_help.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 
 class PassengerRideTrackingScreen extends ConsumerStatefulWidget {
@@ -166,7 +169,9 @@ class _PassengerRideTrackingScreenState
 
     try {
       await ref.read(rideLifecycleProvider.notifier).cancelRide(reason);
-      if (mounted && context.mounted) Navigator.pop(context);
+      if (!mounted) return;
+      setState(() => _hasNavigatedAway = true);
+      if (context.mounted) Navigator.pop(context);
     } catch (e) {
       if (mounted && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -177,6 +182,49 @@ class _PassengerRideTrackingScreenState
         );
       }
     }
+  }
+
+  Future<void> _handleCancelledRide(Ride ride, String reason) async {
+    if (!mounted) return;
+
+    if (RideShareNoDriverHelp.isNoDriverReason(reason)) {
+      final location = RideShareNoDriverHelp.locationLabel(
+        name: null,
+        address: ride.pickupAddress,
+      );
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (ctx) {
+          return SafeArea(
+            child: Container(
+              margin: const EdgeInsets.only(top: 48),
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              child: NoDriverHelpPanel(
+                locationLabel: location,
+                showHandle: true,
+                onTryAgain: () => Navigator.pop(ctx),
+              ),
+            ),
+          );
+        },
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Ride cancelled: $reason'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+    }
+
+    if (mounted && context.mounted) Navigator.of(context).pop();
   }
 
   @override
@@ -216,17 +264,8 @@ class _PassengerRideTrackingScreenState
       if (cancelledRide.id == widget.rideId) {
         _hasNavigatedAway = true;
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Ride cancelled: ${lifecycleState.reason}'),
-                backgroundColor: Colors.red,
-              ),
-            );
-            Future.delayed(const Duration(milliseconds: 500), () {
-              if (mounted && context.mounted) Navigator.of(context).pop();
-            });
-          }
+          if (!mounted || !context.mounted) return;
+          unawaited(_handleCancelledRide(cancelledRide, lifecycleState.reason));
         });
       }
     }

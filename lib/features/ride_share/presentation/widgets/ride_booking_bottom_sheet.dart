@@ -9,6 +9,7 @@ import 'package:vero360_app/features/ride_share/presentation/providers/ride_life
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_completion_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
+import 'package:vero360_app/features/ride_share/ride_share_no_driver_help.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 /// Bottom sheet on the taxi home screen — search bar, ride options, confirm.
@@ -40,6 +41,7 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
   bool _isRequesting = false;
   String? _errorTitle;
   String? _errorMessage;
+  bool _offerHelpCenter = false;
   Ride? _unpaidRide;
   double _distance = 0;
   int _duration = 0;
@@ -155,6 +157,7 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
       _errorTitle = null;
       _errorMessage = null;
       _unpaidRide = null;
+      _offerHelpCenter = false;
     });
 
     final lifecycle = ref.read(rideLifecycleProvider.notifier);
@@ -183,6 +186,7 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
         _showRequestFailure(
           title: 'No ride available',
           detail: detail,
+          offerHelpCenter: true,
         );
         ref.read(rideLifecycleProvider.notifier).reset();
 
@@ -206,6 +210,7 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
         _showRequestFailure(
           title: 'No ride available',
           detail: 'No drivers found in your area right now.',
+          offerHelpCenter: true,
         );
         ref.read(rideLifecycleProvider.notifier).reset();
     }
@@ -215,6 +220,7 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
     required String title,
     required String detail,
     Ride? unpaidRide,
+    bool offerHelpCenter = false,
   }) {
     if (!mounted) return;
     setState(() {
@@ -222,6 +228,7 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
       _errorTitle = title;
       _errorMessage = detail;
       _unpaidRide = unpaidRide;
+      _offerHelpCenter = offerHelpCenter && unpaidRide == null;
     });
     ToastHelper.showCustomToast(
       context,
@@ -419,6 +426,7 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
                                     _errorTitle = null;
                                     _errorMessage = null;
                                     _unpaidRide = null;
+                                    _offerHelpCenter = false;
                                   }),
                                 );
                               },
@@ -435,10 +443,19 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
                                 _unpaidRide != null ? 'Pay Now' : null,
                             onAction:
                                 _unpaidRide != null ? _openUnpaidPayment : null,
+                            helpMessage: _offerHelpCenter
+                                ? RideShareNoDriverHelp.guidingMessage(
+                                    RideShareNoDriverHelp.locationLabel(
+                                      name: widget.pickupPlace?.name,
+                                      address: widget.pickupPlace?.address,
+                                    ),
+                                  )
+                                : null,
                             onDismiss: () => setState(() {
                               _errorTitle = null;
                               _errorMessage = null;
                               _unpaidRide = null;
+                              _offerHelpCenter = false;
                             }),
                           ),
                         ],
@@ -529,6 +546,7 @@ class _RequestErrorBanner extends StatelessWidget {
   final VoidCallback onDismiss;
   final String? actionLabel;
   final VoidCallback? onAction;
+  final String? helpMessage;
 
   const _RequestErrorBanner({
     required this.title,
@@ -536,6 +554,7 @@ class _RequestErrorBanner extends StatelessWidget {
     required this.onDismiss,
     this.actionLabel,
     this.onAction,
+    this.helpMessage,
   });
 
   @override
@@ -598,6 +617,58 @@ class _RequestErrorBanner extends StatelessWidget {
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                     ),
+                  ),
+                ],
+                if (helpMessage != null) ...[
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      SizedBox(
+                        height: 36,
+                        child: ElevatedButton.icon(
+                          onPressed: () => RideShareNoDriverHelp.openHelpCenter(
+                            context,
+                            message: helpMessage!,
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: RideShareColors.primary,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(18),
+                            ),
+                          ),
+                          icon: const Icon(Icons.headset_mic_rounded, size: 16),
+                          label: const Text(
+                            'Chat Help Center',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ),
+                      SizedBox(
+                        height: 36,
+                        child: OutlinedButton(
+                          onPressed: () => RideShareNoDriverHelp.openWhatsApp(
+                            context,
+                            message: helpMessage!,
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: RideShareColors.primaryDeep,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(18),
+                            ),
+                          ),
+                          child: const Text(
+                            'WhatsApp',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ],

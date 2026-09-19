@@ -240,7 +240,8 @@ service cloud.firestore {
       allow read, write: if isSignedIn() && request.auth.uid == uid;
     }
 
-    // Digital services USD rate + subscription/gift-card prices (admin writes via Admin SDK).
+    // App-wide config (digital services, ride-share front desk, etc.).
+    // Admin writes via Admin SDK / web panel.
     match /app_config/{docId} {
       allow read: if true;
       allow write: if false;

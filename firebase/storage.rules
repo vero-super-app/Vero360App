@@ -61,6 +61,10 @@ service firebase.storage {
       allow read: if true;
       allow write: if false;
     }
+    match /site_announcement_videos/{fileName} {
+      allow read: if true;
+      allow write: if false;
+    }
 
     // Deny everything else (production default)
     match /{allPaths=**} {

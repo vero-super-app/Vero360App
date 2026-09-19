@@ -26,9 +26,13 @@ function listingOwnerId(data) {
   return String(
     data.merchantId ||
       data.sellerUserId ||
+      data.sellerId ||
       data.ownerId ||
       data.userId ||
       data.hostUid ||
+      data.hostId ||
+      data.createdBy ||
+      data.uid ||
       '',
   ).trim();
 }
@@ -39,33 +43,29 @@ function isAlreadyActive(status) {
 }
 
 function paymentSucceeded(payload) {
-  const status = String(
-    payload?.status ||
-      payload?.data?.status ||
-      payload?.data?.payment_status ||
-      payload?.message ||
-      '',
-  )
-    .trim()
-    .toLowerCase();
-  if (
-    status === 'success' ||
-    status === 'successful' ||
-    status === 'paid' ||
-    status === 'completed'
-  ) {
-    return true;
-  }
+  // Prefer nested payment status — top-level "success" often means API OK only.
   const nested = String(
     payload?.data?.status || payload?.data?.payment_status || '',
   )
     .trim()
     .toLowerCase();
-  return (
+  if (
     nested === 'success' ||
     nested === 'successful' ||
     nested === 'paid' ||
     nested === 'completed'
+  ) {
+    return true;
+  }
+  if (nested) return false;
+
+  const status = String(payload?.status || '')
+    .trim()
+    .toLowerCase();
+  return (
+    status === 'successful' ||
+    status === 'paid' ||
+    status === 'completed'
   );
 }
 

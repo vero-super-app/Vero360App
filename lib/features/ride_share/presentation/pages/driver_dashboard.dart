@@ -12,7 +12,6 @@ import 'package:vero360_app/features/ride_share/presentation/providers/driver_pr
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_online_session.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/map_view_widget.dart';
 import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
-import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/utils/vero_map_style.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
@@ -214,83 +213,6 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
     _mapCenteringTimer = null;
   }
 
-  /// Opens the 24h story composer for this driver.
-  Future<void> _openPostStory() async {
-    final user = FirebaseAuth.instance.currentUser;
-    final uid = user?.uid;
-    if (uid == null) {
-      ToastHelper.showCustomToast(
-        context,
-        'Please sign in to post a story',
-        isSuccess: false,
-        errorMessage: '',
-      );
-      return;
-    }
-
-    final asyncProfile = ref.read(myDriverProfileProvider);
-    String? imageUrl = asyncProfile.maybeWhen(
-      data: (driver) {
-        final p = driver['user']?['profilepicture']?.toString();
-        if (p != null && p.trim().isNotEmpty) return p.trim();
-        return null;
-      },
-      orElse: () => null,
-    );
-    imageUrl ??= user?.photoURL;
-
-    final merchantName = asyncProfile.maybeWhen(
-          data: (driver) => driver['user']?['name']?.toString(),
-          orElse: () => null,
-        ) ??
-        user?.displayName ??
-        'Ride Driver';
-
-    if (!mounted) return;
-    await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
-        builder: (_) => PostStoryPage(
-          merchantId: uid,
-          merchantName: merchantName,
-          merchantImageUrl: imageUrl,
-          serviceType: 'ride',
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOtherDetailsSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Other details',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w800,
-            color: RideShareColors.titleText,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'Share a 24-hour status with riders on Vero360',
-          style: TextStyle(
-            fontSize: 13,
-            color: Colors.grey.shade600,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-        const SizedBox(height: 12),
-        DriverQuickActionButton(
-          label: 'Post story',
-          icon: Icons.auto_stories_outlined,
-          color: const Color(0xFFDD2A7B),
-          onPressed: _openPostStory,
-        ),
-      ],
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -373,8 +295,6 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
                             _buildRecentActivitySection(),
                             const SizedBox(height: 18),
                             _buildActionsSectionContent(context, driver),
-                            const SizedBox(height: 18),
-                            _buildOtherDetailsSection(),
                           ],
                         ),
                       );
@@ -1037,13 +957,6 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
           ),
         ),
         const SizedBox(height: 12),
-        DriverQuickActionButton(
-          label: 'Post story',
-          icon: Icons.auto_stories_outlined,
-          color: const Color(0xFFDD2A7B),
-          onPressed: _openPostStory,
-        ),
-        const SizedBox(height: 10),
         if (!isVerified || !hasTaxis)
           Container(
             width: double.infinity,

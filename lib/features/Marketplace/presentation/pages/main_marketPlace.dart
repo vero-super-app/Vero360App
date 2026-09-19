@@ -2849,16 +2849,22 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFF8A00).withOpacity(0.95),
+                      color: const Color(0xFF059669).withOpacity(0.95),
                       borderRadius: BorderRadius.circular(10),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF059669).withOpacity(0.35),
+                          blurRadius: 8,
+                        ),
+                      ],
                     ),
                     child: const Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.campaign_rounded, size: 10, color: Colors.white),
+                        Icon(Icons.verified_rounded, size: 10, color: Colors.white),
                         SizedBox(width: 4),
                         Text(
-                          'Promoted',
+                          'Paid ad',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 9,

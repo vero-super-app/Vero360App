@@ -370,13 +370,18 @@ class _SellBannerSlide {
   final String body;
   final String ctaLabel;
   final String imageUrl;
+  /// marketplace | food | accommodation | driver
+  final String audience;
 
   const _SellBannerSlide({
     required this.title,
     required this.body,
     required this.ctaLabel,
     required this.imageUrl,
+    this.audience = 'marketplace',
   });
+
+  bool get isDriver => audience == 'driver';
 
   static const fallback = _SellBannerSlide(
     title: 'Start selling on Vero360',
@@ -384,6 +389,7 @@ class _SellBannerSlide {
         'Create a merchant account, list your products or services, and reach customers across Malawi.',
     ctaLabel: 'Sell now',
     imageUrl: '',
+    audience: 'marketplace',
   );
 }
 
@@ -408,11 +414,47 @@ Stream<List<_SellBannerSlide>> _watchSellBanners() {
           .toString()
           .trim();
       final cta = (data['ctaLabel']?.toString() ?? '').trim();
+      final audienceRaw =
+          (data['audience'] ?? data['role'] ?? data['target'] ?? 'marketplace')
+              .toString()
+              .trim()
+              .toLowerCase();
+      String audience;
+      if (audienceRaw == 'driver') {
+        audience = 'driver';
+      } else if (audienceRaw == 'food' ||
+          audienceRaw == 'restaurant' ||
+          audienceRaw == 'restaurants') {
+        audience = 'food';
+      } else if (audienceRaw == 'accommodation' ||
+          audienceRaw == 'stay' ||
+          audienceRaw == 'hotel') {
+        audience = 'accommodation';
+      } else {
+        audience = 'marketplace';
+      }
       return _SellBannerSlide(
-        title: title.isEmpty ? _SellBannerSlide.fallback.title : title,
+        title: title.isEmpty
+            ? (audience == 'driver'
+                ? 'Drive with Vero360'
+                : audience == 'food'
+                    ? 'Sell food on Vero360'
+                    : audience == 'accommodation'
+                        ? 'List stays on Vero360'
+                        : _SellBannerSlide.fallback.title)
+            : title,
         body: body,
-        ctaLabel: cta.isEmpty ? _SellBannerSlide.fallback.ctaLabel : cta,
+        ctaLabel: cta.isEmpty
+            ? (audience == 'driver'
+                ? 'Join as driver'
+                : audience == 'food'
+                    ? 'Sell food'
+                    : audience == 'accommodation'
+                        ? 'List stays'
+                        : 'Sell now')
+            : cta,
         imageUrl: (data['imageUrl']?.toString() ?? '').trim(),
+        audience: audience,
       );
     }).toList();
   });
@@ -486,6 +528,22 @@ class _HomepageAdvertsSectionState extends State<HomepageAdvertsSection> {
         builder: (_) => const RegisterScreen(initialRole: UserRole.merchant),
       ),
     );
+  }
+
+  void _openDriverSignup() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const RegisterScreen(initialRole: UserRole.driver),
+      ),
+    );
+  }
+
+  void _openSellBanner(_SellBannerSlide banner) {
+    if (banner.isDriver) {
+      _openDriverSignup();
+    } else {
+      _openMerchantSignup();
+    }
   }
 
   void _openAdvert(HomepageAdvert ad) {
@@ -899,7 +957,7 @@ class _HomepageAdvertsSectionState extends State<HomepageAdvertsSection> {
                       if (sellIndex < sells.length) {
                         return _SellCtaSlide(
                           banner: sells[sellIndex],
-                          onTap: _openMerchantSignup,
+                          onTap: () => _openSellBanner(sells[sellIndex]),
                         );
                       }
                       return _AdvertiseCtaSlide(onTap: _openAdvertise);

@@ -13,8 +13,6 @@ import 'package:vero360_app/features/ride_share/presentation/pages/edit_driver_d
 import 'package:vero360_app/features/ride_share/presentation/pages/edit_taxi_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_online_session.dart';
-import 'package:vero360_app/Home/post_story_page.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_skeleton_loaders.dart';
@@ -92,50 +90,6 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
   }
 
   void _reload() => ref.invalidate(myDriverProfileProvider);
-
-  Future<void> _openPostStoryFromHub() async {
-    final user = FirebaseAuth.instance.currentUser;
-    final uid = user?.uid;
-    if (uid == null) {
-      ToastHelper.showCustomToast(
-        context,
-        'Please sign in to post a story',
-        isSuccess: false,
-        errorMessage: '',
-      );
-      return;
-    }
-
-    final driver = ref.read(myDriverProfileProvider).maybeWhen(
-          data: (d) => d,
-          orElse: () => <String, dynamic>{},
-        );
-    final userMap = driver['user'] is Map
-        ? Map<String, dynamic>.from(driver['user'] as Map)
-        : <String, dynamic>{};
-    final name = (userMap['name'] ??
-            userMap['fullName'] ??
-            user?.displayName ??
-            'Ride Driver')
-        .toString()
-        .trim();
-    final imageUrl = _photoFrom(userMap, driver);
-    final photo = imageUrl.isNotEmpty
-        ? imageUrl
-        : (user?.photoURL ?? '').trim();
-
-    if (!mounted) return;
-    await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
-        builder: (_) => PostStoryPage(
-          merchantId: uid,
-          merchantName: name.isNotEmpty ? name : 'Ride Driver',
-          merchantImageUrl: photo.isNotEmpty ? photo : null,
-          serviceType: 'ride',
-        ),
-      ),
-    );
-  }
 
   /// Strict admin-verified flag — never treat missing/1/status as verified.
   bool _isTrulyVerified(Map<String, dynamic> source) {
@@ -353,36 +307,6 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
               ],
             ),
           ],
-          const SizedBox(height: 20),
-          const Text(
-            'Other details',
-            style: TextStyle(
-              fontWeight: FontWeight.w800,
-              fontSize: 16,
-              color: _ink,
-            ),
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Share a 24-hour status with riders on Vero360',
-            style: TextStyle(color: _muted, fontSize: 13, height: 1.35),
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 50,
-            child: FilledButton.icon(
-              onPressed: _openPostStoryFromHub,
-              icon: const Icon(Icons.auto_stories_outlined, size: 20),
-              label: const Text('Post story'),
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFFDD2A7B),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-              ),
-            ),
-          ),
           const SizedBox(height: 20),
           SizedBox(
             height: 50,

@@ -450,19 +450,31 @@ class MarketplacePromoteService {
           onSuccessNavigate: (rootCtx) async {
             try {
               await activateAfterPayment(promoId: promoId, txRef: txRef);
-            } catch (_) {}
-            if (rootCtx.mounted) {
-              final msg = plan.isFeedTop
-                  ? '${vertical.feedLabel} listing promoted for ${plan.label} — also sharing to Facebook Page.'
-                  : 'Promotion paid — sharing to Facebook Page and queuing your campaign.';
-              ToastHelper.showCustomToast(
-                rootCtx,
-                msg,
-                isSuccess: true,
-                errorMessage: '',
-              );
-              if (Navigator.of(rootCtx).canPop()) {
-                Navigator.of(rootCtx).pop(true);
+              if (rootCtx.mounted) {
+                final msg = plan.isFeedTop
+                    ? '${vertical.feedLabel} listing promoted for ${plan.label} — also sharing to Facebook Page.'
+                    : 'Promotion paid — sharing to Facebook Page and queuing your campaign.';
+                ToastHelper.showCustomToast(
+                  rootCtx,
+                  msg,
+                  isSuccess: true,
+                  errorMessage: '',
+                );
+                if (Navigator.of(rootCtx).canPop()) {
+                  Navigator.of(rootCtx).pop(true);
+                }
+              }
+            } catch (e) {
+              if (rootCtx.mounted) {
+                ToastHelper.showCustomToast(
+                  rootCtx,
+                  'Payment received, but promote activation failed. Open Promoted ads in admin and tap Verify & mark paid, or try again.',
+                  isSuccess: false,
+                  errorMessage: UserFacingError.from(e),
+                );
+                if (Navigator.of(rootCtx).canPop()) {
+                  Navigator.of(rootCtx).pop(false);
+                }
               }
             }
           },

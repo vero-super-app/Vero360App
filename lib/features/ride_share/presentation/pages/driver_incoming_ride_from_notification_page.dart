@@ -1,12 +1,18 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:vero360_app/GernalServices/driver_messaging_service.dart';
+import 'package:vero360_app/GernalServices/driver_request_service.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
+import 'package:vero360_app/GernalServices/location_permission_helper.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/driver_ride_execution_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/services/driver_ride_alert_notifications.dart';
 import 'package:vero360_app/features/ride_share/presentation/services/driver_ride_offer_inbox.dart';
-import 'package:vero360_app/features/ride_share/presentation/widgets/driver_request_accept_dialog.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/driver_ride_request_sheet.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 
-/// Full-screen gate opened when the driver taps a `new_ride` push notification.
+/// Full-screen accept popup shown from a lock-screen / background ride push.
 class DriverIncomingRideFromNotificationPage extends StatefulWidget {
   final String rideId;
   final Map<String, dynamic>? fcmData;
@@ -23,100 +29,190 @@ class DriverIncomingRideFromNotificationPage extends StatefulWidget {
 }
 
 class _DriverIncomingRideFromNotificationPageState
-    extends State<DriverIncomingRideFromNotificationPage> {
+    extends State<DriverIncomingRideFromNotificationPage>
+    with SingleTickerProviderStateMixin {
   String? _error;
-  bool _loading = true;
+  bool _accepting = false;
+  bool _declining = false;
+  DriverRideRequest? _request;
+  Map<String, dynamic>? _driver;
+  double? _pickupKm;
+  int? _pickupMins;
+  late AnimationController _timerController;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_loadAndShow());
+    _timerController = AnimationController(
+      duration: const Duration(seconds: 30),
+      vsync: this,
+    )..forward();
+    _timerController.addStatusListener((status) {
+      if (status == AnimationStatus.completed &&
+          mounted &&
+          !_accepting &&
+          !_declining) {
+        unawaited(_decline(pop: true));
+      }
     });
+
+    final seed = widget.fcmData ??
+        <String, dynamic>{'rideId': widget.rideId, 'type': 'new_ride'};
+    _request = DriverRideOfferInbox.fromFcmMap(seed);
+    unawaited(_hydrate(seed));
+    unawaited(_resolvePickupEta());
   }
 
-  Future<void> _loadAndShow() async {
-    if (!mounted) return;
-    setState(() {
-      _error = null;
-      _loading = true;
-    });
+  @override
+  void dispose() {
+    _timerController.dispose();
+    super.dispose();
+  }
 
+  Future<void> _hydrate(Map<String, dynamic> seed) async {
     try {
-      final seed = widget.fcmData ??
-          <String, dynamic>{'rideId': widget.rideId, 'type': 'new_ride'};
-      final request =
+      final fetched =
           await DriverRideOfferInbox.instance.resolveFromPayload(seed);
-      if (!mounted) return;
-      if (request == null) {
-        setState(() {
-          _error = 'This ride is no longer available.';
-          _loading = false;
-        });
-        return;
-      }
-
       final driver = await DriverService().getMyDriverProfile();
       if (!mounted) return;
-
-      int? taxiId = request.candidateTaxiId;
-      if (taxiId == null) {
-        final taxis = driver['taxis'];
-        if (taxis is List && taxis.isNotEmpty) {
-          final first = taxis.first;
-          if (first is Map) {
-            taxiId = (first['id'] as num?)?.toInt();
-          }
-        }
-      }
-
-      setState(() => _loading = false);
-
-      // Dialog handles accept → execution screen; reject → pop(false).
-      final result = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => DriverRequestAcceptDialog(
-          request: request,
-          driverId: (driver['id'] ?? '').toString(),
-          driverName:
-              (driver['user']?['name'] ?? driver['name'] ?? 'Driver').toString(),
-          driverPhone:
-              (driver['user']?['phone'] ?? driver['phone'] ?? '').toString(),
-          driverAvatar: (driver['user']?['profilepicture'] ??
-                  driver['profilepicture'])
-              ?.toString(),
-          taxiId: taxiId,
-        ),
-      );
-
-      if (!mounted) return;
-      if (result == true) {
-        // Accept already pushed execution above this gate — remove gate only.
-        final route = ModalRoute.of(context);
-        if (route != null) {
-          Navigator.of(context).removeRoute(route);
-        }
-      } else {
-        Navigator.of(context).pop();
-      }
+      setState(() {
+        if (fetched != null) _request = fetched;
+        _driver = driver;
+      });
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = UserFacingError.from(e, fallback: 'Could not open ride offer');
-      });
+      if (_request == null) {
+        setState(() {
+          _error = UserFacingError.from(e, fallback: 'Could not open ride offer');
+        });
+      }
     }
+  }
+
+  Future<void> _resolvePickupEta() async {
+    final request = _request;
+    if (request == null) return;
+    try {
+      final pos = await LocationPermissionHelper.getCurrentPositionIfGranted(
+        timeLimit: const Duration(seconds: 3),
+      );
+      if (pos == null || !mounted) return;
+      final meters = Geolocator.distanceBetween(
+        pos.latitude,
+        pos.longitude,
+        request.pickupLat,
+        request.pickupLng,
+      );
+      final km = meters / 1000.0;
+      if (!mounted) return;
+      setState(() {
+        _pickupKm = km;
+        _pickupMins = (km * 2.5).ceil().clamp(1, 60);
+      });
+    } catch (_) {}
+  }
+
+  int? _taxiId(DriverRideRequest request) {
+    final fromOffer = request.candidateTaxiId;
+    if (fromOffer != null) return fromOffer;
+    final taxis = _driver?['taxis'];
+    if (taxis is List && taxis.isNotEmpty && taxis.first is Map) {
+      return (taxis.first['id'] as num?)?.toInt();
+    }
+    return null;
+  }
+
+  Future<void> _accept() async {
+    final request = _request;
+    if (request == null || _accepting || _declining) return;
+    setState(() => _accepting = true);
+    _timerController.stop();
+
+    try {
+      Map<String, dynamic> driver = _driver ?? {};
+      if (driver.isEmpty) {
+        driver = await DriverService().getMyDriverProfile();
+      }
+      final driverId = (driver['id'] ?? '').toString();
+      final driverName =
+          (driver['user']?['name'] ?? driver['name'] ?? 'Driver').toString();
+      final driverPhone =
+          (driver['user']?['phone'] ?? driver['phone'] ?? '').toString();
+      final driverAvatar = (driver['user']?['profilepicture'] ??
+              driver['profilepicture'])
+          ?.toString();
+
+      await DriverRequestService.acceptRideRequest(
+        rideId: request.id,
+        driverId: driverId,
+        driverName: driverName,
+        driverPhone: driverPhone,
+        driverAvatar: driverAvatar,
+        taxiId: _taxiId(request),
+      );
+
+      try {
+        await DriverMessagingService.ensureRideThread(
+          rideId: request.id,
+          passengerId: request.passengerId,
+          driverId: driverId,
+          passengerName: request.passengerName,
+          driverName: driverName,
+          passengerAvatar: null,
+          driverAvatar: driverAvatar,
+        );
+        await DriverMessagingService.sendSystemMessage(
+          rideId: request.id,
+          message: '$driverName accepted your ride request',
+        );
+      } catch (_) {}
+
+      await DriverRideAlertNotifications.cancelOffer(request.id);
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => DriverRideExecutionScreen(
+            rideId: int.tryParse(request.id) ?? 0,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _accepting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(UserFacingError.from(e, fallback: 'Failed to accept ride')),
+          backgroundColor: Colors.red.shade600,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  Future<void> _decline({bool pop = true}) async {
+    final request = _request;
+    if (_declining) return;
+    setState(() => _declining = true);
+    _timerController.stop();
+    try {
+      if (request != null) {
+        await DriverRequestService.rejectRideRequest(request.id);
+        await DriverRideAlertNotifications.cancelOffer(request.id);
+      }
+    } catch (_) {}
+    if (!mounted) return;
+    if (pop) Navigator.of(context).pop();
   }
 
   @override
   Widget build(BuildContext context) {
+    final request = _request;
     return Scaffold(
-      backgroundColor: Colors.black.withValues(alpha: 0.55),
+      backgroundColor: const Color(0xFF000613).withValues(alpha: 0.55),
       body: SafeArea(
-        child: Center(
-          child: _error != null
-              ? Padding(
+        child: _error != null
+            ? Center(
+                child: Padding(
                   padding: const EdgeInsets.all(24),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -131,27 +227,35 @@ class _DriverIncomingRideFromNotificationPageState
                         onPressed: () => Navigator.of(context).pop(),
                         child: const Text('Close'),
                       ),
-                      TextButton(
-                        onPressed: () => unawaited(_loadAndShow()),
-                        child: const Text('Retry'),
-                      ),
                     ],
                   ),
-                )
-              : _loading
-                  ? const Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        CircularProgressIndicator(color: Colors.white),
-                        SizedBox(height: 16),
-                        Text(
-                          'Loading ride offer…',
-                          style: TextStyle(color: Colors.white),
+                ),
+              )
+            : request == null
+                ? const Center(
+                    child: CircularProgressIndicator(color: Colors.white),
+                  )
+                : Align(
+                    alignment: Alignment.bottomCenter,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 440),
+                        child: DriverRideRequestSheet(
+                          request: request,
+                          timer: _timerController,
+                          pickupKm: _pickupKm,
+                          pickupMins: _pickupMins,
+                          passengerShort:
+                              shortPassengerName(request.passengerName),
+                          accepting: _accepting,
+                          declining: _declining,
+                          onAccept: _accept,
+                          onDecline: () => unawaited(_decline()),
                         ),
-                      ],
-                    )
-                  : const SizedBox.shrink(),
-        ),
+                      ),
+                    ),
+                  ),
       ),
     );
   }

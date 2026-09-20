@@ -45,6 +45,7 @@ import 'package:vero360_app/app_nav_key.dart';
 import 'package:vero360_app/app_shell_coordinator.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/active_ride_controller.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_request_overlay.dart';
+import 'package:vero360_app/features/ride_share/presentation/services/driver_ride_alert_notifications.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/reset_password_screen.dart';
@@ -153,8 +154,8 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     }
   }
 
-  // Driver ride offer: stash payload for cold start + show local heads-up when
-  // the message is data-only (notification+data is already shown by the OS).
+  // Driver ride offer: stash payload, then raise a full-screen Accept popup
+  // (data-only FCM — OS does not show a tray notification on Android).
   if (data['type'] == 'new_ride' && data['rideId'] != null) {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -172,39 +173,10 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         await plugin.initialize(
           const local_notif.InitializationSettings(android: android),
         );
-        const channel = local_notif.AndroidNotificationChannel(
-          'driver_ride_requests',
-          'Driver Ride Requests',
-          description: 'Incoming ride offers for drivers',
-          importance: local_notif.Importance.max,
-        );
-        await plugin
-            .resolvePlatformSpecificImplementation<
-                local_notif.AndroidFlutterLocalNotificationsPlugin>()
-            ?.createNotificationChannel(channel);
-
-        final title = data['title']?.toString() ?? 'New Ride Request';
-        final body = data['body']?.toString() ??
-            (data['pickupAddress']?.toString().isNotEmpty == true
-                ? data['pickupAddress'].toString()
-                : 'Tap to accept');
-        await plugin.show(
-          data['rideId'].hashCode.abs(),
-          title,
-          body,
-          local_notif.NotificationDetails(
-            android: local_notif.AndroidNotificationDetails(
-              channel.id,
-              channel.name,
-              channelDescription: channel.description,
-              importance: local_notif.Importance.max,
-              priority: local_notif.Priority.max,
-              category: local_notif.AndroidNotificationCategory.call,
-              fullScreenIntent: true,
-              icon: '@mipmap/ic_launcher',
-            ),
-          ),
-          payload: jsonEncode(Map<String, dynamic>.from(data)),
+        await DriverRideAlertNotifications.showIncomingOffer(
+          plugin: plugin,
+          data: Map<String, dynamic>.from(data),
+          fullScreen: true,
         );
       } catch (_) {}
     }

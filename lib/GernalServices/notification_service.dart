@@ -45,6 +45,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.s
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/driver_incoming_ride_from_notification_page.dart';
+import 'package:vero360_app/features/ride_share/presentation/services/driver_ride_alert_notifications.dart';
 import 'package:vero360_app/features/ride_share/presentation/services/driver_ride_offer_inbox.dart';
 import 'package:vero360_app/utils/app_update_checker.dart';
 
@@ -78,18 +79,12 @@ class NotificationService {
   );
 
   static const AndroidNotificationChannel _rideRequestChannel =
-      AndroidNotificationChannel(
-    'driver_ride_requests',
-    'Driver Ride Requests',
-    description: 'Incoming ride offers for drivers',
-    importance: Importance.max,
-    playSound: true,
-    enableVibration: true,
-  );
+      DriverRideAlertNotifications.channel;
 
-  /// Action IDs for interactive notifications (reply, react)
   static const String _actionReply = 'reply';
   static const String _actionLike = 'like';
+  static String? _openedRideOfferId;
+  static DateTime? _openedRideOfferAt;
 
   /// Actions shown on interactive notifications: Reply (with inline text) and Like
   static List<AndroidNotificationAction> get _interactiveActions =>
@@ -133,6 +128,8 @@ class NotificationService {
     await _localNotifications.initialize(
       settings,
       onDidReceiveNotificationResponse: _onDidReceiveNotificationResponse,
+      onDidReceiveBackgroundNotificationResponse:
+          onDriverRideNotificationBackgroundAction,
     );
 
     // Create Android notification channel (required Android 8+)
@@ -141,6 +138,15 @@ class NotificationService {
             AndroidFlutterLocalNotificationsPlugin>();
     await androidImpl?.createNotificationChannel(_highPriorityChannel);
     await androidImpl?.createNotificationChannel(_rideRequestChannel);
+
+    final launchDetails =
+        await _localNotifications.getNotificationAppLaunchDetails();
+    final launchResponse = launchDetails?.notificationResponse;
+    final launchedFromLocal = launchResponse != null &&
+        launchDetails?.didNotificationLaunchApp == true;
+    if (launchedFromLocal) {
+      _onDidReceiveNotificationResponse(launchResponse);
+    }
 
     // Request Android 13+ notification permission (required to show notifications)
     final androidPlugin = _localNotifications.resolvePlatformSpecificImplementation<
@@ -192,7 +198,7 @@ class NotificationService {
     final initial = await messaging.getInitialMessage();
     if (initial != null) {
       _handleInitialMessage(initial);
-    } else {
+    } else if (!launchedFromLocal) {
       // Background handler may have stashed a ride offer before process restart.
       unawaited(_consumePendingDriverRideOffer());
     }
@@ -562,12 +568,10 @@ class NotificationService {
     if (type == 'new_ride') {
       unawaited(DriverRideOfferInbox.instance.ingestFcm(Map<String, dynamic>.from(data)));
       try {
-        await _showLocalNotification(
-          id: message.hashCode.abs(),
-          title: DescriptionContactMask.mask(title),
-          body: DescriptionContactMask.mask(body),
-          payload: jsonEncode(data),
-          rideRequest: true,
+        await DriverRideAlertNotifications.showIncomingOffer(
+          plugin: _localNotifications,
+          data: Map<String, dynamic>.from(data),
+          fullScreen: false,
         );
       } catch (e) {
         if (kDebugMode) debugPrint("Show ride local notification failed");
@@ -698,6 +702,17 @@ class NotificationService {
     if (response.notificationResponseType ==
         NotificationResponseType.selectedNotificationAction) {
       final actionId = response.actionId;
+      if (actionId == DriverRideAlertNotifications.acceptActionId) {
+        if (data != null) instance._navigateBasedOnPayload(data);
+        return;
+      }
+      if (actionId == DriverRideAlertNotifications.declineActionId) {
+        final rideId = (data?['rideId'] ?? data?['id'] ?? '').toString();
+        if (rideId.isNotEmpty) {
+          unawaited(DriverRideAlertNotifications.cancelOffer(rideId));
+        }
+        return;
+      }
       if (actionId == _actionReply && response.input != null) {
         instance._submitReply(data ?? {}, response.input!.trim());
         return;
@@ -998,6 +1013,14 @@ class NotificationService {
           if (kDebugMode) debugPrint("→ new_ride missing rideId");
           break;
         }
+        if (_openedRideOfferId == rideId &&
+            _openedRideOfferAt != null &&
+            DateTime.now().difference(_openedRideOfferAt!) <
+                const Duration(seconds: 4)) {
+          break;
+        }
+        _openedRideOfferId = rideId;
+        _openedRideOfferAt = DateTime.now();
         if (kDebugMode) debugPrint("→ Open driver ride accept ($rideId)");
         navigator.push(MaterialPageRoute(
           builder: (_) => DriverIncomingRideFromNotificationPage(

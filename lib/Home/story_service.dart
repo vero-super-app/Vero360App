@@ -14,6 +14,7 @@ import 'package:image/image.dart' as img;
 import 'package:vero360_app/Home/merchant_story_model.dart';
 import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
+import 'package:vero360_app/utils/display_name_sync.dart';
 
 const String _collection = 'merchant_stories';
 const String _storagePathPrefix = 'merchant_stories';
@@ -348,7 +349,12 @@ class StoryService {
       });
   }
 
-  /// Prefer live shop / user display name over denormalized story fields.
+  /// Prefer live **business** name over denormalized / personal profile fields.
+  Future<List<MerchantStoryGroup>> resolveLiveMerchantNamesForGroups(
+    List<MerchantStoryGroup> groups,
+  ) =>
+      _resolveLiveMerchantNames(groups);
+
   Future<List<MerchantStoryGroup>> _resolveLiveMerchantNames(
     List<MerchantStoryGroup> groups,
   ) async {
@@ -360,29 +366,54 @@ class StoryService {
         .toList();
     if (ids.isEmpty) return groups;
 
+    const shopCollections = [
+      'marketplace_merchants',
+      'food_merchants',
+      'accommodation_merchants',
+      'courier_merchants',
+    ];
+    // Business-only keys — never personal fullName / Auth displayName.
+    const businessKeys = [
+      'businessName',
+      'business_name',
+      'merchantName',
+      'companyName',
+      'shopName',
+      'storeName',
+    ];
+
+    String? pickBusiness(Map<String, dynamic>? data, {bool allowName = false}) {
+      if (data == null) return null;
+      for (final key in businessKeys) {
+        final v = (data[key] ?? '').toString().trim();
+        if (v.isNotEmpty && !v.contains('@')) return v;
+      }
+      if (allowName) {
+        final v = (data['name'] ?? '').toString().trim();
+        if (v.isNotEmpty && !v.contains('@')) return v;
+      }
+      return null;
+    }
+
     final nameById = <String, String>{};
     await Future.wait(ids.map((id) async {
       try {
-        final snaps = await Future.wait([
-          _firestore.collection('marketplace_merchants').doc(id).get(),
-          _firestore.collection('users').doc(id).get(),
-        ]);
-        for (final snap in snaps) {
+        // 1) Shop docs — `name` here is usually the business title.
+        for (final col in shopCollections) {
+          final snap = await _firestore.collection(col).doc(id).get();
           if (!snap.exists) continue;
-          final data = snap.data();
-          if (data == null) continue;
-          for (final key in const [
-            'businessName',
-            'merchantName',
-            'displayName',
-            'fullName',
-            'name',
-          ]) {
-            final v = (data[key] ?? '').toString().trim();
-            if (v.isNotEmpty) {
-              nameById[id] = v;
-              return;
-            }
+          final biz = pickBusiness(snap.data(), allowName: true);
+          if (biz != null) {
+            nameById[id] = biz;
+            return;
+          }
+        }
+        // 2) User profile — business fields only (never personal name).
+        final userSnap = await _firestore.collection('users').doc(id).get();
+        if (userSnap.exists) {
+          final biz = pickBusiness(userSnap.data(), allowName: false);
+          if (biz != null) {
+            nameById[id] = biz;
           }
         }
       } catch (_) {}
@@ -489,6 +520,17 @@ class StoryService {
     if (user == null || user.uid != merchantId) {
       throw Exception('Only the merchant can post a story');
     }
+
+    // Merchants: persist business name on the story doc (not personal name).
+    var resolvedName = merchantName.trim();
+    try {
+      final acting = await DisplayNameSync.resolveActingDisplayName(
+        fallback: resolvedName,
+      );
+      if (acting.trim().isNotEmpty) resolvedName = acting.trim();
+    } catch (_) {}
+    if (resolvedName.isEmpty) resolvedName = 'Merchant';
+
     final now = DateTime.now();
     final expiresAt = now.add(storyLifetime);
 
@@ -534,7 +576,7 @@ class StoryService {
 
     await _firestore.collection(_collection).add({
       'merchantId': merchantId,
-      'merchantName': merchantName,
+      'merchantName': resolvedName,
       'merchantImageUrl': merchantImageUrl,
       'serviceType': (serviceType ?? 'marketplace').toLowerCase(),
       if (title != null && title.isNotEmpty) 'title': title,
@@ -561,7 +603,7 @@ class StoryService {
       unawaited(
         OrderPartyNotificationService.publishStoryPostedToFollowers(
           merchantUid: merchantId,
-          merchantName: merchantName,
+          merchantName: resolvedName,
           serviceType: serviceType,
         ),
       );

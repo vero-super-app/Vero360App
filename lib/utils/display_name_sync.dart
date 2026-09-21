@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vero360_app/GernalServices/role_helper.dart';
 
 /// Propagates a profile / merchant display name to prefs, Auth, and denormalized
 /// Firestore fields (shop docs, marketplace items, stories) so UI stays in sync.
@@ -9,6 +10,149 @@ class DisplayNameSync {
   DisplayNameSync._();
 
   static final _db = FirebaseFirestore.instance;
+
+  static const _merchantBizPrefsKeys = [
+    'business_name',
+    'businessName',
+    'merchant_business_name',
+    'merchantName',
+    'shopName',
+    'companyName',
+  ];
+
+  static const _personalPrefsKeys = [
+    'fullName',
+    'name',
+    'displayName',
+    'username',
+  ];
+
+  static const _merchantCollections = [
+    'marketplace_merchants',
+    'food_merchants',
+    'accommodation_merchants',
+    'courier_merchants',
+  ];
+
+  static bool _usableLabel(String raw) {
+    final v = raw.trim();
+    if (v.isEmpty || v.contains('@')) return false;
+    final lower = v.toLowerCase();
+    if (lower == 'you' ||
+        lower == 'someone' ||
+        lower == 'contact' ||
+        lower == 'merchant' ||
+        lower == 'user') {
+      return false;
+    }
+    return true;
+  }
+
+  static String? _firstUsable(Iterable<String?> values) {
+    for (final raw in values) {
+      final v = (raw ?? '').trim();
+      if (_usableLabel(v)) return v;
+    }
+    return null;
+  }
+
+  /// Label for the signed-in account in stories / chat notifications.
+  /// Merchants always prefer **business name** over personal name.
+  static Future<String> resolveActingDisplayName({
+    String fallback = 'You',
+  }) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final role = RoleHelper.normalizeAccountRole(
+            prefs.getString('user_role') ?? prefs.getString('role'),
+          ) ??
+          RoleHelper.customer;
+      final user = FirebaseAuth.instance.currentUser;
+      final uid = (user?.uid ?? '').trim();
+
+      if (role == RoleHelper.merchant) {
+        final fromPrefs = _firstUsable(
+          _merchantBizPrefsKeys.map(prefs.getString),
+        );
+        if (fromPrefs != null) return fromPrefs;
+
+        if (uid.isNotEmpty) {
+          final fromShop = await _businessNameFromMerchantDocs(uid);
+          if (fromShop != null) {
+            try {
+              await prefs.setString('business_name', fromShop);
+            } catch (_) {}
+            return fromShop;
+          }
+          final fromUser = await _businessNameFromUserDoc(uid);
+          if (fromUser != null) {
+            try {
+              await prefs.setString('business_name', fromUser);
+            } catch (_) {}
+            return fromUser;
+          }
+        }
+        // Merchant with no business name yet — avoid leaking personal name
+        // into public story / chat labels.
+        return fallback == 'You' ? 'My shop' : fallback;
+      }
+
+      final personal = _firstUsable([
+        ..._personalPrefsKeys.map(prefs.getString),
+        user?.displayName,
+      ]);
+      if (personal != null) return personal;
+
+      final email = prefs.getString('email') ?? user?.email;
+      if (email != null && email.contains('@')) {
+        final local = email.split('@').first.trim();
+        if (_usableLabel(local)) {
+          return local[0].toUpperCase() + local.substring(1);
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('[DisplayNameSync] resolveActingDisplayName: $e');
+    }
+    return fallback;
+  }
+
+  static Future<String?> _businessNameFromMerchantDocs(String uid) async {
+    for (final col in _merchantCollections) {
+      try {
+        final snap = await _db.collection(col).doc(uid).get();
+        if (!snap.exists) continue;
+        final data = snap.data() ?? const <String, dynamic>{};
+        final name = _firstUsable([
+          data['businessName']?.toString(),
+          data['business_name']?.toString(),
+          data['merchantName']?.toString(),
+          data['companyName']?.toString(),
+          data['shopName']?.toString(),
+          data['storeName']?.toString(),
+          // Last resort on shop docs only (often already the business title).
+          data['name']?.toString(),
+        ]);
+        if (name != null) return name;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  static Future<String?> _businessNameFromUserDoc(String uid) async {
+    try {
+      final snap = await _db.collection('users').doc(uid).get();
+      final data = snap.data() ?? const <String, dynamic>{};
+      return _firstUsable([
+        data['businessName']?.toString(),
+        data['business_name']?.toString(),
+        data['merchantName']?.toString(),
+        data['shopName']?.toString(),
+        data['companyName']?.toString(),
+      ]);
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// [name] should already be trimmed and non-empty.
   static Future<void> syncEverywhere({

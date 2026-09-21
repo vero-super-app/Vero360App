@@ -6,6 +6,7 @@ import 'package:vero360_app/Home/merchant_story_model.dart';
 import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/Home/story_ring_widget.dart';
 import 'package:vero360_app/Home/story_service.dart';
+import 'package:vero360_app/utils/display_name_sync.dart';
 
 class StorySection extends StatefulWidget {
   const StorySection({super.key});
@@ -47,18 +48,10 @@ class _StorySectionState extends State<StorySection> {
         ) ??
         RoleHelper.customer;
 
-    String name = '';
-    if (role == RoleHelper.merchant) {
-      name = (prefs.getString('business_name') ?? '').trim();
-    }
-    if (name.isEmpty) {
-      name = (prefs.getString('fullName') ??
-              prefs.getString('name') ??
-              user.displayName ??
-              '')
-          .trim();
-    }
-    if (name.isEmpty || name.contains('@')) name = 'You';
+    // Merchants: always use business name for story rings / posts.
+    final name = await DisplayNameSync.resolveActingDisplayName(
+      fallback: role == RoleHelper.merchant ? 'My shop' : 'You',
+    );
 
     var imageUrl = (prefs.getString('profilepicture') ?? '').trim();
     if (imageUrl.isEmpty) {

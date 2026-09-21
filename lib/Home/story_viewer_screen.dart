@@ -15,6 +15,7 @@ import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/utils/display_name_sync.dart';
 
 class StoryViewerScreen extends StatefulWidget {
   final List<MerchantStoryGroup> groups;
@@ -57,6 +58,26 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     return uid != null && uid == _currentGroup.merchantId;
   }
 
+  /// Story owner label — merchants always show business name (including own).
+  String get _ownerDisplayName {
+    final name = _currentGroup.merchantName.trim();
+    if (name.isEmpty) return _isOwnStory ? 'My status' : 'Merchant';
+    if (!_isOwnStory) return name;
+
+    final st = (_items.isNotEmpty ? _items.first.serviceType : null)
+        ?.toLowerCase()
+        .trim();
+    final isMerchantStory = st == null ||
+        st.isEmpty ||
+        st == 'marketplace' ||
+        st == 'food' ||
+        st == 'accommodation' ||
+        st == 'courier' ||
+        st == 'merchant';
+    if (isMerchantStory && name.toLowerCase() != 'you') return name;
+    return 'My status';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -73,7 +94,34 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
         }
       });
     _restartProgress();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _recordViewForCurrentSlide());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _recordViewForCurrentSlide();
+      _hydrateOwnerBusinessNames();
+    });
+  }
+
+  /// Ensure merchant story headers use live business name, not personal name.
+  Future<void> _hydrateOwnerBusinessNames() async {
+    try {
+      final refreshed =
+          await _storyService.resolveLiveMerchantNamesForGroups(_groups);
+      if (!mounted || refreshed.isEmpty) return;
+      setState(() {
+        _groups = refreshed;
+      });
+    } catch (_) {}
+
+    // Own merchant story: force acting business name from prefs/shop.
+    if (!_isOwnStory) return;
+    try {
+      final biz = await DisplayNameSync.resolveActingDisplayName(fallback: '');
+      if (!mounted || biz.trim().isEmpty) return;
+      final g = _currentGroup;
+      if (g.merchantName.trim() == biz.trim()) return;
+      setState(() {
+        _groups[_groupIndex] = g.copyWith(merchantName: biz.trim());
+      });
+    } catch (_) {}
   }
 
   void _onReplyFocusChanged() {
@@ -608,7 +656,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
               openMerchantOrDriverProfile(
                 context,
                 profileId: _currentGroup.merchantId,
-                displayName: _currentGroup.merchantName,
+                displayName: _ownerDisplayName,
               );
             },
             child: Container(
@@ -639,7 +687,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  _isOwnStory ? 'My status' : _currentGroup.merchantName,
+                  _ownerDisplayName,
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -760,7 +808,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
               style: const TextStyle(color: Colors.white, fontSize: 15),
               cursorColor: const Color(0xFFFF8A00),
               decoration: InputDecoration(
-                hintText: 'Reply to ${_currentGroup.merchantName}…',
+                hintText: 'Reply to ${_ownerDisplayName}…',
                 hintStyle: TextStyle(
                   color: Colors.white.withValues(alpha: 0.55),
                   fontSize: 14,
@@ -875,7 +923,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
         MaterialPageRoute<void>(
           builder: (_) => MessagePageBackendApi(
             peerId: result.chat.id,
-            peerName: _currentGroup.merchantName,
+            peerName: _ownerDisplayName,
             peerAvatarUrl: _currentGroup.merchantImageUrl,
             peerMerchantId: merchantId,
             peerUserId: result.sellerId,

@@ -23,6 +23,7 @@ import 'package:vero360_app/GernalServices/merchant_identity.dart';
 import 'package:vero360_app/widgets/modern_confirm_dialog.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:vero360_app/widgets/messaging_skeleton_loaders.dart';
+import 'package:vero360_app/utils/display_name_sync.dart';
 
 class ChatListPage extends StatefulWidget {
   const ChatListPage({super.key});
@@ -132,10 +133,16 @@ class _ChatListPageState extends State<ChatListPage> {
       if (cached != null && cached > 0 && mounted) {
         await _loadChatListPrefs(cached);
         if (!mounted) return;
+        final actingName = await DisplayNameSync.resolveActingDisplayName(
+          fallback: fbUser.displayName?.trim().isNotEmpty == true
+              ? fbUser.displayName!.trim()
+              : 'You',
+        );
+        if (!mounted) return;
         setState(() {
           _myUserId = cached;
           _myEmail = fbUser.email;
-          _myName = fbUser.displayName;
+          _myName = actingName;
           _error = null;
         });
       }
@@ -167,10 +174,14 @@ class _ChatListPageState extends State<ChatListPage> {
           BackendChatService.refreshThreads();
         }
       });
+      final actingName = await DisplayNameSync.resolveActingDisplayName(
+        fallback: (authUser?.displayName ?? _myName ?? 'You').toString(),
+      );
+      if (!mounted) return;
       setState(() {
         _myUserId = userId;
         _myEmail = authUser?.email ?? _myEmail;
-        _myName = authUser?.displayName ?? _myName;
+        _myName = actingName;
         _error = null;
         _wsConnected = BackendMessagingSocket.isConnected;
       });

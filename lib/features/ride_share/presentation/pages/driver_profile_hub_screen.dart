@@ -13,6 +13,7 @@ import 'package:vero360_app/features/ride_share/presentation/pages/edit_driver_d
 import 'package:vero360_app/features/ride_share/presentation/pages/edit_taxi_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_online_session.dart';
+import 'package:vero360_app/features/ride_share/presentation/services/driver_online_alert_permissions.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_skeleton_loaders.dart';
@@ -1127,6 +1128,9 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     try {
       final session = ref.read(driverOnlineSessionProvider.notifier);
       if (available) {
+        if (!mounted) return;
+        await DriverOnlineAlertPermissions.ensure(context);
+        if (!mounted) return;
         await session.goOnline(taxiId: taxiId);
       } else {
         await session.goOffline();

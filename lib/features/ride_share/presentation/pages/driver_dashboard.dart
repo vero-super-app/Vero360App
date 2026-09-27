@@ -26,6 +26,7 @@ import 'ride_history_screen.dart';
 import 'ride_history_detail_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_skeleton_loaders.dart';
 import 'package:vero360_app/GernalServices/location_permission_helper.dart';
+import 'package:vero360_app/features/ride_share/presentation/services/driver_online_alert_permissions.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
 
@@ -476,6 +477,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
       final granted =
           await LocationPermissionHelper.ensureLocationAccess(context);
       if (!mounted || !granted) return;
+      await DriverOnlineAlertPermissions.ensure(context);
+      if (!mounted) return;
       await ref.read(driverOnlineSessionProvider.notifier).goOnline(
             taxiId: taxiId,
           );
@@ -1109,6 +1112,9 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
       if (taxiId != null) {
         final session = ref.read(driverOnlineSessionProvider.notifier);
         if (isAvailable) {
+          if (!mounted) return;
+          await DriverOnlineAlertPermissions.ensure(context);
+          if (!mounted) return;
           await session.goOnline(taxiId: taxiId);
         } else {
           await session.goOffline();

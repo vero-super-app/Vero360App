@@ -37,6 +37,7 @@ import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/widgets/modern_confirm_dialog.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
+import 'package:vero360_app/utils/display_name_sync.dart';
 import 'package:vero360_app/widgets/linkified_text.dart';
 import 'package:vero360_app/widgets/messaging_skeleton_loaders.dart';
 import 'package:vero360_app/widgets/voice_note_bubble.dart';
@@ -1672,25 +1673,15 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   }
 
   Future<String> _currentSenderDisplayName() async {
-    final prefs = await SharedPreferences.getInstance();
-    for (final key in ['name', 'displayName', 'username']) {
-      final raw = prefs.getString(key)?.trim() ?? '';
-      if (raw.isNotEmpty) return raw;
-    }
+    // Merchants: business name for notifications / contact labels (not personal).
+    final acting =
+        await DisplayNameSync.resolveActingDisplayName(fallback: '');
+    if (acting.trim().isNotEmpty) return acting.trim();
 
     final fromToken = await AuthStorage.userNameFromToken();
     if (fromToken != null && fromToken.trim().isNotEmpty) {
       final t = fromToken.trim();
       return t.contains('@') ? t.split('@').first : t;
-    }
-
-    final fb = FirebaseAuth.instance.currentUser?.displayName?.trim();
-    if (fb != null && fb.isNotEmpty) return fb;
-
-    final email = prefs.getString('email') ??
-        FirebaseAuth.instance.currentUser?.email;
-    if (email != null && email.contains('@')) {
-      return email.split('@').first;
     }
 
     return 'Someone';
@@ -3600,11 +3591,14 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
     try {
       unawaited(UserPresenceService.goOnline());
+      final actingName = await _currentSenderDisplayName();
       final call = await CallServiceImpl().initiateCall(
         initiatorId: myUid,
         recipientId: peerUid,
         callType: video ? CallType.video : CallType.voice,
-        initiatorName: me.displayName ?? me.email ?? 'Vero360 user',
+        initiatorName: actingName.isNotEmpty
+            ? actingName
+            : (me.displayName ?? me.email ?? 'Vero360 user'),
         initiatorAvatar: me.photoURL,
         recipientName: widget.peerName,
         recipientAvatar: widget.peerAvatarUrl,
@@ -3614,7 +3608,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       unawaited(
         ChatNotificationService.notifyRecipientOfMessage(
           chatId: _chatId,
-          senderName: me.displayName ?? 'Vero360',
+          senderName: actingName.isNotEmpty ? actingName : (me.displayName ?? 'Vero360'),
           body: video ? '📹 Incoming video call' : '📞 Incoming voice call',
           recipientFirebaseUid: peerUid,
           recipientUserId: widget.peerUserId ?? _peerUserId,

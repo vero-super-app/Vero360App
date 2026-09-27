@@ -31,6 +31,7 @@ import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/GeneralPages/checkout_page.dart' show DeliveryType;
 import 'package:vero360_app/GernalServices/api_exception.dart';
+import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
@@ -1079,6 +1080,11 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     return _billableUnits * unit;
   }
 
+  BuyerCommissionQuote get _commissionQuote =>
+      BuyerCommission.quote(_totalMwk.toDouble());
+
+  double get _buyerPaysMwk => _commissionQuote.buyerTotal;
+
   String get _staySummaryLine {
     switch (_effectivePricePeriod) {
       case AccommodationPricePeriod.night:
@@ -1479,7 +1485,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
         accommodationId: widget.accommodationId,
         bookingDate: dateStr,
         price: _totalMwk,
-        bookingFee: 0,
+        bookingFee: _commissionQuote.commission,
         phoneNumber: phone,
         checkOut: checkOutStr,
         nights: _nights,
@@ -1532,7 +1538,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
               'email': email,
               'phone_number': phone,
               'currency': 'MWK',
-              'amount': _totalMwk.round().toString(),
+              'amount': _buyerPaysMwk.round().toString(),
               'payment_methods': ['card', 'mobile_money', 'bank'],
               'callback_url': PayChanguConfig.callbackUrl,
               'return_url': PayChanguConfig.returnUrl,
@@ -1594,7 +1600,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
         propertyLocation: widget.location,
         checkIn: _checkIn,
         checkOut: _checkOut,
-        totalMwk: _totalMwk,
+        totalMwk: _buyerPaysMwk,
         guestName: name,
         guestEmail: email,
         guestPhone: phone,
@@ -1608,7 +1614,8 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
           builder: (_) => InAppPaymentPage(
             checkoutUrl: checkoutUrl,
             txRef: txRef,
-            totalAmount: _totalMwk.toDouble(),
+            totalAmount: _buyerPaysMwk,
+            providerAmountMwk: _totalMwk.toDouble(),
             rootContext: context,
             deliveryType: DeliveryType.pickup,
             accommodationEscrow: escrow,
@@ -2403,7 +2410,35 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                         ),
                         Divider(height: 22, color: Colors.grey.shade200),
                         Text(
-                          'MWK ${NumberFormat('#,##0').format(_totalMwk.round())}',
+                          'Stay price  MWK ${NumberFormat('#,##0').format(_totalMwk.round())}',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
+                            color: Colors.grey.shade800,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Commission (${_commissionQuote.percentLabel})  MWK ${NumberFormat('#,##0').format(_commissionQuote.commission.round())}',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
+                            color: Colors.grey.shade800,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Added to your bill. The host receives the full stay price.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.3,
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'MWK ${NumberFormat('#,##0').format(_buyerPaysMwk.round())}',
                           style: const TextStyle(
                             fontWeight: FontWeight.w900,
                             fontSize: 22,

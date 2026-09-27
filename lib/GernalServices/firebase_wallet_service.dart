@@ -21,7 +21,8 @@ class FirebaseWalletService {
   /// Ride / stay default fee (kept for those products).
   static const double serviceFeeRate = 0.025;
 
-  /// Marketplace purchases: 10% of item gross is credited to the super-admin wallet.
+  /// Legacy flat rate. New marketplace, food, and stay orders use
+  /// [BuyerCommission] (buyer-paid tiers). Do not deduct this from merchants.
   static const double marketplaceServiceFeeRate = 0.10;
 
   /// Ensures the platform wallet exists and credits a service fee into it.

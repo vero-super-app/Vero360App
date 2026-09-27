@@ -77,6 +77,8 @@ workflows:
       - name: Build App Store IPA
         script: |
           flutter build ipa --release \
+            --build-name=1.1.11 \
+            --build-number=10017 \
             --export-options-plist=/Users/builder/export_options.plist
     artifacts:
       - build/ios/ipa/*.ipa

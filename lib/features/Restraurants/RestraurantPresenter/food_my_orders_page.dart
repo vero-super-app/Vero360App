@@ -1025,7 +1025,7 @@ class _FoodOrderDetailSheetState extends State<_FoodOrderDetailSheet> {
             const Divider(height: 28),
             _kv('Subtotal', _mwk0(order.subtotalMwk)),
             _kv('Delivery', _mwk0(order.deliveryFeeMwk)),
-            _kv('Service fee', _mwk0(order.serviceFeeMwk)),
+            _kv('Commission', _mwk0(order.serviceFeeMwk)),
             const SizedBox(height: 6),
             _kv('Total', _mwk0(order.totalMwk), emphasize: true),
             _kv('Payment ref', order.paymentTxRef.trim().isEmpty ? '—' : order.paymentTxRef),

@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart'; // ✅ ADD (commas formatter)
 
+import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_checkout_page.dart';
@@ -601,7 +602,8 @@ class _CartPageState extends State<CartPage> {
   @override
   Widget build(BuildContext context) {
     final discount = 0.0;
-    final total = _subtotal + discount;
+    final quote = BuyerCommission.quote(_subtotal + discount);
+    final total = quote.buyerTotal;
 
     final merchantGroups = _itemsByMerchant;
 
@@ -1120,9 +1122,13 @@ class _CartSummary extends StatelessWidget {
               ),
 
             // ✅ COMMAS everywhere
-            _row('Subtotal', mwk(subtotal)),
+            _row('Item price', mwk(subtotal)),
+            _row(
+              'Commission (${BuyerCommission.quote(subtotal).percentLabel})',
+              mwk(BuyerCommission.quote(subtotal).commission),
+            ),
             const Divider(height: 16),
-            _row('Total', mwk(total), bold: true, green: true),
+            _row('You pay', mwk(total), bold: true, green: true),
             const SizedBox(height: 12),
 
             SizedBox(

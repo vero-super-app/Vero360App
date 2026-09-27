@@ -725,14 +725,14 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
         }
       }
 
-      // Delivered / completed → credit kitchen (90%) + platform wallet (10%).
+      // Delivered / completed → credit kitchen the full menu price.
       if (s == 'delivered' || s == 'completed') {
         try {
           await OrderEscrowService.releaseFoodOrderByMerchant(orderId);
           if (mounted) {
             ToastHelper.showCustomToast(
               context,
-              'Order paid out — kitchen wallet + 10% platform fee credited.',
+              'Order paid out — kitchen receives the full menu price.',
               isSuccess: true,
               errorMessage: '',
             );

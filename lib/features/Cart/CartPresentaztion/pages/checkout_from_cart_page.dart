@@ -26,6 +26,7 @@ import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_my_o
 import 'package:vero360_app/features/Restraurants/RestraurantsService/restaurant_service.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
+import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/GernalServices/order_service.dart' as order_svc;
@@ -85,7 +86,11 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   double get _subtotal =>
       _items.fold(0.0, (sum, item) => sum + (item.price * item.quantity));
 
-  double get _total => max(0.0, _subtotal);
+  BuyerCommissionQuote get _commissionQuote => BuyerCommission.quote(_subtotal);
+
+  /// Buyer pays the seller's price plus commission. Commission is not taken
+  /// from the seller.
+  double get _total => max(0.0, _commissionQuote.buyerTotal);
 
   int? get _maxFoodPrepMinutes {
     if (!_isFoodCheckout) return null;
@@ -1354,7 +1359,25 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                   title: 'Summary',
                   child: Column(
                     children: [
-                      _row('Subtotal', _mwk(_subtotal)),
+                      _row('Item price', _mwk(_subtotal)),
+                      const SizedBox(height: 10),
+                      _row(
+                        'Commission (${_commissionQuote.percentLabel})',
+                        _mwk(_commissionQuote.commission),
+                      ),
+                      const SizedBox(height: 6),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Added to your bill. The seller receives the full item price.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.3,
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
                       const SizedBox(height: 10),
                       _row(
                         'Delivery',
@@ -1791,6 +1814,10 @@ class InAppPaymentPage extends StatefulWidget {
   /// Optional Firestore escrow hold for the accommodation host (wallet / payouts).
   final AccommodationEscrowParams? accommodationEscrow;
 
+  /// Host/seller price when [totalAmount] includes buyer commission.
+  /// Escrow credits this amount to the merchant, not the buyer total.
+  final double? providerAmountMwk;
+
   /// Single-item food: after verified payment, writes `food_orders` for the merchant dashboard.
   final FoodCheckoutContext? foodCheckout;
 
@@ -1809,6 +1836,7 @@ class InAppPaymentPage extends StatefulWidget {
     this.onSuccessNavigate,
     this.accommodationEscrow,
     this.foodCheckout,
+    this.providerAmountMwk,
   });
 
   @override
@@ -2120,10 +2148,8 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
 
       final subtotalMwk =
           lineItems.fold<double>(0, (s, e) => s + e.lineTotalMwk);
-      // TODO: pull real deliveryFeeMwk / serviceFeeMwk from the restaurant
-      // document (delivery radius / min order / restaurant config) once wired.
       const deliveryFeeMwk = 0.0;
-      const serviceFeeMwk = 0.0;
+      final serviceFeeMwk = BuyerCommission.quote(subtotalMwk).commission;
       final totalMwk = subtotalMwk + deliveryFeeMwk + serviceFeeMwk;
 
       String pickupAddress = '';
@@ -2204,7 +2230,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         merchantUid: merchantId,
         merchantName: merchantName,
         foodName: summaryName,
-        grossAmountMwk: totalMwk,
+        grossAmountMwk: subtotalMwk,
         orderNumber: orderNumber,
       );
 
@@ -2324,7 +2350,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     if (esc != null) {
       unawaited(OrderEscrowService.createHoldForAccommodationBooking(
         txRef: widget.txRef,
-        grossAmountMwk: widget.totalAmount,
+        grossAmountMwk: widget.providerAmountMwk ?? widget.totalAmount,
         params: esc,
       ));
     }

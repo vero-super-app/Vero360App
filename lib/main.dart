@@ -234,9 +234,13 @@ bool _fcmBackgroundHandlerRegistered = false;
 Future<bool>? _firebaseHealInFlight;
 
 /// Modern Firebase self-heal: init / verify / retry without blocking first paint.
+///
+/// Each attempt is timed out so a hung native init cannot stall App Store launch
+/// (Guideline 2.1 — indefinite splash on iPad / cold start).
 Future<bool> _ensureFirebaseHealthy({
   void Function(String msg)? log,
   bool quiet = false,
+  Duration attemptTimeout = const Duration(seconds: 4),
 }) async {
   if (_firebaseHealInFlight != null) return _firebaseHealInFlight!;
 
@@ -248,10 +252,12 @@ Future<bool> _ensureFirebaseHealthy({
     const maxAttempts = 3;
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        final ok = await ensureFirebaseApp(maxAttempts: 1);
+        final ok = await ensureFirebaseApp(maxAttempts: 1)
+            .timeout(attemptTimeout, onTimeout: () => false);
         if (!ok && Firebase.apps.isEmpty) {
           say('Firebase init (attempt $attempt/$maxAttempts)…');
-          await Firebase.initializeApp(options: _kFirebaseOptions);
+          await Firebase.initializeApp(options: _kFirebaseOptions)
+              .timeout(attemptTimeout);
         } else {
           say('Firebase already warm ✅');
         }
@@ -372,15 +378,25 @@ class _AppBootstrapState extends State<AppBootstrap> {
   String _bootMessage = 'Opening Vero360…';
   bool _showLauncher = true;
   bool _firebaseNudgeInFlight = false;
+  bool _bootDeadlinePassed = false;
+  Timer? _bootDeadlineTimer;
 
   /// Brand flash — keep short so home arrives in ~1s.
   static const _minLauncher = Duration(milliseconds: 450);
+  /// Hard ceiling so App Review / cold start never sits on splash forever.
+  static const _bootDeadline = Duration(seconds: 8);
   static const _splashBg = Color(0xFFFFF8F2);
 
   @override
   void initState() {
     super.initState();
     _bootFuture = _boot();
+    _bootDeadlineTimer = Timer(_bootDeadline, () {
+      if (!mounted || _bootDeadlinePassed) return;
+      setState(() => _bootDeadlinePassed = true);
+      // Keep healing in background; UI must fail-open past splash.
+      unawaited(_ensureFirebaseHealthy(quiet: true));
+    });
 
     unawaited(GoogleMapsConfig.initialize());
     unawaited(PayChanguConfig.initialize());
@@ -390,13 +406,21 @@ class _AppBootstrapState extends State<AppBootstrap> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(() async {
         try {
-          await _ensureFirebaseHealthy(quiet: true);
+          await _ensureFirebaseHealthy(quiet: true)
+              .timeout(const Duration(seconds: 6), onTimeout: () => false);
+          if (Firebase.apps.isEmpty) return;
           // Warm push path quickly (token + channels) — don't wait 2.4s.
           await NotificationService.instance.initialize();
           NotificationService.setNavigatorKey(navKey);
         } catch (_) {}
       }());
     });
+  }
+
+  @override
+  void dispose() {
+    _bootDeadlineTimer?.cancel();
+    super.dispose();
   }
 
   Future<_BootState> _boot() async {
@@ -410,19 +434,19 @@ class _AppBootstrapState extends State<AppBootstrap> {
         } catch (_) {}
       }));
 
-      // Cart / Auth / Firestore need the DEFAULT app. Init is local (fast) —
-      // await it here so MyApp never mounts without Firebase. No failure UI.
-      await _ensureFirebaseHealthy(quiet: true);
+      // Prefer a warm Firebase DEFAULT app, but never hang launch on it.
+      await _ensureFirebaseHealthy(quiet: true)
+          .timeout(const Duration(seconds: 5), onTimeout: () => false);
       if (Firebase.apps.isEmpty) {
         try {
-          await Firebase.initializeApp(options: _kFirebaseOptions);
+          await Firebase.initializeApp(options: _kFirebaseOptions)
+              .timeout(const Duration(seconds: 3));
         } catch (_) {}
       }
 
-      try {
-        await GoogleMapsConfig.initialize();
-        await PayChanguConfig.initialize();
-      } catch (_) {}
+      // Env config is optional at launch — do not block splash on it.
+      unawaited(GoogleMapsConfig.initialize());
+      unawaited(PayChanguConfig.initialize());
 
       if (mounted) {
         setState(() {
@@ -485,15 +509,12 @@ class _AppBootstrapState extends State<AppBootstrap> {
         await Future<void>.delayed(_minLauncher - elapsed);
       }
 
-      // Last-resort: still no app → keep trying briefly on splash (no red screen).
+      // Brief last-resort only — still capped so we never loop forever.
       if (Firebase.apps.isEmpty) {
-        for (var i = 0; i < 3 && Firebase.apps.isEmpty; i++) {
-          try {
-            await Firebase.initializeApp(options: _kFirebaseOptions);
-          } catch (_) {
-            await Future<void>.delayed(Duration(milliseconds: 120 * (i + 1)));
-          }
-        }
+        try {
+          await Firebase.initializeApp(options: _kFirebaseOptions)
+              .timeout(const Duration(seconds: 2));
+        } catch (_) {}
       }
 
       return _BootState(
@@ -504,10 +525,10 @@ class _AppBootstrapState extends State<AppBootstrap> {
         initialShell: initialShell,
       );
     } catch (_) {
-      // Still try to stand up Firebase before MyApp (avoids red [core/no-app]).
       try {
         if (Firebase.apps.isEmpty) {
-          await Firebase.initializeApp(options: _kFirebaseOptions);
+          await Firebase.initializeApp(options: _kFirebaseOptions)
+              .timeout(const Duration(seconds: 2));
         }
       } catch (_) {}
       final elapsed = DateTime.now().difference(started);
@@ -524,6 +545,17 @@ class _AppBootstrapState extends State<AppBootstrap> {
     }
   }
 
+  void _continueFirebaseInBackground() {
+    if (_firebaseNudgeInFlight) return;
+    _firebaseNudgeInFlight = true;
+    unawaited(() async {
+      try {
+        await _ensureFirebaseHealthy(quiet: true);
+      } catch (_) {}
+      _firebaseNudgeInFlight = false;
+    }());
+  }
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<_BootState>(
@@ -536,9 +568,10 @@ class _AppBootstrapState extends State<AppBootstrap> {
               onboardingDone: true,
               initialShell: null,
             );
-        // Do not open MyApp until Firebase DEFAULT exists (CartService needs it).
         final firebaseReady = Firebase.apps.isNotEmpty;
-        final ready = !booting && firebaseReady;
+        // Fail-open: leave splash when boot finishes OR hard deadline hits.
+        // Do not require Firebase forever (App Review Guideline 2.1 hang).
+        final ready = (!booting || _bootDeadlinePassed);
 
         if (ready && _showLauncher) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -546,19 +579,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
           });
         }
 
-        // Keep branded splash — never a Firebase failure / retry screen.
         if (_showLauncher || !ready) {
-          // If boot finished but Firebase still missing, nudge init once more.
-          if (!booting && !firebaseReady && !_firebaseNudgeInFlight) {
-            _firebaseNudgeInFlight = true;
-            unawaited(() async {
-              try {
-                await Firebase.initializeApp(options: _kFirebaseOptions);
-              } catch (_) {}
-              _firebaseNudgeInFlight = false;
-              if (mounted) setState(() {});
-            }());
-          }
           return MaterialApp(
             debugShowCheckedModeBanner: false,
             color: _splashBg,
@@ -574,6 +595,10 @@ class _AppBootstrapState extends State<AppBootstrap> {
               showSpinner: true,
             ),
           );
+        }
+
+        if (!firebaseReady) {
+          _continueFirebaseInBackground();
         }
 
         return MyApp(

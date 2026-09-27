@@ -43,7 +43,10 @@ Future<bool>? _ensureInFlight;
 
 /// Safe to call from services before Auth / Firestore / Storage.
 /// Retries briefly so refunds / occupancy do not hit `core/no-app`.
-Future<bool> ensureFirebaseApp({int maxAttempts = 3}) async {
+Future<bool> ensureFirebaseApp({
+  int maxAttempts = 3,
+  Duration attemptTimeout = const Duration(seconds: 4),
+}) async {
   if (isFirebaseAppReady) return true;
   if (_ensureInFlight != null) return _ensureInFlight!;
 
@@ -51,7 +54,8 @@ Future<bool> ensureFirebaseApp({int maxAttempts = 3}) async {
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         if (Firebase.apps.isEmpty) {
-          await Firebase.initializeApp(options: kFirebaseOptions);
+          await Firebase.initializeApp(options: kFirebaseOptions)
+              .timeout(attemptTimeout);
         }
         Firebase.app();
         return true;

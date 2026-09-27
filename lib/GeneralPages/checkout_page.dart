@@ -21,6 +21,7 @@ import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
+import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierService/courier_city.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/modern_confirm_dialog.dart';
@@ -85,7 +86,9 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   double get _subtotal => widget.item.price * _qty;
 
-  double get _total => _subtotal;
+  BuyerCommissionQuote get _commissionQuote => BuyerCommission.quote(_subtotal);
+
+  double get _total => _commissionQuote.buyerTotal;
 
   bool get _buyerInLilongwe {
     final a = _defaultAddr;
@@ -1177,7 +1180,25 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     title: 'Summary',
                     child: Column(
                       children: [
-                        _rowLine('Subtotal', _formatMoney(_subtotal)),
+                        _rowLine('Item price', _formatMoney(_subtotal)),
+                        const SizedBox(height: 10),
+                        _rowLine(
+                          'Commission (${_commissionQuote.percentLabel})',
+                          _formatMoney(_commissionQuote.commission),
+                        ),
+                        const SizedBox(height: 6),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'Added to your bill. The seller receives the full item price.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              height: 1.3,
+                              color: Colors.grey.shade600,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
                         const SizedBox(height: 10),
                         _rowLine(
                           'Delivery',

@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/GernalServices/delivery_proof_service.dart';
+import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 import 'package:vero360_app/GernalServices/marketplace_stock_reminder_service.dart';
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
@@ -85,32 +86,39 @@ class OrderEscrowService {
       throw StateError('You must be signed in to place a hold.');
     }
 
-    const feeRate = FirebaseWalletService.marketplaceServiceFeeRate;
-    final batch = _db.batch();
-
+    final eligible = <CreatedOrderRef>[];
+    final grosses = <double>[];
     for (final r in refs) {
       if (!r.item.hasValidMerchant) continue;
       if (r.item.serviceType != 'marketplace') continue;
-
       final gross = r.item.price * r.item.quantity;
       if (gross <= 0) continue;
+      eligible.add(r);
+      grosses.add(gross);
+    }
+    final quotes = BuyerCommission.allocateLines(grosses);
+    final batch = _db.batch();
 
-      final merchantAmount = gross * (1.0 - feeRate);
-      final feeAmount = gross * feeRate;
+    for (var i = 0; i < eligible.length; i++) {
+      final r = eligible[i];
+      final quote = quotes[i];
 
-      // Always clear delivery fields so a reused/merged doc cannot keep an old
-      // shipped date (e.g. "Shipped Jul 27" on a purchase made today).
+      // Merchant is paid the listed price. Commission is added on the buyer bill.
       batch.set(
         _doc(r.orderId),
         {
           'buyerUid': buyerUid,
           'merchantUid': r.item.merchantId,
           'merchantName': r.item.merchantName,
-          'merchantAmount': merchantAmount,
-          'serviceFeeAmount': feeAmount,
-          'feeRate': feeRate,
+          'merchantAmount': quote.providerPrice,
+          'serviceFeeAmount': quote.commission,
+          'veroShareAmount': quote.veroShare,
+          'paychanguShareAmount': quote.paychanguShare,
+          'buyerPaysAmount': quote.buyerTotal,
+          'commissionPayer': 'buyer',
+          'feeRate': quote.rate,
           'serviceType': 'marketplace',
-          'grossAmount': gross,
+          'grossAmount': quote.providerPrice,
           'txRef': txRef,
           'orderNumber': r.orderNumber,
           'itemName': r.item.name,
@@ -149,7 +157,8 @@ class OrderEscrowService {
     );
   }
 
-  /// Escrow hold for a paid food order (10% platform fee, same as marketplace).
+  /// Escrow hold for a paid food order. Kitchen receives the menu price;
+  /// buyer commission is stored separately and is not taken from the kitchen.
   /// Doc id = [orderId] from `food_orders`.
   static Future<void> createHoldForFoodOrder({
     required String orderId,
@@ -173,9 +182,7 @@ class OrderEscrowService {
     final gross = grossAmountMwk;
     if (gross <= 0) return;
 
-    const feeRate = FirebaseWalletService.marketplaceServiceFeeRate;
-    final merchantAmount = gross * (1.0 - feeRate);
-    final feeAmount = gross * feeRate;
+    final quote = BuyerCommission.quote(gross);
 
     await _doc(oid).set(
       {
@@ -183,10 +190,14 @@ class OrderEscrowService {
         'merchantUid': mid,
         'merchantName':
             merchantName.trim().isEmpty ? 'Kitchen' : merchantName.trim(),
-        'merchantAmount': merchantAmount,
-        'serviceFeeAmount': feeAmount,
-        'feeRate': feeRate,
-        'grossAmount': gross,
+        'merchantAmount': quote.providerPrice,
+        'serviceFeeAmount': quote.commission,
+        'veroShareAmount': quote.veroShare,
+        'paychanguShareAmount': quote.paychanguShare,
+        'buyerPaysAmount': quote.buyerTotal,
+        'commissionPayer': 'buyer',
+        'feeRate': quote.rate,
+        'grossAmount': quote.providerPrice,
         'txRef': txRef,
         'orderNumber': (orderNumber ?? oid).trim(),
         'itemName': foodName.trim().isEmpty ? 'Food order' : foodName.trim(),
@@ -201,7 +212,7 @@ class OrderEscrowService {
     );
   }
 
-  /// Food kitchen marks delivered/completed → credit kitchen + 10% platform fee.
+  /// Food kitchen marks delivered/completed → credit the kitchen the full menu price.
   static Future<void> releaseFoodOrderByMerchant(String orderId) async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null || uid.isEmpty) {
@@ -267,9 +278,7 @@ class OrderEscrowService {
     final gross = grossAmountMwk;
     if (gross <= 0) return;
 
-    const feeRate = FirebaseWalletService.serviceFeeRate;
-    final merchantAmount = gross * (1.0 - feeRate);
-    final feeAmount = gross * feeRate;
+    final quote = BuyerCommission.quote(gross);
 
     final safeId = params.bookingRef
         .trim()
@@ -286,8 +295,14 @@ class OrderEscrowService {
         'merchantName': params.hostDisplayName.trim().isEmpty
             ? 'Host'
             : params.hostDisplayName.trim(),
-        'merchantAmount': merchantAmount,
-        'serviceFeeAmount': feeAmount,
+        'merchantAmount': quote.providerPrice,
+        'serviceFeeAmount': quote.commission,
+        'veroShareAmount': quote.veroShare,
+        'paychanguShareAmount': quote.paychanguShare,
+        'buyerPaysAmount': quote.buyerTotal,
+        'commissionPayer': 'buyer',
+        'feeRate': quote.rate,
+        'grossAmount': quote.providerPrice,
         'txRef': txRef,
         'orderNumber': params.bookingRef,
         'itemName': params.propertyName,
@@ -1073,15 +1088,23 @@ class OrderEscrowService {
       type: 'sale_escrow',
     );
 
-    if (serviceFee > 0) {
+    final veroRaw = data['veroShareAmount'];
+    final veroShare = veroRaw is num
+        ? veroRaw.toDouble()
+        : double.tryParse('$veroRaw') ?? 0.0;
+    // New buyer-paid commissions credit only Vero's 60%. Older holds that
+    // deducted the fee from the merchant credit the stored fee in full.
+    final platformCredit = veroShare > 0 ? veroShare : serviceFee;
+
+    if (platformCredit > 0) {
       try {
         await FirebaseWalletService.creditPlatformServiceFee(
-          amount: serviceFee,
+          amount: platformCredit,
           description: isFood
-              ? 'Food service fee 10% ($txRef)'
+              ? 'Food buyer commission — Vero share ($txRef)'
               : isAcc
-                  ? 'Stay service fee ($txRef)'
-                  : 'Marketplace service fee 10% ($txRef)',
+                  ? 'Stay buyer commission — Vero share ($txRef)'
+                  : 'Marketplace buyer commission — Vero share ($txRef)',
           reference: txRef,
         );
         await ref.set({
@@ -1095,7 +1118,7 @@ class OrderEscrowService {
           'platformFeeError': e.toString(),
         }, SetOptions(merge: true));
       }
-      await _recordServiceFeeWithAdminApi(amount: serviceFee, txRef: txRef);
+      await _recordServiceFeeWithAdminApi(amount: platformCredit, txRef: txRef);
     } else {
       await ref.set({
         'platformFeeCredited': true,

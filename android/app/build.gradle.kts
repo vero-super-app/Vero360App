@@ -53,10 +53,11 @@ android {
         versionName = flutter.versionName
         multiDexEnabled = true
 
-        // Redmi 8A / 2GB: 32-bit ARM only (smaller APK + lower RAM).
+        // Play delivers one ABI per phone, so a 32-bit Redmi still gets armeabi-v7a.
+        // arm64-v8a is required for 64-bit devices and for the 16 KB page-size check.
         // Do not also pass Flutter `--split-per-abi` — AGP rejects both together.
         ndk {
-            abiFilters += listOf("armeabi-v7a")
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a")
         }
 
         // Load Google Maps API key from .env, with built-in fallback for local/CI.
@@ -138,6 +139,20 @@ android {
 
 flutter {
     source = "../.."
+}
+
+// Play Console: libdatastore_shared_counter.so from DataStore 1.2.0 crashes on 16 KB devices.
+// 1.2.1 rebuilds that library with 16 KB alignment.
+configurations.configureEach {
+    resolutionStrategy {
+        force("androidx.datastore:datastore:1.2.1")
+        force("androidx.datastore:datastore-android:1.2.1")
+        force("androidx.datastore:datastore-core:1.2.1")
+        force("androidx.datastore:datastore-core-android:1.2.1")
+        force("androidx.datastore:datastore-preferences:1.2.1")
+        force("androidx.datastore:datastore-preferences-android:1.2.1")
+        force("androidx.datastore:datastore-preferences-core:1.2.1")
+    }
 }
 
 dependencies {

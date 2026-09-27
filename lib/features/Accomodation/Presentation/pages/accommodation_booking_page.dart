@@ -15,6 +15,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_amenities.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_offers.dart';
+import 'package:vero360_app/features/Accomodation/Presentation/widgets/accommodation_offer_gallery.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_share_link.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_booking_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
@@ -167,11 +169,14 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   bool _openingChat = false;
   String _ownerUid = '';
   String _ownerName = '';
-  String _ownerPhone = '';
   String _ownerPhotoUrl = '';
   Map<String, int> _nightCounts = {};
   bool _occupancyLoading = true;
   List<String> _amenities = const [];
+  List<AccommodationRoomOffer> _roomOffers = const [];
+  List<AccommodationConferenceOffer> _conferences = const [];
+  int? _selectedRoomIndex;
+  int? _selectedHallIndex;
   bool _paymentSucceeded = false;
   /// Prevents double-open while a check-in / check-out dialog is showing.
   bool _datePickerOpen = false;
@@ -402,7 +407,6 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   Future<void> _loadOwnerProfile() async {
     final fallbackName = (widget.hostDisplayName ?? '').trim();
     var ownerName = fallbackName;
-    var ownerPhone = '';
     var ownerPhoto = '';
     var ownerUid = (widget.hostMerchantUid ?? '').trim();
 
@@ -461,12 +465,6 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
             d['fullName']?.toString(),
             ownerName,
           ]);
-          // Do not load/expose owner email to guests.
-          ownerPhone = _firstNonEmpty([
-            d['phone']?.toString(),
-            d['phoneNumber']?.toString(),
-            d['mobile']?.toString(),
-          ]);
           ownerPhoto = _firstNonEmpty([
             d['profilePicture']?.toString(),
             d['profilepicture']?.toString(),
@@ -480,7 +478,6 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     setState(() {
       _ownerUid = ownerUid;
       _ownerName = ownerName;
-      _ownerPhone = ownerPhone;
       _ownerPhotoUrl = ownerPhoto;
     });
   }
@@ -541,7 +538,6 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
             : (widget.hostDisplayName?.trim().isNotEmpty == true
                 ? widget.hostDisplayName!.trim()
                 : 'Accommodation owner');
-        final phone = _ownerPhone.trim();
         final photo = _ownerPhotoUrl.trim();
         final hasPhoto = photo.startsWith('http://') || photo.startsWith('https://');
         return Padding(
@@ -609,15 +605,6 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                   ),
                 ],
               ),
-              if (phone.isNotEmpty) ...[
-                const SizedBox(height: 14),
-                Text('Phone: $phone',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.grey.shade800,
-                      fontWeight: FontWeight.w600,
-                    )),
-              ],
               if (hasPhoto) ...[
                 const SizedBox(height: 10),
                 TextButton.icon(
@@ -747,12 +734,24 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
           );
         }
       }
-      if (!mounted || found.isEmpty) return;
+      final rooms = <AccommodationRoomOffer>[];
+      final halls = <AccommodationConferenceOffer>[];
+      for (final doc in snap.docs) {
+        final d = doc.data();
+        rooms.addAll(parseAccommodationRoomOffers(d['roomOffers']));
+        halls.addAll(parseAccommodationConferenceOffers(d['conferences']));
+      }
+      if (!mounted) return;
+      if (found.isEmpty && rooms.isEmpty && halls.isEmpty) return;
       final merged = <String>[..._amenities];
       for (final a in found) {
         if (!merged.contains(a)) merged.add(a);
       }
-      setState(() => _amenities = merged);
+      setState(() {
+        if (merged.isNotEmpty) _amenities = merged;
+        if (rooms.isNotEmpty) _roomOffers = rooms;
+        if (halls.isNotEmpty) _conferences = halls;
+      });
     } catch (_) {}
   }
 
@@ -1041,8 +1040,41 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     }
   }
 
+  /// General listing rate, unless the guest picked a room or conference.
+  num get _unitPrice {
+    final roomIndex = _selectedRoomIndex;
+    if (roomIndex != null &&
+        roomIndex >= 0 &&
+        roomIndex < _roomOffers.length) {
+      return _roomOffers[roomIndex].price;
+    }
+    final hallIndex = _selectedHallIndex;
+    if (hallIndex != null &&
+        hallIndex >= 0 &&
+        hallIndex < _conferences.length) {
+      return _conferences[hallIndex].price;
+    }
+    return widget.pricePerNight;
+  }
+
+  String? get _selectedOfferName {
+    final roomIndex = _selectedRoomIndex;
+    if (roomIndex != null &&
+        roomIndex >= 0 &&
+        roomIndex < _roomOffers.length) {
+      return _roomOffers[roomIndex].name;
+    }
+    final hallIndex = _selectedHallIndex;
+    if (hallIndex != null &&
+        hallIndex >= 0 &&
+        hallIndex < _conferences.length) {
+      return _conferences[hallIndex].name;
+    }
+    return null;
+  }
+
   num get _totalMwk {
-    final unit = widget.pricePerNight;
+    final unit = _unitPrice;
     if (unit <= 0) return 0;
     return _billableUnits * unit;
   }
@@ -1315,8 +1347,8 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
               ),
               const SizedBox(height: 12),
               Text(
-                'After check-in, confirm arrival in My Bookings to release payment to the host. '
-                'You can request a refund before check-in day if your plans change.',
+                'Once you pay, this stay cannot be refunded. '
+                'The dates stay reserved so the host does not turn other guests away.',
                 style: TextStyle(
                   color: Colors.grey.shade800,
                   fontWeight: FontWeight.w600,
@@ -1376,6 +1408,16 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
       ToastHelper.showCustomToast(
         context,
         'Your account is missing name, email, or phone. Update them in Settings, then try again.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    if ((_roomOffers.isNotEmpty || _conferences.isNotEmpty) &&
+        _selectedOfferName == null) {
+      ToastHelper.showCustomToast(
+        context,
+        'Choose a room or conference to continue.',
         isSuccess: false,
         errorMessage: '',
       );
@@ -1497,7 +1539,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
               'customization': {
                 'title': 'Vero 360 — Stay',
                 'description':
-                    '${widget.propertyName} · $_staySummaryLine · Ref $bookingNo',
+                    '${widget.propertyName}${_selectedOfferName == null ? '' : ' · ${_selectedOfferName!}'} · $_staySummaryLine · Ref $bookingNo',
               },
             }),
           )
@@ -1984,7 +2026,6 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                     ownerName: _ownerName.isNotEmpty
                         ? _ownerName
                         : (widget.hostDisplayName ?? ''),
-                    ownerPhone: _ownerPhone,
                     ownerPhotoUrl: _ownerPhotoUrl,
                     openingChat: _openingChat,
                     onViewProfile: _showOwnerProfileSheet,
@@ -1992,6 +2033,44 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                   ),
                 ),
               ),
+              if (_roomOffers.isNotEmpty)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
+                    child: AccommodationOfferGallery.rooms(
+                      rooms: _roomOffers,
+                      priceSuffix: _effectivePricePeriod.uiSuffix,
+                      selectedIndex: _selectedRoomIndex,
+                      onSelect: (index) => setState(() {
+                        if (_selectedRoomIndex == index) {
+                          _selectedRoomIndex = null;
+                        } else {
+                          _selectedRoomIndex = index;
+                          _selectedHallIndex = null;
+                        }
+                      }),
+                    ),
+                  ),
+                ),
+              if (_conferences.isNotEmpty)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+                    child: AccommodationOfferGallery.conferences(
+                      conferences: _conferences,
+                      priceSuffix: _effectivePricePeriod.uiSuffix,
+                      selectedIndex: _selectedHallIndex,
+                      onSelect: (index) => setState(() {
+                        if (_selectedHallIndex == index) {
+                          _selectedHallIndex = null;
+                        } else {
+                          _selectedHallIndex = index;
+                          _selectedRoomIndex = null;
+                        }
+                      }),
+                    ),
+                  ),
+                ),
               if (_amenities.isNotEmpty ||
                   widget.location.trim().isNotEmpty)
                 SliverToBoxAdapter(
@@ -2294,8 +2373,19 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                           ),
                           const SizedBox(height: 8),
                         ],
+                        if (_selectedOfferName != null) ...[
+                          Text(
+                            _selectedOfferName!,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 13,
+                              color: _brandNavy,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                        ],
                         Text(
-                          'MWK ${NumberFormat('#,##0').format(widget.pricePerNight.round())}${_effectivePricePeriod.uiSuffix}',
+                          'MWK ${NumberFormat('#,##0').format(_unitPrice.round())}${_effectivePricePeriod.uiSuffix}',
                           style: TextStyle(
                             fontWeight: FontWeight.w800,
                             fontSize: 15,
@@ -2353,7 +2443,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                               SizedBox(width: 10),
                               Expanded(
                                 child: Text(
-                                  'Money will be released when you arrive at your stay.',
+                                  'Bookings are not refundable. The stay stays reserved once you pay.',
                                   style: TextStyle(
                                     color: Color(0xFFC62828),
                                     fontWeight: FontWeight.w800,
@@ -2394,7 +2484,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                             ),
                           )
                         : const Text(
-                            'Continue to payment',
+                            'Pay now',
                             style: TextStyle(
                               fontWeight: FontWeight.w900,
                               fontSize: 16,
@@ -2552,7 +2642,6 @@ class _AccommodationOwnerBanner extends StatelessWidget {
   static const _orange = Color(0xFFFF8A00);
 
   final String ownerName;
-  final String ownerPhone;
   final String ownerPhotoUrl;
   final bool openingChat;
   final VoidCallback onViewProfile;
@@ -2560,7 +2649,6 @@ class _AccommodationOwnerBanner extends StatelessWidget {
 
   const _AccommodationOwnerBanner({
     required this.ownerName,
-    required this.ownerPhone,
     required this.ownerPhotoUrl,
     required this.openingChat,
     required this.onViewProfile,
@@ -2571,8 +2659,6 @@ class _AccommodationOwnerBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final display =
         ownerName.trim().isNotEmpty ? ownerName.trim() : 'Accommodation owner';
-    final phoneLine = ownerPhone.trim();
-    final missingPhone = phoneLine.isEmpty;
     final hasPhoto = ownerPhotoUrl.startsWith('http');
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -2633,21 +2719,6 @@ class _AccommodationOwnerBanner extends StatelessWidget {
                     color: Colors.white,
                     fontSize: 16,
                     fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  missingPhone ? 'No phone' : phoneLine,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: missingPhone
-                        ? Colors.white.withValues(alpha: 0.55)
-                        : Colors.white.withValues(alpha: 0.78),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    fontStyle:
-                        missingPhone ? FontStyle.italic : FontStyle.normal,
                   ),
                 ),
                 const SizedBox(height: 6),

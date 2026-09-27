@@ -52,7 +52,6 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
   /// Escrow snapshot keyed by booking id / booking number.
   final Map<String, OrderEscrowSnapshot?> _escrowByBooking = {};
   String? _releasingBookingKey;
-  String? _refundingBookingKey;
   bool _showIncomingGuestBookings = true;
   bool _messagingBooker = false;
 
@@ -276,142 +275,6 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
     return !d.isBefore(checkIn);
   }
 
-  bool _canRequestStayRefund(BookingItem b, OrderEscrowSnapshot? escrow) {
-    if (b.status == BookingStatus.cancelled) return false;
-    if (escrow == null || !escrow.isHeld) return false;
-    return !_isOnOrAfterCheckIn(b);
-  }
-
-  Future<void> _requestStayRefund(BookingItem b) async {
-    final key = _bookingEscrowKey(b);
-    if (key.isEmpty || _refundingBookingKey != null || _releasingBookingKey != null) {
-      return;
-    }
-
-    var escrow = _escrowByBooking[key] ??
-        await OrderEscrowService.fetchEscrowForAccommodationBooking(
-          bookingId: b.id,
-          bookingNumber: b.bookingNumber ?? b.displayBookingRef,
-        );
-    if (!mounted) return;
-    if (!_canRequestStayRefund(b, escrow) || escrow == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Refunds are only available before check-in, while payment is still held.',
-          ),
-        ),
-      );
-      return;
-    }
-
-    final reasonCtrl = TextEditingController(text: 'I have changed my mind');
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: const Text(
-          'Request a refund?',
-          style: TextStyle(fontWeight: FontWeight.w900),
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Cancel this stay at ${(b.accommodationName ?? 'this property').trim()} '
-                'and refund your payment.\n\n'
-                'This is only possible before check-in and before you confirm arrival. '
-                'The host will not be paid. Your money is typically returned within '
-                '${OrderRefundService.processingDays} days.',
-                style: TextStyle(height: 1.45, color: Colors.grey.shade800),
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                controller: reasonCtrl,
-                maxLines: 3,
-                decoration: InputDecoration(
-                  labelText: 'Reason',
-                  hintText: 'I have changed my mind',
-                  filled: true,
-                  fillColor: const Color(0xFFF7F8FB),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Keep stay'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade600),
-            child: const Text('Request refund'),
-          ),
-        ],
-      ),
-    );
-
-    if (ok != true || !mounted) {
-      reasonCtrl.dispose();
-      return;
-    }
-    final reason = reasonCtrl.text.trim();
-    reasonCtrl.dispose();
-    if (reason.isEmpty) {
-      ToastHelper.showCustomToast(
-        context,
-        'Please enter a reason for the refund.',
-        isSuccess: false,
-        errorMessage: '',
-      );
-      return;
-    }
-
-    setState(() => _refundingBookingKey = key);
-    try {
-      final res = await OrderRefundService.submitStayCancellation(
-        booking: b,
-        escrow: escrow,
-        reason: reason,
-      );
-      if (!mounted) return;
-      final days = res.processingDays > 0
-          ? res.processingDays
-          : OrderRefundService.processingDays;
-      ToastHelper.showCustomToast(
-        context,
-        'Stay cancelled. Refund is processing (within $days days).',
-        isSuccess: true,
-        errorMessage: '',
-      );
-      final refreshed =
-          await OrderEscrowService.fetchEscrowForAccommodationBooking(
-        bookingId: b.id,
-        bookingNumber: b.bookingNumber ?? b.displayBookingRef,
-      );
-      if (!mounted) return;
-      setState(() => _escrowByBooking[key] = refreshed);
-      _reload();
-    } catch (e) {
-      if (!mounted) return;
-      ToastHelper.showCustomToast(
-        context,
-        e.toString().replaceFirst('Exception: ', ''),
-        isSuccess: false,
-        errorMessage: '$e',
-      );
-    } finally {
-      if (mounted) setState(() => _refundingBookingKey = null);
-    }
-  }
-
   Future<void> _confirmArrivalAndRelease(BookingItem b) async {
     final key = _bookingEscrowKey(b);
     if (key.isEmpty || _releasingBookingKey != null) return;
@@ -530,7 +393,6 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
     final key = _bookingEscrowKey(b);
     final escrow = _escrowByBooking[key];
     final releasing = _releasingBookingKey == key;
-    final refunding = _refundingBookingKey == key;
 
     if (escrow != null && escrow.isRefunded) {
       return Padding(
@@ -602,7 +464,6 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
     }
 
     final canConfirm = _isOnOrAfterCheckIn(b);
-    final canRefund = _canRequestStayRefund(b, escrow);
 
     return Padding(
       padding: const EdgeInsets.only(top: 12),
@@ -629,7 +490,7 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
             Text(
               canConfirm
                   ? 'When you arrive at your stay, confirm below to release payment to the host. This uses Face ID / fingerprint or your wallet password.'
-                  : 'Payment is held until you arrive. If you change your mind, you can request a refund before check-in day. After check-in, confirm arrival here to pay the host.',
+                  : 'This booking is not refundable. Payment stays held until you arrive, then you confirm arrival to pay the host.',
               style: TextStyle(
                 fontSize: 12,
                 height: 1.4,
@@ -641,7 +502,7 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
-                onPressed: (!canConfirm || releasing || refunding)
+                onPressed: (!canConfirm || releasing)
                     ? null
                     : () => _confirmArrivalAndRelease(b),
                 icon: releasing
@@ -673,38 +534,6 @@ class AccommodationMyBookingsTabState extends State<AccommodationMyBookingsTab>
                 ),
               ),
             ),
-            if (canRefund) ...[
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: (releasing || refunding)
-                      ? null
-                      : () => _requestStayRefund(b),
-                  icon: refunding
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.replay_rounded, size: 20),
-                  label: Text(
-                    refunding
-                        ? 'Requesting refund…'
-                        : 'Changed my mind — request refund',
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.red.shade700,
-                    side: BorderSide(color: Colors.red.shade200),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-              ),
-            ],
           ],
         ),
       ),

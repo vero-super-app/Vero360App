@@ -1144,6 +1144,9 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                     ),
                     itemBuilder: (_, i) {
                       final it = _items[i];
+                      final customerLine = BuyerCommission.allocateLines(
+                        _items.map((e) => e.price * e.quantity).toList(),
+                      )[i].buyerTotal;
                       final qtyCtrl = _qtyCtrls.putIfAbsent(
                         _qtyKey(it),
                         () => TextEditingController(text: '${it.quantity}'),
@@ -1177,7 +1180,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
-                                  _mwk(it.price),
+                                  _mwk(it.quantity <= 0 ? customerLine : customerLine / it.quantity),
                                   style: TextStyle(
                                     color: Colors.grey.shade600,
                                     fontWeight: FontWeight.w600,
@@ -1299,7 +1302,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            _mwk(it.price * it.quantity),
+                            _mwk(customerLine),
                             style: const TextStyle(
                               color: _brandNavy,
                               fontWeight: FontWeight.w900,
@@ -1359,25 +1362,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                   title: 'Summary',
                   child: Column(
                     children: [
-                      _row('Item price', _mwk(_subtotal)),
-                      const SizedBox(height: 10),
-                      _row(
-                        'Commission (${_commissionQuote.percentLabel})',
-                        _mwk(_commissionQuote.commission),
-                      ),
-                      const SizedBox(height: 6),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Added to your bill. The seller receives the full item price.',
-                          style: TextStyle(
-                            fontSize: 12,
-                            height: 1.3,
-                            color: Colors.grey.shade600,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
+                      _row('Subtotal', _mwk(_total)),
                       const SizedBox(height: 10),
                       _row(
                         'Delivery',

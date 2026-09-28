@@ -2302,7 +2302,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                           const SizedBox(height: 8),
                         ],
                         Text(
-                          'MWK ${NumberFormat('#,##0').format(widget.pricePerNight.round())}${_effectivePricePeriod.uiSuffix}',
+                          'MWK ${NumberFormat('#,##0').format((_billableUnits <= 0 ? _buyerPaysMwk : _buyerPaysMwk / _billableUnits).round())}${_effectivePricePeriod.uiSuffix}',
                           style: TextStyle(
                             fontWeight: FontWeight.w800,
                             fontSize: 15,
@@ -2319,34 +2319,6 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                           ),
                         ),
                         Divider(height: 22, color: Colors.grey.shade200),
-                        Text(
-                          'Stay price  MWK ${NumberFormat('#,##0').format(_totalMwk.round())}',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 14,
-                            color: Colors.grey.shade800,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Commission (${_commissionQuote.percentLabel})  MWK ${NumberFormat('#,##0').format(_commissionQuote.commission.round())}',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 14,
-                            color: Colors.grey.shade800,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Added to your bill. The host receives the full stay price.',
-                          style: TextStyle(
-                            fontSize: 12,
-                            height: 1.3,
-                            color: Colors.grey.shade600,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
                         Text(
                           'MWK ${NumberFormat('#,##0').format(_buyerPaysMwk.round())}',
                           style: const TextStyle(

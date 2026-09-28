@@ -965,7 +965,7 @@ class _CartItemTileState extends State<_CartItemTile> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  mwk(item.price),
+                  mwk(BuyerCommission.quote(item.price).buyerTotal),
                   style: const TextStyle(
                     color: Colors.green,
                     fontWeight: FontWeight.w600,
@@ -1122,13 +1122,7 @@ class _CartSummary extends StatelessWidget {
               ),
 
             // ✅ COMMAS everywhere
-            _row('Item price', mwk(subtotal)),
-            _row(
-              'Commission (${BuyerCommission.quote(subtotal).percentLabel})',
-              mwk(BuyerCommission.quote(subtotal).commission),
-            ),
-            const Divider(height: 16),
-            _row('You pay', mwk(total), bold: true, green: true),
+            _row('Total', mwk(total), bold: true, green: true),
             const SizedBox(height: 12),
 
             SizedBox(

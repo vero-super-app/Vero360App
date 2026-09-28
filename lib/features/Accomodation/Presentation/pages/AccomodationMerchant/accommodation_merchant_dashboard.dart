@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' show MediaType;
 
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/widgets/merchant_commission_guide.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
@@ -714,6 +715,11 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                     decoration: _fieldDecoration(
                       label: 'Amount (MWK) *',
                       hint: 'e.g. 45000',
+                    ).copyWith(
+                      suffixIcon: MerchantCommissionGuide.infoButton(
+                        context,
+                        priceText: _priceController.text,
+                      ),
                     ),
                   ),
                   if (_isMultiRoomType) ...[
@@ -2795,6 +2801,11 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                           ),
                           decoration: _propertyFormDecoration(
                             label: 'Amount (MWK) *',
+                          ).copyWith(
+                            suffixIcon: MerchantCommissionGuide.infoButton(
+                              context,
+                              priceText: priceController.text,
+                            ),
                           ),
                         ),
                         if (selectedType == 'hotel' ||

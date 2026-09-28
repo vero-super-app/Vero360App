@@ -12,6 +12,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.s
 import 'package:vero360_app/features/Restraurants/Models/food_categories.dart';
 import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/merchant_commission_guide.dart';
 
 /// Add or edit a dish in the merchant's Firestore `food_menu_items`.
 class FoodMenuPostPage extends StatefulWidget {
@@ -47,6 +48,7 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
   String? _category;
   bool _isAvailable = true;
   bool _submitting = false;
+  bool _commissionGuideShown = false;
   /// Share to Vero360 Facebook Page after create (default on).
   bool _postToFacebook = true;
 
@@ -928,7 +930,20 @@ class _FoodMenuPostPageState extends State<FoodMenuPostPage> {
                               inputFormatters: [
                                 FilteringTextInputFormatter.digitsOnly,
                               ],
-                              decoration: _decoration('Price (MWK)'),
+                              onTap: () {
+                                if (_commissionGuideShown) return;
+                                setState(() => _commissionGuideShown = true);
+                                MerchantCommissionGuide.show(
+                                  context,
+                                  price: double.tryParse(_price.text.trim()),
+                                );
+                              },
+                              decoration: _decoration('Price (MWK)').copyWith(
+                                suffixIcon: MerchantCommissionGuide.infoButton(
+                                  context,
+                                  priceText: _price.text,
+                                ),
+                              ),
                               validator: (v) {
                                 final p = double.tryParse(v?.trim() ?? '');
                                 if (p == null || p <= 0) {

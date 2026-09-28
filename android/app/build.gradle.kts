@@ -43,6 +43,14 @@ android {
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
+    // NDK r28 crashes CMake 3.22.1 on Windows (access violation -1073741819).
+    // 3.31.6 is installed under the Android SDK; pin it so AGP does not keep 3.22.1.
+    externalNativeBuild {
+        cmake {
+            version = "3.31.6"
+        }
+    }
+
     defaultConfig {
         // Must match the package_name registered in google-services.json exactly.
         applicationId = "com.vero265.app"

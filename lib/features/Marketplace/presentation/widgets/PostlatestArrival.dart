@@ -13,6 +13,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/MarkeplaceMer
 import 'package:vero360_app/utils/formatters.dart';
 
 import '../../../../utils/toasthelper.dart';
+import 'package:vero360_app/widgets/merchant_commission_guide.dart';
 
 class LatestArrivalsCrudPage extends StatefulWidget {
   const LatestArrivalsCrudPage({super.key});
@@ -389,6 +390,11 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
                       decoration: _inputDecoration(
                         label: 'Price (MWK)',
                         hint: 'e.g. 12,000',
+                      ).copyWith(
+                        suffixIcon: MerchantCommissionGuide.infoButton(
+                          context,
+                          priceText: priceCtrl.text,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -605,6 +611,11 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
                   decoration: _inputDecoration(
                     label: 'Price (MWK)',
                     hint: 'e.g. 12,000',
+                  ).copyWith(
+                    suffixIcon: MerchantCommissionGuide.infoButton(
+                      context,
+                      priceText: _price.text,
+                    ),
                   ),
                   validator: (v) {
                     final pv = parseMwkInput(v);

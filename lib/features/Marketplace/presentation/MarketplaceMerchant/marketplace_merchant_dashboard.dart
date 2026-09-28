@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode, compute;
 import 'package:flutter/material.dart';
+import 'package:vero360_app/widgets/merchant_commission_guide.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -3640,6 +3641,11 @@ class _MarketplaceMerchantDashboardState
                       decoration: _inputDecoration(
                         label: 'Price (MWK)',
                         hint: 'e.g. 12,000',
+                      ).copyWith(
+                        suffixIcon: MerchantCommissionGuide.infoButton(
+                          context,
+                          priceText: priceCtrl.text,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 10),
@@ -5752,6 +5758,11 @@ class _MarketplaceMerchantDashboardState
                   decoration: _inputDecoration(
                     label: 'Price (MWK)',
                     hint: 'e.g. 12,000',
+                  ).copyWith(
+                    suffixIcon: MerchantCommissionGuide.infoButton(
+                      context,
+                      priceText: _price.text,
+                    ),
                   )),
               const SizedBox(height: 10),
               Row(

@@ -1180,25 +1180,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                     title: 'Summary',
                     child: Column(
                       children: [
-                        _rowLine('Item price', _formatMoney(_subtotal)),
-                        const SizedBox(height: 10),
-                        _rowLine(
-                          'Commission (${_commissionQuote.percentLabel})',
-                          _formatMoney(_commissionQuote.commission),
-                        ),
-                        const SizedBox(height: 6),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            'Added to your bill. The seller receives the full item price.',
-                            style: TextStyle(
-                              fontSize: 12,
-                              height: 1.3,
-                              color: Colors.grey.shade600,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
+                        _rowLine('Subtotal', _formatMoney(_total)),
                         const SizedBox(height: 10),
                         _rowLine(
                           'Delivery',

@@ -39,7 +39,10 @@ import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/vero_coin_icon_button.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_amenities.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_offers.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
+import 'package:vero360_app/features/Accomodation/Presentation/widgets/property_offers_editor.dart';
+import 'package:vero360_app/features/Accomodation/Presentation/widgets/accommodation_offer_gallery.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/Accomodation_service.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/mybookingData_service.dart';
@@ -115,6 +118,8 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
   _PropertyMedia? _cover;
   final List<_PropertyMedia> _gallery = [];
   final Set<String> _selectedAmenities = {};
+  List<AccommodationRoomOffer> _roomOffers = const [];
+  List<AccommodationConferenceOffer> _conferences = const [];
 
   bool get _isMultiRoomType =>
       _selectedType == 'hotel' || _selectedType == 'lodge';
@@ -188,6 +193,44 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
         ),
       ],
     );
+  }
+
+  Future<AccommodationRoomOffer> _uploadOfferPhoto(
+    AccommodationRoomOffer room,
+  ) async {
+    final urls = List<String>.from(room.imageUrls);
+    for (var i = 0; i < room.localImages.length; i++) {
+      final bytes = room.localImages[i];
+      if (bytes.isEmpty) continue;
+      final name = i < room.localFilenames.length
+          ? room.localFilenames[i]
+          : 'room-$i.jpg';
+      urls.add(
+        await widget.onUploadPhoto(
+          _PropertyMedia(bytes: bytes, filename: name),
+        ),
+      );
+    }
+    return room.copyWith(imageUrls: urls, clearLocalImage: true);
+  }
+
+  Future<AccommodationConferenceOffer> _uploadHallPhoto(
+    AccommodationConferenceOffer hall,
+  ) async {
+    final urls = List<String>.from(hall.imageUrls);
+    for (var i = 0; i < hall.localImages.length; i++) {
+      final bytes = hall.localImages[i];
+      if (bytes.isEmpty) continue;
+      final name = i < hall.localFilenames.length
+          ? hall.localFilenames[i]
+          : 'conference-$i.jpg';
+      urls.add(
+        await widget.onUploadPhoto(
+          _PropertyMedia(bytes: bytes, filename: name),
+        ),
+      );
+    }
+    return hall.copyWith(imageUrls: urls, clearLocalImage: true);
   }
 
   Future<void> _pickCover(ImageSource src) async {
@@ -728,9 +771,33 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                       controller: _roomsController,
                       keyboardType: TextInputType.number,
                       decoration: _fieldDecoration(
-                        label: 'Number of rooms available *',
+                        label: _roomOffers.isEmpty
+                            ? 'Number of rooms available *'
+                            : 'Total rooms (filled from room types)',
                         hint: 'e.g. 12',
                       ),
+                    ),
+                    PropertyOffersEditor(
+                      rooms: _roomOffers,
+                      conferences: _conferences,
+                      onRoomsChanged: (next) => setState(() {
+                        _roomOffers = next;
+                        if (next.isNotEmpty) {
+                          final total = next.fold<int>(
+                            0,
+                            (running, room) => running + room.quantity,
+                          );
+                          _roomsController.text = '$total';
+                          if (_priceController.text.trim().isEmpty) {
+                            final lowest = next
+                                .map((r) => r.price)
+                                .reduce((a, b) => a < b ? a : b);
+                            _priceController.text = lowest.round().toString();
+                          }
+                        }
+                      }),
+                      onConferencesChanged: (next) =>
+                          setState(() => _conferences = next),
                     ),
                   ],
                   const SizedBox(height: 24),
@@ -825,6 +892,15 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                                   galleryUrls
                                       .add(await widget.onUploadPhoto(m));
                                 }
+                                final uploadedRooms = <AccommodationRoomOffer>[];
+                                for (final room in _roomOffers) {
+                                  uploadedRooms.add(await _uploadOfferPhoto(room));
+                                }
+                                final uploadedHalls =
+                                    <AccommodationConferenceOffer>[];
+                                for (final hall in _conferences) {
+                                  uploadedHalls.add(await _uploadHallPhoto(hall));
+                                }
                                 final desc = DescriptionContactMask.mask(
                                   _descriptionController.text.trim(),
                                 );
@@ -870,6 +946,14 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                                     'galleryUrls': galleryUrls,
                                     'amenities':
                                         _selectedAmenities.toList(growable: false),
+                                    if (uploadedRooms.isNotEmpty)
+                                      'roomOffers': uploadedRooms
+                                          .map((e) => e.toMap())
+                                          .toList(growable: false),
+                                    if (uploadedHalls.isNotEmpty)
+                                      'conferences': uploadedHalls
+                                          .map((e) => e.toMap())
+                                          .toList(growable: false),
                                     'postToFacebook': _postToFacebook,
                                   },
                                 );
@@ -1353,6 +1437,8 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
           row['hostelGender'] =
               (fsMeta['hostelGender'] ?? row['hostelGender']);
           row['roomType'] = (fsMeta['roomType'] ?? row['roomType']);
+          row['roomOffers'] = fsMeta['roomOffers'] ?? row['roomOffers'];
+          row['conferences'] = fsMeta['conferences'] ?? row['conferences'];
           row['promotedUntil'] = fsMeta['promotedUntil'];
         }
         return row;
@@ -2029,6 +2115,9 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
               .toList() ??
           <String>[];
       final amenities = parseAccommodationAmenities(payload['amenities']);
+      final roomOffers = parseAccommodationRoomOffers(payload['roomOffers']);
+      final conferences =
+          parseAccommodationConferenceOffers(payload['conferences']);
       final postToFacebook = (payload['postToFacebook'] as bool?) ?? true;
       final newId = (created is Map && created['id'] != null)
           ? created['id'].toString()
@@ -2053,6 +2142,10 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         'imageUrl': coverUrl,
         'galleryUrls': galleryUrls,
         if (amenities.isNotEmpty) 'amenities': amenities,
+        if (roomOffers.isNotEmpty)
+          'roomOffers': roomOffers.map((e) => e.toMap()).toList(),
+        if (conferences.isNotEmpty)
+          'conferences': conferences.map((e) => e.toMap()).toList(),
       };
       final apiNumeric = created is Map
           ? () {
@@ -2082,6 +2175,10 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                 'hostelGender': hostelGender,
               if (roomType != null && roomType.isNotEmpty) 'roomType': roomType,
               if (amenities.isNotEmpty) 'amenities': amenities,
+              if (roomOffers.isNotEmpty)
+                'roomOffers': roomOffers.map((e) => e.toMap()).toList(),
+              if (conferences.isNotEmpty)
+                'conferences': conferences.map((e) => e.toMap()).toList(),
               if (name.isNotEmpty) 'name': name,
               if (location.isNotEmpty) 'location': location,
               if (desc.isNotEmpty) 'description': desc,
@@ -2173,6 +2270,8 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     final selectedAmenities = parseAccommodationAmenities(
       room['amenities'] ?? room['servicesOffered'] ?? room['facilities'],
     ).toSet();
+    var roomOffers = parseAccommodationRoomOffers(room['roomOffers']);
+    var conferences = parseAccommodationConferenceOffers(room['conferences']);
 
     String existingCoverUrl =
         (room['image'] ?? room['imageUrl'] ?? '').toString().trim();
@@ -2834,6 +2933,21 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                               ),
                             ],
                           ),
+                          PropertyOffersEditor(
+                            rooms: roomOffers,
+                            conferences: conferences,
+                            onRoomsChanged: (next) => setLocal(() {
+                              roomOffers = next;
+                              if (next.isNotEmpty) {
+                                roomsAvailable = next.fold<int>(
+                                  0,
+                                  (running, offer) => running + offer.quantity,
+                                );
+                              }
+                            }),
+                            onConferencesChanged: (next) =>
+                                setLocal(() => conferences = next),
+                          ),
                         ],
                         Padding(
                           padding: const EdgeInsets.symmetric(vertical: 20),
@@ -2933,6 +3047,66 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                             await _uploadPropertyPhotoForApi(
                                                 m));
                                       }
+                                      final uploadedRooms =
+                                          <AccommodationRoomOffer>[];
+                                      for (final offer in roomOffers) {
+                                        final urls =
+                                            List<String>.from(offer.imageUrls);
+                                        for (var i = 0;
+                                            i < offer.localImages.length;
+                                            i++) {
+                                          final bytes = offer.localImages[i];
+                                          if (bytes.isEmpty) continue;
+                                          final filename =
+                                              i < offer.localFilenames.length
+                                                  ? offer.localFilenames[i]
+                                                  : 'room-$i.jpg';
+                                          urls.add(
+                                            await _uploadPropertyPhotoForApi(
+                                              _PropertyMedia(
+                                                bytes: bytes,
+                                                filename: filename,
+                                              ),
+                                            ),
+                                          );
+                                        }
+                                        uploadedRooms.add(
+                                          offer.copyWith(
+                                            imageUrls: urls,
+                                            clearLocalImage: true,
+                                          ),
+                                        );
+                                      }
+                                      final uploadedHalls =
+                                          <AccommodationConferenceOffer>[];
+                                      for (final hall in conferences) {
+                                        final urls =
+                                            List<String>.from(hall.imageUrls);
+                                        for (var i = 0;
+                                            i < hall.localImages.length;
+                                            i++) {
+                                          final bytes = hall.localImages[i];
+                                          if (bytes.isEmpty) continue;
+                                          final filename =
+                                              i < hall.localFilenames.length
+                                                  ? hall.localFilenames[i]
+                                                  : 'conference-$i.jpg';
+                                          urls.add(
+                                            await _uploadPropertyPhotoForApi(
+                                              _PropertyMedia(
+                                                bytes: bytes,
+                                                filename: filename,
+                                              ),
+                                            ),
+                                          );
+                                        }
+                                        uploadedHalls.add(
+                                          hall.copyWith(
+                                            imageUrls: urls,
+                                            clearLocalImage: true,
+                                          ),
+                                        );
+                                      }
                                       await _accommodationApi
                                           .updateAccommodation(
                                         id: apiId,
@@ -2984,6 +3158,15 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                                   : true,
                                               'amenities':
                                                   selectedAmenities.toList(),
+                                              if (selectedType == 'hotel' ||
+                                                  selectedType == 'lodge') ...{
+                                                'roomOffers': uploadedRooms
+                                                    .map((e) => e.toMap())
+                                                    .toList(),
+                                                'conferences': uploadedHalls
+                                                    .map((e) => e.toMap())
+                                                    .toList(),
+                                              },
                                               'name': name,
                                               'location': location,
                                               'description':
@@ -3026,6 +3209,15 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                       }
                                       updated['amenities'] =
                                           selectedAmenities.toList();
+                                      if (selectedType == 'hotel' ||
+                                          selectedType == 'lodge') {
+                                        updated['roomOffers'] = uploadedRooms
+                                            .map((e) => e.toMap())
+                                            .toList();
+                                        updated['conferences'] = uploadedHalls
+                                            .map((e) => e.toMap())
+                                            .toList();
+                                      }
                                       updated['isAvailable'] = selectedType == 'hostel'
                                           ? isAvailable
                                           : true;
@@ -6399,6 +6591,26 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                 fontSize: 14,
                               ),
                             ),
+                            if (parseAccommodationRoomOffers(room['roomOffers'])
+                                .isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              AccommodationOfferGallery.rooms(
+                                rooms: parseAccommodationRoomOffers(
+                                  room['roomOffers'],
+                                ),
+                                priceSuffix: listPricePeriod.uiSuffix,
+                              ),
+                            ],
+                            if (parseAccommodationConferenceOffers(
+                                    room['conferences'])
+                                .isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              AccommodationOfferGallery.conferences(
+                                conferences: parseAccommodationConferenceOffers(
+                                  room['conferences'],
+                                ),
+                              ),
+                            ],
                             if (desc.isNotEmpty) ...[
                               const SizedBox(height: 4),
                               Text(

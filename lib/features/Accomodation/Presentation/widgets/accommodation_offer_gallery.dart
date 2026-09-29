@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_offers.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/widgets/accommodation_listing_image.dart';
 
@@ -31,6 +32,7 @@ class AccommodationOfferGallery extends StatelessWidget {
     String priceSuffix = '',
     int? selectedIndex,
     ValueChanged<int>? onSelect,
+    bool buyerPrices = false,
   }) {
     return AccommodationOfferGallery(
       key: key,
@@ -43,7 +45,7 @@ class AccommodationOfferGallery extends StatelessWidget {
           _OfferCardData(
             name: room.name,
             priceLabel:
-                'MWK ${formatAccommodationMwk(room.price)}$priceSuffix',
+                'MWK ${formatAccommodationMwk(buyerPrices ? BuyerCommission.buyerFacing(room.price) : room.price)}$priceSuffix',
             imageUrls: room.imageUrls,
             localImages: room.localImages,
           ),
@@ -57,6 +59,7 @@ class AccommodationOfferGallery extends StatelessWidget {
     String priceSuffix = '',
     int? selectedIndex,
     ValueChanged<int>? onSelect,
+    bool buyerPrices = false,
   }) {
     return AccommodationOfferGallery(
       key: key,
@@ -69,7 +72,7 @@ class AccommodationOfferGallery extends StatelessWidget {
           _OfferCardData(
             name: hall.name,
             priceLabel:
-                'MWK ${formatAccommodationMwk(hall.price)}$priceSuffix',
+                'MWK ${formatAccommodationMwk(buyerPrices ? BuyerCommission.buyerFacing(hall.price) : hall.price)}$priceSuffix',
             imageUrls: hall.imageUrls,
             localImages: hall.localImages,
           ),

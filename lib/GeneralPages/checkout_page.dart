@@ -751,7 +751,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
       await PayChanguConfig.initialize();
       if (!PayChanguConfig.isConfigured) {
         throw Exception(
-          'Payment is not configuredFOR PO.',
+          'Payment is not configured. Add PAYCHANGU_SECRET_TEST or PAYCHANGU_SECRET_LIVE to .env.',
         );
       }
 
@@ -1054,7 +1054,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
                               ),
                               const SizedBox(height: 8),
                               Text(
-                                _formatMoney(item.price),
+                                _formatMoney(
+                                  _qty <= 0
+                                      ? 0
+                                      : _commissionQuote.buyerTotal / _qty,
+                                ),
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w900,
                                   fontSize: 16,

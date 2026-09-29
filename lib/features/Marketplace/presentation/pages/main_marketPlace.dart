@@ -27,6 +27,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:vero360_app/GeneralPages/checkout_page.dart';
+import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart'
     as core;
@@ -545,7 +546,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   final ScrollController _scrollCtrl = ScrollController();
 
   late final NumberFormat _mwkFmt = NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
-  String _mwk(num v) => _mwkFmt.format(v);
+  String _mwk(num v) => _mwkFmt.format(BuyerCommission.buyerFacing(v));
 
   /// Food listings use the Food flow only — not shown under Products vertical.
   static const List<String> _kCategories = ['drinks', 'electronics', 'clothes', 'shoes', 'other'];
@@ -2164,7 +2165,8 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     );
     final merchantName =
         item.merchantName ?? item.sellerBusinessName ?? 'A merchant';
-    final priceStr = NumberFormat('#,###', 'en').format(item.price.truncate());
+    final priceStr = NumberFormat('#,###', 'en')
+        .format(BuyerCommission.buyerFacing(item.price).round());
     final url = marketplaceProductShareUrl(
       id: id,
       name: item.name,
@@ -2187,7 +2189,8 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       ),
       name: item.name,
       location: item.location,
-      price: NumberFormat('#,###', 'en').format(item.price.truncate()),
+      price: NumberFormat('#,###', 'en')
+          .format(BuyerCommission.buyerFacing(item.price).round()),
       merchant: item.merchantName ?? item.sellerBusinessName,
  
     );
@@ -3252,11 +3255,11 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     final q = question.toLowerCase().trim();
     if (items.isEmpty) return 'There are no products to answer questions about. Try searching for something first.';
     if (_matches(q, ['cheapest', 'lowest', 'cheap', 'budget', 'affordable', 'least expensive'])) {
-      final sorted = List<MarketplaceDetailModel>.from(items)..sort((a, b) => a.price.compareTo(b.price));
+      final sorted = List<MarketplaceDetailModel>.from(items)..sort((a, b) => BuyerCommission.buyerFacing(a.price).compareTo(BuyerCommission.buyerFacing(b.price)));
       final best = sorted.first;
       return 'The cheapest option is **${best.name}** at ${_mwk(best.price)}${best.location != null && best.location!.isNotEmpty ? ' from ${best.location}' : ''}.';
     }
-    if (_matches(q, ['expensive', 'highest', 'most expensive', 'top price'])) { final sorted = List<MarketplaceDetailModel>.from(items)..sort((a, b) => b.price.compareTo(a.price)); final top = sorted.first; return 'The most expensive option is **${top.name}** at ${_mwk(top.price)}.'; }
+    if (_matches(q, ['expensive', 'highest', 'most expensive', 'top price'])) { final sorted = List<MarketplaceDetailModel>.from(items)..sort((a, b) => BuyerCommission.buyerFacing(b.price).compareTo(BuyerCommission.buyerFacing(a.price))); final top = sorted.first; return 'The most expensive option is **${top.name}** at ${_mwk(top.price)}.'; }
     if (_matches(q, ['best value', 'best deal', 'value for money', 'recommend', 'which one'])) {
       final scored = items.map((i) { final rating = (i.sellerRating ?? 0).clamp(0.0, 5.0); final score = rating > 0 ? (rating / 5) * 100 - (i.price / 10000) : -i.price / 10000; return MapEntry(i, score); }).toList();
       scored.sort((a, b) => b.value.compareTo(a.value));

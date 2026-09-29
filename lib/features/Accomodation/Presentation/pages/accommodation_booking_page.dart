@@ -759,8 +759,9 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   Future<void> _shareStay() async {
     final loc = widget.location.trim();
     final name = widget.propertyName.trim();
-    final price =
-        NumberFormat('#,##0').format(widget.pricePerNight.round());
+    final price = NumberFormat('#,##0').format(
+      BuyerCommission.buyerFacing(widget.pricePerNight).round(),
+    );
     final url = accommodationShareUrl(
       id: widget.accommodationId,
       name: name,
@@ -800,7 +801,9 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
         id: widget.accommodationId,
         name: widget.propertyName,
         location: widget.location,
-        price: NumberFormat('#,##0').format(widget.pricePerNight.round()),
+        price: NumberFormat('#,##0').format(
+          BuyerCommission.buyerFacing(widget.pricePerNight).round(),
+        ),
         period: _effectivePricePeriod.uiSuffix.trim(),
         image: widget.photoSources.cast<String?>().firstWhere(
               (s) => (s ?? '').startsWith('http'),
@@ -2046,6 +2049,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                     padding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
                     child: AccommodationOfferGallery.rooms(
                       rooms: _roomOffers,
+                      buyerPrices: true,
                       priceSuffix: _effectivePricePeriod.uiSuffix,
                       selectedIndex: _selectedRoomIndex,
                       onSelect: (index) => setState(() {
@@ -2064,6 +2068,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
                     child: AccommodationOfferGallery.conferences(
+                      buyerPrices: true,
                       conferences: _conferences,
                       priceSuffix: _effectivePricePeriod.uiSuffix,
                       selectedIndex: _selectedHallIndex,

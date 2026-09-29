@@ -71,6 +71,12 @@ class BuyerCommission {
 
   static double money(double value) => (value * 100).round() / 100;
 
+  /// Buyer-facing unit price: the amount the seller entered plus commission.
+  /// Show this anywhere a customer sees a price. Do not store it as the
+  /// seller's price, or checkout will add commission twice.
+  static double buyerFacing(num providerPrice) =>
+      quote(providerPrice.toDouble()).buyerTotal;
+
   static BuyerCommissionQuote quote(double providerPrice) {
     final price = money(providerPrice < 0 ? 0 : providerPrice);
     final rate = rateFor(price);

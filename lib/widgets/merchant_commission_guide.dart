@@ -101,6 +101,23 @@ class MerchantCommissionGuide {
     return double.tryParse(digits);
   }
 
+  static int _rangeIndexFor(double price) {
+    const caps = <double>[
+      5000,
+      10000,
+      20000,
+      50000,
+      100000,
+      500000,
+      2000000,
+      10000000,
+    ];
+    for (var i = 0; i < caps.length; i++) {
+      if (price <= caps[i]) return i;
+    }
+    return caps.length;
+  }
+
   static Future<void> show(
     BuildContext context, {
     double? price,
@@ -109,93 +126,80 @@ class MerchantCommissionGuide {
     final quote = BuyerCommission.quote(entered);
     return showDialog<void>(
       context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.55),
+      barrierColor: Colors.black.withValues(alpha: 0.62),
       builder: (ctx) {
         return Dialog(
-          backgroundColor: const Color(0xFF2A2A2A),
-          insetPadding: const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+          backgroundColor: const Color(0xFF1E1E1E),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
+            padding: const EdgeInsets.fromLTRB(18, 16, 12, 16),
             child: SingleChildScrollView(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Expanded(
-                        child: Text(
-                          'How Vero360 Commission Works',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 22,
-                            fontWeight: FontWeight.w800,
-                            height: 1.2,
+                        child: Padding(
+                          padding: EdgeInsets.only(top: 6),
+                          child: Text(
+                            'How Vero360 Commission Works',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w800,
+                              height: 1.15,
+                            ),
                           ),
                         ),
                       ),
                       IconButton(
                         onPressed: () => Navigator.of(ctx).pop(),
-                        icon: const Icon(Icons.close_rounded, color: Colors.white70),
+                        icon: const Icon(Icons.close_rounded, color: Colors.white),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 14),
-                  const Text(
-                    'Enter the price you want to receive. Vero360 adds its commission to the customer’s total; it is not deducted from your price.',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      height: 1.45,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  Text.rich(
-                    TextSpan(
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        height: 1.45,
+                  const Padding(
+                    padding: EdgeInsets.only(right: 8),
+                    child: Text(
+                      'Enter the price you want to receive. Commission is added for the customer. It is not taken from you.',
+                      style: TextStyle(
+                        color: Color(0xFFE8E8E8),
+                        fontSize: 15,
+                        height: 1.4,
                         fontWeight: FontWeight.w500,
                       ),
-                      children: [
-                        const TextSpan(text: 'For example, if you enter '),
-                        TextSpan(
-                          text: money(quote.providerPrice),
-                          style: const TextStyle(fontWeight: FontWeight.w800),
-                        ),
-                        const TextSpan(text: ', Vero360 adds '),
-                        TextSpan(
-                          text: money(quote.commission),
-                          style: const TextStyle(fontWeight: FontWeight.w800),
-                        ),
-                        const TextSpan(text: '. The customer pays '),
-                        TextSpan(
-                          text: money(quote.buyerTotal),
-                          style: const TextStyle(fontWeight: FontWeight.w800),
-                        ),
-                        const TextSpan(text: ', and you receive '),
-                        TextSpan(
-                          text: money(quote.providerPrice),
-                          style: const TextStyle(fontWeight: FontWeight.w800),
-                        ),
-                        const TextSpan(text: '.'),
-                      ],
                     ),
                   ),
-                  const SizedBox(height: 18),
-                  InkWell(
-                    onTap: () => _showRanges(ctx),
-                    child: const Text(
-                      'View the full commission ranges',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        decoration: TextDecoration.underline,
-                        decorationColor: Colors.white70,
+                  const SizedBox(height: 16),
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: _exampleCard(quote),
+                  ),
+                  const SizedBox(height: 16),
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: () => _showRanges(ctx, highlightPrice: entered),
+                        icon: const Icon(Icons.table_chart_rounded, size: 20),
+                        label: const Text('View the full commission ranges'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFFFF6B00),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          textStyle: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -208,70 +212,123 @@ class MerchantCommissionGuide {
     );
   }
 
-  static Future<void> _showRanges(BuildContext context) {
+  static Widget _exampleCard(BuyerCommissionQuote quote) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2C2C2C),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFFF6B00), width: 1.4),
+      ),
+      child: Column(
+        children: [
+          _exampleLine('You enter', money(quote.providerPrice)),
+          _exampleLine('Amount added', money(quote.commission)),
+          _exampleLine('Customer pays', money(quote.buyerTotal), emphasize: true),
+          _exampleLine('You receive', money(quote.providerPrice), emphasize: true),
+        ],
+      ),
+    );
+  }
+
+  static Widget _exampleLine(String label, String value, {bool emphasize = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: emphasize ? Colors.white : const Color(0xFFD0D0D0),
+                fontSize: 15,
+                fontWeight: emphasize ? FontWeight.w800 : FontWeight.w600,
+              ),
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              color: emphasize ? const Color(0xFFFFB067) : Colors.white,
+              fontSize: emphasize ? 16 : 15,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static Future<void> _showRanges(
+    BuildContext context, {
+    required double highlightPrice,
+  }) {
+    final active = _rangeIndexFor(highlightPrice);
+    final height = MediaQuery.sizeOf(context).height * 0.86;
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
       builder: (ctx) {
         return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 42,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(99),
+          child: SizedBox(
+            height: height,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 46,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF102A43),
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 14),
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
+                  const SizedBox(height: 14),
+                  const Text(
                     'Commission ranges',
                     style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
                       color: Color(0xFF102A43),
                     ),
                   ),
-                ),
-                const SizedBox(height: 6),
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'You set the price you receive. This amount is added for the customer.',
+                  const SizedBox(height: 6),
+                  const Text(
+                    'You set the price you receive. This is what is added for the customer.',
                     style: TextStyle(
-                      fontSize: 13,
+                      fontSize: 14.5,
                       height: 1.35,
-                      color: Color(0xFF486581),
+                      color: Color(0xFF243B53),
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                Flexible(
-                  child: ListView(
-                    shrinkWrap: true,
-                    children: [
-                      _rangeHeader(),
-                      for (var i = 0; i < BuyerCommission.merchantRanges.length; i++)
-                        _rangeRow(
-                          BuyerCommission.merchantRanges[i].price,
-                          BuyerCommission.merchantRanges[i].added,
+                  const SizedBox(height: 12),
+                  _rangeHeader(),
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: BuyerCommission.merchantRanges.length,
+                      itemBuilder: (_, i) {
+                        final row = BuyerCommission.merchantRanges[i];
+                        return _rangeRow(
+                          row.price,
+                          row.added,
                           i.isEven,
-                        ),
-                    ],
+                          highlighted: i == active,
+                        );
+                      },
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         );
@@ -294,7 +351,7 @@ class MerchantCommissionGuide {
               style: TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.w800,
-                fontSize: 12,
+                fontSize: 13,
                 letterSpacing: 0.4,
               ),
             ),
@@ -306,7 +363,7 @@ class MerchantCommissionGuide {
               style: TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.w800,
-                fontSize: 12,
+                fontSize: 13,
                 letterSpacing: 0.4,
               ),
             ),
@@ -316,18 +373,37 @@ class MerchantCommissionGuide {
     );
   }
 
-  static Widget _rangeRow(String price, String added, bool shaded) {
+  static Widget _rangeRow(
+    String price,
+    String added,
+    bool shaded, {
+    bool highlighted = false,
+  }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-      color: shaded ? const Color(0xFFF4F7FB) : Colors.white,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+      decoration: BoxDecoration(
+        color: highlighted
+            ? const Color(0xFFFFF1E6)
+            : (shaded ? const Color(0xFFF4F7FB) : Colors.white),
+        border: Border(
+          left: BorderSide(
+            color: highlighted ? const Color(0xFFFF6B00) : Colors.transparent,
+            width: 5,
+          ),
+          bottom: const BorderSide(color: Color(0xFFE4E7EB)),
+        ),
+      ),
       child: Row(
         children: [
           Expanded(
             child: Text(
               price,
-              style: const TextStyle(
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF243B53),
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 14.5,
+                color: highlighted
+                    ? const Color(0xFF9A3412)
+                    : const Color(0xFF102A43),
               ),
             ),
           ),
@@ -336,9 +412,12 @@ class MerchantCommissionGuide {
             child: Text(
               added,
               textAlign: TextAlign.right,
-              style: const TextStyle(
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF334E68),
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 14.5,
+                color: highlighted
+                    ? const Color(0xFFC2410C)
+                    : const Color(0xFF243B53),
               ),
             ),
           ),

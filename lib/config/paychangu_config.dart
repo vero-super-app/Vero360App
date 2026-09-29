@@ -71,10 +71,14 @@ class PayChanguConfig {
   }
 
   /// Debug → test; release → live. Override with PAYCHANGU_MODE=test|live.
+  /// A release build that only has the test secret still checks out in test
+  /// mode instead of failing with "payment is not configured".
   static bool get isTestMode {
     if (_modeOverride == 'test') return true;
     if (_modeOverride == 'live') return false;
-    return kDebugMode;
+    if (kDebugMode) return true;
+    if (_secretLive.isEmpty && _secretTest.isNotEmpty) return true;
+    return false;
   }
 
   static String get _rawSecret {

@@ -17,6 +17,7 @@ import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/GeneralPages/address.dart';
@@ -356,7 +357,8 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
       ),
       name: item.FoodName,
       restaurant: item.RestrauntName,
-      price: NumberFormat('#,##0').format(_unitPrice.round()),
+      price: NumberFormat('#,##0')
+          .format(BuyerCommission.buyerFacing(_unitPrice).round()),
       location: item.listingLocation,
       description: item.description,
       image: foodShareImageUrl(item.FoodImage, item.gallery),
@@ -370,7 +372,9 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     if (item.RestrauntName.trim().isNotEmpty) {
       buf.write(' — ${item.RestrauntName.trim()}');
     }
-    buf.write('\nMWK ${NumberFormat('#,##0').format(_unitPrice.round())}');
+    buf.write(
+      '\nMWK ${NumberFormat('#,##0').format(BuyerCommission.buyerFacing(_unitPrice).round())}',
+    );
     buf.write('\n$url');
     await Share.share(buf.toString());
   }
@@ -933,7 +937,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                         ),
                       ),
                       Text(
-                        'MWK ${NumberFormat('#,##0').format(f.price.round())}',
+                        'MWK ${NumberFormat('#,##0').format(BuyerCommission.buyerFacing(f.price).round())}',
                         style: const TextStyle(
                           fontWeight: FontWeight.w800,
                           fontSize: 12,
@@ -1261,7 +1265,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                             ),
                             const SizedBox(width: 12),
                             Text(
-                              'MWK ${NumberFormat('#,##0').format(_unitPrice.round())}',
+                              'MWK ${NumberFormat('#,##0').format(BuyerCommission.buyerFacing(_unitPrice).round())}',
                               style: const TextStyle(
                                   fontSize: 20,
                                   fontWeight: FontWeight.w900,
@@ -3101,7 +3105,7 @@ class _KitchenExplorePageState extends State<_KitchenExplorePage> {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  'MWK ${NumberFormat('#,##0').format(f.price.round())}',
+                                  'MWK ${NumberFormat('#,##0').format(BuyerCommission.buyerFacing(f.price).round())}',
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w800,
                                     color: _veroOrange,

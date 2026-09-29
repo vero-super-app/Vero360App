@@ -33,6 +33,7 @@ import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/verocourie
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 
+import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/Latest_model.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketPlace.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
@@ -3147,7 +3148,8 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
         item: enriched,
         imageFuture: _imgFuture(enriched),
         immediateImageUrl: _immediateImageUrl(enriched),
-        fmtPrice: (n) => 'MWK ${_fmtKwacha(n)}',
+        fmtPrice: (n) =>
+            'MWK ${_fmtKwacha(BuyerCommission.buyerFacing(n).round())}',
         tryDecodeBase64: _tryDecodeBase64,
         onBuyNow: (qty) async =>
             _buyNow(enriched, qty: qty, sheetCtx: sheetCtx),
@@ -3215,7 +3217,8 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
                 final it = items[i];
                 return _ProductCard(
                   item: it,
-                  priceText: 'MWK ${_fmtKwacha(it.price)}',
+                  priceText:
+                      'MWK ${_fmtKwacha(BuyerCommission.buyerFacing(it.price).round())}',
                   imageFuture: _imgFuture(it),
                   immediateImageUrl: _immediateImageUrl(it),
                   tryDecodeBase64: _tryDecodeBase64,

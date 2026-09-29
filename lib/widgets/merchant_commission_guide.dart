@@ -29,6 +29,73 @@ class MerchantCommissionGuide {
     );
   }
 
+  /// Always-visible breakdown under a merchant price field.
+  static Widget priceNote(
+    BuildContext context, {
+    required String priceText,
+  }) {
+    final price = _parse(priceText);
+    final hasPrice = price != null && price > 0;
+    final quote = hasPrice ? BuyerCommission.quote(price) : null;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Material(
+        color: const Color(0xFFFFF4EB),
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => show(context, price: price),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.only(top: 1),
+                  child: Icon(
+                    Icons.info_outline_rounded,
+                    color: Color(0xFFFF6B00),
+                    size: 18,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        hasPrice
+                            ? 'Customer pays ${money(quote!.buyerTotal)}. You receive ${money(quote.providerPrice)}.'
+                            : 'Vero360 adds commission for the customer. It is not taken from your price.',
+                        style: const TextStyle(
+                          color: Color(0xFF7A3E00),
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                          height: 1.35,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      const Text(
+                        'How commission works',
+                        style: TextStyle(
+                          color: Color(0xFFFF6B00),
+                          fontWeight: FontWeight.w800,
+                          fontSize: 12.5,
+                          decoration: TextDecoration.underline,
+                          decorationColor: Color(0xFFFF6B00),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   static double? _parse(String raw) {
     final digits = raw.replaceAll(RegExp(r'[^0-9.]'), '');
     return double.tryParse(digits);

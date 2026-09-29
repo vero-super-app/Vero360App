@@ -206,6 +206,7 @@ class _MarketplaceMerchantDashboardState
   final _desc = TextEditingController();
   final _stock = TextEditingController(text: '1');
   int _stockQty = 1;
+  bool _addItemCommissionShown = false;
 
   late TabController _marketplaceTabs;
 
@@ -813,6 +814,11 @@ class _MarketplaceMerchantDashboardState
       _selectedIndex = 4;
     }
     final startTab = widget.initialInnerTab.clamp(0, 3);
+    if (startTab == 1) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showAddItemCommissionGuide();
+      });
+    }
     _marketplaceTabs = TabController(
       length: 4,
       vsync: this,
@@ -820,6 +826,9 @@ class _MarketplaceMerchantDashboardState
     );
     _marketplaceTabs.addListener(() {
       if (_marketplaceTabs.indexIsChanging) return;
+      if (_marketplaceTabs.index == 1) {
+        _showAddItemCommissionGuide();
+      }
       // My Items tab: ensure cached list is visible immediately.
       if (_marketplaceTabs.index == 2 && _items.isEmpty) {
         _hydrateItemsFromLocalCache();
@@ -3648,6 +3657,14 @@ class _MarketplaceMerchantDashboardState
                         ),
                       ),
                     ),
+                    ValueListenableBuilder<TextEditingValue>(
+                      valueListenable: priceCtrl,
+                      builder: (context, value, _) =>
+                          MerchantCommissionGuide.priceNote(
+                        context,
+                        priceText: value.text,
+                      ),
+                    ),
                     const SizedBox(height: 10),
                     Row(
                       children: [
@@ -3917,6 +3934,18 @@ class _MarketplaceMerchantDashboardState
     } else {
       _toastErr('Could not open Google Maps.');
     }
+  }
+
+  void _showAddItemCommissionGuide() {
+    if (_addItemCommissionShown || !mounted) return;
+    _addItemCommissionShown = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      MerchantCommissionGuide.show(
+        context,
+        price: double.tryParse(_price.text.replaceAll(RegExp(r'[^0-9.]'), '')),
+      );
+    });
   }
 
   // ----------------- UI helpers -----------------
@@ -5764,6 +5793,13 @@ class _MarketplaceMerchantDashboardState
                       priceText: _price.text,
                     ),
                   )),
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _price,
+                builder: (context, value, _) => MerchantCommissionGuide.priceNote(
+                  context,
+                  priceText: value.text,
+                ),
+              ),
               const SizedBox(height: 10),
               Row(
                 children: [

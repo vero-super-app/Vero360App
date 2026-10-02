@@ -8,7 +8,9 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.WindowManager
 import androidx.activity.enableEdgeToEdge
+import androidx.core.view.WindowCompat
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -17,10 +19,18 @@ class MainActivity : FlutterFragmentActivity() {
     private val channelName = "vero365.app/driver_alerts"
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Draw behind the status and navigation bars on Android 14 and below.
-        // Android 15+ already does this when the app targets SDK 35.
+        // Edge-to-edge on Android 14 and below. Android 15+ already does this
+        // when the app targets SDK 35. This AndroidX version exposes the
+        // Kotlin helper enableEdgeToEdge(), not a class named EdgeToEdge.
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            }
+        }
         // Keep extras so Dart can open the accept popup after a lock-screen launch.
         intent?.let { DriverAlertIntents.store(it) }
     }

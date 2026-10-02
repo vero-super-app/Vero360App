@@ -8,22 +8,33 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+
+    <!-- Location -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+
+    <!-- Device / Media -->
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+
     <!-- Biometrics (local_auth) -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
     <uses-permission android:name="android.permission.USE_FINGERPRINT"/>
 
-    <!-- Storage permissions -->
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
+    <!--
+        IMPORTANT:
+        Do NOT add any of these permissions:
+        READ_MEDIA_IMAGES
+        READ_MEDIA_VIDEO
+        READ_EXTERNAL_STORAGE
+        WRITE_EXTERNAL_STORAGE
+
+        Vero360 uses the Android system photo picker via image_picker.
+    -->
 
     <application
         android:enableOnBackInvokedCallback="true"
@@ -55,45 +66,87 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
 
-            <!-- Deep link support for vero360:// (catches payment-complete and any other paths) -->
-            <intent-filter android:autoVerify="true">
+            <!--
+                Custom Vero360 deep links.
+                Catches vero360:// URLs including payment callbacks.
+            -->
+            <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <!-- This catches ALL vero360:// URLs (recommended for payment callbacks) -->
                 <data android:scheme="vero360" />
             </intent-filter>
 
-            <!-- Shared stay + marketplace links: https://vero360.app/accommodation/{id} -->
+            <!-- HTTPS App Links -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="vero360.app" android:pathPrefix="/accommodation" />
-                <data android:scheme="https" android:host="vero360.app" android:pathPrefix="/stay" />
-                <data android:scheme="https" android:host="vero360.app" android:pathPrefix="/marketplace" />
-                <data android:scheme="https" android:host="vero360.app" android:pathPrefix="/shop" />
-                <data android:scheme="https" android:host="vero360.app" android:pathPrefix="/merchant" />
-                <data android:scheme="https" android:host="vero360.app" android:pathPrefix="/food" />
-                <data android:scheme="https" android:host="www.vero360.app" android:pathPrefix="/accommodation" />
-                <data android:scheme="https" android:host="www.vero360.app" android:pathPrefix="/stay" />
-                <data android:scheme="https" android:host="www.vero360.app" android:pathPrefix="/marketplace" />
-                <data android:scheme="https" android:host="www.vero360.app" android:pathPrefix="/shop" />
-                <data android:scheme="https" android:host="www.vero360.app" android:pathPrefix="/merchant" />
-                <data android:scheme="https" android:host="www.vero360.app" android:pathPrefix="/food" />
-            </intent-filter>
 
-            <!-- If you want to be more restrictive (only payment-complete path), use this instead: -->
-            <!--
-            <intent-filter android:autoVerify="true">
-                <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
+
+                <!-- vero360.app -->
                 <data
-                    android:scheme="vero360"
-                    android:host="payment-complete" />
+                    android:scheme="https"
+                    android:host="vero360.app"
+                    android:pathPrefix="/accommodation" />
+
+                <data
+                    android:scheme="https"
+                    android:host="vero360.app"
+                    android:pathPrefix="/stay" />
+
+                <data
+                    android:scheme="https"
+                    android:host="vero360.app"
+                    android:pathPrefix="/marketplace" />
+
+                <data
+                    android:scheme="https"
+                    android:host="vero360.app"
+                    android:pathPrefix="/shop" />
+
+                <data
+                    android:scheme="https"
+                    android:host="vero360.app"
+                    android:pathPrefix="/merchant" />
+
+                <data
+                    android:scheme="https"
+                    android:host="vero360.app"
+                    android:pathPrefix="/food" />
+
+                <!-- www.vero360.app -->
+                <data
+                    android:scheme="https"
+                    android:host="www.vero360.app"
+                    android:pathPrefix="/accommodation" />
+
+                <data
+                    android:scheme="https"
+                    android:host="www.vero360.app"
+                    android:pathPrefix="/stay" />
+
+                <data
+                    android:scheme="https"
+                    android:host="www.vero360.app"
+                    android:pathPrefix="/marketplace" />
+
+                <data
+                    android:scheme="https"
+                    android:host="www.vero360.app"
+                    android:pathPrefix="/shop" />
+
+                <data
+                    android:scheme="https"
+                    android:host="www.vero360.app"
+                    android:pathPrefix="/merchant" />
+
+                <data
+                    android:scheme="https"
+                    android:host="www.vero360.app"
+                    android:pathPrefix="/food" />
+
             </intent-filter>
-            -->
 
         </activity>
 
@@ -102,54 +155,68 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
-        <!-- Redmi 8A: Impeller (Vulkan *and* OpenGLES) OOMs Adreno 506 →
-             SIGSEGV on 1.raster. Use legacy Skia only. -->
+        <!--
+            Redmi 8A:
+            Impeller can cause GPU / memory problems on older Adreno devices.
+            Keep legacy Skia rendering.
+        -->
         <meta-data
             android:name="io.flutter.embedding.android.EnableImpeller"
             android:value="false" />
 
-        <!-- Google Maps SDK key (required in the client binary; restrict by package + SHA in Cloud Console) -->
+        <!-- Google Maps SDK -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"
-            android:value="AIzaSyAQtLkqSetILdLacfIxnqH8DEC0qcobCuI"/>
+            android:value="AIzaSyAQtLkqSetILdLacfIxnqH8DEC0qcobCuI" />
 
-        <!-- FCM: show system trays when app is backgrounded / killed -->
+        <!-- Firebase Cloud Messaging -->
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="high_importance_channel" />
+
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_icon"
             android:resource="@mipmap/ic_launcher" />
 
+        <!-- Restore driver online/background functionality after reboot/update -->
         <receiver
             android:name=".DriverOnlineBootReceiver"
             android:exported="true"
             android:directBootAware="true">
+
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
+
         </receiver>
+
     </application>
 
     <queries>
+
         <package android:name="com.google.android.gms" />
         <package android:name="com.android.vending" />
+
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
-        <!-- Allow url_launcher / canLaunchUrl to resolve https job apply links -->
+
+        <!-- Allow url_launcher / canLaunchUrl to resolve HTTPS links -->
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
         </intent>
+
+        <!-- Allow url_launcher / canLaunchUrl to resolve HTTP links -->
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="http" />
         </intent>
+
     </queries>
 
 </manifest>

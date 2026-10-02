@@ -43,9 +43,8 @@ class _VeroLaunchSplashState extends State<VeroLaunchSplash>
     super.initState();
     SystemChrome.setSystemUIOverlayStyle(
       const SystemUiOverlayStyle(
-        statusBarColor: Colors.transparent,
         statusBarIconBrightness: Brightness.dark,
-        systemNavigationBarColor: _pageBg,
+        statusBarBrightness: Brightness.light,
         systemNavigationBarIconBrightness: Brightness.dark,
       ),
     );

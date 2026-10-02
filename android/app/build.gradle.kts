@@ -41,7 +41,8 @@ android {
     namespace = "com.vero265.app"
 
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // Plugins (Firebase, Maps, WebView, …) require NDK 28. It is backward compatible.
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         // Must match the package_name registered in google-services.json exactly.

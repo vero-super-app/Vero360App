@@ -28,6 +28,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_p
 import 'package:vero360_app/utils/description_contact_mask.dart';
 
 import '../../../../utils/toasthelper.dart';
+import 'package:vero360_app/widgets/merchant_commission_guide.dart';
 import 'marketplace_edit_page.dart';
 
 class LocalMedia {
@@ -67,6 +68,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
 
   bool _isActive = true;
   bool _submitting = false;
+  bool _commissionGuideShown = false;
   /// Share to Vero360 Facebook Page when the listing goes live (default on).
   bool _postToFacebook = true;
   int _stockQty = 1;
@@ -1612,7 +1614,20 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                   inputFormatters: [
                     FilteringTextInputFormatter.digitsOnly,
                   ],
-                  decoration: _inputDecoration(label: 'Price (MWK)'),
+                  onTap: () {
+                    if (_commissionGuideShown) return;
+                    setState(() => _commissionGuideShown = true);
+                    MerchantCommissionGuide.show(
+                      context,
+                      price: double.tryParse(_price.text.trim()),
+                    );
+                  },
+                  decoration: _inputDecoration(label: 'Price (MWK)').copyWith(
+                    suffixIcon: MerchantCommissionGuide.infoButton(
+                      context,
+                      priceText: _price.text,
+                    ),
+                  ),
                   validator: (v) {
                     final pv = double.tryParse(v?.trim() ?? '');
                     if (pv == null || pv <= 0) {

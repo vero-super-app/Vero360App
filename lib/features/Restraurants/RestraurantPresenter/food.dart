@@ -17,6 +17,7 @@ import 'package:intl/intl.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
+import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
@@ -1895,7 +1896,7 @@ class _FoodCard extends StatelessWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          _foodMwk(item.price),
+                          _foodMwk(BuyerCommission.buyerFacing(item.price)),
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w900,
@@ -2052,7 +2053,7 @@ class _NearestRestaurantCard extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      _foodMwk(item.price),
+                      _foodMwk(BuyerCommission.buyerFacing(item.price)),
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w900,
@@ -2361,7 +2362,7 @@ class _NearestSeeAllPage extends StatelessWidget {
                                       ],
                                       const SizedBox(height: 6),
                                       Text(
-                                        _foodMwk(item.price),
+                                        _foodMwk(BuyerCommission.buyerFacing(item.price)),
                                         style: const TextStyle(
                                           fontWeight: FontWeight.w900,
                                           fontSize: 14,

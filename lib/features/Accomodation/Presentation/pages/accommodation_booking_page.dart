@@ -821,8 +821,9 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   Future<void> _shareStay() async {
     final loc = widget.location.trim();
     final name = widget.propertyName.trim();
-    final price =
-        NumberFormat('#,##0').format(widget.pricePerNight.round());
+    final price = NumberFormat('#,##0').format(
+      BuyerCommission.buyerFacing(widget.pricePerNight).round(),
+    );
     final url = accommodationShareUrl(
       id: widget.accommodationId,
       name: name,
@@ -862,7 +863,9 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
         id: widget.accommodationId,
         name: widget.propertyName,
         location: widget.location,
-        price: NumberFormat('#,##0').format(widget.pricePerNight.round()),
+        price: NumberFormat('#,##0').format(
+          BuyerCommission.buyerFacing(widget.pricePerNight).round(),
+        ),
         period: _effectivePricePeriod.uiSuffix.trim(),
         image: widget.photoSources.cast<String?>().firstWhere(
               (s) => (s ?? '').startsWith('http'),
@@ -2108,6 +2111,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                     padding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
                     child: AccommodationOfferGallery.rooms(
                       rooms: _roomOffers,
+                      buyerPrices: true,
                       priceSuffix: _effectivePricePeriod.uiSuffix,
                       selectedIndex: _selectedRoomIndex,
                       onSelect: (index) => setState(() {
@@ -2126,6 +2130,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
                     child: AccommodationOfferGallery.conferences(
+                      buyerPrices: true,
                       conferences: _conferences,
                       priceSuffix: _effectivePricePeriod.uiSuffix,
                       selectedIndex: _selectedHallIndex,
@@ -2454,7 +2459,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                           const SizedBox(height: 4),
                         ],
                         Text(
-                          'MWK ${NumberFormat('#,##0').format(_unitPrice.round())}${_effectivePricePeriod.uiSuffix}',
+                          'MWK ${NumberFormat('#,##0').format((_billableUnits <= 0 ? _buyerPaysMwk : _buyerPaysMwk / _billableUnits).round())}${_effectivePricePeriod.uiSuffix}',
                           style: TextStyle(
                             fontWeight: FontWeight.w800,
                             fontSize: 15,
@@ -2471,34 +2476,6 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                           ),
                         ),
                         Divider(height: 22, color: Colors.grey.shade200),
-                        Text(
-                          'Stay price  MWK ${NumberFormat('#,##0').format(_totalMwk.round())}',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 14,
-                            color: Colors.grey.shade800,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Commission (${_commissionQuote.percentLabel})  MWK ${NumberFormat('#,##0').format(_commissionQuote.commission.round())}',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 14,
-                            color: Colors.grey.shade800,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Added to your bill. The host receives the full stay price.',
-                          style: TextStyle(
-                            fontSize: 12,
-                            height: 1.3,
-                            color: Colors.grey.shade600,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
                         Text(
                           'MWK ${NumberFormat('#,##0').format(_buyerPaysMwk.round())}',
                           style: const TextStyle(

@@ -23,6 +23,7 @@ import 'package:uuid/uuid.dart';
 
 import 'package:vero360_app/GeneralModels/call_model.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
+import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/call_service_impl.dart';
@@ -4638,7 +4639,13 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                           if (product.price != null) ...[
                             const SizedBox(height: 2),
                             Text(
-                              _formatPrice(product.price!),
+                              _formatPrice(
+                                isMerchant
+                                    ? product.price!
+                                    : BuyerCommission.buyerFacing(
+                                        product.price!,
+                                      ),
+                              ),
                               style: const TextStyle(
                                 color: _brandOrange,
                                 fontWeight: FontWeight.w800,

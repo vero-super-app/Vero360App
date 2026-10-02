@@ -21,6 +21,7 @@ import 'package:saver_gallery/saver_gallery.dart';
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/GeneralPages/checkout_page.dart';
+import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_share_link.dart';
@@ -209,7 +210,8 @@ class _DetailsPageState extends State<DetailsPage> {
     final item = widget.item;
     final merchantName =
         item.merchantName ?? item.sellerBusinessName ?? 'A merchant';
-    final priceStr = NumberFormat('#,###', 'en').format(item.price.truncate());
+    final priceStr = NumberFormat('#,###', 'en')
+        .format(BuyerCommission.buyerFacing(item.price).round());
     final url = marketplaceProductShareUrl(
       id: marketplaceProductShareId(
         sqlItemId: item.id > 0 ? item.id : null,
@@ -237,7 +239,8 @@ class _DetailsPageState extends State<DetailsPage> {
       ),
       name: item.name,
       location: item.location,
-      price: NumberFormat('#,###', 'en').format(item.price.truncate()),
+      price: NumberFormat('#,###', 'en')
+          .format(BuyerCommission.buyerFacing(item.price).round()),
       merchant: item.merchantName ?? item.sellerBusinessName,
       description: item.description,
       image: marketplaceShareImageUrl(item.image, item.gallery),
@@ -1420,7 +1423,7 @@ class _DetailsPageState extends State<DetailsPage> {
     List<int> openingDays = const [],
   }) {
     final price =
-        'MWK ${NumberFormat('#,###', 'en').format(item.price.truncate())}';
+        'MWK ${NumberFormat('#,###', 'en').format(BuyerCommission.buyerFacing(item.price).round())}';
     final category = (item.category ?? '').trim();
     final days = openingDays.isNotEmpty ? openingDays : _resolvedOpeningDays;
     final shopOpen = _isShopOpenFromHours(openingHours, days);
@@ -1711,7 +1714,7 @@ class _DetailsPageState extends State<DetailsPage> {
 
   Widget _buildBottomBar(MarketplaceDetailModel item) {
     final price =
-        'MWK ${NumberFormat('#,###', 'en').format(item.price.truncate())}';
+        'MWK ${NumberFormat('#,###', 'en').format(BuyerCommission.buyerFacing(item.price).round())}';
 
     return Container(
       decoration: BoxDecoration(

@@ -11,6 +11,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
+import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_detail_model.dart';
@@ -1228,7 +1229,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                 ),
                 Chip(
                   label: Text(
-                    'MWK ${NumberFormat('#,##0').format(stay.price)}${stay.pricePeriod.uiSuffix}',
+                    'MWK ${NumberFormat('#,##0').format(BuyerCommission.buyerFacing(stay.price).round())}${stay.pricePeriod.uiSuffix}',
                     style: TextStyle(
                       fontWeight: FontWeight.w900,
                       color: Colors.green.shade800,
@@ -3581,7 +3582,7 @@ class _MerchantStayCard extends StatelessWidget {
                   ],
                   const SizedBox(height: 4),
                   Text(
-                    'MWK ${NumberFormat('#,##0').format(stay.price)}${stay.pricePeriod.uiSuffix}',
+                    'MWK ${NumberFormat('#,##0').format(BuyerCommission.buyerFacing(stay.price).round())}${stay.pricePeriod.uiSuffix}',
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w800,
@@ -3681,7 +3682,7 @@ class _MerchantProductCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'MWK ${NumberFormat('#,###', 'en').format(item.price.truncate())}',
+                    'MWK ${NumberFormat('#,###', 'en').format(BuyerCommission.buyerFacing(item.price).round())}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(

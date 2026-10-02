@@ -4,14 +4,16 @@
 /// buyer's bill (not deducted from the merchant). Of that commission,
 /// Vero360 keeps 60% and PayChangu's share is 40%.
 ///
-/// Tiers are based on the provider price (the transaction value):
-///   MWK 1–50,000            10%
-///   MWK 50,001–500,000       8%
-///   MWK 500,001–2,000,000    6%
-///   MWK 2,000,001–5,000,000  5%
-///   MWK 5,000,001–10,000,000 4%
-///   MWK 10,000,001–20,000,000 3%
-///   Above MWK 20,000,000    2.5%
+/// Amount added for the customer, by the price the merchant wants to receive:
+///   MWK 100–5,000              10%     (MWK 10–500)
+///   MWK 5,001–10,000            9%     (about MWK 450–900)
+///   MWK 10,001–20,000           8%     (about MWK 800–1,600)
+///   MWK 20,001–50,000           7%     (about MWK 1,400–3,500)
+///   MWK 50,001–100,000          6%     (about MWK 3,000–6,000)
+///   MWK 100,001–500,000         5%     (about MWK 5,000–25,000)
+///   MWK 500,001–2,000,000       4%     (about MWK 20,000–80,000)
+///   MWK 2,000,001–10,000,000    3.3%   (about MWK 66,000–330,000)
+///   Above MWK 10,000,000        3%     (about MWK 300,000–600,000 up to 20,000,000)
 class BuyerCommissionQuote {
   const BuyerCommissionQuote({
     required this.providerPrice,
@@ -42,18 +44,38 @@ class BuyerCommission {
   static const double veroShareRate = 0.60;
   static const double paychanguShareRate = 0.40;
 
+  static const List<({String price, String added})> merchantRanges = [
+    (price: 'MWK 100 – 5,000', added: 'MWK 10 – 500'),
+    (price: 'MWK 5,001 – 10,000', added: 'about MWK 450 – 900'),
+    (price: 'MWK 10,001 – 20,000', added: 'about MWK 800 – 1,600'),
+    (price: 'MWK 20,001 – 50,000', added: 'about MWK 1,400 – 3,500'),
+    (price: 'MWK 50,001 – 100,000', added: 'about MWK 3,000 – 6,000'),
+    (price: 'MWK 100,001 – 500,000', added: 'about MWK 5,000 – 25,000'),
+    (price: 'MWK 500,001 – 2,000,000', added: 'about MWK 20,000 – 80,000'),
+    (price: 'MWK 2,000,001 – 10,000,000', added: 'about MWK 66,000 – 330,000'),
+    (price: 'MWK 10,000,001 – 20,000,000', added: 'about MWK 300,000 – 600,000'),
+  ];
+
   static double rateFor(double providerPrice) {
     if (providerPrice <= 0) return 0;
-    if (providerPrice <= 50000) return 0.10;
-    if (providerPrice <= 500000) return 0.08;
-    if (providerPrice <= 2000000) return 0.06;
-    if (providerPrice <= 5000000) return 0.05;
-    if (providerPrice <= 10000000) return 0.04;
-    if (providerPrice <= 20000000) return 0.03;
-    return 0.025;
+    if (providerPrice <= 5000) return 0.10;
+    if (providerPrice <= 10000) return 0.09;
+    if (providerPrice <= 20000) return 0.08;
+    if (providerPrice <= 50000) return 0.07;
+    if (providerPrice <= 100000) return 0.06;
+    if (providerPrice <= 500000) return 0.05;
+    if (providerPrice <= 2000000) return 0.04;
+    if (providerPrice <= 10000000) return 0.033;
+    return 0.03;
   }
 
   static double money(double value) => (value * 100).round() / 100;
+
+  /// Buyer-facing unit price: the amount the seller entered plus commission.
+  /// Show this anywhere a customer sees a price. Do not store it as the
+  /// seller's price, or checkout will add commission twice.
+  static double buyerFacing(num providerPrice) =>
+      quote(providerPrice.toDouble()).buyerTotal;
 
   static BuyerCommissionQuote quote(double providerPrice) {
     final price = money(providerPrice < 0 ? 0 : providerPrice);

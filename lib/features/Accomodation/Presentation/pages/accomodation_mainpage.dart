@@ -19,6 +19,7 @@ import 'package:vero360_app/features/Accomodation/Presentation/pages/accommodati
 import 'package:vero360_app/features/Accomodation/Presentation/widgets/accommodation_listing_image.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
+import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
@@ -1919,7 +1920,7 @@ class _AccommodationCard extends StatelessWidget {
                       child: Row(
                         children: [
                           Text(
-                            'MWK ${_formatPriceWhole(price)}',
+                            'MWK ${_formatPriceWhole(BuyerCommission.buyerFacing(price))}',
                             style: const TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.w900,

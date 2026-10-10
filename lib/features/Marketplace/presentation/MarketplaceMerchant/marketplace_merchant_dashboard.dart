@@ -918,7 +918,7 @@ class _MarketplaceMerchantDashboardState
     if (mem == null || mem.isEmpty) return;
     _items = mem.map((e) => Map<String, dynamic>.from(e)).toList();
     _totalItems = _items.length;
-    _activeItems = _items.where((e) => e['isActive'] == true).length;
+    _activeItems = _items.where(_countsAsActiveListing).length;
     _loadingItems = false;
   }
 
@@ -944,7 +944,7 @@ class _MarketplaceMerchantDashboardState
       setState(() {
         _items = list;
         _totalItems = list.length;
-        _activeItems = list.where((e) => e['isActive'] == true).length;
+        _activeItems = list.where(_countsAsActiveListing).length;
         _loadingItems = false;
       });
     } catch (_) {}
@@ -979,7 +979,7 @@ class _MarketplaceMerchantDashboardState
 
   void _applyItemsToUi(List<Map<String, dynamic>> list, {bool persist = true}) {
     final total = list.length;
-    final active = list.where((e) => e['isActive'] == true).length;
+    final active = list.where(_countsAsActiveListing).length;
     if (!mounted) {
       if (persist) unawaited(_persistItemsCache(list));
       return;
@@ -2117,8 +2117,92 @@ class _MarketplaceMerchantDashboardState
         sold: _soldItems,
         earnings: _totalEarnings,
       ));
+      unawaited(_stampSoldListings(sold));
     } catch (e) {
       debugPrint('Error loading order stats: $e');
+    }
+  }
+
+  /// Paid orders that used up the listing stock should leave Live and show Sold.
+  Future<void> _stampSoldListings(List<OrderItem> soldOrders) async {
+    if (!mounted || soldOrders.isEmpty || _items.isEmpty) return;
+
+    final qtyBySql = <int, int>{};
+    final qtyByName = <String, int>{};
+    for (final o in soldOrders) {
+      final id = o.itemSqlId;
+      if (id != null && id > 0) {
+        qtyBySql[id] = (qtyBySql[id] ?? 0) + o.quantity;
+      }
+      final name = o.itemName.trim().toLowerCase();
+      if (name.isNotEmpty) {
+        qtyByName[name] = (qtyByName[name] ?? 0) + o.quantity;
+      }
+    }
+
+    final nameCounts = <String, int>{};
+    for (final it in _items) {
+      final name = (it['name'] ?? '').toString().trim().toLowerCase();
+      if (name.isEmpty) continue;
+      nameCounts[name] = (nameCounts[name] ?? 0) + 1;
+    }
+
+    final updates = <String, Map<String, dynamic>>{};
+    for (final raw in _items) {
+      if (_itemIsSold(raw)) continue;
+      final docId = (raw['id'] ?? '').toString().trim();
+      if (docId.isEmpty) continue;
+
+      int? sql;
+      final rawSql = raw['sqlItemId'] ?? raw['backendId'] ?? raw['itemId'];
+      if (rawSql is num) {
+        sql = rawSql.toInt();
+      } else {
+        sql = int.tryParse('${rawSql ?? ''}');
+      }
+      final name = (raw['name'] ?? '').toString().trim().toLowerCase();
+      var soldQty = 0;
+      if (sql != null && sql > 0 && qtyBySql.containsKey(sql)) {
+        soldQty = qtyBySql[sql] ?? 0;
+      } else if (name.isNotEmpty && nameCounts[name] == 1) {
+        soldQty = qtyByName[name] ?? 0;
+      }
+      if (soldQty <= 0) continue;
+
+      final stock = _stockOf(raw);
+      // Only close the listing once paid orders have used up the listed stock.
+      if (stock == null || soldQty < stock) continue;
+
+      updates[docId] = {
+        'sold': true,
+        'isActive': false,
+        'stockQuantity': 0,
+        'quantity': 0,
+      };
+    }
+
+    if (updates.isEmpty) return;
+
+    final next = _items.map((raw) {
+      final id = (raw['id'] ?? '').toString();
+      final patch = updates[id];
+      if (patch == null) return raw;
+      return {...raw, ...patch};
+    }).toList();
+    _applyItemsToUi(next);
+
+    for (final entry in updates.entries) {
+      try {
+        await _firestore.collection('marketplace_items').doc(entry.key).set(
+          {
+            ...entry.value,
+            'updatedAt': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        );
+      } catch (e) {
+        debugPrint('[My Items] mark sold ${entry.key} failed: $e');
+      }
     }
   }
 
@@ -2427,15 +2511,19 @@ class _MarketplaceMerchantDashboardState
       final name = (it['name'] ?? '').toString().toLowerCase();
       final cat = (it['category'] ?? 'other').toString().toLowerCase();
       final review = _itemReviewStatus(it);
-      final active = it['isActive'] == true && review == 'approved';
+      final sold = _itemIsSold(it);
+      final active =
+          it['isActive'] == true && review == 'approved' && !sold;
 
       final okQ = q.isEmpty || name.contains(q);
       final okCat = (_filterCategory == 'all') || cat == _filterCategory;
       final okStatus = (_filterStatus == 'all') ||
           (_filterStatus == 'active' && active) ||
+          (_filterStatus == 'sold' && sold) ||
           (_filterStatus == 'inactive' &&
               review == 'approved' &&
-              it['isActive'] != true) ||
+              it['isActive'] != true &&
+              !sold) ||
           (_filterStatus == 'pending' &&
               (review == 'pending' || review.isEmpty && it['isActive'] != true)) ||
           (_filterStatus == 'rejected' && review == 'rejected');
@@ -2453,7 +2541,31 @@ class _MarketplaceMerchantDashboardState
     return '';
   }
 
+  static int? _stockOf(Map<String, dynamic> it) {
+    final raw = it['stockQuantity'] ?? it['quantity'] ?? it['stock'];
+    if (raw == null) return null;
+    if (raw is num) return raw.toInt();
+    final text = raw.toString().trim();
+    if (text.isEmpty) return null;
+    return int.tryParse(text);
+  }
+
+  /// Sold when stock is finished or the listing was explicitly marked sold.
+  /// A paused listing with stock left stays Inactive, not Sold.
+  static bool _itemIsSold(Map<String, dynamic> it) {
+    final flag = it['sold'] ?? it['isSold'];
+    if (flag == true || flag == 1 || '${flag}'.toLowerCase() == 'true') {
+      return true;
+    }
+    final stock = _stockOf(it);
+    return stock != null && stock <= 0;
+  }
+
+  static bool _countsAsActiveListing(Map<String, dynamic> it) =>
+      it['isActive'] == true && !_itemIsSold(it);
+
   static String _reviewLabel(Map<String, dynamic> it) {
+    if (_itemIsSold(it)) return 'Sold';
     final review = _itemReviewStatus(it);
     if (review == 'pending') return 'Under review';
     if (review == 'rejected') return 'Rejected';
@@ -2462,6 +2574,7 @@ class _MarketplaceMerchantDashboardState
   }
 
   static Color _reviewColor(Map<String, dynamic> it) {
+    if (_itemIsSold(it)) return const Color(0xFFB71C1C);
     final review = _itemReviewStatus(it);
     if (review == 'pending') return Colors.orange;
     if (review == 'rejected') return Colors.red;
@@ -3473,7 +3586,7 @@ class _MarketplaceMerchantDashboardState
 
       setState(() {
         _totalItems = _items.length;
-        _activeItems = _items.where((e) => e['isActive'] == true).length;
+        _activeItems = _items.where(_countsAsActiveListing).length;
       });
     } catch (e) {
       debugPrint('Delete item error: $e');
@@ -5858,7 +5971,9 @@ class _MarketplaceMerchantDashboardState
     final id = (it['id'] ?? '').toString().trim();
     if (id.isEmpty) return;
     final canPromote =
-        _itemReviewStatus(it) == 'approved' && it['isActive'] == true;
+        _itemReviewStatus(it) == 'approved' &&
+        it['isActive'] == true &&
+        !_itemIsSold(it);
     if (!canPromote) {
       ToastHelper.showCustomToast(
         context,
@@ -6368,6 +6483,11 @@ class _MarketplaceMerchantDashboardState
                       label: 'Live',
                       selected: _filterStatus == 'active',
                       onTap: () => setState(() => _filterStatus = 'active'),
+                    ),
+                    _chip(
+                      label: 'Sold',
+                      selected: _filterStatus == 'sold',
+                      onTap: () => setState(() => _filterStatus = 'sold'),
                     ),
                     _chip(
                       label: 'Under review',
@@ -7188,10 +7308,12 @@ class _ModernItemMiniCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final statusLabel = _MarketplaceMerchantDashboardState._reviewLabel(item);
     final statusColor = _MarketplaceMerchantDashboardState._reviewColor(item);
+    final sold = _MarketplaceMerchantDashboardState._itemIsSold(item);
     final canPromote =
         _MarketplaceMerchantDashboardState._itemReviewStatus(item) ==
                 'approved' &&
-            item['isActive'] == true;
+            item['isActive'] == true &&
+            !sold;
     final isBoosted = MarketplacePromoteService.isPromotedNow(item);
 
     return Container(
@@ -7214,7 +7336,20 @@ class _ModernItemMiniCard extends StatelessWidget {
                 children: [
                   Expanded(
                     flex: 5,
-                    child: _ImageAny(_coverImageSourceFromItem(item)),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        ColorFiltered(
+                          colorFilter: sold
+                              ? const ColorFilter.mode(
+                                  Color(0x88000000), BlendMode.darken)
+                              : const ColorFilter.mode(
+                                  Colors.transparent, BlendMode.srcOver),
+                          child: _ImageAny(_coverImageSourceFromItem(item)),
+                        ),
+                        if (sold) const _SoldDiagonalBanner(),
+                      ],
+                    ),
                   ),
                   Expanded(
                     flex: 5,
@@ -7372,10 +7507,12 @@ class _ItemCard extends StatelessWidget {
             'rejected';
     final rejectReason = (item['rejectedReason'] ?? '').toString().trim();
     final showRejectReason = isRejected && rejectReason.isNotEmpty;
+    final sold = _MarketplaceMerchantDashboardState._itemIsSold(item);
     final canPromote =
         _MarketplaceMerchantDashboardState._itemReviewStatus(item) ==
                 'approved' &&
-            item['isActive'] == true;
+            item['isActive'] == true &&
+            !sold;
     final isBoosted = MarketplacePromoteService.isPromotedNow(item);
 
     // Flex layout: image shrinks; text never overflows the grid cell.
@@ -7403,7 +7540,20 @@ class _ItemCard extends StatelessWidget {
                   children: [
                     Expanded(
                       flex: showRejectReason ? 5 : 6,
-                      child: _ImageAny(_coverImageSourceFromItem(item)),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          ColorFiltered(
+                            colorFilter: sold
+                                ? const ColorFilter.mode(
+                                    Color(0x88000000), BlendMode.darken)
+                                : const ColorFilter.mode(
+                                    Colors.transparent, BlendMode.srcOver),
+                            child: _ImageAny(_coverImageSourceFromItem(item)),
+                          ),
+                          if (sold) const _SoldDiagonalBanner(),
+                        ],
+                      ),
                     ),
                     Expanded(
                       flex: showRejectReason ? 5 : 4,
@@ -7597,6 +7747,45 @@ class _ItemCard extends StatelessWidget {
           onTap: onTap,
           customBorder: const CircleBorder(),
           child: Icon(icon, size: compact ? 14 : 16, color: color),
+        ),
+      ),
+    );
+  }
+}
+
+/// Red diagonal SOLD band across a listing photo.
+class _SoldDiagonalBanner extends StatelessWidget {
+  const _SoldDiagonalBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      right: -34,
+      top: 18,
+      child: Transform.rotate(
+        angle: 0.6,
+        child: Container(
+          width: 120,
+          padding: const EdgeInsets.symmetric(vertical: 5),
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(0xFFD32F2F), Color(0xFFB71C1C)],
+            ),
+            boxShadow: [
+              BoxShadow(color: Color(0x66B71C1C), blurRadius: 8),
+            ],
+          ),
+          alignment: Alignment.center,
+          child: const Text(
+            'SOLD',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+              fontSize: 12,
+              letterSpacing: 1.4,
+            ),
+          ),
         ),
       ),
     );

@@ -3662,6 +3662,7 @@ class _MerchantProductCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final sold = item.isSoldOut;
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(
@@ -3672,7 +3673,7 @@ class _MerchantProductCard extends StatelessWidget {
       color: Colors.white,
       shadowColor: Colors.black26,
       child: InkWell(
-        onTap: onOpen,
+        onTap: sold ? null : onOpen,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -3682,7 +3683,56 @@ class _MerchantProductCard extends StatelessWidget {
                   topLeft: Radius.circular(18),
                   topRight: Radius.circular(18),
                 ),
-                child: imageBuilder(item),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    ColorFiltered(
+                      colorFilter: sold
+                          ? const ColorFilter.mode(
+                              Color(0x88000000), BlendMode.darken)
+                          : const ColorFilter.mode(
+                              Colors.transparent, BlendMode.srcOver),
+                      child: imageBuilder(item),
+                    ),
+                    if (sold)
+                      Positioned(
+                        right: -34,
+                        top: 18,
+                        child: Transform.rotate(
+                          angle: 0.6,
+                          child: Container(
+                            width: 120,
+                            padding: const EdgeInsets.symmetric(vertical: 5),
+                            decoration: const BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [
+                                  Color(0xFFD32F2F),
+                                  Color(0xFFB71C1C),
+                                ],
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Color(0x66B71C1C),
+                                  blurRadius: 8,
+                                ),
+                              ],
+                            ),
+                            alignment: Alignment.center,
+                            child: const Text(
+                              'SOLD',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 12,
+                                letterSpacing: 1.4,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
             Padding(
@@ -3692,7 +3742,7 @@ class _MerchantProductCard extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   GestureDetector(
-                    onTap: onOpen,
+                    onTap: sold ? null : onOpen,
                     child: Text(
                       item.name,
                       maxLines: 1,
@@ -3719,7 +3769,7 @@ class _MerchantProductCard extends StatelessWidget {
                     children: [
                       Expanded(
                         child: OutlinedButton(
-                          onPressed: onAddToCart,
+                          onPressed: sold ? null : onAddToCart,
                           style: OutlinedButton.styleFrom(
                             foregroundColor: _brandOrange,
                             side: const BorderSide(color: _brandOrange),
@@ -3734,7 +3784,7 @@ class _MerchantProductCard extends StatelessWidget {
                       const SizedBox(width: 6),
                       Expanded(
                         child: ElevatedButton(
-                          onPressed: onBuyNow,
+                          onPressed: sold ? null : onBuyNow,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: _brandOrange,
                             foregroundColor: Colors.white,

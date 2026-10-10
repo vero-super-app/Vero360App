@@ -26,6 +26,9 @@ class MarketplaceDetailModel {
   /// Available units. Null = legacy / unlimited (buyer capped at 99).
   final int? stockQuantity;
 
+  /// Explicit sold flag written when a listing is fully sold.
+  final bool markedSold;
+
   MarketplaceDetailModel({
     required this.id,
     required this.name,
@@ -41,12 +44,16 @@ class MarketplaceDetailModel {
     this.gallery = const [],
     this.videos = const [],
     this.stockQuantity,
+    this.markedSold = false,
   });
 
   /// ✅ True only if we have a real numeric backend id > 0
   bool get hasValidSqlItemId => sqlItemId != null && sqlItemId! > 0;
 
   bool get isOutOfStock => stockQuantity != null && stockQuantity! <= 0;
+
+  /// Fully sold: stock finished, or the listing was marked sold.
+  bool get isSoldOut => markedSold || isOutOfStock;
 
   int get maxOrderQty {
     if (stockQuantity == null) return 99999;
@@ -146,6 +153,9 @@ class MarketplaceDetailModel {
         if (raw is num) return raw.toInt();
         return int.tryParse('${raw ?? ''}');
       }(),
+      markedSold: data['sold'] == true ||
+          data['isSold'] == true ||
+          '${data['sold'] ?? data['isSold'] ?? ''}'.toLowerCase() == 'true',
     );
   }
 }

@@ -1833,7 +1833,24 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   Timer? _pollTimer;
   bool _isLoading = true;
   bool _resultHandled = false;
+  bool _redirectResolveInFlight = false;
   final order_svc.OrderService _orderService = order_svc.OrderService();
+
+  static const _paidStatuses = {
+    'successful',
+    'success',
+    'paid',
+    'completed',
+  };
+  static const _failedStatuses = {
+    'failed',
+    'failure',
+    'cancelled',
+    'canceled',
+    'cancel',
+    'abandoned',
+    'expired',
+  };
 
   @override
   void initState() {
@@ -1856,27 +1873,8 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
             // Deep link vero360://payment-complete
             final isPaymentCompleteDeepLink =
                 uri.scheme == 'vero360' && uri.host == 'payment-complete';
-            if (isPaymentCompleteDeepLink) {
-              final status = (uri.queryParameters['status'] ?? '').toLowerCase();
-              if (status == 'failed' || status == 'cancelled') {
-                _handlePaymentFailure();
-              } else {
-                _handlePaymentSuccess();
-              }
-              return NavigationDecision.prevent;
-            }
-
-            // PayChangu redirects to callback_url on success, return_url on cancel/fail.
-            // Use contains() so we match regardless of query params or ngrok interstitial.
-            final url = request.url.toLowerCase();
-            if (url.contains('/vero/payments/callback') ||
-                url.contains('/vero/payments/return')) {
-              final status = (uri.queryParameters['status'] ?? '').toLowerCase();
-              if (status == 'failed' || status == 'cancelled') {
-                _handlePaymentFailure();
-              } else {
-                _handlePaymentSuccess();
-              }
+            if (isPaymentCompleteDeepLink || _isTerminalPaymentUrl(uri)) {
+              unawaited(_onGatewayRedirect(uri));
               return NavigationDecision.prevent;
             }
 
@@ -1888,18 +1886,9 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
               setState(() => _isLoading = true),
           onPageFinished: (String url) {
             setState(() => _isLoading = false);
-            // Backup: if we land on callback/return (e.g. ngrok interstitial),
-            // treat as payment complete
-            final lower = url.toLowerCase();
-            if (lower.contains('/vero/payments/callback') ||
-                lower.contains('/vero/payments/return')) {
-              final uri = Uri.tryParse(url);
-              final status = (uri?.queryParameters['status'] ?? '').toLowerCase();
-              if (status == 'failed' || status == 'cancelled') {
-                _handlePaymentFailure();
-              } else {
-                _handlePaymentSuccess();
-              }
+            final landed = Uri.tryParse(url);
+            if (landed != null && _isTerminalPaymentUrl(landed)) {
+              unawaited(_onGatewayRedirect(landed));
             }
           },
           onWebResourceError: (_) =>
@@ -1913,6 +1902,112 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     _pollTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
       await _checkPaymentStatus();
     });
+  }
+
+  /// PayChangu sends a paid customer to [PayChanguConfig.callbackUrl].
+  /// Cancel and failed attempts go to [PayChanguConfig.returnUrl].
+  /// Match the real redirect only. The checkout page URL also carries those
+  /// addresses as query params, and a substring check was marking that as paid.
+  bool _matchesPaymentEndpoint(Uri uri, String configured) {
+    final target = Uri.tryParse(configured);
+    if (target == null || target.host.isEmpty) return false;
+    if (uri.scheme != 'http' && uri.scheme != 'https') return false;
+    if (uri.host.toLowerCase() != target.host.toLowerCase()) return false;
+    String norm(String path) {
+      var p = path.toLowerCase();
+      if (p.length > 1 && p.endsWith('/')) {
+        p = p.substring(0, p.length - 1);
+      }
+      return p;
+    }
+
+    return norm(uri.path) == norm(target.path);
+  }
+
+  bool _isTerminalPaymentUrl(Uri uri) {
+    return _matchesPaymentEndpoint(uri, PayChanguConfig.callbackUrl) ||
+        _matchesPaymentEndpoint(uri, PayChanguConfig.returnUrl);
+  }
+
+  bool _isPaidStatus(String? raw) =>
+      _paidStatuses.contains((raw ?? '').toLowerCase().trim());
+
+  bool _isFailureStatus(String? raw) =>
+      _failedStatuses.contains((raw ?? '').toLowerCase().trim());
+
+  /// Transaction status from a verify payload. Prefer an explicit payment
+  /// status over the envelope `status: success` that only means the lookup worked.
+  String? _statusFromVerifyNode(Map<dynamic, dynamic> node) {
+    final paymentStatus =
+        (node['payment_status'] ?? node['paymentStatus'] ?? '')
+            .toString()
+            .toLowerCase()
+            .trim();
+    final status = (node['status'] ?? '').toString().toLowerCase().trim();
+    if (paymentStatus.isNotEmpty &&
+        _isPaidStatus(status) &&
+        !_isPaidStatus(paymentStatus)) {
+      return paymentStatus;
+    }
+    if (status.isNotEmpty) return status;
+    if (paymentStatus.isNotEmpty) return paymentStatus;
+    final inner = node['data'];
+    if (inner is Map) return _statusFromVerifyNode(inner);
+    return null;
+  }
+
+  Future<String?> _fetchVerifiedPaymentStatus() async {
+    await PayChanguConfig.initialize();
+    final response = await http.get(
+      PayChanguConfig.verifyUri(widget.txRef),
+      headers: {
+        'Accept': 'application/json',
+        'Authorization': PayChanguConfig.authorizationToken,
+      },
+    );
+    if (response.statusCode != 200) return null;
+    final data = json.decode(response.body);
+    debugPrint('[CheckoutWebView] verify response: ${response.body}');
+    if (data is! Map) return null;
+    final dataNode = data['data'] is Map ? data['data'] as Map : data;
+    return _statusFromVerifyNode(dataNode);
+  }
+
+  /// Confirm with PayChangu before creating an order. A return-url visit is a
+  /// cancel unless verify already shows the charge as paid.
+  Future<void> _onGatewayRedirect(Uri uri) async {
+    if (_resultHandled || _redirectResolveInFlight) return;
+    final userLeft = _matchesPaymentEndpoint(uri, PayChanguConfig.returnUrl) ||
+        _isFailureStatus(uri.queryParameters['status']);
+    _redirectResolveInFlight = true;
+    try {
+      final attempts = userLeft ? 1 : 4;
+      for (var i = 0; i < attempts; i++) {
+        if (_resultHandled) return;
+        final status = await _fetchVerifiedPaymentStatus();
+        if (_isPaidStatus(status)) {
+          _handlePaymentSuccess();
+          return;
+        }
+        // A success redirect can arrive while an earlier attempt is still
+        // marked failed. Only a return-url / cancel closes the payment.
+        if (userLeft && _isFailureStatus(status)) {
+          _handlePaymentFailure();
+          return;
+        }
+        if (i < attempts - 1) {
+          await Future.delayed(const Duration(milliseconds: 700));
+        }
+      }
+      if (userLeft && !_resultHandled) {
+        _handlePaymentFailure();
+      }
+    } catch (e) {
+      debugPrint('[CheckoutWebView] redirect verify failed: $e');
+      if (userLeft && !_resultHandled) _handlePaymentFailure();
+    } finally {
+      _redirectResolveInFlight = false;
+    }
   }
 
   /// Backend orders + Firestore escrow (merchant wallet credited after buyer confirms or 7 days).
@@ -1947,38 +2042,14 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   }
 
   Future<void> _checkPaymentStatus() async {
+    if (_resultHandled) return;
     try {
-      await PayChanguConfig.initialize();
-      final response = await http.get(
-        PayChanguConfig.verifyUri(widget.txRef),
-        headers: {
-          'Accept': 'application/json',
-          'Authorization': PayChanguConfig.authorizationToken,
-        },
-      );
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        debugPrint('[CheckoutWebView] verify response: ${response.body}');
-        final dataNode = (data['data'] is Map) ? data['data'] as Map<String, dynamic> : <String, dynamic>{};
-        final rawStatus = (dataNode['status'] ??
-                dataNode['payment_status'] ??
-                dataNode['paymentStatus'] ??
-                '')
-            .toString();
-        final status = rawStatus.toLowerCase();
-
-        // PayChangu may return 'successful', 'success', 'paid', 'completed', etc.
-        if (status == 'successful' ||
-            status == 'success' ||
-            status == 'paid' ||
-            status == 'completed') {
-          debugPrint('[CheckoutWebView] verify => success (status=$status)');
-          _handlePaymentSuccess();
-        } else if (status == 'failed' || status == 'cancelled') {
-          debugPrint('[CheckoutWebView] verify => failure (status=$status)');
-          _handlePaymentFailure();
-        }
+      final status = await _fetchVerifiedPaymentStatus();
+      // Only a verified paid status completes checkout. A failed mobile-money
+      // attempt stays open so the customer can retry. Cancel lands on return_url.
+      if (_isPaidStatus(status)) {
+        debugPrint('[CheckoutWebView] verify => success (status=$status)');
+        _handlePaymentSuccess();
       }
     } catch (_) {}
   }

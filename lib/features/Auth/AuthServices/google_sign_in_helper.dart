@@ -46,13 +46,11 @@ class GoogleSignInHelper {
         );
       }
 
-      // Prefer a clean account picker (avoids stale session without idToken).
-      try {
-        await _google.signOut();
-      } catch (_) {}
-
+      // Do not sign out immediately before authenticate(). On Android that
+      // clears Credential Manager state and the account picker comes back
+      // as "canceled" before the user can choose an account.
       final account = await _google.authenticate(
-        scopeHint: const ['email', 'profile', 'openid'],
+        scopeHint: const ['email', 'profile'],
       );
       var idToken = account.authentication.idToken;
       String? accessToken;
@@ -66,12 +64,8 @@ class GoogleSignInHelper {
       } catch (_) {}
 
       if (idToken == null || idToken.isEmpty) {
-        // One retry after re-auth — common after Play Services / config glitches.
-        try {
-          await _google.signOut();
-        } catch (_) {}
         final retry = await _google.authenticate(
-          scopeHint: const ['email', 'profile', 'openid'],
+          scopeHint: const ['email', 'profile'],
         );
         idToken = retry.authentication.idToken;
         try {
@@ -119,14 +113,30 @@ class GoogleSignInHelper {
   static bool _isCanceled(Object e) {
     if (e is FirebaseAuthException) {
       final c = e.code.toLowerCase();
-      return c.contains('cancel') || c == 'web-context-canceled';
+      return c == 'web-context-canceled' ||
+          c == 'cancelled' ||
+          c == 'canceled' ||
+          c == 'popup-closed-by-user';
     }
     if (e is GoogleSignInException) {
-      return e.code == GoogleSignInExceptionCode.canceled ||
-          e.code == GoogleSignInExceptionCode.interrupted;
+      if (e.code != GoogleSignInExceptionCode.canceled) return false;
+      return !_looksLikeConfigFailure(e.description);
     }
-    final s = e.toString().toLowerCase();
-    return s.contains('cancel') || s.contains('canceled');
+    return false;
+  }
+
+  /// Credential Manager reports a bad SHA-1 / OAuth setup as a cancellation.
+  static bool _looksLikeConfigFailure(String? raw) {
+    final s = (raw ?? '').toLowerCase();
+    return s.contains('developer_error') ||
+        s.contains('developer error') ||
+        s.contains('apiexception: 10') ||
+        s.contains('apiexception: 12500') ||
+        s.contains('12500') ||
+        s.contains('sha-1') ||
+        s.contains('sha-256') ||
+        s.contains('server client') ||
+        s.contains('not set up');
   }
 
   static Object _wrap(Object e, FirebaseAuthException? providerError) {
@@ -150,6 +160,23 @@ class GoogleSignInHelper {
             code: 'google-ui',
             message:
                 'Google Sign-In isn’t available. Update Google Play services and try again.',
+          );
+        case GoogleSignInExceptionCode.canceled:
+          if (_looksLikeConfigFailure(e.description)) {
+            return FirebaseAuthException(
+              code: 'google-config',
+              message:
+                  'Google sign-in isn’t available right now. Try again or use email.',
+            );
+          }
+          return FirebaseAuthException(
+            code: 'canceled',
+            message: 'Google sign-in was cancelled.',
+          );
+        case GoogleSignInExceptionCode.interrupted:
+          return FirebaseAuthException(
+            code: 'google-sign-in',
+            message: 'Google sign-in was interrupted. Please try again.',
           );
         default:
           return FirebaseAuthException(

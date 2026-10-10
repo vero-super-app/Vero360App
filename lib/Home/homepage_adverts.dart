@@ -334,6 +334,7 @@ class HomepageAdvertService {
           amount: amount,
           description: 'Homepage advert fee · $title',
           reference: txRef.isNotEmpty ? txRef : 'homepage_ad:$advertId',
+          service: 'homepage_ads',
         );
         feeCreditedNow = true;
       } catch (_) {
@@ -1678,10 +1679,6 @@ class _AdvertiseHerePageState extends State<AdvertiseHerePage> {
           : _accountName.trim();
       final email = _accountEmail.trim();
       final phone = _normalizePhone(_accountPhone);
-      final parts = name.split(RegExp(r'\s+'));
-      final firstName = parts.isNotEmpty ? parts.first : 'Advertiser';
-      final lastName =
-          parts.length > 1 ? parts.sublist(1).join(' ') : 'Vero360';
 
       final imageUrl = await HomepageAdvertService.uploadImage(
         userId: user.uid,
@@ -1710,50 +1707,12 @@ class _AdvertiseHerePageState extends State<AdvertiseHerePage> {
         productPrice: productPrice,
       );
 
-      final response = await http
-          .post(
-            PayChanguConfig.paymentUri,
-            headers: PayChanguConfig.authHeaders,
-            body: json.encode({
-              'tx_ref': txRef,
-              'first_name': firstName,
-              'last_name': lastName,
-              'email': email,
-              'phone_number': phone,
-              'currency': 'MWK',
-              'amount': _plan.priceMwk.toString(),
-              'payment_methods': ['card', 'mobile_money', 'bank'],
-              'callback_url': PayChanguConfig.callbackUrl,
-              'return_url': PayChanguConfig.returnUrl,
-              'customization': {
-                'title': 'Vero360 Homepage Ad',
-                'description':
-                    'Homepage advert · ${_plan.label} · $_category · $title',
-              },
-            }),
-          )
-          .timeout(const Duration(seconds: 30));
-
-      if (response.statusCode != 200 && response.statusCode != 201) {
-        throw Exception('HTTP ${response.statusCode}: ${response.body}');
-      }
-      final data = json.decode(response.body) as Map<String, dynamic>;
-      final status = (data['status'] ?? '').toString().toLowerCase();
-      if (status != 'success') {
-        throw Exception(data['message']?.toString() ?? 'Payment init failed');
-      }
-      final checkoutUrl = data['data']?['checkout_url'] as String?;
-      if (checkoutUrl == null || checkoutUrl.isEmpty) {
-        throw Exception('No checkout URL from payment provider');
-      }
-
       if (!mounted) return;
       final paidId = advertId;
       final planLabel = _plan.label;
       await Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => InAppPaymentPage(
-            checkoutUrl: checkoutUrl,
             txRef: txRef,
             totalAmount: _plan.priceMwk.toDouble(),
             rootContext: context,

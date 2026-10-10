@@ -28,6 +28,7 @@ import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
+import 'package:vero360_app/GernalServices/pawapay_payment.dart';
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/GernalServices/order_service.dart' as order_svc;
 import 'package:vero360_app/GernalServices/vero_rewards_service.dart';
@@ -881,92 +882,29 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     setState(() => _paying = true);
 
     try {
-      await PayChanguConfig.initialize();
-      if (!PayChanguConfig.isConfigured) {
-        throw Exception(
-          'Payment is not configured. Add PAYCHANGU_SECRET_TEST to .env.',
-        );
-      }
-
-      final prefs = await SharedPreferences.getInstance();
-      final email = prefs.getString('email') ?? 'customer@example.com';
-      final name = prefs.getString('name') ?? 'Customer';
-      final phone = prefs.getString('phone') ?? '+265888000000';
-
-      final parts = name.split(' ');
-      final firstName = parts.isNotEmpty ? parts.first : 'Customer';
-      final lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
-
       final txRef = 'vero-${DateTime.now().millisecondsSinceEpoch}';
-
-      // DNS test
-      try {
-        await InternetAddress.lookup('api.paychangu.com');
-      } on SocketException catch (_) {
-        throw Exception(
-            'Cannot connect to payment service. Please check your internet connection.');
-      }
-
-      final response = await http
-          .post(
-            PayChanguConfig.paymentUri,
-            headers: PayChanguConfig.authHeaders,
-            body: json.encode({
-              'tx_ref': txRef,
-              'first_name': firstName,
-              'last_name': lastName,
-              'email': email,
-              'phone_number': phone,
-              'currency': 'MWK',
-              'amount': _total.round().toString(),
-              'payment_methods': ['card', 'mobile_money', 'bank'],
-              'callback_url': PayChanguConfig.callbackUrl,
-              'return_url': PayChanguConfig.returnUrl,
-              'customization': {
-                'title': 'Vero 360 Payment',
-                'description': 'Cart order • Delivery: ${_deliveryLabel(_deliveryType)} • ${_deliveryType == DeliveryType.pickup ? "Pickup" : "Deliver to: ${_defaultAddr?.city ?? "-"}"}',
-              },
-            }),
-          )
-          .timeout(const Duration(seconds: 30));
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final Map<String, dynamic> responseJson = json.decode(response.body);
-
-        final status = (responseJson['status'] ?? '').toString().toLowerCase();
-        if (status == 'success') {
-          final checkoutUrl = responseJson['data']['checkout_url'] as String;
-
-          if (!mounted) return;
-
-          Navigator.of(context).push(MaterialPageRoute(
-            builder: (_) => InAppPaymentPage(
-              checkoutUrl: checkoutUrl,
-              txRef: txRef,
-              totalAmount: _total,
-              rootContext: context,
-              clearCartOnSuccess: true,
-              cartItemsForMerchantCredit: _items,
-              shippingAddress: _deliveryType == DeliveryType.pickup ? null : _defaultAddr,
-              deliveryType: _deliveryType,
-              onSuccessNavigate: _isFoodCheckout
-                  ? (root) {
-                      Navigator.of(root).pushAndRemoveUntil(
-                        MaterialPageRoute(
-                          builder: (_) => const FoodMyOrdersPage(),
-                        ),
-                        (route) => route.isFirst,
-                      );
-                    }
-                  : null,
-            ),
-          ));
-        } else {
-          throw Exception(responseJson['message'] ?? 'Payment failed');
-        }
-      } else {
-        throw Exception('HTTP ${response.statusCode}: ${response.body}');
-      }
+      if (!mounted) return;
+      Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => InAppPaymentPage(
+          txRef: txRef,
+          totalAmount: _total,
+          rootContext: context,
+          clearCartOnSuccess: true,
+          cartItemsForMerchantCredit: _items,
+          shippingAddress: _deliveryType == DeliveryType.pickup ? null : _defaultAddr,
+          deliveryType: _deliveryType,
+          onSuccessNavigate: _isFoodCheckout
+              ? (root) {
+                  Navigator.of(root).pushAndRemoveUntil(
+                    MaterialPageRoute(
+                      builder: (_) => const FoodMyOrdersPage(),
+                    ),
+                    (route) => route.isFirst,
+                  );
+                }
+              : null,
+        ),
+      ));
     } on SocketException catch (e) {
       ToastHelper.showCustomToast(
         context,
@@ -1074,7 +1012,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'Secure checkout · PayChangu protected',
+                          'Secure checkout · Airtel Money or TNM Mpamba',
                           style: TextStyle(
                             fontSize: 12.5,
                             fontWeight: FontWeight.w600,
@@ -1774,6 +1712,7 @@ class FoodCheckoutContext {
 
 // ────────────────────── IN-APP PAYMENT PAGE ──────────────────────
 class InAppPaymentPage extends StatefulWidget {
+  /// Empty when the customer pays with a PawaPay phone prompt.
   final String checkoutUrl;
   final String txRef;
   final double totalAmount;
@@ -1808,7 +1747,7 @@ class InAppPaymentPage extends StatefulWidget {
 
   const InAppPaymentPage({
     super.key,
-    required this.checkoutUrl,
+    this.checkoutUrl = '',
     required this.txRef,
     required this.totalAmount,
     required this.rootContext,
@@ -1829,17 +1768,82 @@ class InAppPaymentPage extends StatefulWidget {
 }
 
 class _InAppPaymentPageState extends State<InAppPaymentPage> {
-  late final WebViewController _controller;
+  WebViewController? _controller;
   Timer? _pollTimer;
   bool _isLoading = true;
   bool _resultHandled = false;
   final order_svc.OrderService _orderService = order_svc.OrderService();
+  final TextEditingController _momoPhone = TextEditingController();
+  String _momoOperator = PawaPayPayment.airtelOperatorId;
+  bool _momoBusy = false;
+  bool _momoWaiting = false;
+  String _momoMessage = '';
+  bool get _usePawaPay => widget.checkoutUrl.trim().isEmpty;
 
   @override
   void initState() {
     super.initState();
-    _initializeWebView();
-    _startStatusPolling();
+    if (_usePawaPay) {
+      _isLoading = false;
+      _prefillMomoPhone();
+    } else {
+      _initializeWebView();
+      _startStatusPolling();
+    }
+  }
+
+  Future<void> _prefillMomoPhone() async {
+    final prefs = await SharedPreferences.getInstance();
+    final phone = (prefs.getString('phone') ??
+            prefs.getString('user_phone') ??
+            FirebaseAuth.instance.currentUser?.phoneNumber ??
+            '')
+        .trim();
+    if (!mounted || phone.isEmpty || _momoPhone.text.isNotEmpty) return;
+    final local = PawaPayPayment.localPhone(phone);
+    _momoPhone.text = local;
+    final guessed = PawaPayPayment.operatorForPhone(local);
+    if (guessed != null) setState(() => _momoOperator = guessed);
+  }
+
+  Future<void> _startPawaPayDeposit() async {
+    if (_momoBusy || _resultHandled) return;
+    setState(() {
+      _momoBusy = true;
+      _momoWaiting = false;
+      _momoMessage = '';
+    });
+    try {
+      final depositId = await PawaPayPayment.createDeposit(
+        amountMwk: widget.totalAmount.round(),
+        phone: _momoPhone.text.trim(),
+        operatorId: _momoOperator,
+        reference: widget.txRef,
+      );
+      if (!mounted) return;
+      setState(() => _momoWaiting = true);
+      _pollTimer?.cancel();
+      _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+        try {
+          final status = await PawaPayPayment.readStatus(depositId);
+          final state = (status['status'] ?? '').toString();
+          if (state == 'completed') {
+            _handlePaymentSuccess();
+          } else if (state == 'failed') {
+            _momoMessage =
+                (status['failure'] ?? 'Payment was declined.').toString();
+            _handlePaymentFailure();
+          }
+        } catch (_) {}
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _momoBusy = false;
+        _momoWaiting = false;
+        _momoMessage = PawaPayPayment.readableError(e);
+      });
+    }
   }
 
   void _initializeWebView() {
@@ -2466,6 +2470,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _momoPhone.dispose();
     super.dispose();
   }
 
@@ -2498,6 +2503,19 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     }
   }
 
+  Widget _pawaPayBody() {
+    return PawaPayCheckoutView(
+      amountMwk: widget.totalAmount.round(),
+      phoneController: _momoPhone,
+      operatorId: _momoOperator,
+      onOperatorChanged: (value) => setState(() => _momoOperator = value),
+      onSubmit: _startPawaPayDeposit,
+      busy: _momoBusy,
+      waiting: _momoWaiting,
+      message: _momoMessage,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -2507,13 +2525,26 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         _onBackPressed();
       },
       child: Scaffold(
+        backgroundColor: _usePawaPay ? const Color(0xFFF6F4F0) : null,
         appBar: AppBar(
           elevation: 0,
-          backgroundColor: const Color(0xFFFF8A00),
-          foregroundColor: Colors.white,
+          scrolledUnderElevation: 0,
+          backgroundColor: _usePawaPay
+              ? const Color(0xFFF6F4F0)
+              : const Color(0xFFFF8A00),
+          foregroundColor: _usePawaPay ? const Color(0xFF161513) : Colors.white,
           centerTitle: false,
           titleSpacing: 8,
-          title: const Row(
+          title: _usePawaPay
+              ? const Text(
+                  'Pay',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 17,
+                    color: Color(0xFF161513),
+                  ),
+                )
+              : const Row(
             children: [
               Icon(Icons.payment_rounded, size: 26),
               SizedBox(width: 10),
@@ -2538,9 +2569,11 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
             tooltip: 'Back to checkout',
           ),
         ),
-        body: Stack(
+        body: _usePawaPay
+            ? _pawaPayBody()
+            : Stack(
           children: [
-          WebViewWidget(controller: _controller),
+          WebViewWidget(controller: _controller!),
           if (_isLoading)
             Container(
               color: Colors.white,

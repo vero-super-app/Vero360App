@@ -748,67 +748,8 @@ class _CheckoutPageState extends State<CheckoutPage> {
     setState(() => _submitting = true);
 
     try {
-      await PayChanguConfig.initialize();
-      if (!PayChanguConfig.isConfigured) {
-        throw Exception(
-          'Payment is not configured. Add PAYCHANGU_SECRET_TEST or PAYCHANGU_SECRET_LIVE to .env.',
-        );
-      }
-
-      final prefs = await SharedPreferences.getInstance();
-      final email = prefs.getString('email') ?? 'customer@example.com';
-      final name = prefs.getString('name') ?? 'Customer';
-      final phoneNumber = prefs.getString('phone') ?? '+265888000000';
-
-      final parts = name.split(' ');
-      final firstName = parts.isNotEmpty ? parts.first : 'Customer';
-      final lastName = parts.length > 1 ? parts.sublist(1).join(' ') : '';
-
       final txRef = 'vero-${DateTime.now().millisecondsSinceEpoch}';
-
-      try {
-        await InternetAddress.lookup('api.paychangu.com');
-      } on SocketException catch (_) {
-        throw Exception('Cannot connect to payment service. Please check your internet connection.');
-      }
-
-      final addrText = _deliveryType == DeliveryType.pickup
-          ? 'Pickup'
-          : 'Deliver to: ${_defaultAddr?.city ?? '-'}';
-      final description =
-          'Order: ${widget.item.name} (x$_qty) • Delivery: ${_deliveryLabel(_deliveryType)} • $addrText';
-
-      final response = await http
-          .post(
-            PayChanguConfig.paymentUri,
-            headers: PayChanguConfig.authHeaders,
-            body: json.encode({
-              'tx_ref': txRef,
-              'first_name': firstName,
-              'last_name': lastName,
-              'email': email,
-              'phone_number': phoneNumber,
-              'currency': 'MWK',
-              'amount': _total == _total.roundToDouble()
-                  ? _total.round().toString()
-                  : _total.toStringAsFixed(2),
-              'payment_methods': ['card', 'mobile_money', 'bank'],
-              'callback_url': PayChanguConfig.callbackUrl,
-              'return_url': PayChanguConfig.returnUrl,
-              'customization': {
-                'title': 'Vero 360 Payment',
-                'description': description,
-              },
-            }),
-          )
-          .timeout(const Duration(seconds: 30));
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final Map<String, dynamic> responseJson = json.decode(response.body);
-        final status = (responseJson['status'] ?? '').toString().toLowerCase();
-        if (status == 'success') {
-          final checkoutUrl = responseJson['data']['checkout_url'] as String;
-          if (!mounted) return;
+      if (!mounted) return;
           // Pass merchant credit so wallet is credited on payment success (same as cart checkout)
           final mid = (widget.item.merchantId ?? '').trim();
           final mname = (widget.item.merchantName ?? '').trim();
@@ -836,7 +777,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
           await Navigator.of(context).push(
             MaterialPageRoute(
               builder: (_) => InAppPaymentPage(
-                checkoutUrl: checkoutUrl,
                 txRef: txRef,
                 totalAmount: _total,
                 rootContext: context,
@@ -863,12 +803,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
               ),
             ),
           );
-        } else {
-          throw Exception(responseJson['message'] ?? 'Payment failed');
-        }
-      } else {
-        throw Exception('HTTP ${response.statusCode}: ${response.body}');
-      }
     } on SocketException catch (e) {
       ToastHelper.showCustomToast(
         context,
@@ -1015,7 +949,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'Secure checkout · PayChangu protected',
+                            'Secure checkout · Airtel Money or TNM Mpamba',
                             style: TextStyle(
                               fontSize: 12.5,
                               fontWeight: FontWeight.w600,

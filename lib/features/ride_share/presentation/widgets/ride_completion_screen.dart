@@ -12,6 +12,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
+import 'package:vero360_app/GernalServices/pawapay_payment.dart';
 import 'package:vero360_app/GernalServices/vero_rewards_service.dart';
 import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/widgets/vero_spin_reward_prompt.dart';
@@ -138,26 +139,10 @@ class _RideCompletionScreenState extends ConsumerState<RideCompletionScreen>
     final onDone = widget.onDone;
     final ride = widget.ride;
     final totalFare = _totalFare;
-    final distanceStr = _distance.toStringAsFixed(1);
 
     setState(() => _isProcessingPayment = true);
 
     try {
-      await InternetAddress.lookup('api.paychangu.com');
-    } on SocketException catch (_) {
-      if (mounted) setState(() => _isProcessingPayment = false);
-      scaffold.showSnackBar(
-        const SnackBar(
-          content: Text('No internet connection. Please check and try again.'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    try {
-      // Reuse the same txRef so a successful PayChangu charge can still settle
-      // after a false WebView result or a slow verify.
       if (_pendingTxRef != null &&
           await _tryConfirmPending(ride.id, retries: 2)) {
         await _finishDigitalPayment(
@@ -169,71 +154,27 @@ class _RideCompletionScreenState extends ConsumerState<RideCompletionScreen>
         return;
       }
 
-      if (_pendingCheckoutUrl == null || _pendingTxRef == null) {
-        final txRef = 'ride_${ride.id}_${const Uuid().v4()}';
-        final nameParts = (user.displayName ?? 'Passenger').split(' ');
-        final firstName = nameParts.first;
-        final lastName =
-            nameParts.length > 1 ? nameParts.sublist(1).join(' ') : '';
-
-        final response = await http
-            .post(
-              PayChanguConfig.paymentUri,
-              headers: PayChanguConfig.authHeaders,
-              body: json.encode({
-                'tx_ref': txRef,
-                'first_name': firstName,
-                'last_name': lastName,
-                'email': user.email ?? '',
-                'phone_number': user.phoneNumber ?? '',
-                'currency': 'MWK',
-                'amount': totalFare.round().toString(),
-                'payment_methods': ['card', 'mobile_money', 'bank'],
-                'callback_url': PayChanguConfig.callbackUrl,
-                'return_url': PayChanguConfig.returnUrl,
-                'customization': {
-                  'title': 'Vero Ride Payment',
-                  'description': 'Ride #${ride.id} • $distanceStr km',
-                },
-              }),
-            )
-            .timeout(const Duration(seconds: 30));
-
-        if (!mounted) return;
-
-        if (response.statusCode != 200 && response.statusCode != 201) {
-          throw Exception('HTTP ${response.statusCode}: ${response.body}');
-        }
-
-        final responseJson =
-            json.decode(response.body) as Map<String, dynamic>;
-        final status = (responseJson['status'] ?? '').toString().toLowerCase();
-        if (status != 'success') {
-          throw Exception(
-            responseJson['message'] ?? 'Payment initiation failed',
-          );
-        }
-
-        _pendingTxRef = txRef;
-        _pendingCheckoutUrl =
-            responseJson['data']['checkout_url'] as String;
-      }
-
-      final paymentResult = await navigator.push<bool>(
+      final reference = 'ride_${ride.id}_${const Uuid().v4()}';
+      final depositId = await navigator.push<String>(
         MaterialPageRoute(
-          builder: (_) => _RidePaymentWebView(
-            checkoutUrl: _pendingCheckoutUrl!,
-            txRef: _pendingTxRef!,
+          builder: (_) => PawaPayCheckoutPage(
+            amountMwk: totalFare.round(),
+            reference: reference,
+            initialPhone: user.phoneNumber,
           ),
         ),
       );
+      if (depositId != null && depositId.isNotEmpty) {
+        _pendingTxRef = depositId;
+      }
 
       if (!mounted) return;
 
-      final confirmed = await _tryConfirmPending(
-        ride.id,
-        retries: paymentResult == true ? 3 : 1,
-      );
+      final confirmed = depositId != null &&
+          await _tryConfirmPending(
+            ride.id,
+            retries: 3,
+          );
       if (confirmed) {
         await _finishDigitalPayment(
           ride: ride,
@@ -248,7 +189,7 @@ class _RideCompletionScreenState extends ConsumerState<RideCompletionScreen>
       scaffold.showSnackBar(
         SnackBar(
           content: Text(
-            paymentResult == true
+            depositId != null
                 ? 'Payment is still confirming. Tap Pay again, or choose Cash to book another ride.'
                 : 'Payment was not completed. Try again or pay cash.',
           ),
@@ -359,17 +300,11 @@ class _RideCompletionScreenState extends ConsumerState<RideCompletionScreen>
       );
 
       if (serviceFee > 0) {
-        await FirebaseWalletService.getOrCreateWallet(
-          merchantId: FirebaseWalletService.superAdminUserId,
-          merchantName: FirebaseWalletService.superAdminDisplayName,
-        );
-        await FirebaseWalletService.creditWallet(
-          merchantId: FirebaseWalletService.superAdminUserId,
+        await FirebaseWalletService.creditPlatformServiceFee(
           amount: serviceFee,
-          description:
-              'Service fee from ride #${ride.id}',
+          description: 'Service fee from ride #${ride.id}',
           reference: 'ride_fee_${ride.id}',
-          type: 'service_fee',
+          service: 'ride',
         );
       }
 

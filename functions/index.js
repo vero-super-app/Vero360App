@@ -5,7 +5,6 @@ const {
   onDocumentUpdated,
 } = require('firebase-functions/v2/firestore');
 const admin = require('firebase-admin');
-const vision = require('@google-cloud/vision');
 const {
   findBlockedTerms,
   findBlockedImageLabels,
@@ -31,7 +30,10 @@ const FUNCTIONS_SERVICE_ACCOUNT =
 
 let _visionClient = null;
 function getVisionClient() {
-  if (!_visionClient) _visionClient = new vision.ImageAnnotatorClient();
+  if (!_visionClient) {
+    const vision = require('@google-cloud/vision');
+    _visionClient = new vision.ImageAnnotatorClient();
+  }
   return _visionClient;
 }
 
@@ -2066,6 +2068,18 @@ exports.createDiditSession = onCall(
 /** Didit destination webhook — see ./didit_webhook.js */
 const { diditWebhook } = require('./didit_webhook');
 exports.diditWebhook = diditWebhook;
+
+/** PawaPay mobile-money payouts. Bank cash-out stays on PayChangu. */
+const {
+  createPawaPayPayout,
+  createPawaPayDeposit,
+  getPawaPayDepositStatus,
+  pawapayWebhook,
+} = require('./pawapay_payout');
+exports.createPawaPayPayout = createPawaPayPayout;
+exports.createPawaPayDeposit = createPawaPayDeposit;
+exports.getPawaPayDepositStatus = getPawaPayDepositStatus;
+exports.pawapayWebhook = pawapayWebhook;
 
 /** Facebook Page link posts when listings go live — see ./facebook_page_post.js */
 exports.onMarketplaceItemFacebookPost =

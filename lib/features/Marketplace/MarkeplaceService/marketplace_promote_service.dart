@@ -329,6 +329,7 @@ class MarketplacePromoteService {
         amount: amount,
         description: '${vertical.feedLabel} promote · $itemName · $planId',
         reference: txRef.isNotEmpty ? txRef : 'promo:$promoId',
+        service: 'promotions',
       );
       await ref.set({
         'platformFeeCredited': true,
@@ -368,11 +369,6 @@ class MarketplacePromoteService {
       throw StateError('Add a valid email on your profile before paying.');
     }
 
-    final parts = name.split(RegExp(r'\s+'));
-    final firstName = parts.isNotEmpty ? parts.first : 'Merchant';
-    final lastName =
-        parts.length > 1 ? parts.sublist(1).join(' ') : 'Vero360';
-
     final shortUid =
         user.uid.length >= 6 ? user.uid.substring(0, 6) : user.uid;
     final txPrefix = vertical == PromoteVertical.food
@@ -401,48 +397,10 @@ class MarketplacePromoteService {
 
     await AuthStorage.userIdFromToken();
 
-    final response = await http
-        .post(
-          PayChanguConfig.paymentUri,
-          headers: PayChanguConfig.authHeaders,
-          body: json.encode({
-            'tx_ref': txRef,
-            'first_name': firstName,
-            'last_name': lastName,
-            'email': email,
-            'phone_number': phone,
-            'currency': 'MWK',
-            'amount': plan.priceMwk.toString(),
-            'payment_methods': ['card', 'mobile_money', 'bank'],
-            'callback_url': PayChanguConfig.callbackUrl,
-            'return_url': PayChanguConfig.returnUrl,
-            'customization': {
-              'title': 'Vero360 Promote',
-              'description':
-                  '${plan.label} · ${(item['name'] ?? vertical.noun).toString()}',
-            },
-          }),
-        )
-        .timeout(const Duration(seconds: 30));
-
-    if (response.statusCode != 200 && response.statusCode != 201) {
-      throw Exception('HTTP ${response.statusCode}: ${response.body}');
-    }
-    final data = json.decode(response.body) as Map<String, dynamic>;
-    final status = (data['status'] ?? '').toString().toLowerCase();
-    if (status != 'success') {
-      throw Exception(data['message']?.toString() ?? 'Payment init failed');
-    }
-    final checkoutUrl = data['data']?['checkout_url'] as String?;
-    if (checkoutUrl == null || checkoutUrl.isEmpty) {
-      throw Exception('No checkout URL from payment provider');
-    }
-
     if (!context.mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => InAppPaymentPage(
-          checkoutUrl: checkoutUrl,
           txRef: txRef,
           totalAmount: plan.priceMwk.toDouble(),
           rootContext: context,

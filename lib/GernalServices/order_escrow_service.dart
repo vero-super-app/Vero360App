@@ -1106,6 +1106,7 @@ class OrderEscrowService {
                   ? 'Stay buyer commission — Vero share ($txRef)'
                   : 'Marketplace buyer commission — Vero share ($txRef)',
           reference: txRef,
+          service: isFood ? 'food' : isAcc ? 'stay' : 'marketplace',
         );
         await ref.set({
           'platformFeeCredited': true,

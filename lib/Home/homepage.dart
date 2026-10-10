@@ -4394,9 +4394,6 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
       final name      = _nameCtrl.text.trim();
       final email     = _emailCtrl.text.trim();
       final phone     = _normalizePhone(_phoneCtrl.text.trim());
-      final parts     = name.split(' ');
-      final firstName = parts.isNotEmpty ? parts.first : 'Customer';
-      final lastName  = parts.length > 1  ? parts.sublist(1).join(' ') : '';
       final amount    = _mwkAmount;
       if (_product.category == 'streaming' ||
           _product.category == 'subscription') {
@@ -4415,15 +4412,7 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
         ToastHelper.showCustomToast(context, 'Invalid price.', isSuccess: false, errorMessage: '');
         return;
       }
-      try { await InternetAddress.lookup('api.paychangu.com'); }
-      on SocketException catch (_) {
-        throw Exception('Cannot connect to payment service. Check your internet connection.');
-      }
       final txRef       = 'vero-digital-${DateTime.now().millisecondsSinceEpoch}';
-      final description = _isFixedPrice
-          ? 'Digital: ${_product.name} • ${formatMwk(amount)}'
-          : 'Digital: ${_product.name} • ${_product.formatAmount(widget.selectedUsd)} '
-              '(${formatMwk(amount)})';
 
       final orderId = await DigitalServiceOrderService.createPendingOrder(
         product: _product,
@@ -4435,36 +4424,10 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
         selectedUsd: _isFixedPrice ? null : widget.selectedUsd,
       );
 
-      final response    = await http.post(
-        PayChanguConfig.paymentUri,
-        headers: PayChanguConfig.authHeaders,
-        body: json.encode({
-          'tx_ref':         txRef,
-          'first_name':     firstName,
-          'last_name':      lastName,
-          'email':          email,
-          'phone_number':   phone,
-          'currency':       'MWK',
-          'amount':         amount.round().toString(),
-          // PayChangu: mobile money + bank now; Visa/card later
-          'payment_methods':['mobile_money', 'bank'],
-          'callback_url':   PayChanguConfig.callbackUrl,
-          'return_url':     PayChanguConfig.returnUrl,
-          'customization':  {'title': 'Vero 360 Payment', 'description': description},
-        }),
-      ).timeout(const Duration(seconds: 30));
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final Map<String, dynamic> responseJson =
-            jsonDecode(response.body) as Map<String, dynamic>;
-        final status = (responseJson['status'] ?? '').toString().toLowerCase();
-        if (status == 'success') {
-          final checkoutUrl = responseJson['data']['checkout_url'] as String;
-          if (!mounted) return;
-          await Navigator.of(context).push(MaterialPageRoute(
-            builder: (_) => InAppPaymentPage(
-              checkoutUrl:        checkoutUrl,
-              txRef:              txRef,
+      if (!mounted) return;
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => InAppPaymentPage(
+          txRef:              txRef,
               totalAmount:        amount,
               rootContext:        context,
               digitalProductName: widget.product.name,
@@ -4478,12 +4441,6 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
               },
             ),
           ));
-        } else {
-          throw Exception(responseJson['message'] ?? 'Payment failed');
-        }
-      } else {
-        throw Exception('HTTP ${response.statusCode}: ${response.body}');
-      }
     } on SocketException catch (e) {
       ToastHelper.showCustomToast(context, 'Network error. Check your connection.',
           isSuccess: false, errorMessage: e.message);
@@ -4597,7 +4554,7 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                 ),
                 child: Text(
                   widget.payMethod == DigitalPayMethod.paychangu
-                      ? 'Paying with Mobile money & bank (MWK)'
+                      ? 'Paying with Airtel Money or TNM Mpamba'
                       : 'Visa / card · Coming soon',
                   style: const TextStyle(
                     fontWeight: FontWeight.w700,

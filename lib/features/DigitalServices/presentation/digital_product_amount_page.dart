@@ -494,8 +494,8 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
           const SizedBox(height: 10),
           _payTile(
             method: DigitalPayMethod.paychangu,
-            title: 'Mobile money & bank',
-            subtitle: 'Pay in MWK via Airtel, Mpamba, or bank',
+            title: 'Airtel Money or TNM Mpamba',
+            subtitle: 'Approve a prompt on your phone',
             icon: Icons.phone_android_rounded,
           ),
           const SizedBox(height: 10),

@@ -72,6 +72,7 @@ class DigitalServiceOrderService {
           amount: amount,
           description: 'Digital service · $productName',
           reference: txRef.isNotEmpty ? txRef : 'digital:$orderId',
+          service: 'digital',
         );
         feeCreditedNow = true;
       } catch (_) {

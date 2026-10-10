@@ -706,13 +706,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _google() async {
     FocusScope.of(context).unfocus();
-    // 1) Show Vero UI + overlay while the system Google sheet is open (not empty).
-    setState(() {
-      _oauthProviderLabel = 'Google';
-      _oauthPhase = _OAuthPhase.providerSheet;
-    });
+    // Keep the login screen in place while the system Google sheet is open.
+    // A full-screen overlay here puts the activity in a bad state and Android
+    // Credential Manager returns "canceled" before an account can be chosen.
     try {
-      // 2) Returns only after the user finishes or cancels the Google flow.
       final user = await _firebaseAuthService.signInWithGoogle();
       if (!mounted) return;
       if (user == null) {

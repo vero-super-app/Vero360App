@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:intl/intl.dart';
 import 'package:http/http.dart' as http;
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
@@ -248,7 +249,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                         ),
                         ButtonSegment<String>(
                           value: 'mobile_money',
-                          label: Text('Mobile Money'),
+                          label: Text('Mobile Money (PawaPay)'),
                           icon: Icon(Icons.phone_android),
                         ),
                       ],
@@ -595,28 +596,34 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
 
       final amount = double.parse(_amountController.text);
       final payoutRef = 'PAYOUT-${DateTime.now().millisecondsSinceEpoch}';
-      
-      // 1. Send money via PayChangu (real cash-out)
-      await _processPayChanguPayout(amount, payoutRef);
 
-      // 2. Debit wallet as completed (instant)
-      final momoName = _mobileMoneyProviders
-          .where((p) => p['id'] == _selectedMobileProvider)
-          .map((p) => p['name']!)
-          .firstOrNull;
-      await FirebaseWalletService.debitWallet(
-        merchantId: widget.merchantId,
-        amount: amount,
-        description: _selectedPayoutMethod == 'bank' 
-            ? 'Bank Transfer Payout' 
-            : '${momoName ?? 'Mobile Money'} Payout',
-        reference: payoutRef,
-      );
-      
-      // 3. Show success and close dialog
-      if (mounted) {
-        Navigator.pop(context);
-        _showSuccess('Payout sent! Cash-out completed.');
+      if (_selectedPayoutMethod == 'bank') {
+        await _processPayChanguPayout(amount, payoutRef);
+        await FirebaseWalletService.debitWallet(
+          merchantId: widget.merchantId,
+          amount: amount,
+          description: 'Bank Transfer Payout',
+          reference: payoutRef,
+        );
+        if (mounted) {
+          Navigator.pop(context);
+          _showSuccess('Bank payout sent.');
+        }
+      } else {
+        var mobile = _phoneController.text.trim().replaceAll(RegExp(r'\s+'), '');
+        final callable =
+            FirebaseFunctions.instance.httpsCallable('createPawaPayPayout');
+        await callable.call(<String, dynamic>{
+          'amount': amount.round(),
+          'phone': mobile,
+          'operatorId': _selectedMobileProvider,
+        });
+        if (mounted) {
+          Navigator.pop(context);
+          _showSuccess(
+            'Mobile-money payout sent. It finishes when PawaPay confirms delivery.',
+          );
+        }
       }
       _clearControllers();
       
@@ -634,36 +641,16 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
     final amountStr = amount.round().toString();
     final email = _emailController.text.trim();
 
-    late final Uri uri;
-    late final Map<String, dynamic> payload;
-
-    if (_selectedPayoutMethod == 'bank') {
-      uri = PayChanguConfig.bankPayoutInitializeUri();
-      payload = {
-        'payout_method': 'bank_transfer',
-        'bank_uuid': _banks[_selectedBankIndex! - 1]['uuid'],
-        'amount': amountStr,
-        'charge_id': chargeId,
-        'bank_account_name': _accountNameController.text.trim(),
-        'bank_account_number': _accountNumberController.text.trim(),
-        if (email.isNotEmpty) 'email': email,
-      };
-    } else {
-      uri = PayChanguConfig.mobileMoneyPayoutInitializeUri();
-      var mobile = _phoneController.text.trim().replaceAll(RegExp(r'\s+'), '');
-      if (mobile.startsWith('+265')) {
-        mobile = '0${mobile.substring(4)}';
-      } else if (mobile.startsWith('265')) {
-        mobile = '0${mobile.substring(3)}';
-      }
-      payload = {
-        'mobile_money_operator_ref_id': _selectedMobileProvider,
-        'mobile': mobile,
-        'amount': amountStr,
-        'charge_id': chargeId,
-        if (email.isNotEmpty) 'email': email,
-      };
-    }
+    final uri = PayChanguConfig.bankPayoutInitializeUri();
+    final payload = {
+      'payout_method': 'bank_transfer',
+      'bank_uuid': _banks[_selectedBankIndex! - 1]['uuid'],
+      'amount': amountStr,
+      'charge_id': chargeId,
+      'bank_account_name': _accountNameController.text.trim(),
+      'bank_account_number': _accountNumberController.text.trim(),
+      if (email.isNotEmpty) 'email': email,
+    };
 
     final response = await http
         .post(

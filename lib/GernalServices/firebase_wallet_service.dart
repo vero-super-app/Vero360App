@@ -26,10 +26,12 @@ class FirebaseWalletService {
   static const double marketplaceServiceFeeRate = 0.10;
 
   /// Ensures the platform wallet exists and credits a service fee into it.
+  /// [service] is marketplace, food, stay, ride, digital, promotions, or homepage_ads.
   static Future<void> creditPlatformServiceFee({
     required double amount,
     required String description,
     required String reference,
+    required String service,
   }) async {
     if (amount <= 0) return;
     await getOrCreateWallet(
@@ -42,6 +44,7 @@ class FirebaseWalletService {
       description: description,
       reference: reference,
       type: 'service_fee',
+      service: service,
     );
   }
 
@@ -248,29 +251,34 @@ class FirebaseWalletService {
           List<Map<String, dynamic>>.from(data['transactions'] ?? []);
       var changed = 0;
 
+      var pawapayHeld = 0.0;
       for (var i = 0; i < transactions.length; i++) {
         final t = Map<String, dynamic>.from(transactions[i]);
         final type = (t['type'] ?? '').toString().toLowerCase();
         final status = (t['status'] ?? '').toString().toLowerCase();
-        if (type == 'payout' && status == 'pending') {
-          t['status'] = 'completed';
-          t['updatedAt'] = Timestamp.now();
-          t['settledAt'] = Timestamp.now();
-          t['settleReason'] = 'instant_cashout_backfill';
-          transactions[i] = t;
-          changed++;
+        if (type != 'payout' || status != 'pending') continue;
+        // PawaPay holds stay pending until the callback confirms delivery.
+        if ((t['payoutProvider'] ?? '').toString().toLowerCase() == 'pawapay') {
+          pawapayHeld += (t['amount'] as num?)?.toDouble() ?? 0;
+          continue;
+        }
+        t['status'] = 'completed';
+        t['updatedAt'] = Timestamp.now();
+        t['settledAt'] = Timestamp.now();
+        t['settleReason'] = 'instant_cashout_backfill';
+        transactions[i] = t;
+        changed++;
 
-          final txId = (t['transactionId'] ?? '').toString().trim();
-          if (txId.isNotEmpty) {
-            try {
-              await _firestore.collection('wallet_transactions').doc(txId).set({
-                'status': 'completed',
-                'updatedAt': Timestamp.now(),
-                'settledAt': Timestamp.now(),
-                'settleReason': 'instant_cashout_backfill',
-              }, SetOptions(merge: true));
-            } catch (_) {}
-          }
+        final txId = (t['transactionId'] ?? '').toString().trim();
+        if (txId.isNotEmpty) {
+          try {
+            await _firestore.collection('wallet_transactions').doc(txId).set({
+              'status': 'completed',
+              'updatedAt': Timestamp.now(),
+              'settledAt': Timestamp.now(),
+              'settleReason': 'instant_cashout_backfill',
+            }, SetOptions(merge: true));
+          } catch (_) {}
         }
       }
 
@@ -281,7 +289,15 @@ class FirebaseWalletService {
           .where('status', isEqualTo: 'pending')
           .get();
 
+      var collectionHeld = 0.0;
+      var sawPawaPay = false;
       for (final doc in txQs.docs) {
+        final row = doc.data();
+        if ((row['payoutProvider'] ?? '').toString().toLowerCase() == 'pawapay') {
+          sawPawaPay = true;
+          collectionHeld += (row['amount'] as num?)?.toDouble() ?? 0;
+          continue;
+        }
         await doc.reference.update({
           'status': 'completed',
           'updatedAt': Timestamp.now(),
@@ -291,10 +307,12 @@ class FirebaseWalletService {
         changed++;
       }
 
-      if (changed > 0 || (data['pendingBalance'] ?? 0) != 0) {
+      final held = sawPawaPay ? collectionHeld : pawapayHeld;
+      final currentPending = (data['pendingBalance'] as num?)?.toDouble() ?? 0;
+      if (changed > 0 || currentPending != held) {
         await walletDoc.reference.update({
           'transactions': transactions,
-          'pendingBalance': 0.0,
+          'pendingBalance': held,
           'updatedAt': Timestamp.now(),
         });
       }
@@ -313,6 +331,7 @@ class FirebaseWalletService {
     required String description,
     required String reference,
     String type = 'credit',
+    String service = '',
   }) async {
     try {
       final walletDoc = await _findWalletDoc(merchantId);
@@ -352,6 +371,7 @@ class FirebaseWalletService {
               ...walletTransaction.toMap(),
               'userId': merchantId,
               'createdAt': Timestamp.now(),
+              if (service.trim().isNotEmpty) 'service': service.trim(),
             },
           ),
         });
@@ -362,6 +382,7 @@ class FirebaseWalletService {
         'userId': merchantId,
         'createdAt': Timestamp.now(),
         'updatedAt': Timestamp.now(),
+        if (service.trim().isNotEmpty) 'service': service.trim(),
       });
     } catch (e) {
       print('Error crediting wallet: $e');

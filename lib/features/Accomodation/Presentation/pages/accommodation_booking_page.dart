@@ -1505,10 +1505,6 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
       reservedRef = bookingNo;
       unawaited(_loadOccupancy());
 
-      final parts = name.split(RegExp(r'\s+'));
-      final firstName = parts.isNotEmpty ? parts.first : 'Guest';
-      final lastName =
-          parts.length > 1 ? parts.sublist(1).join(' ') : '';
       final txRef =
           'acc-${widget.accommodationId}-$bookingNo-${DateTime.now().millisecondsSinceEpoch}';
 
@@ -1518,7 +1514,6 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
         bookingDetails: result['bookingDetails'],
       );
 
-      // Reserve inventory + PayChangu init together (was sequential + DNS probe).
       final reserveFuture = _occupancy.reserveStay(
         accommodationId: widget.accommodationId,
         bookingRef: bookingNo,
@@ -1530,55 +1525,15 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
           ? Future<String?>.value(hostForAlerts)
           : _lookupHostMerchantUidInFirestore(widget.accommodationId)
               .timeout(const Duration(seconds: 4), onTimeout: () => null);
-      final payFuture = http
-          .post(
-            PayChanguConfig.paymentUri,
-            headers: PayChanguConfig.authHeaders,
-            body: json.encode({
-              'tx_ref': txRef,
-              'first_name': firstName,
-              'last_name': lastName,
-              'email': email,
-              'phone_number': phone,
-              'currency': 'MWK',
-              'amount': _buyerPaysMwk.round().toString(),
-              'payment_methods': ['card', 'mobile_money', 'bank'],
-              'callback_url': PayChanguConfig.callbackUrl,
-              'return_url': PayChanguConfig.returnUrl,
-              'customization': {
-                'title': 'Vero 360 — Stay',
-                'description':
-                    '${widget.propertyName}${_selectedOfferName == null ? '' : ' · ${_selectedOfferName!}'} · $_staySummaryLine · Ref $bookingNo',
-              },
-            }),
-          )
-          .timeout(const Duration(seconds: 20));
 
-      late final http.Response response;
       try {
         final waited = await Future.wait<Object?>([
           reserveFuture,
-          payFuture,
           hostFuture,
         ]);
-        response = waited[1] as http.Response;
-        hostForAlerts = (waited[2] as String?)?.trim();
+        hostForAlerts = (waited[1] as String?)?.trim();
       } catch (e) {
-        // If PayChangu failed after reserve, free the hold.
         rethrow;
-      }
-
-      if (response.statusCode != 200 && response.statusCode != 201) {
-        throw Exception('HTTP ${response.statusCode}: ${response.body}');
-      }
-      final data = json.decode(response.body) as Map<String, dynamic>;
-      final status = (data['status'] ?? '').toString().toLowerCase();
-      if (status != 'success') {
-        throw Exception(data['message']?.toString() ?? 'Payment init failed');
-      }
-      final checkoutUrl = data['data']?['checkout_url'] as String?;
-      if (checkoutUrl == null || checkoutUrl.isEmpty) {
-        throw Exception('No checkout URL from payment provider');
       }
 
       final hostUid = hostForAlerts?.trim() ?? '';
@@ -1615,7 +1570,6 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
           builder: (_) => InAppPaymentPage(
-            checkoutUrl: checkoutUrl,
             txRef: txRef,
             totalAmount: _buyerPaysMwk,
             providerAmountMwk: _totalMwk.toDouble(),

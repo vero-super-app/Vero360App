@@ -10,9 +10,9 @@ import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 /// - 3 app opens in one day → +1 Vero Point (once per day)
 /// - Visit bonus max 3 times per week (then no show-up earnings until next week)
 /// - 1 Vero Point = 1 Vero Coin = MWK 50
-/// - 10 Vero Coins = MWK 500 → reward wallet (spin/redeem earnings only)
+/// - Cash out from MWK 1,000. The full coin balance pays out (MWK 50 each).
 /// - Earn spins: free daily + after marketplace / food / courier / ride / stay
-/// - Spin max prize MWK 10,000
+/// - Spin jackpot MWK 5,000
 class VeroRewardsService {
   VeroRewardsService._();
 
@@ -58,12 +58,16 @@ class VeroRewardsService {
   static const int visitsForPoint = 3;
   static const int coinsPerPoint = 1;
   static const int visitPointsPerWeek = 3;
-  /// Harder cash-out: need 10 coins (not 5 → 1,000).
-  static const int coinsPerRedeem = 10;
   static const double mwkPerCoin = 50;
-  static const double mwkPerRedeem = coinsPerRedeem * mwkPerCoin; // 500
-  static const double maxSpinMwk = 10000;
-  static const int maxSpinCoins = 200; // 10,000 / 50
+  /// Cash-out opens at this MWK value. The gate is money, not a coin count.
+  static const double minCashOutMwk = 1000;
+  static const double mwkPerRedeem = minCashOutMwk;
+
+  static double coinsWorthMwk(int coins) => coins * mwkPerCoin;
+
+  static bool canCashOutCoins(int coins) => coinsWorthMwk(coins) >= minCashOutMwk;
+  static const double maxSpinMwk = 5000;
+  static const int maxSpinCoins = 100; // 5,000 / 50
 
   static const String sourceDaily = 'daily';
   static const String sourceMarketplace = 'marketplace';
@@ -135,14 +139,20 @@ class VeroRewardsService {
     ),
     VeroSpinPrize(
       id: 'jackpot',
-      label: 'Jackpot',
-      valueLabel: 'MWK 10,000',
+      label: 'MWK 5,000',
+      valueLabel: 'Jackpot · MWK 5,000',
       colorValue: 0xFFB45309,
       kind: VeroSpinKind.coins,
       coins: maxSpinCoins,
       weight: 1,
     ),
   ];
+
+  static int _asInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
 
   static String _todayKey([DateTime? now]) {
     final d = now ?? DateTime.now();
@@ -375,7 +385,7 @@ class VeroRewardsService {
     return '${source}_$bucket';
   }
 
-  /// Redeem batches of [coinsPerRedeem] coins → MWK into reward + user wallet.
+  /// Cash out every coin once the balance is worth at least [minCashOutMwk].
   static Future<VeroRedeemResult> redeemCoinsIfEligible() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || user.isAnonymous) {
@@ -394,64 +404,99 @@ class VeroRewardsService {
     final uid = user.uid;
 
     final balance = await getBalance(uid);
-    if (balance.coins < coinsPerRedeem) {
+    if (!canCashOutCoins(balance.coins)) {
       return VeroRedeemResult(
         ok: false,
         message:
-            'You need $coinsPerRedeem coins to cash out (you have ${balance.coins}). Almost… not quite.',
+            'You need MWK ${formatMwk(minCashOutMwk)} to cash out (you have MWK ${formatMwk(coinsWorthMwk(balance.coins))}). Almost… not quite.',
         coins: balance.coins,
       );
     }
 
-    final batches = balance.coins ~/ coinsPerRedeem;
-    final coinsToSpend = batches * coinsPerRedeem;
-    final mwk = batches * mwkPerRedeem;
-
     try {
-      // Deduct coins + accumulate spin/reward earnings (transaction).
-      await _db.runTransaction((tx) async {
+      // Spend the live balance in full once it is worth at least MWK 1,000.
+      final spent = await _db.runTransaction((tx) async {
         final ref = _doc(uid);
         final snap = await tx.get(ref);
         final data = snap.data() ?? <String, dynamic>{};
-        final coins = (data['coins'] as num?)?.toInt() ?? 0;
-        if (coins < coinsToSpend) {
+        final coins = _asInt(data['coins']);
+        if (!canCashOutCoins(coins)) {
           throw Exception('Not enough coins');
         }
+        final payout = coins * mwkPerCoin;
         final prevEarnings =
             (data['rewardEarningsMwk'] as num?)?.toDouble() ?? 0;
         tx.set(
           ref,
           {
-            'coins': coins - coinsToSpend,
-            'rewardEarningsMwk': prevEarnings + mwk,
+            'coins': 0,
+            'rewardEarningsMwk': prevEarnings + payout,
             'updatedAt': FieldValue.serverTimestamp(),
             'lastRedeemAt': FieldValue.serverTimestamp(),
-            'lastRedeemMwk': mwk,
-            'lastRedeemCoins': coinsToSpend,
+            'lastRedeemMwk': payout,
+            'lastRedeemCoins': coins,
           },
           SetOptions(merge: true),
         );
+        return (coins: coins, mwk: payout);
       });
+      final coinsToSpend = spent.coins;
+      final mwk = spent.mwk;
 
-      await ensureUserWallet(
-        uid: uid,
-        displayName: user.displayName ?? user.email,
-      );
+      var platformDebited = false;
+      try {
+        await ensureUserWallet(
+          uid: uid,
+          displayName: user.displayName ?? user.email,
+        );
 
-      // Move MWK: platform → user (customer or merchant).
-      await FirebaseWalletService.debitWallet(
-        merchantId: FirebaseWalletService.superAdminUserId,
-        amount: mwk,
-        description: 'Vero Coin reward payout ($coinsToSpend coins)',
-        reference: 'VERO_COIN_$uid-${DateTime.now().millisecondsSinceEpoch}',
-      );
-      await FirebaseWalletService.creditWallet(
-        merchantId: uid,
-        amount: mwk,
-        description: 'Vero Coin reward ($coinsToSpend coins)',
-        reference: 'VERO_COIN_$uid-${DateTime.now().millisecondsSinceEpoch}',
-        type: 'credit',
-      );
+        final reference =
+            'VERO_COIN_$uid-${DateTime.now().millisecondsSinceEpoch}';
+        // Treasury move: not a user withdrawal, so KYC and a short
+        // platform balance must not block 800 or 1,000 coin cash-outs.
+        await FirebaseWalletService.debitWallet(
+          merchantId: FirebaseWalletService.superAdminUserId,
+          amount: mwk,
+          description: 'Vero Coin reward payout ($coinsToSpend coins)',
+          reference: reference,
+          requireKyc: false,
+          allowNegative: true,
+        );
+        platformDebited = true;
+        await FirebaseWalletService.creditWallet(
+          merchantId: uid,
+          amount: mwk,
+          description: 'Vero Coin reward ($coinsToSpend coins)',
+          reference: reference,
+          type: 'credit',
+        );
+      } catch (e) {
+        await _doc(uid).set(
+          {
+            'coins': FieldValue.increment(coinsToSpend),
+            'rewardEarningsMwk': FieldValue.increment(-mwk),
+            'updatedAt': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        );
+        if (platformDebited) {
+          try {
+            await FirebaseWalletService.creditWallet(
+              merchantId: FirebaseWalletService.superAdminUserId,
+              amount: mwk,
+              description:
+                  'Vero Coin reward payout reversed ($coinsToSpend coins)',
+              reference: 'VERO_COIN_REV_$uid-${DateTime.now().millisecondsSinceEpoch}',
+              type: 'credit',
+            );
+          } catch (rev) {
+            if (kDebugMode) {
+              debugPrint('[VeroRewards] platform reversal failed: $rev');
+            }
+          }
+        }
+        rethrow;
+      }
 
       final fresh = await getBalance(uid);
       return VeroRedeemResult(
@@ -462,7 +507,6 @@ class VeroRewardsService {
       );
     } catch (e) {
       if (kDebugMode) debugPrint('[VeroRewards] redeem failed: $e');
-      // Best-effort rollback of coin deduct is skipped; user can contact support.
       return VeroRedeemResult(
         ok: false,
         message: e.toString().contains('Insufficient')
@@ -577,7 +621,7 @@ class VeroRewardsService {
         VeroSpinKind.tryAgain =>
           'Try again — come back tomorrow for another free spin.',
         VeroSpinKind.coins => prize.id == 'jackpot'
-            ? 'JACKPOT! MWK ${formatMwk(maxSpinMwk)} — go brag (quietly).'
+            ? 'JACKPOT! MWK ${formatMwk(maxSpinMwk)} (${maxSpinCoins} coins) is on your balance.'
             : 'You won ${prize.coins} Vero Coin${prize.coins == 1 ? '' : 's'}!',
         VeroSpinKind.points => prize.points == 5
             ? 'You won exactly 5 points (5 coins)! Not 6. We counted twice.'
@@ -702,7 +746,7 @@ class VeroRewardsBalance {
     final rawWeekPoints = (data['visitPointsThisWeek'] as num?)?.toInt() ?? 0;
     final weekPoints = visitWeek == week ? rawWeekPoints : 0;
     return VeroRewardsBalance(
-      coins: (data['coins'] as num?)?.toInt() ?? 0,
+      coins: VeroRewardsService._asInt(data['coins']),
       points: (data['points'] as num?)?.toInt() ?? 0,
       visitCountToday: visitDay == today
           ? ((data['visitCountToday'] as num?)?.toInt() ?? 0)

@@ -16,6 +16,7 @@ import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_detail_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
+import 'package:vero360_app/features/Marketplace/presentation/pages/shop_pictures_page.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart'
     as marketplaceModel;
 import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
@@ -1472,6 +1473,27 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         errorMessage: e.toString(),
       );
     }
+  }
+
+  Future<void> _openShopPictures() async {
+    final keys = await _resolveMerchantIdentityKeys();
+    final ids = keys.where(_looksLikeFirebaseUid).toList();
+    if (ids.isEmpty && widget.merchantId.trim().isNotEmpty) {
+      ids.add(widget.merchantId.trim());
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ShopPicturesPage(
+          merchantIds: ids,
+          shopName: _shopDisplayName,
+          description: _merchantBusinessDescription ?? '',
+          openingHours: _merchantOpeningHours,
+          openingDays: _merchantOpeningDays,
+          profileUrl: (_resolvedProfileHttpUrl ?? _merchantProfileUrl)?.trim(),
+        ),
+      ),
+    );
   }
 
   Future<void> _toggleFollow() async {
@@ -3348,6 +3370,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             onViewProfile: _showMerchantProfileViewer,
             onOpenReviews: _openMerchantReviews,
             onOpenFollowers: _openMerchantFollowers,
+            onViewShop: _openShopPictures,
           ),
           _buildRecentReviewsSection(),
           Expanded(
@@ -3757,6 +3780,7 @@ class _MerchantProfileCard extends StatelessWidget {
   final VoidCallback onViewProfile;
   final VoidCallback onOpenReviews;
   final VoidCallback onOpenFollowers;
+  final VoidCallback onViewShop;
 
   const _MerchantProfileCard({
     required this.merchantId,
@@ -3776,6 +3800,7 @@ class _MerchantProfileCard extends StatelessWidget {
     required this.onViewProfile,
     required this.onOpenReviews,
     required this.onOpenFollowers,
+    required this.onViewShop,
   });
 
   ImageProvider? _profileImageProvider() {
@@ -4074,8 +4099,28 @@ class _MerchantProfileCard extends StatelessWidget {
               ),
             ],
           ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: onViewShop,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _kBrandNavy,
+                side: const BorderSide(color: _kBorder),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              icon: const Icon(Icons.storefront_outlined, size: 18),
+              label: const Text(
+                'View shop',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
           if (!loading) ...[
-            const SizedBox(height: 14),
+            const SizedBox(height: 10),
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(

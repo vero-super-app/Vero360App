@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:vero360_app/features/DigitalServices/chatgpt_plans.dart';
 import 'package:vero360_app/features/DigitalServices/netflix_plans.dart';
 
 /// Fallback USD → MWK rate when Firestore config is unavailable.
@@ -67,12 +68,18 @@ class DigitalProduct {
     this.active = true,
   });
 
-  bool get usesAmountPicker => fixedMwkPrice == null && key != 'netflix';
+  bool get usesAmountPicker =>
+      fixedMwkPrice == null && !isNetflixHub && !isChatGptHub;
 
   /// Homepage Netflix tile — opens plan picker instead of checkout.
   bool get isNetflixHub => key == 'netflix';
 
   bool get isNetflixPlan => key.startsWith('netflix_');
+
+  /// Homepage ChatGPT tile — opens plan picker instead of checkout.
+  bool get isChatGptHub => key == 'chatgpt';
+
+  bool get isChatGptPlan => key == 'chatgpt_basic' || key == 'chatgpt_plus';
 
   double get startingUsd =>
       usdAmounts.isEmpty ? 0 : usdAmounts.reduce((a, b) => a < b ? a : b);
@@ -116,7 +123,7 @@ class DigitalProduct {
   }
 
   String get priceLabel {
-    if (isNetflixHub) return 'Choose a plan';
+    if (isNetflixHub || isChatGptHub) return 'Choose a plan';
     if (fixedMwkPrice != null && fixedMwkPrice! > 0) {
       return formatMwk(fixedMwkPrice!);
     }
@@ -198,9 +205,9 @@ const List<DigitalProduct> kDigitalProducts = [
     // Hub only — prices live on netflix_* plan products (admin).
   ),
   DigitalProduct(
-    key: 'chatgpt_plus',
-    name: 'ChatGPT Plus',
-    subtitle: '1-month subscription',
+    key: 'chatgpt',
+    name: 'ChatGPT',
+    subtitle: 'Choose a plan',
     category: 'streaming',
     accent: Color(0xFF10A37F),
     brandTag: 'GPT',
@@ -313,6 +320,7 @@ const List<DigitalProduct> kAllDigitalProducts = [
   ),
   ...kDigitalProducts,
   ...kNetflixPlanProducts,
+  ...kChatGptPlanProducts,
 ];
 
 class DigitalCategory {

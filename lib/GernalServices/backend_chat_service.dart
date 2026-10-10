@@ -110,6 +110,15 @@ class BackendChatThread {
   final String? lastMessagePreview;
   final ChatProductContext? lastProductTag;
 
+  /// A thread only belongs in the inbox after someone has actually sent a message.
+  bool get hasConversation {
+    final preview = (lastMessagePreview ?? '').trim();
+    if (preview.isNotEmpty) return true;
+    if (unreadCount > 0) return true;
+    if (lastProductTag != null) return true;
+    return false;
+  }
+
   BackendChatThread({
     required this.id,
     required this.type,
@@ -585,6 +594,7 @@ class ChatLastMessagePreview {
 class BackendChatService {
   /// Legacy Firebase chat image prefix still accepted by some backends.
   static const _legacyImgPrefix = 'img::';
+  static const _legacyVidPrefix = 'vid::';
   static const _legacyAudPrefix = 'aud::';
 
   /// User-facing last-message line for chat lists (WhatsApp-style labels).
@@ -616,7 +626,7 @@ class BackendChatService {
         kind: ChatLastMessagePreviewKind.photo,
       );
     }
-    if (type == 'video') {
+    if (type == 'video' || t.startsWith(_legacyVidPrefix)) {
       return const ChatLastMessagePreview(
         label: 'Video',
         kind: ChatLastMessagePreviewKind.video,
@@ -754,6 +764,13 @@ class BackendChatService {
         }
       }
     }
+    if (!usablePeerName(peerName) && otherParticipant != null) {
+      final memo = peekCachedBusinessName(otherParticipant.displayLookupKey) ??
+          (otherParticipant.id > 0
+              ? peekCachedBusinessName('i:${otherParticipant.id}')
+              : null);
+      if (memo != null && usablePeerName(memo)) peerName = memo;
+    }
     if (!usablePeerName(peerName)) peerName = 'Chat';
     return peerName;
   }
@@ -770,8 +787,50 @@ class BackendChatService {
       myName: myName,
     );
     final fromPeer = (other?.profilePicture ?? '').trim();
-    if (fromPeer.isNotEmpty) return fromPeer;
-    return (t.avatarUrl ?? '').trim();
+    if (_usableAvatarUrl(fromPeer)) {
+      if (other != null) rememberPeerAvatar(other, fromPeer);
+      return fromPeer;
+    }
+    if (other != null) {
+      final cached = peekCachedAvatar(other);
+      if (_usableAvatarUrl(cached)) return cached!.trim();
+    }
+    final threadAvatar = (t.avatarUrl ?? '').trim();
+    if (!_usableAvatarUrl(threadAvatar)) return '';
+    // A shared thread photo is often the person who started the chat.
+    // Never show that as the other person when it is actually my photo.
+    if (_avatarBelongsToMe(t, threadAvatar, myUserId)) return '';
+    return threadAvatar;
+  }
+
+  static bool _usableAvatarUrl(String? raw) {
+    final v = (raw ?? '').trim();
+    return v.startsWith('http://') || v.startsWith('https://');
+  }
+
+  static bool _sameAvatarUrl(String a, String b) {
+    String norm(String raw) {
+      final uri = Uri.tryParse(raw.trim());
+      if (uri == null) return raw.trim();
+      return '${uri.scheme}://${uri.host}${uri.path}';
+    }
+
+    return norm(a) == norm(b);
+  }
+
+  static bool _avatarBelongsToMe(
+    BackendChatThread t,
+    String url,
+    int myUserId,
+  ) {
+    final mine = FirebaseAuth.instance.currentUser?.photoURL?.trim() ?? '';
+    if (_usableAvatarUrl(mine) && _sameAvatarUrl(url, mine)) return true;
+    for (final p in t.participants) {
+      if (myUserId <= 0 || p.id != myUserId) continue;
+      final pic = (p.profilePicture ?? '').trim();
+      if (_usableAvatarUrl(pic) && _sameAvatarUrl(url, pic)) return true;
+    }
+    return false;
   }
 
   /// Uses ApiConfig for base URL (supports dart-define, ngrok, etc.)
@@ -976,10 +1035,14 @@ class BackendChatService {
       if (thread.participants.isEmpty && prior.participants.isNotEmpty) {
         toStore = thread.copyWith(participants: prior.participants);
       } else if (thread.participants.isNotEmpty && prior.participants.isNotEmpty) {
-        final byId = <int, ChatParticipant>{
-          for (final p in prior.participants) if (p.id > 0) p.id: p,
-          for (final p in thread.participants) if (p.id > 0) p.id: p,
-        };
+        final byId = <int, ChatParticipant>{};
+        for (final p in prior.participants) {
+          if (p.id > 0) byId[p.id] = p;
+        }
+        for (final p in thread.participants) {
+          if (p.id <= 0) continue;
+          byId[p.id] = _keepKnownProfilePhoto(p, byId[p.id]);
+        }
         toStore = thread.copyWith(participants: byId.values.toList());
       }
     }
@@ -1136,6 +1199,8 @@ class BackendChatService {
         body = '🎤 Voice message';
       } else if (message.type == 'image' || raw.startsWith(_legacyImgPrefix)) {
         body = '📷 Photo';
+      } else if (message.type == 'video' || raw.startsWith(_legacyVidPrefix)) {
+        body = '🎬 Video';
       } else {
         body = raw.length > 100 ? '${raw.substring(0, 100)}…' : raw;
       }
@@ -1149,8 +1214,10 @@ class BackendChatService {
   }
 
   /// Total unread messages across all chat threads.
-  static int get totalUnreadMessageCount =>
-      _cachedThreads.fold<int>(0, (sum, t) => sum + t.unreadCount);
+  static int get totalUnreadMessageCount => _cachedThreads.fold<int>(
+        0,
+        (sum, t) => sum + (t.hasConversation ? t.unreadCount : 0),
+      );
 
   /// Emits whenever thread unread totals change.
   static Stream<int> watchTotalUnreadCount() async* {
@@ -2588,6 +2655,95 @@ class BackendChatService {
     return null;
   }
 
+  static ChatParticipant _keepKnownProfilePhoto(
+    ChatParticipant incoming,
+    ChatParticipant? prior,
+  ) {
+    final nextPic = (incoming.profilePicture ?? '').trim();
+    if (_usableAvatarUrl(nextPic)) {
+      rememberPeerAvatar(incoming, nextPic);
+      return incoming;
+    }
+    final oldPic = (prior?.profilePicture ?? '').trim();
+    if (_usableAvatarUrl(oldPic)) {
+      return incoming.copyWith(profilePicture: oldPic);
+    }
+    final cached = peekCachedAvatar(incoming);
+    if (_usableAvatarUrl(cached)) {
+      return incoming.copyWith(profilePicture: cached);
+    }
+    return incoming;
+  }
+
+  static final Map<String, String> _avatarMemo = {};
+  static bool _avatarMemoLoaded = false;
+  static const _kAvatarPrefs = 'chat_peer_avatars_v1';
+
+  static Future<void> ensureAvatarCacheLoaded() async {
+    if (_avatarMemoLoaded) return;
+    _avatarMemoLoaded = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_kAvatarPrefs);
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      decoded.forEach((key, value) {
+        final k = key.toString().trim();
+        final url = value.toString().trim();
+        if (k.isEmpty || !_usableAvatarUrl(url)) return;
+        _avatarMemo.putIfAbsent(k, () => url);
+      });
+    } catch (_) {}
+  }
+
+  static void rememberPeerAvatar(ChatParticipant peer, String url) {
+    final photo = url.trim();
+    if (!_usableAvatarUrl(photo)) return;
+    final before = peekCachedAvatar(peer);
+    _rememberAvatar(peer, photo);
+    if (before != photo) _persistAvatarMemo();
+  }
+
+  static String? peekCachedAvatar(ChatParticipant peer) {
+    final keys = <String>[
+      peer.displayLookupKey,
+      if (peer.id > 0) 'i:${peer.id}',
+      if (peer.email.trim().contains('@')) 'e:${peer.email.trim().toLowerCase()}',
+      if ((peer.firebaseUid ?? '').trim().isNotEmpty) 'u:${peer.firebaseUid!.trim()}',
+    ];
+    for (final key in keys) {
+      final v = _avatarMemo[key.trim()];
+      if (_usableAvatarUrl(v)) return v!.trim();
+    }
+    return null;
+  }
+
+  static void _rememberAvatar(ChatParticipant p, String url) {
+    void put(String key) {
+      if (key.trim().isEmpty) return;
+      _avatarMemo[key] = url;
+    }
+
+    put(p.displayLookupKey);
+    if (p.id > 0) put('i:${p.id}');
+    final email = p.email.trim().toLowerCase();
+    if (email.contains('@') && !email.startsWith('+firebase_')) {
+      put('e:$email');
+    }
+    final uid = (p.firebaseUid ?? '').trim();
+    if (uid.isNotEmpty) put('u:$uid');
+  }
+
+  static void _persistAvatarMemo() {
+    unawaited(() async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_kAvatarPrefs, jsonEncode(_avatarMemo));
+      } catch (_) {}
+    }());
+  }
+
   static final Map<String, String> _businessNameMemo = {};
   static bool _businessNameMemoLoaded = false;
   static bool _enrichingThreadNames = false;
@@ -2595,6 +2751,17 @@ class BackendChatService {
   static const Duration _nameLookupTimeout = Duration(seconds: 2);
 
   static String peerDisplayLookupKey(ChatParticipant p) => p.displayLookupKey;
+
+  /// Keep a name we already know so the inbox does not fall back to "Chat" offline.
+  static void rememberPeerDisplayName(ChatParticipant peer, String name) {
+    final n = name.trim();
+    if (n.isEmpty || _isPlaceholderChatName(n) || n.toLowerCase() == 'chat') {
+      return;
+    }
+    final before = peekCachedBusinessName(peer.displayLookupKey);
+    _rememberBusinessName(peer, n);
+    if (before != n) _persistBusinessNameMemo();
+  }
 
   static String? peekCachedBusinessName(String key) {
     final k = key.trim();
@@ -2605,6 +2772,7 @@ class BackendChatService {
   }
 
   static Future<void> ensureBusinessNameCacheLoaded() async {
+    unawaited(ensureAvatarCacheLoaded());
     if (_businessNameMemoLoaded) return;
     _businessNameMemoLoaded = true;
     try {
@@ -3451,6 +3619,28 @@ class BackendChatService {
     }
 
     throw Exception('Failed to send image: $lastError');
+  }
+
+  /// Send a video message. One payload so the reply is not sent twice.
+  static Future<BackendChatMessage> sendVideoMessage({
+    required String chatId,
+    required String videoUrl,
+    String caption = '',
+    String? clientMessageId,
+    Map<String, dynamic>? metadata,
+  }) async {
+    await ensureAuth();
+    final trimmedCaption = caption.trim();
+    final content = trimmedCaption.isNotEmpty
+        ? '$_legacyVidPrefix$videoUrl\n$trimmedCaption'
+        : '$_legacyVidPrefix$videoUrl';
+    return sendMessage(
+      chatId: chatId,
+      content: content,
+      type: 'text',
+      clientMessageId: clientMessageId,
+      metadata: metadata,
+    );
   }
 
   /// Send a voice note message, trying common backend payload shapes.

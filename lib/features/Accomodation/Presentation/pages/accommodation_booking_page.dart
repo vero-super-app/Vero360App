@@ -27,6 +27,7 @@ import 'package:vero360_app/features/Accomodation/AccomodationService/guest_book
 import 'package:vero360_app/features/Accomodation/Presentation/widgets/accommodation_listing_image.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/GeneralPages/video_player_page.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/GeneralPages/checkout_page.dart' show DeliveryType;
@@ -57,6 +58,7 @@ class AccommodationBookingPage extends StatefulWidget {
   final int roomsAvailable;
   final AccommodationPricePeriod? pricePeriod;
   final List<String> photoSources;
+  final List<String> videoSources;
   final Uint8List? memoryHeroBytes;
 
   final String? hostMerchantUid;
@@ -77,6 +79,7 @@ class AccommodationBookingPage extends StatefulWidget {
     this.roomsAvailable = 1,
     this.pricePeriod,
     this.photoSources = const [],
+    this.videoSources = const [],
     this.memoryHeroBytes,
     this.hostMerchantUid,
     this.hostDisplayName,
@@ -132,6 +135,7 @@ class AccommodationBookingPage extends StatefulWidget {
       roomsAvailable: a.roomsAvailable,
       pricePeriod: a.pricePeriod,
       photoSources: photoSources,
+      videoSources: a.videos,
       memoryHeroBytes: a.imageBytes,
       hostMerchantUid: a.hostMerchantUid,
       hostDisplayName: a.owner?.name,
@@ -190,8 +194,30 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
   /// Prevents double-open while a check-in / check-out dialog is showing.
   bool _datePickerOpen = false;
 
+  bool _heroIndexIsVideo(int index) {
+    final videos = widget.videoSources
+        .map((e) => e.trim())
+        .where((s) => s.isNotEmpty)
+        .length;
+    if (videos == 0) return false;
+    return index >= 0 && index < videos;
+  }
+
   List<Widget> get _heroPages {
     final pages = <Widget>[];
+    final videos = widget.videoSources
+        .map((e) => e.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+    for (final url in videos) {
+      pages.add(
+        InlineAutoplayVideo(
+          key: ValueKey('stay-video-$url'),
+          url: url,
+          play: _heroIndex == pages.length,
+        ),
+      );
+    }
     final mem = widget.memoryHeroBytes;
     if (mem != null && mem.isNotEmpty) {
       pages.add(Image.memory(mem, fit: BoxFit.cover, gaplessPlayback: true));
@@ -251,6 +277,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
 
   void _startHeroAutoplay() {
     _heroAutoTimer?.cancel();
+    if (_heroIndexIsVideo(_heroIndex)) return;
     final count = _heroPages.length;
     if (count <= 1) return;
     _heroAutoTimer = Timer.periodic(_heroAutoInterval, (_) {
@@ -1044,7 +1071,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
             productContext: productContext,
             peerMerchantId: ownerUid,
             peerUserId: result.sellerId,
-            sendProductEnquiry: true,
+            sendProductEnquiry: false,
             resolveMerchantId: ownerUid,
             resolveSellerUserId: ownerUid,
           ),

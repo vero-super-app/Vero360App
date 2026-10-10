@@ -1,4 +1,4 @@
-import 'dart:convert';
+import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -111,10 +111,9 @@ class StoryProfileRing extends StatelessWidget {
     final ringPadding = hasStories ? 3.0 : 2.0;
     final innerSize = size - ringPadding * 2;
 
-    return InkWell(
+    return _StoryRingTap(
       onTap: () => _onTap(context, state),
-      onLongPress: () => _openStories(context, state),
-      borderRadius: BorderRadius.circular(size / 2 + 4),
+      onLongPress: onAvatarTap == null ? null : () => _openStories(context, state),
       child: Container(
         width: size,
         height: size,
@@ -149,29 +148,45 @@ class StoryProfileRing extends StatelessWidget {
     }
 
     final latest = state.items.isNotEmpty ? state.items.last : null;
-    final imageBase64 = latest?.imageBase64;
-    if (imageBase64 != null && imageBase64.isNotEmpty) {
-      try {
-        final bytes = base64Decode(imageBase64);
-        return Image.memory(
-          bytes,
-          width: innerSize,
-          height: innerSize,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _placeholder(innerSize),
-        );
-      } catch (_) {}
-    }
-
-    final thumbUrl = latest?.mediaUrl.isNotEmpty == true
-        ? latest!.mediaUrl
-        : merchantImageUrl;
-    if (thumbUrl != null && thumbUrl.isNotEmpty) {
+    final latestIsVideo = latest?.mediaType == 'video';
+    if (!latestIsVideo && latest != null && latest.mediaUrl.isNotEmpty) {
       return Image.network(
-        thumbUrl,
+        latest.mediaUrl,
+        key: ValueKey(latest.mediaUrl),
         width: innerSize,
         height: innerSize,
         fit: BoxFit.cover,
+        gaplessPlayback: true,
+        filterQuality: FilterQuality.low,
+        errorBuilder: (_, __, ___) => _placeholder(innerSize),
+      );
+    }
+
+    final inline = latest == null || latestIsVideo
+        ? null
+        : StoryInlineImageCache.bytesFor(latest.storyId, latest.imageBase64);
+    if (inline != null) {
+      return Image.memory(
+        inline,
+        width: innerSize,
+        height: innerSize,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        filterQuality: FilterQuality.low,
+        errorBuilder: (_, __, ___) => _placeholder(innerSize),
+      );
+    }
+
+    final fallback = merchantImageUrl?.trim() ?? '';
+    if (fallback.isNotEmpty) {
+      return Image.network(
+        fallback,
+        key: ValueKey(fallback),
+        width: innerSize,
+        height: innerSize,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        filterQuality: FilterQuality.low,
         errorBuilder: (_, __, ___) => _placeholder(innerSize),
       );
     }
@@ -340,6 +355,75 @@ class StoryListRing extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// Opens on the first tap inside the home scroll view.
+/// A long-press recognizer on the same target was swallowing that tap.
+class _StoryRingTap extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+
+  const _StoryRingTap({
+    required this.child,
+    required this.onTap,
+    this.onLongPress,
+  });
+
+  @override
+  State<_StoryRingTap> createState() => _StoryRingTapState();
+}
+
+class _StoryRingTapState extends State<_StoryRingTap> {
+  Offset? _origin;
+  Timer? _hold;
+  bool _longFired = false;
+
+  void _clear() {
+    _hold?.cancel();
+    _hold = null;
+    _origin = null;
+  }
+
+  @override
+  void dispose() {
+    _hold?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerDown: (e) {
+        _longFired = false;
+        _origin = e.position;
+        _hold?.cancel();
+        if (widget.onLongPress == null) return;
+        _hold = Timer(const Duration(milliseconds: 450), () {
+          if (!mounted || _origin == null) return;
+          _longFired = true;
+          widget.onLongPress?.call();
+        });
+      },
+      onPointerMove: (e) {
+        final origin = _origin;
+        if (origin == null) return;
+        if ((e.position - origin).distance > 16) _clear();
+      },
+      onPointerUp: (e) {
+        final origin = _origin;
+        _hold?.cancel();
+        _hold = null;
+        _origin = null;
+        if (_longFired || origin == null) return;
+        if ((e.position - origin).distance > 16) return;
+        widget.onTap();
+      },
+      onPointerCancel: (_) => _clear(),
+      child: widget.child,
     );
   }
 }

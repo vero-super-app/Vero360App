@@ -179,6 +179,9 @@ class Accommodation {
   /// Additional gallery URLs/paths
   final List<String> gallery;
 
+  /// Listing video URLs (camera or gallery). Played on the booking page.
+  final List<String> videos;
+
   /// What this place offers (Wi-Fi, parking, pool, …).
   final List<String>? _amenities;
 
@@ -204,6 +207,7 @@ class Accommodation {
     this.image,
     this.imageBytes,
     this.gallery = const [],
+    this.videos = const [],
     List<String>? amenities,
     this.promotedUntil,
   })  : _pricePeriod = pricePeriod,
@@ -225,6 +229,7 @@ class Accommodation {
       image: image,
       imageBytes: imageBytes,
       gallery: gallery,
+      videos: videos,
       amenities: _amenities,
       promotedUntil: promotedUntil,
     );
@@ -245,6 +250,7 @@ class Accommodation {
       image: image,
       imageBytes: imageBytes,
       gallery: gallery,
+      videos: videos,
       amenities: _amenities,
       promotedUntil: until,
     );
@@ -265,6 +271,7 @@ class Accommodation {
       image: image,
       imageBytes: imageBytes,
       gallery: gallery,
+      videos: videos,
       amenities: _amenities,
       promotedUntil: promotedUntil,
     );
@@ -285,7 +292,29 @@ class Accommodation {
       image: image,
       imageBytes: imageBytes,
       gallery: gallery,
+      videos: videos,
       amenities: next,
+      promotedUntil: promotedUntil,
+    );
+  }
+
+  Accommodation withVideos(List<String> next) {
+    return Accommodation(
+      id: id,
+      name: name,
+      location: location,
+      description: description,
+      price: price,
+      pricePeriod: pricePeriod,
+      accommodationType: accommodationType,
+      roomsAvailable: roomsAvailable,
+      owner: owner,
+      hostMerchantUid: hostMerchantUid,
+      image: image,
+      imageBytes: imageBytes,
+      gallery: gallery,
+      videos: next,
+      amenities: _amenities,
       promotedUntil: promotedUntil,
     );
   }
@@ -364,6 +393,14 @@ class Accommodation {
     if (galleryRaw is List) {
       gallery = galleryRaw.map((e) => e.toString()).toList();
     }
+    List<String> videos = const [];
+    final videosRaw = json['videos'];
+    if (videosRaw is List) {
+      videos = videosRaw
+          .map((e) => e.toString().trim())
+          .where((s) => s.isNotEmpty)
+          .toList();
+    }
     final priceRaw = json['pricePerNight'] ?? json['price'];
     final roomsRaw =
         json['roomsAvailable'] ?? json['roomCount'] ?? json['capacity'] ?? 1;
@@ -392,6 +429,7 @@ class Accommodation {
       image: rawImage.isEmpty ? null : rawImage,
       imageBytes: imageBytes,
       gallery: gallery,
+      videos: videos,
       amenities: parseAccommodationAmenities(
         json['amenities'] ??
             json['servicesOffered'] ??

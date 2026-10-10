@@ -161,7 +161,11 @@ class _ToShipPageState extends State<ToShipPage> {
     List<OrderItem> list,
     String merchantUid,
   ) async {
+    final me = merchantUid.trim();
+    // getMyOrders mixes purchases and sales. A ship nudge is only for
+    // orders this account is selling.
     final toShip = list.where((o) {
+      if (!_isSellerForOrder(o)) return false;
       return o.status == OrderStatus.confirmed &&
           o.paymentStatus == PaymentStatus.paid;
     }).take(8);
@@ -169,9 +173,13 @@ class _ToShipPageState extends State<ToShipPage> {
       try {
         final esc = await OrderEscrowService.fetchEscrow(o.id);
         if (esc == null || !esc.isAwaitingShipment) continue;
+        final buyer = esc.buyerUid.trim();
+        final seller = esc.merchantUid.trim();
+        // Purchases stay on Received Parcel. Never tell the buyer to ship.
+        if (buyer.isNotEmpty && buyer == me && seller != me) continue;
         await OrderShippingReminderService.maybeTeamNudgeMerchant(
           orderId: o.id,
-          merchantUid: merchantUid,
+          merchantUid: me,
           orderNumber: o.orderNumber,
           itemName: o.itemName,
         );

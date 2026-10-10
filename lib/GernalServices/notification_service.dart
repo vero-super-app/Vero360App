@@ -1102,6 +1102,7 @@ class NotificationService {
         break;
 
       case 'story_posted':
+      case 'story_liked':
         if (kDebugMode) debugPrint('→ Open home for story');
         final storyEmail = FirebaseAuth.instance.currentUser?.email ?? '';
         openVeroMainShell(navigator.context, email: storyEmail, tabIndex: 0);

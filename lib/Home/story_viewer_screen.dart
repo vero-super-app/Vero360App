@@ -1,9 +1,13 @@
 // Full-screen story viewer — one merchant's stories, 24h, caption, video, record viewers.
 
-import 'dart:convert';
+import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:video_player/video_player.dart';
 
 import 'package:vero360_app/Home/merchant_story_model.dart';
@@ -42,9 +46,19 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   bool _isPaused = false;
   bool _sendingReply = false;
   bool _replyFocused = false;
+  Uint8List? _replyImageBytes;
+  String? _replyVideoPath;
+  MerchantChatResult? _warmChat;
+  String? _warmMerchantId;
+  final ImagePicker _replyPicker = ImagePicker();
   bool _deleting = false;
   int _ownViewerCount = 0;
-  bool _loadingOwnViews = false;
+  int _likeCount = 0;
+  bool _liked = false;
+  String? _likeWatchStoryId;
+  bool? _expectMineLiked;
+  StreamSubscription<StoryLikeState>? _likeSub;
+  bool _likeBusy = false;
   late AnimationController _progressController;
   final StoryService _storyService = StoryService();
   final TextEditingController _replyController = TextEditingController();
@@ -97,6 +111,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _recordViewForCurrentSlide();
       _hydrateOwnerBusinessNames();
+      _warmReplyChat();
     });
   }
 
@@ -142,14 +157,15 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   void _recordViewForCurrentSlide() {
     final items = _items;
     if (_currentIndex < 0 || _currentIndex >= items.length) return;
+    _bindLikeWatch();
     if (_isOwnStory) {
       _loadOwnViewerCount();
       return;
     }
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
-    final viewerName = user.displayName ?? user.email ?? 'Someone';
     final storyId = items[_currentIndex].storyId;
+    final viewerName = user.displayName ?? user.email ?? 'Someone';
     _storyService.recordView(
       storyId: storyId,
       viewerId: user.uid,
@@ -163,17 +179,14 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     final items = _items;
     if (_currentIndex < 0 || _currentIndex >= items.length) return;
     final storyId = items[_currentIndex].storyId;
-    setState(() => _loadingOwnViews = true);
     try {
-      final count = await _storyService.getStoryViewerCount(storyId);
+      final viewers = await _storyService.getStoryViewers(storyId);
       if (!mounted) return;
+      if (_likeWatchStoryId != storyId) return;
       setState(() {
-        _ownViewerCount = count;
-        _loadingOwnViews = false;
+        _ownViewerCount = viewers.length;
       });
-    } catch (_) {
-      if (mounted) setState(() => _loadingOwnViews = false);
-    }
+    } catch (_) {}
   }
 
   Future<void> _showOwnViewersSheet() async {
@@ -182,113 +195,18 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     _progressController.stop();
     setState(() => _isPaused = true);
     final storyId = items[_currentIndex].storyId;
-    final viewers = await _storyService.getStoryViewers(storyId);
+    List<StoryViewerInfo> viewers = const [];
+    try {
+      viewers = await _storyService.getStoryViewers(storyId);
+    } catch (_) {}
     if (!mounted) return;
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.55,
-        minChildSize: 0.3,
-        maxChildSize: 0.92,
-        expand: false,
-        builder: (_, scrollController) => Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 36,
-                  height: 4,
-                  margin: const EdgeInsets.only(bottom: 14),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                ),
-              ),
-              Row(
-                children: [
-                  const Icon(Icons.visibility_outlined, size: 22),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Views (${viewers.length})',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Expanded(
-                child: viewers.isEmpty
-                    ? const Center(
-                        child: Text(
-                          'No views yet',
-                          style: TextStyle(color: Colors.grey),
-                        ),
-                      )
-                    : ListView.builder(
-                        controller: scrollController,
-                        itemCount: viewers.length,
-                        itemBuilder: (_, i) {
-                          final v = viewers[i];
-                          final initial = (v.viewerName.isNotEmpty
-                                  ? v.viewerName[0]
-                                  : '?')
-                              .toUpperCase();
-                          final avatar = (v.viewerProfileImageUrl != null &&
-                                  v.viewerProfileImageUrl!.trim().isNotEmpty)
-                              ? CircleAvatar(
-                                  backgroundImage:
-                                      NetworkImage(v.viewerProfileImageUrl!),
-                                )
-                              : CircleAvatar(
-                                  backgroundColor:
-                                      const Color(0xFFFF8A00).withValues(alpha: 0.25),
-                                  child: Text(
-                                    initial,
-                                    style: const TextStyle(
-                                      color: Color(0xFFFF8A00),
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                );
-                          return ListTile(
-                            leading: avatar,
-                            title: Text(
-                              v.viewerName.isEmpty ? 'Unknown' : v.viewerName,
-                              style: const TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                            subtitle: Text(_formatViewedAt(v.viewedAt)),
-                          );
-                        },
-                      ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    await showStoryViewersSheet(context, viewers);
     if (!mounted) return;
     setState(() {
       _ownViewerCount = viewers.length;
       _isPaused = false;
     });
     _progressController.forward();
-  }
-
-  String _formatViewedAt(DateTime viewedAt) {
-    final d = DateTime.now().difference(viewedAt);
-    if (d.inMinutes < 1) return 'Just now';
-    if (d.inMinutes < 60) return '${d.inMinutes}m ago';
-    if (d.inHours < 24) return '${d.inHours}h ago';
-    return '${d.inDays}d ago';
   }
 
   Future<void> _confirmDeleteCurrentStory() async {
@@ -392,9 +310,25 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
         .getMerchantStoryRingState(merchantId: group.merchantId, viewerId: viewerId)
         .then((s) => s.hasUnviewed);
     if (!mounted) return;
+    if (group.hasUnviewed == hasUnviewed) return;
     setState(() {
       _groups[_groupIndex] = group.copyWith(hasUnviewed: hasUnviewed);
     });
+  }
+
+  void _warmReplyChat() {
+    if (_isOwnStory) return;
+    final merchantId = _currentGroup.merchantId.trim();
+    if (merchantId.isEmpty) return;
+    if (FirebaseAuth.instance.currentUser == null) return;
+    if (_warmMerchantId == merchantId && _warmChat != null) return;
+    _warmMerchantId = merchantId;
+    _warmChat = null;
+    BackendChatService.startMerchantChat(merchantId: merchantId).then((result) {
+      if (!mounted) return;
+      if (_currentGroup.merchantId.trim() != merchantId) return;
+      _warmChat = result;
+    }).catchError((_) {});
   }
 
   void _restartProgress() {
@@ -437,13 +371,60 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
       });
       _pageController.jumpToPage(0);
       _restartProgress();
+      _warmReplyChat();
     } else {
       Navigator.of(context).pop();
     }
   }
 
+  void _bindLikeWatch() {
+    final items = _items;
+    if (_currentIndex < 0 || _currentIndex >= items.length) return;
+    final storyId = items[_currentIndex].storyId;
+    if (storyId.isEmpty || storyId == _likeWatchStoryId) return;
+    _likeWatchStoryId = storyId;
+    _likeSub?.cancel();
+    _likeSub = null;
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final cachedMine = uid == null ? null : StoryService.peekMyLike(uid, storyId);
+    if (!_isOwnStory) {
+      setState(() {
+        if (!_likeBusy) _liked = cachedMine ?? false;
+      });
+      if (uid == null) return;
+      _storyService.viewerHasLiked(storyId: storyId, viewerId: uid).then((liked) {
+        if (!mounted || _likeWatchStoryId != storyId || _likeBusy) return;
+        if (_expectMineLiked != null && liked != _expectMineLiked) return;
+        setState(() {
+          _expectMineLiked = null;
+          _liked = liked;
+        });
+      });
+      return;
+    }
+    final cachedCount = StoryService.peekLikeCount(storyId);
+    setState(() {
+      _likeCount = cachedCount ?? 0;
+      if (!_likeBusy) _liked = cachedMine ?? false;
+    });
+    _likeSub = _storyService
+        .watchStoryLikes(storyId: storyId, viewerId: uid)
+        .listen((state) {
+      if (!mounted || _likeWatchStoryId != storyId || _likeBusy) return;
+      if (_expectMineLiked != null && state.mineLiked != _expectMineLiked) {
+        return;
+      }
+      setState(() {
+        _expectMineLiked = null;
+        _likeCount = state.likeCount;
+        _liked = state.mineLiked;
+      });
+    });
+  }
+
   @override
   void dispose() {
+    _likeSub?.cancel();
     _replyFocus.removeListener(_onReplyFocusChanged);
     _replyFocus.dispose();
     _replyController.dispose();
@@ -467,6 +448,11 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
         onLongPressStart: (_) => _progressController.stop(),
         onLongPressEnd: (_) {
           if (!_isPaused) _progressController.forward();
+        },
+        onVerticalDragEnd: (details) {
+          if (!_isOwnStory) return;
+          final velocity = details.primaryVelocity ?? 0;
+          if (velocity < -280) _showOwnViewersSheet();
         },
         onTapUp: (details) {
           if (!_allowTapAdvance()) return;
@@ -503,7 +489,11 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
               },
               itemBuilder: (context, i) {
                 final item = items[i];
-                return _StoryPage(item: item);
+                return _StoryPage(
+                  key: ValueKey(item.storyId),
+                  item: item,
+                  active: i == _currentIndex,
+                );
               },
             ),
             SafeArea(
@@ -590,25 +580,27 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                       const Icon(Icons.visibility_rounded,
                           color: Colors.white, size: 22),
                       const SizedBox(width: 8),
-                      if (_loadingOwnViews)
-                        const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      else
-                        Text(
-                          '$_ownViewerCount view${_ownViewerCount == 1 ? '' : 's'}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 15,
+                      Flexible(
+                          child: Text(
+                            '$_ownViewerCount view${_ownViewerCount == 1 ? '' : 's'} · $_likeCount like${_likeCount == 1 ? '' : 's'}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 15,
+                            ),
                           ),
                         ),
-                      const SizedBox(width: 4),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Swipe up',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.85),
+                          fontWeight: FontWeight.w600,
+                          fontSize: 12,
+                        ),
+                      ),
                       Icon(
                         Icons.keyboard_arrow_up_rounded,
                         color: Colors.white.withValues(alpha: 0.8),
@@ -793,11 +785,155 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     );
   }
 
+  Future<void> _toggleLike() async {
+    if (_likeBusy || _isOwnStory || _items.isEmpty) return;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      await _promptLoginToReply();
+      return;
+    }
+    final storyId = _items[_currentIndex.clamp(0, _items.length - 1)].storyId;
+    final wasLiked = _liked;
+    final next = !wasLiked;
+    final previousCount = _likeCount;
+    _expectMineLiked = next;
+    setState(() {
+      _liked = next;
+      _likeBusy = true;
+      if (next && !wasLiked) _likeCount++;
+      if (!next && wasLiked && _likeCount > 0) _likeCount--;
+    });
+    try {
+      final name = await DisplayNameSync.resolveActingDisplayName(
+        fallback: user.displayName ?? user.email ?? 'Someone',
+      );
+      await _storyService.setStoryLiked(
+        storyId: storyId,
+        viewerId: user.uid,
+        viewerName: name,
+        viewerProfileImageUrl: user.photoURL,
+        liked: next,
+      );
+      if (!mounted) return;
+      final saved = StoryService.peekLikeCount(storyId);
+      setState(() {
+        _likeBusy = false;
+        _liked = next;
+        if (saved != null) _likeCount = saved;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _likeBusy = false;
+        _expectMineLiked = null;
+        _liked = wasLiked;
+        _likeCount = previousCount;
+      });
+    }
+  }
+
+  Widget _likeButton() {
+    return Material(
+      color: Colors.white.withValues(alpha: 0.14),
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: _likeBusy ? null : _toggleLike,
+        child: SizedBox(
+          width: 46,
+          height: 46,
+          child: Icon(
+            _liked ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+            color: _liked ? const Color(0xFFFF2D55) : Colors.white,
+            size: 24,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildReplyBar() {
+    final hasImage = _replyImageBytes != null;
+    final hasVideo = _replyVideoPath != null;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
+          if (hasImage || hasVideo)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 54, bottom: 8),
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: hasImage
+                          ? Image.memory(
+                              _replyImageBytes!,
+                              width: 72,
+                              height: 72,
+                              fit: BoxFit.cover,
+                              gaplessPlayback: true,
+                            )
+                          : Container(
+                              width: 72,
+                              height: 72,
+                              color: Colors.black,
+                              alignment: Alignment.center,
+                              child: const Icon(
+                                Icons.play_circle_fill_rounded,
+                                color: Colors.white,
+                                size: 32,
+                              ),
+                            ),
+                    ),
+                    Positioned(
+                      top: -6,
+                      right: -6,
+                      child: Material(
+                        color: Colors.black87,
+                        shape: const CircleBorder(),
+                        child: InkWell(
+                          customBorder: const CircleBorder(),
+                          onTap: _sendingReply
+                              ? null
+                              : () => setState(() {
+                                    _replyImageBytes = null;
+                                    _replyVideoPath = null;
+                                  }),
+                          child: const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: Icon(Icons.close, color: Colors.white, size: 14),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          Row(
+        children: [
+          _likeButton(),
+          const SizedBox(width: 8),
+          Material(
+            color: Colors.white.withValues(alpha: 0.14),
+            shape: const CircleBorder(),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: _sendingReply ? null : _pickReplyMedia,
+              child: const SizedBox(
+                width: 46,
+                height: 46,
+                child: Icon(Icons.perm_media_outlined, color: Colors.white, size: 22),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
           Expanded(
             child: TextField(
               controller: _replyController,
@@ -864,13 +1000,189 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
             ),
           ),
         ],
+          ),
+        ],
       ),
     );
   }
 
+  Widget _replySourceRow(
+    BuildContext ctx, {
+    required String choice,
+    required Color color,
+    required IconData icon,
+    required String label,
+  }) {
+    return InkWell(
+      onTap: () => Navigator.pop(ctx, choice),
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade50,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                child: Icon(icon, color: Colors.white, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF222222),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickReplyMedia() async {
+    _progressController.stop();
+    setState(() => _isPaused = true);
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _replySourceRow(
+                ctx,
+                choice: 'photo_camera',
+                color: const Color(0xFFFF8A00),
+                icon: Icons.photo_camera_outlined,
+                label: 'Take a photo',
+              ),
+              _replySourceRow(
+                ctx,
+                choice: 'photo',
+                color: const Color(0xFF1E88E5),
+                icon: Icons.photo_library_outlined,
+                label: 'Choose from gallery',
+              ),
+              _replySourceRow(
+                ctx,
+                choice: 'video_camera',
+                color: const Color(0xFF111111),
+                icon: Icons.videocam_outlined,
+                label: 'Record a video',
+              ),
+              _replySourceRow(
+                ctx,
+                choice: 'video',
+                color: const Color(0xFF111111),
+                icon: Icons.video_library_outlined,
+                label: 'Choose a video',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (choice == 'photo' || choice == 'photo_camera') {
+      try {
+        final file = await _replyPicker.pickImage(
+          source: choice == 'photo_camera'
+              ? ImageSource.camera
+              : ImageSource.gallery,
+          maxWidth: 1600,
+          imageQuality: 85,
+        );
+        if (file == null || !mounted) {
+          _resumeAfterReplyPick();
+          return;
+        }
+        final raw = await file.readAsBytes();
+        final prepared = await StoryService.prepareStoryImageBytes(
+          Uint8List.fromList(raw),
+          maxEdge: 1280,
+          maxBytes: 450000,
+        );
+        if (!mounted) return;
+        setState(() {
+          _replyImageBytes = prepared;
+          _replyVideoPath = null;
+        });
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not add that photo. $e')),
+          );
+        }
+      }
+    } else if (choice == 'video' || choice == 'video_camera') {
+      try {
+        final file = await _replyPicker.pickVideo(
+          source: choice == 'video_camera'
+              ? ImageSource.camera
+              : ImageSource.gallery,
+          maxDuration: const Duration(minutes: 2),
+        );
+        if (file == null || !mounted) {
+          _resumeAfterReplyPick();
+          return;
+        }
+        final length = await File(file.path).length();
+        if (length > 40 * 1024 * 1024) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('That video is too large. Choose one under 40 MB.'),
+              ),
+            );
+          }
+          _resumeAfterReplyPick();
+          return;
+        }
+        setState(() {
+          _replyVideoPath = file.path;
+          _replyImageBytes = null;
+        });
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not add that video. $e')),
+          );
+        }
+      }
+    }
+    _resumeAfterReplyPick();
+  }
+
+  void _resumeAfterReplyPick() {
+    if (!mounted || _sendingReply || _replyFocused) return;
+    setState(() => _isPaused = false);
+    _progressController.forward();
+  }
+
   Future<void> _sendStoryReply() async {
     final text = _replyController.text.trim();
-    if (text.isEmpty || _sendingReply || _isOwnStory) return;
+    final hasImage = _replyImageBytes != null && _replyImageBytes!.isNotEmpty;
+    final hasVideo = _replyVideoPath != null && _replyVideoPath!.isNotEmpty;
+    if ((text.isEmpty && !hasImage && !hasVideo) || _sendingReply || _isOwnStory) {
+      return;
+    }
     if (_items.isEmpty) return;
 
     // Guests can view stories, but inbox replies need an account.
@@ -892,32 +1204,69 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     _replyFocus.unfocus();
 
     try {
-      final result = await BackendChatService.startMerchantChat(
-        merchantId: merchantId,
-      );
+      final result = (_warmChat != null && _warmMerchantId == merchantId)
+          ? _warmChat!
+          : await BackendChatService.startMerchantChat(
+              merchantId: merchantId,
+            );
+      _warmChat = result;
+      _warmMerchantId = merchantId;
 
       final caption = item.caption?.trim();
-      final content = (caption != null && caption.isNotEmpty)
-          ? '↩️ Story reply:\n"$caption"\n\n$text'
-          : '↩️ Story reply:\n\n$text';
+      final metadata = <String, dynamic>{
+        'source': 'story_reply',
+        'storyId': item.storyId,
+        'merchantId': merchantId,
+        if (caption != null && caption.isNotEmpty) 'storyCaption': caption,
+        if (item.mediaUrl.trim().isNotEmpty) 'storyMediaUrl': item.mediaUrl.trim(),
+        'storyMediaType': item.mediaType,
+      };
 
-      await BackendChatService.sendMessage(
-        chatId: result.chat.id,
-        content: content,
-        type: 'text',
-        metadata: {
-          'source': 'story_reply',
-          'storyId': item.storyId,
-          'merchantId': merchantId,
-          if (caption != null && caption.isNotEmpty) 'storyCaption': caption,
-          if (item.mediaUrl.trim().isNotEmpty)
-            'storyMediaUrl': item.mediaUrl.trim(),
-          'storyMediaType': item.mediaType,
-        },
-      );
+      if (hasImage) {
+        final url = await BackendChatService.uploadChatAttachment(
+          bytes: _replyImageBytes!,
+          filename: 'story-reply.jpg',
+          mimeType: 'image/jpeg',
+        );
+        await BackendChatService.sendImageMessage(
+          chatId: result.chat.id,
+          imageUrl: url,
+          caption: text,
+          metadata: metadata,
+        );
+      } else if (hasVideo) {
+        final path = _replyVideoPath!;
+        final ref = FirebaseStorage.instance.ref().child(
+          'chat_media/story_replies/'
+          '${DateTime.now().millisecondsSinceEpoch}.mp4',
+        );
+        await ref.putFile(
+          File(path),
+          SettableMetadata(contentType: 'video/mp4'),
+        );
+        final url = await ref.getDownloadURL();
+        await BackendChatService.sendVideoMessage(
+          chatId: result.chat.id,
+          videoUrl: url,
+          caption: text,
+          metadata: metadata,
+        );
+      } else {
+        final content = (caption != null && caption.isNotEmpty)
+            ? '↩️ Story reply:\n"$caption"\n\n$text'
+            : '↩️ Story reply:\n\n$text';
+        await BackendChatService.sendMessage(
+          chatId: result.chat.id,
+          content: content,
+          type: 'text',
+          metadata: metadata,
+        );
+      }
 
       if (!mounted) return;
       _replyController.clear();
+      _replyImageBytes = null;
+      _replyVideoPath = null;
 
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
@@ -1027,30 +1376,64 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
 
 class _StoryPage extends StatefulWidget {
   final MerchantStoryItem item;
+  final bool active;
 
-  const _StoryPage({required this.item});
+  const _StoryPage({
+    super.key,
+    required this.item,
+    required this.active,
+  });
 
   @override
   State<_StoryPage> createState() => _StoryPageState();
 }
 
-class _StoryPageState extends State<_StoryPage> {
+class _StoryPageState extends State<_StoryPage>
+    with AutomaticKeepAliveClientMixin {
   VideoPlayerController? _videoController;
+  Uint8List? _inlineBytes;
+  bool _videoReady = false;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
     super.initState();
-    if (widget.item.mediaType == 'video' && widget.item.mediaUrl.trim().isNotEmpty) {
-      _videoController = VideoPlayerController.networkUrl(Uri.parse(widget.item.mediaUrl))
-        ..initialize().then((_) {
-          if (mounted) {
-            _videoController!.setLooping(true);
-            _videoController!.play();
-            setState(() {});
-          }
-        }).catchError((_) {
-          if (mounted) setState(() {});
-        });
+    _inlineBytes = StoryInlineImageCache.bytesFor(
+      widget.item.storyId,
+      widget.item.imageBase64,
+    );
+    final url = widget.item.mediaUrl.trim();
+    if (widget.item.mediaType != 'video' && url.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        precacheImage(NetworkImage(url), context);
+      });
+    }
+    if (widget.item.mediaType == 'video' && url.isNotEmpty) {
+      final controller = VideoPlayerController.networkUrl(Uri.parse(url));
+      _videoController = controller;
+      controller.initialize().then((_) {
+        if (!mounted) return;
+        controller.setLooping(true);
+        if (widget.active) controller.play();
+        setState(() => _videoReady = true);
+      }).catchError((_) {
+        if (mounted) setState(() => _videoReady = false);
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _StoryPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final controller = _videoController;
+    if (controller == null || !controller.value.isInitialized) return;
+    if (widget.active && !controller.value.isPlaying) {
+      controller.play();
+    } else if (!widget.active && controller.value.isPlaying) {
+      controller.pause();
     }
   }
 
@@ -1062,6 +1445,7 @@ class _StoryPageState extends State<_StoryPage> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final item = widget.item;
     return Stack(
       fit: StackFit.expand,
@@ -1101,48 +1485,59 @@ class _StoryPageState extends State<_StoryPage> {
 
   Widget _buildMedia(MerchantStoryItem item) {
     if (item.mediaType == 'video') {
-      if (_videoController == null) {
-        return const Center(
-          child: CircularProgressIndicator(color: Colors.white),
-        );
-      }
-      if (!_videoController!.value.isInitialized) {
-        return const Center(
-          child: CircularProgressIndicator(color: Colors.white),
-        );
-      }
-      return Center(
-        child: AspectRatio(
-          aspectRatio: _videoController!.value.aspectRatio,
-          child: VideoPlayer(_videoController!),
+      final controller = _videoController;
+      return ColoredBox(
+        color: Colors.black,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (controller != null && _videoReady && controller.value.isInitialized)
+              Center(
+                child: AspectRatio(
+                  aspectRatio: controller.value.aspectRatio == 0
+                      ? 9 / 16
+                      : controller.value.aspectRatio,
+                  child: VideoPlayer(controller),
+                ),
+              ),
+            if (!_videoReady)
+              const Center(
+                child: CircularProgressIndicator(color: Colors.white),
+              ),
+          ],
         ),
       );
     }
-    if (item.hasInlineImage && item.imageBase64 != null) {
-      try {
-        final bytes = base64Decode(item.imageBase64!);
-        return Center(
+    final inline = _inlineBytes;
+    if (inline != null) {
+      return ColoredBox(
+        color: Colors.black,
+        child: Center(
           child: Image.memory(
-            bytes,
+            inline,
             fit: BoxFit.contain,
+            gaplessPlayback: true,
+            filterQuality: FilterQuality.medium,
             errorBuilder: (_, __, ___) => const Center(
               child: Text('Unable to load', style: TextStyle(color: Colors.white)),
             ),
           ),
-        );
-      } catch (_) {
-        return const Center(
-          child: Text('Unable to load', style: TextStyle(color: Colors.white)),
-        );
-      }
+        ),
+      );
     }
     if (item.mediaUrl.isNotEmpty) {
-      return Center(
-        child: Image.network(
-          item.mediaUrl,
-          fit: BoxFit.contain,
-          errorBuilder: (_, __, ___) => const Center(
-            child: Text('Unable to load', style: TextStyle(color: Colors.white)),
+      return ColoredBox(
+        color: Colors.black,
+        child: Center(
+          child: Image.network(
+            item.mediaUrl,
+            key: ValueKey(item.mediaUrl),
+            fit: BoxFit.contain,
+            gaplessPlayback: true,
+            filterQuality: FilterQuality.medium,
+            errorBuilder: (_, __, ___) => const Center(
+              child: Text('Unable to load', style: TextStyle(color: Colors.white)),
+            ),
           ),
         ),
       );
@@ -1151,4 +1546,272 @@ class _StoryPageState extends State<_StoryPage> {
       child: Text('No media', style: TextStyle(color: Colors.white)),
     );
   }
+}
+
+Future<void> showStoryViewersSheet(
+  BuildContext context,
+  List<StoryViewerInfo> viewers,
+) {
+  final screenHeight = MediaQuery.sizeOf(context).height;
+  return showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: Colors.transparent,
+    isScrollControlled: true,
+    builder: (ctx) {
+      return SizedBox(
+        height: screenHeight,
+        child: DraggableScrollableSheet(
+          initialChildSize: 0.55,
+          minChildSize: 0.32,
+          maxChildSize: 0.92,
+          builder: (_, scrollController) => ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            child: ColoredBox(
+              color: Colors.white,
+              child: _StoryViewersPage(
+                viewers: viewers,
+                scrollController: scrollController,
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}
+
+class _StoryViewersPage extends StatelessWidget {
+  final List<StoryViewerInfo> viewers;
+  final ScrollController scrollController;
+
+  const _StoryViewersPage({
+    required this.viewers,
+    required this.scrollController,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final likes = viewers.where((v) => v.liked).length;
+    return Column(
+      children: [
+        const SizedBox(height: 10),
+        Container(
+          width: 36,
+          height: 4,
+          decoration: BoxDecoration(
+            color: const Color(0xFFD1D7DB),
+            borderRadius: BorderRadius.circular(99),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
+          child: Row(
+            children: [
+              const Icon(Icons.remove_red_eye_outlined,
+                  size: 20, color: Color(0xFF54656F)),
+              const SizedBox(width: 8),
+              Text(
+                'Viewed by ${viewers.length}',
+                style: const TextStyle(
+                  color: Color(0xFF111B21),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.2,
+                ),
+              ),
+              const Spacer(),
+              const Icon(Icons.favorite_rounded,
+                  size: 16, color: Color(0xFFFF2D55)),
+              const SizedBox(width: 4),
+              Text(
+                '$likes',
+                style: const TextStyle(
+                  color: Color(0xFF111B21),
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1, thickness: 0.6, color: Color(0xFFE9EDEF)),
+        Expanded(
+          child: viewers.isEmpty
+              ? const _EmptyViewers()
+              : ListView.separated(
+                  controller: scrollController,
+                  padding: const EdgeInsets.only(top: 6, bottom: 24),
+                  itemCount: viewers.length,
+                  separatorBuilder: (_, __) => const Padding(
+                    padding: EdgeInsets.only(left: 84),
+                    child: Divider(
+                      height: 1,
+                      thickness: 0.5,
+                      color: Color(0xFFF0F2F5),
+                    ),
+                  ),
+                  itemBuilder: (_, i) => _ViewerRow(viewer: viewers[i]),
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+class _EmptyViewers extends StatelessWidget {
+  const _EmptyViewers();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.remove_red_eye_outlined, size: 42, color: Color(0xFF8696A0)),
+          SizedBox(height: 12),
+          Text(
+            'No views yet',
+            style: TextStyle(
+              color: Color(0xFF111B21),
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          SizedBox(height: 4),
+          Text(
+            'When someone watches this status,\nthey’ll show up here.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Color(0xFF667781),
+              fontSize: 13.5,
+              height: 1.35,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ViewerRow extends StatelessWidget {
+  final StoryViewerInfo viewer;
+
+  const _ViewerRow({required this.viewer});
+
+  @override
+  Widget build(BuildContext context) {
+    final name = viewer.viewerName.trim().isEmpty ? 'Unknown' : viewer.viewerName.trim();
+    final initial = name.isEmpty ? '?' : name[0].toUpperCase();
+    final photo = viewer.viewerProfileImageUrl?.trim() ?? '';
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            padding: const EdgeInsets.all(2),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: const Color(0xFFE9EDEF), width: 1.4),
+            ),
+            child: ClipOval(
+              child: photo.isNotEmpty
+                  ? Image.network(
+                      photo,
+                      fit: BoxFit.cover,
+                      gaplessPlayback: true,
+                      errorBuilder: (_, __, ___) => _InitialAvatar(initial: initial),
+                    )
+                  : _InitialAvatar(initial: initial),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF111B21),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _viewedLabel(viewer.viewedAt),
+                  style: const TextStyle(
+                    color: Color(0xFF667781),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (viewer.liked)
+            const Padding(
+              padding: EdgeInsets.only(left: 8),
+              child: Icon(Icons.favorite_rounded, color: Color(0xFFFF2D55), size: 20),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InitialAvatar extends StatelessWidget {
+  final String initial;
+
+  const _InitialAvatar({required this.initial});
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: const Color(0xFFDFE5E7),
+      child: Center(
+        child: Text(
+          initial,
+          style: const TextStyle(
+            color: Color(0xFF3B4A54),
+            fontWeight: FontWeight.w700,
+            fontSize: 18,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _viewedLabel(DateTime viewedAt) {
+  final now = DateTime.now();
+  final local = viewedAt.toLocal();
+  final diff = now.difference(local);
+  if (diff.inMinutes < 1) return 'Just now';
+  if (diff.inMinutes < 60) {
+    final m = diff.inMinutes;
+    return m == 1 ? '1 minute ago' : '$m minutes ago';
+  }
+  final time = _clock(local);
+  final today = DateTime(now.year, now.month, now.day);
+  final day = DateTime(local.year, local.month, local.day);
+  if (day == today) return 'Today, $time';
+  if (day == today.subtract(const Duration(days: 1))) return 'Yesterday, $time';
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  return '${local.day} ${months[local.month - 1]}, $time';
+}
+
+String _clock(DateTime t) {
+  final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
+  final m = t.minute.toString().padLeft(2, '0');
+  final suffix = t.hour >= 12 ? 'PM' : 'AM';
+  return '$h:$m $suffix';
 }

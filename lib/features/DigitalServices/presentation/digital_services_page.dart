@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
 import 'package:vero360_app/features/DigitalServices/digital_services_catalog.dart';
+import 'package:vero360_app/features/DigitalServices/chatgpt_plans.dart';
 import 'package:vero360_app/features/DigitalServices/netflix_plans.dart';
+import 'package:vero360_app/features/DigitalServices/presentation/chatgpt_plan_picker_page.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_product_amount_page.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/netflix_plan_picker_page.dart';
 
@@ -14,7 +16,14 @@ class DigitalServicesPage extends StatefulWidget {
     required DigitalPayMethod payMethod,
   }) onContinueCheckout;
 
-  const DigitalServicesPage({super.key, required this.onContinueCheckout});
+  /// `all` or a catalog id such as `gift_cards`.
+  final String initialCategory;
+
+  const DigitalServicesPage({
+    super.key,
+    required this.onContinueCheckout,
+    this.initialCategory = 'all',
+  });
 
   @override
   State<DigitalServicesPage> createState() => _DigitalServicesPageState();
@@ -28,13 +37,16 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
 
   final _searchCtrl = TextEditingController();
   final _catalog = DigitalServicesCatalog.instance;
-  String _category = 'all';
+  late String _category;
   String _query = '';
   late final AnimationController _enter;
 
   @override
   void initState() {
     super.initState();
+    _category = widget.initialCategory.trim().isEmpty
+        ? 'all'
+        : widget.initialCategory.trim();
     _catalog.addListener(_onCatalog);
     unawaited(_catalog.ensureStarted());
     _enter = AnimationController(
@@ -65,7 +77,7 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
   List<DigitalProduct> get _filtered {
     return _all.where((p) {
       // Plans are chosen via the Netflix hub picker, not as separate tiles.
-      if (p.isNetflixPlan) return false;
+      if (p.isNetflixPlan || p.isChatGptPlan) return false;
       final catOk = _category == 'all' || p.category == _category;
       if (!catOk) return false;
       if (_query.isEmpty) return true;
@@ -76,6 +88,23 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
   }
 
   void _openProduct(DigitalProduct p) {
+    if (p.isChatGptHub || isChatGptHubKey(p.key)) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => ChatGptPlanPickerPage(
+            onSelectPlan: (plan) {
+              widget.onContinueCheckout(
+                product: plan,
+                selectedUsd: 0,
+                payMethod: DigitalPayMethod.paychangu,
+              );
+            },
+          ),
+        ),
+      );
+      return;
+    }
+
     if (p.isNetflixHub || isNetflixHubKey(p.key)) {
       Navigator.of(context).push(
         MaterialPageRoute(
@@ -734,7 +763,7 @@ class _GiftCardTileState extends State<_GiftCardTile> {
                                     color: const Color(0xFFFF6B00),
                                   ),
                                 ),
-                              ] else if (p.isNetflixHub) ...[
+                              ] else if (p.isNetflixHub || p.isChatGptHub) ...[
                                 const SizedBox(height: 4),
                                 Text(
                                   'Choose a plan',

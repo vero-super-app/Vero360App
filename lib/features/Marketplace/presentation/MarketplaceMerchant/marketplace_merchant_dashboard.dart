@@ -32,6 +32,7 @@ import 'package:http_parser/http_parser.dart' show MediaType;
 import 'package:vero360_app/features/Marketplace/presentation/widgets/PostlatestArrival.dart';
 import 'package:vero360_app/widgets/vero_coin_icon_button.dart';
 import 'package:vero360_app/features/Promotions/presentation/Postpromotion.dart';
+import 'package:vero360_app/features/Marketplace/presentation/pages/shop_pictures_page.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
@@ -150,11 +151,13 @@ class LocalMedia {
   final String filename;
   final String? mime;
   final bool isVideo;
+  final String? filePath;
   const LocalMedia({
     required this.bytes,
     required this.filename,
     this.mime,
     this.isVideo = false,
+    this.filePath,
   });
 }
 
@@ -207,6 +210,10 @@ class _MarketplaceMerchantDashboardState
   final _stock = TextEditingController(text: '1');
   int _stockQty = 1;
   bool _addItemCommissionShown = false;
+  static bool _commissionGuideShownThisInstall = false;
+  static const String _commissionGuidePrefKey =
+      'marketplace_price_commission_guide_shown_v1';
+  final FocusNode _priceFocus = FocusNode();
 
   late TabController _marketplaceTabs;
 
@@ -220,7 +227,10 @@ class _MarketplaceMerchantDashboardState
 
   // G?? multi-photos for posting
   static const int _maxGalleryPhotos = 5;
+  static const int _maxVideos = 2;
+  static const int _maxVideoBytes = 40 * 1024 * 1024;
   final List<LocalMedia> _gallery = <LocalMedia>[];
+  final List<LocalMedia> _videos = <LocalMedia>[];
 
   static const List<String> _kCategories = <String>[
     'drinks',
@@ -814,11 +824,8 @@ class _MarketplaceMerchantDashboardState
       _selectedIndex = 4;
     }
     final startTab = widget.initialInnerTab.clamp(0, 3);
-    if (startTab == 1) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _showAddItemCommissionGuide();
-      });
-    }
+    _priceFocus.addListener(_onPriceFieldFocused);
+    unawaited(_rememberCommissionGuideIfAlreadyShown());
     _marketplaceTabs = TabController(
       length: 4,
       vsync: this,
@@ -826,9 +833,6 @@ class _MarketplaceMerchantDashboardState
     );
     _marketplaceTabs.addListener(() {
       if (_marketplaceTabs.indexIsChanging) return;
-      if (_marketplaceTabs.index == 1) {
-        _showAddItemCommissionGuide();
-      }
       // My Items tab: ensure cached list is visible immediately.
       if (_marketplaceTabs.index == 2 && _items.isEmpty) {
         _hydrateItemsFromLocalCache();
@@ -993,6 +997,8 @@ class _MarketplaceMerchantDashboardState
   void dispose() {
     _ticker?.cancel();
     _marketplaceTabs.dispose();
+    _priceFocus.removeListener(_onPriceFieldFocused);
+    _priceFocus.dispose();
     _name.dispose();
     _price.dispose();
     _location.dispose();
@@ -1255,6 +1261,20 @@ class _MarketplaceMerchantDashboardState
       return null;
     }
 
+    try {
+      final cached = await _firestore
+          .collection('marketplace_merchants')
+          .doc(u.uid)
+          .get(const GetOptions(source: Source.cache));
+      final fromCache = fromMap(cached.data(), includeListingName: true);
+      if (fromCache != null &&
+          fromCache.isNotEmpty &&
+          mounted &&
+          _businessName.trim().isEmpty) {
+        setState(() => _businessName = fromCache);
+      }
+    } catch (_) {}
+
     // Always hydrate shop profile fields from marketplace_merchants.
     try {
       final doc =
@@ -1377,6 +1397,17 @@ class _MarketplaceMerchantDashboardState
     }
 
     if (resolved.isEmpty) resolved = 'Marketplace Merchant';
+    final already = _businessName.trim();
+    if (resolved == 'Marketplace Merchant' &&
+        already.isNotEmpty &&
+        already != 'Marketplace Merchant') {
+      resolved = already;
+    }
+    if (resolved != 'Marketplace Merchant') {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('business_name', resolved);
+      await prefs.setString('marketplace_business_name_${u.uid}', resolved);
+    }
 
     // backfill FirebaseAuth displayName
     try {
@@ -1434,6 +1465,13 @@ class _MarketplaceMerchantDashboardState
     if (!mounted) return;
 
     final currentUid = (_auth.currentUser?.uid ?? _uid).trim();
+    final cachedName = (prefs.getString('marketplace_business_name_$currentUid') ??
+            prefs.getString('business_name') ??
+            '')
+        .trim();
+    if (cachedName.isNotEmpty && cachedName != 'Marketplace Merchant') {
+      setState(() => _businessName = cachedName);
+    }
     final phone = _sanitizePhone(
       prefs.getString('merchant_profile_phone') ?? prefs.getString('phone') ?? '',
     );
@@ -3011,38 +3049,209 @@ class _MarketplaceMerchantDashboardState
     }
   }
 
+  Future<bool> _confirmListingAccuracy() async {
+    const strong = TextStyle(
+      fontWeight: FontWeight.w800,
+      color: Color(0xFF101010),
+      height: 1.4,
+      fontSize: 14,
+    );
+    const red = TextStyle(
+      fontWeight: FontWeight.w800,
+      color: Color(0xFFD32F2F),
+      height: 1.4,
+      fontSize: 14,
+    );
+    const body = TextStyle(
+      fontWeight: FontWeight.w600,
+      color: Color(0xFF374151),
+      height: 1.4,
+      fontSize: 14,
+    );
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.white,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 22, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: Color(0xFFE65100)),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Warning',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 18,
+                        color: Color(0xFF101010),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Before you confirm your listing',
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 15,
+                  color: Color(0xFF101010),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text.rich(
+                TextSpan(
+                  style: body,
+                  children: [
+                    TextSpan(text: 'Check that your '),
+                    TextSpan(
+                      text: 'photos, description and product details accurately match',
+                      style: strong,
+                    ),
+                    TextSpan(text: ' what you are selling.'),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text.rich(
+                TextSpan(
+                  style: body,
+                  children: [
+                    TextSpan(text: 'Buyers have the '),
+                    TextSpan(
+                      text: 'right to return products that do not match your listing',
+                      style: red,
+                    ),
+                    TextSpan(text: '.'),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text.rich(
+                TextSpan(
+                  style: body,
+                  children: [
+                    TextSpan(
+                      text: 'You are responsible for your products’ quality and condition. ',
+                      style: strong,
+                    ),
+                    TextSpan(
+                      text: 'Vero360 is not responsible for your product quality.',
+                      style: red,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text.rich(
+                TextSpan(
+                  style: body,
+                  children: [
+                    TextSpan(text: 'By confirming, you declare that '),
+                    TextSpan(text: 'your listing is accurate', style: strong),
+                    TextSpan(text: ' and accept these responsibilities.'),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        'Go Back & Edit',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                          color: Color(0xFF374151),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _brandOrange,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        'Confirm & Continue',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    return confirmed == true;
+  }
+
   Future<void> _create() async {
     // Sync lock BEFORE any await so one tap cannot post twice on slow networks.
+    if (_submitting) return;
+
+    if (_cover == null) {
+      _toastErr('Please pick a cover photo');
+      return;
+    }
+    if (_name.text.isEmpty || _price.text.isEmpty || _location.text.isEmpty) {
+      _toastErr('Please fill all required fields');
+      return;
+    }
+
+    final stockRaw = _stock.text.trim();
+    final stock = int.tryParse(stockRaw);
+    if (stockRaw.isEmpty || stock == null || stock < 1) {
+      _toastErr('Enter how many items you have in stock (at least 1)');
+      return;
+    }
+    _stockQty = stock;
+
+    final blockReason = MarketplaceModeration.clientBlockReason(
+      title: _name.text,
+      description: _desc.text,
+    );
+    if (blockReason != null) {
+      _toastErr(blockReason);
+      return;
+    }
+
+    final accepted = await _confirmListingAccuracy();
+    if (!accepted || !mounted) return;
     if (_submitting) return;
     _submitting = true;
     if (mounted) setState(() {});
 
     try {
-      if (_cover == null) {
-        _toastErr('Please pick a cover photo');
-        return;
-      }
-      if (_name.text.isEmpty || _price.text.isEmpty || _location.text.isEmpty) {
-        _toastErr('Please fill all required fields');
-        return;
-      }
-
-      final stockRaw = _stock.text.trim();
-      final stock = int.tryParse(stockRaw);
-      if (stockRaw.isEmpty || stock == null || stock < 1) {
-        _toastErr('Enter how many items you have in stock (at least 1)');
-        return;
-      }
-      _stockQty = stock;
-
-      final blockReason = MarketplaceModeration.clientBlockReason(
-        title: _name.text,
-        description: _desc.text,
-      );
-      if (blockReason != null) {
-        _toastErr(blockReason);
-        return;
-      }
 
       final user = _auth.currentUser;
       unawaited(AuthHandler.refreshFirebaseTokenIfSignedIn());
@@ -3128,6 +3337,7 @@ class _MarketplaceMerchantDashboardState
         if (coverBase64 != null) 'image': coverBase64,
         if (galleryUrls.isNotEmpty) 'galleryUrls': galleryUrls,
         if (galleryBase64.isNotEmpty) 'gallery': galleryBase64,
+        if (_videos.isNotEmpty) 'videos': await _uploadListingVideos(svc, uploadToken),
         'description': _desc.text.trim().isEmpty
             ? null
             : DescriptionContactMask.mask(_desc.text.trim()),
@@ -3936,16 +4146,50 @@ class _MarketplaceMerchantDashboardState
     }
   }
 
+  Future<void> _rememberCommissionGuideIfAlreadyShown() async {
+    if (_commissionGuideShownThisInstall) {
+      _addItemCommissionShown = true;
+      return;
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool(_commissionGuidePrefKey) == true) {
+        _commissionGuideShownThisInstall = true;
+        _addItemCommissionShown = true;
+      }
+    } catch (_) {}
+  }
+
+  void _onPriceFieldFocused() {
+    if (!_priceFocus.hasFocus) return;
+    _showAddItemCommissionGuide();
+  }
+
   void _showAddItemCommissionGuide() {
-    if (_addItemCommissionShown || !mounted) return;
+    if (_addItemCommissionShown ||
+        _commissionGuideShownThisInstall ||
+        !mounted) {
+      return;
+    }
     _addItemCommissionShown = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      MerchantCommissionGuide.show(
-        context,
-        price: double.tryParse(_price.text.replaceAll(RegExp(r'[^0-9.]'), '')),
-      );
-    });
+    unawaited(_showCommissionGuideOnce());
+  }
+
+  Future<void> _showCommissionGuideOnce() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool(_commissionGuidePrefKey) == true) {
+        _commissionGuideShownThisInstall = true;
+        return;
+      }
+      await prefs.setBool(_commissionGuidePrefKey, true);
+    } catch (_) {}
+    _commissionGuideShownThisInstall = true;
+    if (!mounted) return;
+    await MerchantCommissionGuide.show(
+      context,
+      price: double.tryParse(_price.text.replaceAll(RegExp(r'[^0-9.]'), '')),
+    );
   }
 
   // ----------------- UI helpers -----------------
@@ -5246,6 +5490,12 @@ class _MarketplaceMerchantDashboardState
         onTap: () => _openBottomSheet(const PromotionsCrudPage()),
       ),
       _QuickActionTile(
+        title: 'Shop pictures',
+        icon: Icons.photo_library_outlined,
+        color: Colors.teal,
+        onTap: _openShopPictures,
+      ),
+      _QuickActionTile(
         title: 'My Vero Ride',
         icon: Icons.directions_car_filled_rounded,
         color: Colors.orange,
@@ -5267,6 +5517,20 @@ class _MarketplaceMerchantDashboardState
   void _openRideHistory() {
     _openBottomSheet(
       const RideHistoryScreen(mode: RideHistoryMode.passenger),
+    );
+  }
+
+  void _openShopPictures() {
+    final uid = _uid.trim().isEmpty
+        ? (FirebaseAuth.instance.currentUser?.uid ?? '')
+        : _uid.trim();
+    if (uid.isEmpty) return;
+    _openBottomSheet(
+      ShopPicturesPage(
+        merchantIds: [uid],
+        shopName: _displayBusinessName(),
+        canManage: true,
+      ),
     );
   }
 
@@ -5776,12 +6040,96 @@ class _MarketplaceMerchantDashboardState
 
               const SizedBox(height: 14),
 
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Videos (optional)',
+                      style: TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                  Text(
+                    '${_videos.length}/$_maxVideos',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      color: Colors.black54,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _videos.length >= _maxVideos
+                      ? null
+                      : _showVideoSource,
+                  icon: const Icon(Icons.videocam_outlined),
+                  label: Text(
+                    _videos.isEmpty ? 'Add a video' : 'Add another video',
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                ),
+              ),
+              if (_videos.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                SizedBox(
+                  height: 96,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _videos.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 10),
+                    itemBuilder: (_, i) {
+                      return SizedBox(
+                        width: 96,
+                        height: 96,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: const ColoredBox(
+                                color: Colors.black,
+                                child: Icon(
+                                  Icons.play_arrow_rounded,
+                                  color: Colors.white,
+                                  size: 36,
+                                ),
+                              ),
+                            ),
+                            Positioned(
+                              top: 4,
+                              right: 4,
+                              child: InkWell(
+                                onTap: () => setState(() => _videos.removeAt(i)),
+                                child: const CircleAvatar(
+                                  radius: 12,
+                                  backgroundColor: Colors.black54,
+                                  child: Icon(
+                                    Icons.close,
+                                    size: 14,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 14),
+
               TextField(
                   controller: _name,
                   decoration: _inputDecoration(label: 'Item Name')),
               const SizedBox(height: 10),
               TextField(
                   controller: _price,
+                  focusNode: _priceFocus,
                   keyboardType: TextInputType.number,
                   inputFormatters: [ThousandsSeparatorInputFormatter()],
                   decoration: _inputDecoration(
@@ -6331,6 +6679,162 @@ class _MarketplaceMerchantDashboardState
         ),
       ),
     );
+  }
+
+  void _showVideoSource() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (_) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _mediaSourceRow(
+                color: const Color(0xFFFF8A00),
+                icon: Icons.videocam_outlined,
+                label: 'Record a video',
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickListingVideo(ImageSource.camera);
+                },
+              ),
+              _mediaSourceRow(
+                color: const Color(0xFF111111),
+                icon: Icons.video_library_outlined,
+                label: 'Choose from gallery',
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickListingVideo(ImageSource.gallery);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _mediaSourceRow({
+    required Color color,
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade50,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                child: Icon(icon, color: Colors.white, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF222222),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickListingVideo(ImageSource source) async {
+    try {
+      if (_videos.length >= _maxVideos) {
+        _toastErr('You can add up to $_maxVideos videos.');
+        return;
+      }
+      final x = await _picker.pickVideo(
+        source: source,
+        maxDuration: const Duration(minutes: 2),
+      );
+      if (x == null) return;
+      final length = await File(x.path).length();
+      if (length > _maxVideoBytes) {
+        _toastErr('That video is too large. Choose one under 40 MB.');
+        return;
+      }
+      if (!mounted) return;
+      setState(() {
+        _videos.add(
+          LocalMedia(
+            bytes: Uint8List(0),
+            filename: x.name.isEmpty ? 'video.mp4' : x.name,
+            mime: lookupMimeType(x.name) ?? 'video/mp4',
+            isVideo: true,
+            filePath: x.path,
+          ),
+        );
+      });
+    } catch (e) {
+      debugPrint('Pick listing video error: $e');
+      if (!mounted) return;
+      _toastErr('Could not add that video. Please try again.');
+    }
+  }
+
+  Future<List<String>> _uploadListingVideos(
+    MarketplaceService svc,
+    String? uploadToken,
+  ) async {
+    final urls = <String>[];
+    final uid = (_auth.currentUser?.uid ?? _uid).trim();
+    for (var i = 0; i < _videos.length; i++) {
+      final video = _videos[i];
+      final path = (video.filePath ?? '').trim();
+      final String url;
+      if (path.isNotEmpty && uid.isNotEmpty) {
+        final ext = video.filename.contains('.')
+            ? video.filename.split('.').last.toLowerCase()
+            : 'mp4';
+        final safeExt = ext.length > 4 ? 'mp4' : ext;
+        final ref = FirebaseStorage.instance.ref().child(
+          'profile_photos/${uid}_listingvideo_${DateTime.now().millisecondsSinceEpoch}_$i.$safeExt',
+        );
+        await ref.putFile(
+          File(path),
+          SettableMetadata(contentType: video.mime ?? 'video/mp4'),
+        );
+        url = await ref.getDownloadURL();
+      } else {
+        url = await svc.uploadBytes(
+          video.bytes,
+          filename: video.filename.isNotEmpty ? video.filename : 'video_$i.mp4',
+          mimeType: video.mime ?? 'video/mp4',
+          token: uploadToken,
+          timeout: const Duration(seconds: 90),
+        );
+      }
+      if (url.trim().isNotEmpty) urls.add(url.trim());
+    }
+    if (urls.isEmpty) {
+      throw StateError('Video upload failed. Check your connection and try again.');
+    }
+    return urls;
   }
 
   Future<void> _pickMorePhotosFromCamera() async {

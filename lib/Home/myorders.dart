@@ -172,6 +172,8 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
   final Map<String, OrderEscrowSnapshot?> _escrowByOrderId = {};
   /// Merchant phones from dashboard source (SharedPreferences + Firestore), keyed by order id.
   final Map<String, String> _merchantPhoneByOrderId = {};
+  /// Shop business name per order, preferred over the personal name on the order.
+  final Map<String, String> _businessNameByOrderId = {};
 
   static const String _shippingPrefsKey = 'order_shipping_method_v1';
   static const String _deliveryMetaPrefsKey = 'order_delivery_meta_v1';
@@ -215,6 +217,7 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
         _hydrateFirestoreDelivery(list),
         _hydrateEscrow(list),
         _hydrateMerchantPhones(list),
+        _hydrateSellerBusinessNames(list),
       ]);
     } catch (_) {}
   }
@@ -227,6 +230,7 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
       _hydrateFirestoreDelivery(list),
       _hydrateEscrow(list),
       _hydrateMerchantPhones(list),
+      _hydrateSellerBusinessNames(list),
     ]));
     return list;
   }
@@ -503,8 +507,7 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
       await _reloadCurrent();
       if (!mounted) return;
       // Facebook-style: rate after business is done (payment released).
-      final merchantName =
-          (o.merchantName ?? '').trim().isEmpty ? 'the seller' : o.merchantName!.trim();
+      final merchantName = await _sellerBusinessName(o);
       await MerchantReviewPrompt.maybeShow(
         context,
         merchantName: merchantName,
@@ -784,7 +787,9 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     if (d.contains('[delivery: speed]') || d.contains('delivery: speed')) {
       return 'speed';
     }
-    if (d.contains('[delivery: pickup]') || d.contains('delivery: pickup')) {
+    if (d.contains('[delivery: pickup]') ||
+        d.contains('delivery: pickup') ||
+        d.contains('shop pickup')) {
       return 'pickup';
     }
     return '';
@@ -806,6 +811,18 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     final resolved = _merchantPhoneByOrderId[o.id];
     if (resolved != null && resolved.isNotEmpty) return resolved;
     return safeMerchantPhone(o.merchantPhone);
+  }
+
+  String _deliveryPlaceLabel(OrderItem o) {
+    if (_resolvedCourierMethod(o) == 'pickup') return 'Shop pickup';
+    final city = (o.addressCity ?? '').trim();
+    final addr = (o.addressDescription ?? '').trim();
+    final parts = [
+      if (city.isNotEmpty) city,
+      if (addr.isNotEmpty) addr,
+    ];
+    if (parts.isEmpty) return 'No address';
+    return parts.join(' • ');
   }
 
   String _courierLabel(OrderItem o) {
@@ -848,15 +865,28 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     );
   }
 
-  Future<String> _sellerBusinessName(OrderItem o) async {
-    final ids = <String>[
-      (o.merchantUid ?? '').trim(),
-      if (o.merchantId > 0) '${o.merchantId}',
-    ].where((id) => id.isNotEmpty).toList();
+  String _sellerKey(OrderItem o) {
+    final uid = (o.merchantUid ?? '').trim();
+    if (uid.isNotEmpty) return uid;
+    if (o.merchantId > 0) return 'sql:${o.merchantId}';
+    return '';
+  }
 
+  String _sellerLabel(OrderItem o) {
+    final resolved = (_businessNameByOrderId[o.id] ?? '').trim();
+    if (resolved.isNotEmpty && !_isWeakShopName(resolved)) return resolved;
+    final fromOrder = (o.merchantName ?? '').trim();
+    if (fromOrder.isNotEmpty && !_isWeakShopName(fromOrder)) return fromOrder;
+    return 'Merchant';
+  }
+
+  Future<String?> _lookupBusinessName(OrderItem o) async {
+    final uid = (o.merchantUid ?? '').trim();
+    final sql = o.merchantId > 0 ? '${o.merchantId}' : '';
+    final ids = [uid, sql].where((id) => id.isNotEmpty);
     for (final id in ids) {
       final n = MerchantSellerLoader.peekBusinessName(id);
-      if (n != null && n.isNotEmpty) return n;
+      if (n != null && n.isNotEmpty && !_isWeakShopName(n)) return n;
     }
     await BackendChatService.ensureBusinessNameCacheLoaded();
     for (final id in ids) {
@@ -865,9 +895,53 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
     }
     for (final id in ids) {
       final n = await MerchantSellerLoader.peekBusinessNamePersisted(id);
-      if (n != null && n.isNotEmpty) return n;
+      if (n != null && n.isNotEmpty && !_isWeakShopName(n)) return n;
     }
+    try {
+      final info = await MerchantSellerLoader.load(
+        merchantId: uid.isNotEmpty ? uid : (sql.isNotEmpty ? sql : null),
+        sellerUserId: uid.isNotEmpty ? uid : null,
+        backendUserIdHint: o.merchantId > 0 ? o.merchantId : null,
+        backendMerchantIdForReviews: o.merchantId > 0 ? o.merchantId : null,
+      );
+      final name = (info.businessName ?? '').trim();
+      if (name.isNotEmpty && !_isWeakShopName(name)) return name;
+    } catch (_) {}
+    return null;
+  }
 
+  Future<void> _hydrateSellerBusinessNames(List<OrderItem> orders) async {
+    if (orders.isEmpty) return;
+    final sampleByKey = <String, OrderItem>{};
+    for (final o in orders) {
+      final key = _sellerKey(o);
+      if (key.isEmpty) continue;
+      sampleByKey.putIfAbsent(key, () => o);
+    }
+    final names = <String, String>{};
+    await Future.wait(sampleByKey.entries.map((e) async {
+      final name = await _lookupBusinessName(e.value);
+      if (name != null && name.isNotEmpty) names[e.key] = name;
+    }));
+    if (!mounted || names.isEmpty) return;
+    setState(() {
+      for (final o in orders) {
+        final name = names[_sellerKey(o)];
+        if (name != null && name.isNotEmpty) {
+          _businessNameByOrderId[o.id] = name;
+        }
+      }
+    });
+  }
+
+  Future<String> _sellerBusinessName(OrderItem o) async {
+    final shown = (_businessNameByOrderId[o.id] ?? '').trim();
+    if (shown.isNotEmpty && !_isWeakShopName(shown)) return shown;
+    final looked = await _lookupBusinessName(o);
+    if (looked != null && looked.isNotEmpty) {
+      _businessNameByOrderId[o.id] = looked;
+      return looked;
+    }
     final fromOrder = (o.merchantName ?? '').trim();
     if (fromOrder.isNotEmpty && !_isWeakShopName(fromOrder)) return fromOrder;
     return 'Merchant';
@@ -889,12 +963,14 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
   }
 
   String _orderShippingMessage(OrderItem o, {String? businessName}) {
-    final city = (o.addressCity ?? '').trim();
-    final addr = (o.addressDescription ?? '').trim();
-    final delivery = [
-      if (city.isNotEmpty) city,
-      if (addr.isNotEmpty) addr,
-    ].join(' • ');
+    final delivery = _resolvedCourierMethod(o) == 'pickup'
+        ? 'Shop pickup'
+        : [
+            if ((o.addressCity ?? '').trim().isNotEmpty)
+              (o.addressCity ?? '').trim(),
+            if ((o.addressDescription ?? '').trim().isNotEmpty)
+              (o.addressDescription ?? '').trim(),
+          ].join(' • ');
     final shop = (businessName ?? o.merchantName ?? '').trim();
     final hello = _isWeakShopName(shop) ? 'Hi' : 'Hi @$shop';
 
@@ -1248,7 +1324,9 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                 const SizedBox(height: 8),
                 // Delivery
                 Text(
-                  'Delivery',
+                  _resolvedCourierMethod(o) == 'pickup'
+                      ? 'Shop pickup'
+                      : 'Delivery',
                   style: TextStyle(
                     color: _brand.withValues(alpha: 0.95),
                     fontWeight: FontWeight.w900,
@@ -1257,18 +1335,10 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                 ),
                 const SizedBox(height: 6),
                 _infoRow(
-                  icon: Icons.location_on_outlined,
-                  text: [
-                    if ((o.addressCity ?? '').isNotEmpty) o.addressCity,
-                    if ((o.addressDescription ?? '').isNotEmpty)
-                      o.addressDescription,
-                  ].whereType<String>().join(' • ').trim().isEmpty
-                      ? 'No address'
-                      : [
-                          if ((o.addressCity ?? '').isNotEmpty) o.addressCity,
-                          if ((o.addressDescription ?? '').isNotEmpty)
-                            o.addressDescription,
-                        ].whereType<String>().join(' • '),
+                  icon: _resolvedCourierMethod(o) == 'pickup'
+                      ? Icons.storefront_outlined
+                      : Icons.location_on_outlined,
+                  text: _deliveryPlaceLabel(o),
                 ),
                 if (o.orderDate != null) ...[
                   const SizedBox(height: 6),
@@ -1291,9 +1361,7 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
                 const SizedBox(height: 6),
                 _infoRow(
                   icon: Icons.storefront_outlined,
-                  text: (o.merchantName ?? '').toString().trim().isEmpty
-                      ? 'Merchant'
-                      : (o.merchantName ?? '').toString().trim(),
+                  text: _sellerLabel(o),
                   trailing: (o.merchantAvgRating != null)
                       ? '⭐ ${o.merchantAvgRating!.toStringAsFixed(1)}'
                       : null,

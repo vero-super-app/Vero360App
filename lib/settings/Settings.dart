@@ -145,6 +145,8 @@ class _SettingsPageState extends State<SettingsPage> {
     unawaited(_loadProfileFromFirestore());
     unawaited(_loadAppInfo().then((_) {
       if (mounted) setState(() {});
+      if (!mounted) return;
+      unawaited(AppUpdateChecker.maybeRemindOncePerDay(context));
     }));
     unawaited(_loadAddressCount());
   }
@@ -195,6 +197,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _loadAppInfo() async {
+    await AppVersionInfo.ensureLoaded();
     _appVersion = AppVersionInfo.version;
     _buildNumber = AppVersionInfo.buildNumber;
   }
@@ -2993,6 +2996,62 @@ class PolicyPage extends StatelessWidget {
     );
   }
 
+  Widget _pageTitle(String text) {
+    return Text(
+      text,
+      style: const TextStyle(
+        fontWeight: FontWeight.w900,
+        fontSize: 16,
+        color: _ink,
+      ),
+    );
+  }
+
+  Widget _pageBody(String text) {
+    return Text(
+      text,
+      style: const TextStyle(height: 1.45, color: _ink, fontSize: 14),
+    );
+  }
+
+  Widget _redLine(String text) {
+    return Text(
+      text,
+      style: const TextStyle(
+        height: 1.45,
+        color: _escrowRed,
+        fontWeight: FontWeight.w800,
+        fontSize: 14,
+      ),
+    );
+  }
+
+  TextSpan _redSpan(String text) {
+    return TextSpan(
+      text: text,
+      style: const TextStyle(
+        color: _escrowRed,
+        fontWeight: FontWeight.w800,
+      ),
+    );
+  }
+
+  Widget _docLink(BuildContext context, String label, String assetPath) {
+    return GestureDetector(
+      onTap: () => _openAssetPdf(context, assetPath: assetPath, title: label),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: kBrandOrange,
+          fontWeight: FontWeight.w800,
+          fontSize: 14,
+          decoration: TextDecoration.underline,
+          decorationColor: kBrandOrange,
+        ),
+      ),
+    );
+  }
+
   Widget _sectionCard({required Widget child}) {
     return Container(
       width: double.infinity,
@@ -3116,72 +3175,44 @@ class PolicyPage extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Before you continue',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 18,
-                    color: _ink,
-                    letterSpacing: -0.3,
-                  ),
-                ),
+                _pageTitle('Before You Continue'),
                 const SizedBox(height: 8),
-                const Text(
-                  'Please review how Vero360 protects payments and your data. '
-                  'Full legal documents are available below.',
-                  style: TextStyle(height: 1.4, color: _muted, fontSize: 14),
+                _pageBody(
+                  'Please review how Vero360 handles payments and your personal information. Full Terms & Conditions and the Privacy Policy are available below.',
                 ),
               ],
             ),
           ),
           const SizedBox(height: 14),
 
-          // Escrow highlight
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFEBEE),
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: _escrowRed.withValues(alpha: 0.45)),
-            ),
-            child: Row(
+          _sectionCard(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: _escrowRed.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(
-                    Icons.account_balance_wallet_rounded,
-                    color: _escrowRed,
-                    size: 22,
+                _pageTitle('Payments & Wallet Access'),
+                const SizedBox(height: 8),
+                Text.rich(
+                  TextSpan(
+                    style: const TextStyle(height: 1.45, color: _ink, fontSize: 14),
+                    children: [
+                      const TextSpan(
+                        text:
+                            'Funds are released once the transaction is complete and all required procedures have been met. Released funds are available in your wallet for ',
+                      ),
+                      _redSpan('instant withdrawal'),
+                      const TextSpan(text: '.'),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 12),
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                const SizedBox(height: 10),
+                Text.rich(
+                  TextSpan(
+                    style: const TextStyle(height: 1.45, color: _ink, fontSize: 14),
                     children: [
-                      Text(
-                        'Payment protection',
-                        style: TextStyle(
-                          color: _escrowRed,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 15,
-                        ),
-                      ),
-                      SizedBox(height: 6),
-                      Text(
-                        'The system holds money for 7 days until both parties are satisfied with the business.',
-                        style: TextStyle(
-                          color: _escrowRed,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 14,
-                          height: 1.4,
-                        ),
+                      _redSpan('There is no standard 7-day waiting period. '),
+                      const TextSpan(
+                        text:
+                            'The 7-day confirmation period applies only to marketplace orders delivered by courier.',
                       ),
                     ],
                   ),
@@ -3195,46 +3226,35 @@ class PolicyPage extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Terms & Conditions',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16,
-                    color: _ink,
+                _pageTitle('Courier Delivery & Payment Protection'),
+                const SizedBox(height: 8),
+                _pageBody(
+                  'For orders delivered by courier, the buyer must confirm receipt after receiving and checking the item.',
+                ),
+                const SizedBox(height: 10),
+                Text.rich(
+                  TextSpan(
+                    style: const TextStyle(height: 1.45, color: _ink, fontSize: 14),
+                    children: [
+                      const TextSpan(text: 'Buyers have '),
+                      _redSpan('7 days after delivery'),
+                      const TextSpan(
+                        text: ' to confirm receipt or report an issue.',
+                      ),
+                    ],
                   ),
+                ),
+                const SizedBox(height: 10),
+                _redLine(
+                  'Receipt confirmed: Once all required transaction procedures are met, funds are released to the provider and become available for instant withdrawal.',
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'By using Vero360, you agree to the following:',
-                  style: TextStyle(height: 1.35, color: _muted),
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  '• Use the app in a lawful and responsible manner.\n'
-                  '• Do not upload or share illegal, harmful, or misleading content.\n'
-                  '• Respect other users, merchants, and service providers.',
-                  style: TextStyle(height: 1.45, color: _ink, fontSize: 14),
+                _redLine(
+                  'Issue reported: Funds may remain on hold while the dispute is reviewed.',
                 ),
                 const SizedBox(height: 10),
-                const Text(
-                  '• The system holds money for 7 days until both parties are satisfied with the business.',
-                  style: TextStyle(
-                    height: 1.45,
-                    color: _escrowRed,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 14,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  '• Merchants are responsible for the accuracy of their products and services.\n'
-                  '• Vero360 acts as a technology platform and is not the direct provider of services.',
-                  style: TextStyle(height: 1.45, color: _ink, fontSize: 14),
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  'We may update these terms as the platform evolves. Continued use means you accept the updates.',
-                  style: TextStyle(height: 1.4, color: _muted, fontSize: 13),
+                _pageBody(
+                  'You do not need to wait 7 days to confirm receipt. Confirm as soon as you have received and checked your item.',
                 ),
               ],
             ),
@@ -3245,25 +3265,78 @@ class PolicyPage extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Privacy Policy',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16,
-                    color: _ink,
+                _pageTitle('Automatic Payment Release for Courier Orders'),
+                const SizedBox(height: 8),
+                Text.rich(
+                  TextSpan(
+                    style: const TextStyle(height: 1.45, color: _ink, fontSize: 14),
+                    children: [
+                      const TextSpan(
+                        text:
+                            'If the buyer does not confirm receipt or raise a dispute within ',
+                      ),
+                      _redSpan('7 days after delivery'),
+                      const TextSpan(
+                        text:
+                            ', the order is treated as accepted. Funds are automatically released once all other required transaction procedures have been met.',
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Vero360 collects only what is needed to run and improve the app: account details, '
-                  'login data, orders/bookings, chat for buyer and seller communication, and usage for security.',
-                  style: TextStyle(height: 1.4, color: _muted, fontSize: 14),
-                ),
                 const SizedBox(height: 10),
-                const Text(
-                  'We do not sell your personal data. Payments are handled by trusted providers  '
-                  'Vero360 does not store your card credentials.',
-                  style: TextStyle(height: 1.4, color: _ink, fontSize: 14),
+                _pageBody(
+                  'Vero360’s payment hold protection ends once funds are released. This does not affect your rights under applicable law.',
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          _sectionCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _pageTitle('Terms & Conditions'),
+                const SizedBox(height: 8),
+                _pageBody(
+                  'Use Vero360 lawfully, respect other users, and provide accurate information. Merchants and providers are responsible for their products and services. Cancellation conditions and any fees are shown when ordering or booking.',
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          _sectionCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _pageTitle('Privacy'),
+                const SizedBox(height: 8),
+                _pageBody(
+                  'Vero360 uses account, transaction, communication, and usage information to operate and secure the app. Read the full Privacy Policy for details.',
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    _docLink(
+                      context,
+                      'Terms & Conditions',
+                      _platformAgreementAsset,
+                    ),
+                    const Text(
+                      '  |  ',
+                      style: TextStyle(
+                        color: _muted,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    _docLink(
+                      context,
+                      'Privacy Policy',
+                      _privacyPolicyAsset,
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -3339,8 +3412,10 @@ class PolicyPage extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
+          const _AgreeContinueBar(),
+          const SizedBox(height: 16),
           const Text(
-            'Last updated: July 2026',
+            'Last updated: April 2026',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 12,
@@ -3474,6 +3549,70 @@ class _AssetPdfViewerPageState extends State<_AssetPdfViewerPage> {
                   const Center(child: CircularProgressIndicator()),
               ],
             ),
+    );
+  }
+}
+
+class _AgreeContinueBar extends StatefulWidget {
+  const _AgreeContinueBar();
+
+  @override
+  State<_AgreeContinueBar> createState() => _AgreeContinueBarState();
+}
+
+class _AgreeContinueBarState extends State<_AgreeContinueBar> {
+  bool _agreed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Checkbox(
+              value: _agreed,
+              activeColor: kBrandOrange,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact,
+              onChanged: (v) => setState(() => _agreed = v ?? false),
+            ),
+            const Expanded(
+              child: Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text(
+                  'I agree to the Terms & Conditions and acknowledge the Privacy Policy.',
+                  style: TextStyle(
+                    height: 1.4,
+                    color: Color(0xFF101010),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        FilledButton(
+          onPressed: _agreed ? () => Navigator.of(context).pop(true) : null,
+          style: FilledButton.styleFrom(
+            backgroundColor: kBrandOrange,
+            disabledBackgroundColor: const Color(0xFFE8E4DE),
+            foregroundColor: Colors.white,
+            disabledForegroundColor: const Color(0xFF6B6B6B),
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+          ),
+          child: const Text(
+            'Agree & Continue',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+          ),
+        ),
+      ],
     );
   }
 }

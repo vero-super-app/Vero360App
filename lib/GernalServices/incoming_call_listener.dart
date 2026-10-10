@@ -4,8 +4,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:vero360_app/GeneralModels/call_model.dart';
 import 'package:vero360_app/GernalServices/call_service_impl.dart';
+import 'package:vero360_app/GernalServices/live_call_session.dart';
 import 'package:vero360_app/app_nav_key.dart';
 
 /// Listens for Firestore ringing/incoming calls and presents the answer UI.
@@ -124,9 +126,35 @@ class _IncomingCallRingScreenState extends State<_IncomingCallRingScreen> {
     if (_acting) return;
     setState(() => _acting = true);
     try {
+      final mic = await Permission.microphone.request();
+      if (!mic.isGranted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Microphone permission is required for calls.'),
+            ),
+          );
+          setState(() => _acting = false);
+        }
+        return;
+      }
+      final video = widget.call.callType == CallType.video;
+      if (video) {
+        final cam = await Permission.camera.request();
+        if (!cam.isGranted) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Camera permission is required for video calls.'),
+              ),
+            );
+            setState(() => _acting = false);
+          }
+          return;
+        }
+      }
       await _calls.answerCall(widget.call.id);
       if (!mounted) return;
-      final video = widget.call.callType == CallType.video;
       await Navigator.of(context).pushReplacement(
         MaterialPageRoute<void>(
           builder: (_) => _ActiveIncomingCallScreen(
@@ -287,22 +315,37 @@ class _ActiveIncomingCallScreen extends StatefulWidget {
 
 class _ActiveIncomingCallScreenState extends State<_ActiveIncomingCallScreen> {
   final _calls = CallServiceImpl();
+  late final LiveCallSession _media;
   Timer? _timer;
   int _seconds = 0;
   bool _ending = false;
   bool _micOn = true;
+  bool _camOn = true;
 
   @override
   void initState() {
     super.initState();
+    _media = LiveCallSession(
+      callId: widget.call.id,
+      isCaller: false,
+      video: widget.video,
+    );
+    _media.addListener(_onMedia);
+    unawaited(_media.start());
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       setState(() => _seconds++);
     });
   }
 
+  void _onMedia() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _media.removeListener(_onMedia);
+    unawaited(_media.hangup());
     _timer?.cancel();
     super.dispose();
   }
@@ -373,7 +416,38 @@ class _ActiveIncomingCallScreenState extends State<_ActiveIncomingCallScreen> {
                 fontSize: 16,
               ),
             ),
-            const Spacer(),
+            const SizedBox(height: 6),
+            Text(
+              _media.mediaLive
+                  ? 'Live'
+                  : (_media.error ?? 'Connecting audio…'),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: _media.error != null
+                    ? const Color(0xFFF87171)
+                    : const Color(0xFF22C55E),
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
+            if (widget.video) ...[
+              const SizedBox(height: 16),
+              Expanded(
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 20),
+                  clipBehavior: Clip.antiAlias,
+                  decoration: BoxDecoration(
+                    color: Colors.white10,
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(color: Colors.white12),
+                  ),
+                  child: LiveCallVideoPane(session: _media),
+                ),
+              ),
+            ] else ...[
+              LiveCallAudioSink(session: _media),
+              const Spacer(),
+            ],
             Padding(
               padding: const EdgeInsets.fromLTRB(28, 12, 28, 28),
               child: Row(
@@ -386,7 +460,11 @@ class _ActiveIncomingCallScreenState extends State<_ActiveIncomingCallScreen> {
                         shape: const CircleBorder(),
                         child: InkWell(
                           customBorder: const CircleBorder(),
-                          onTap: () => setState(() => _micOn = !_micOn),
+                          onTap: () {
+                            final next = !_micOn;
+                            setState(() => _micOn = next);
+                            unawaited(_media.setMicEnabled(next));
+                          },
                           child: SizedBox(
                             width: 64,
                             height: 64,
@@ -406,6 +484,66 @@ class _ActiveIncomingCallScreenState extends State<_ActiveIncomingCallScreen> {
                       ),
                     ],
                   ),
+                  Column(
+                    children: [
+                      Material(
+                        color: const Color(0xFF2A2F3A),
+                        shape: const CircleBorder(),
+                        child: InkWell(
+                          customBorder: const CircleBorder(),
+                          onTap: () =>
+                              unawaited(_media.setSpeaker(!_media.speakerOn)),
+                          child: SizedBox(
+                            width: 64,
+                            height: 64,
+                            child: Icon(
+                              _media.speakerOn
+                                  ? Icons.volume_up_rounded
+                                  : Icons.hearing_rounded,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _media.speakerOn ? 'Speaker' : 'Earpiece',
+                        style: const TextStyle(color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                  if (widget.video)
+                    Column(
+                      children: [
+                        Material(
+                          color: const Color(0xFF2A2F3A),
+                          shape: const CircleBorder(),
+                          child: InkWell(
+                            customBorder: const CircleBorder(),
+                            onTap: () {
+                              final next = !_camOn;
+                              setState(() => _camOn = next);
+                              unawaited(_media.setCameraEnabled(next));
+                            },
+                            child: SizedBox(
+                              width: 64,
+                              height: 64,
+                              child: Icon(
+                                _camOn
+                                    ? Icons.videocam_rounded
+                                    : Icons.videocam_off_rounded,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _camOn ? 'Camera' : 'Cam off',
+                          style: const TextStyle(color: Colors.white70),
+                        ),
+                      ],
+                    ),
                   Column(
                     children: [
                       Material(

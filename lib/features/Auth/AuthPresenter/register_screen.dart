@@ -79,10 +79,17 @@ const List<MerchantService> kMerchantServices = [
 ];
 
 class RegisterScreen extends StatefulWidget {
-  const RegisterScreen({super.key, this.initialRole});
+  const RegisterScreen({
+    super.key,
+    this.initialRole,
+    this.initialMerchantServiceKey,
+  });
 
   /// Prefill role when opened from sell banner / deep links.
   final UserRole? initialRole;
+
+  /// Prefill "service you provide" (marketplace, food, accommodation).
+  final String? initialMerchantServiceKey;
 
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
@@ -124,6 +131,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.initState();
     final initial = widget.initialRole;
     if (initial != null) _role = initial;
+    final serviceKey = widget.initialMerchantServiceKey?.trim().toLowerCase();
+    if (serviceKey != null && serviceKey.isNotEmpty) {
+      for (final service in kMerchantServices) {
+        if (service.key == serviceKey) {
+          _selectedMerchantService = service;
+          if (_role == UserRole.customer) _role = UserRole.merchant;
+          break;
+        }
+      }
+    }
   }
 
   @override
@@ -1239,10 +1256,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   // ---------- Terms & Conditions ----------
 
-  void _openTermsAndConditionsPage() {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const PolicyPage()),
+  Future<void> _openTermsAndConditionsPage() async {
+    final agreed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(builder: (_) => const PolicyPage()),
     );
+    if (agreed == true && mounted) setState(() => _agree = true);
   }
 
   // ---------- UI helpers ----------

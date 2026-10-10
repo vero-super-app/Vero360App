@@ -150,14 +150,19 @@ class FirebaseWalletService {
 
   // Debit wallet (for payouts). Completes immediately so cash-out is not stuck pending.
   // Requires KYC approval — blocks cash-out even if a UI screen skipped the gate.
+  // Reward funding skips KYC and may draw the platform wallet below zero.
   static Future<void> debitWallet({
     required String merchantId,
     required double amount,
     required String description,
     required String reference,
+    bool requireKyc = true,
+    bool allowNegative = false,
   }) async {
     try {
-      await KycGate.assertVerifiedForPayout(uid: merchantId);
+      if (requireKyc) {
+        await KycGate.assertVerifiedForPayout(uid: merchantId);
+      }
 
       final walletDoc = await _findWalletDoc(merchantId);
       if (walletDoc == null) {
@@ -170,7 +175,7 @@ class FirebaseWalletService {
       }
       final currentBalance = (walletData['balance'] ?? 0.0).toDouble();
 
-      if (currentBalance < amount) {
+      if (!allowNegative && currentBalance < amount) {
         throw Exception('Insufficient balance');
       }
 
@@ -197,7 +202,7 @@ class FirebaseWalletService {
 
         final data = walletSnapshot.data() as Map<String, dynamic>;
         final newBalance = (data['balance'] ?? 0.0).toDouble() - amount;
-        if (newBalance < 0) {
+        if (!allowNegative && newBalance < 0) {
           throw Exception('Insufficient balance');
         }
 

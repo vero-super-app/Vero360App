@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:vero360_app/GeneralPages/Toreceive.dart';
 import 'package:vero360_app/GeneralPages/ToRefund.dart';
 import 'package:vero360_app/GeneralPages/Toship.dart';
+import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
@@ -68,6 +69,7 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
   bool _markedRead = false;
   bool _clearing = false;
   int _clearedBroadcastsBeforeMs = 0;
+  final Set<String> _hidingBuyerShipNudges = {};
 
   @override
   void initState() {
@@ -166,6 +168,7 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
       }
       _personal = items;
       _recompute();
+      unawaited(_hideShipNudgesAddressedToBuyer(items));
     }, onError: (_) {
       if (mounted) setState(() => _loading = false);
     });
@@ -216,6 +219,47 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
 
   Future<void> _markAllRead(Iterable<String> ids) async {
     await _batchUpdate(ids, {'read': true, 'consumed': true});
+  }
+
+  bool _isMerchantShipNudge(_TeamMessage m) {
+    final type = (m.payload?['type'] ?? '').toString().toLowerCase();
+    final text = '${m.title} ${m.body}'.toLowerCase();
+    if (type == 'ship_reminder') return true;
+    return text.contains('please ship') || text.contains('reminded you to ship');
+  }
+
+  /// Older builds wrote "please ship" onto the buyer's uid. Drop those.
+  Future<void> _hideShipNudgesAddressedToBuyer(List<_TeamMessage> items) async {
+    final me = (FirebaseAuth.instance.currentUser?.uid ?? '').trim();
+    if (me.isEmpty) return;
+    final suspects = items.where((m) {
+      if (m.isBroadcast || _hidingBuyerShipNudges.contains(m.id)) return false;
+      return _isMerchantShipNudge(m);
+    }).toList();
+    if (suspects.isEmpty) return;
+
+    final hideIds = <String>[];
+    for (final m in suspects) {
+      final orderId = (m.payload?['orderId'] ?? '').toString().trim();
+      if (orderId.isEmpty) continue;
+      _hidingBuyerShipNudges.add(m.id);
+      try {
+        final esc = await OrderEscrowService.fetchEscrow(orderId);
+        if (esc == null) continue;
+        final buyer = esc.buyerUid.trim();
+        final seller = esc.merchantUid.trim();
+        if (buyer == me && seller != me) hideIds.add(m.id);
+      } catch (_) {}
+    }
+    if (hideIds.isEmpty || !mounted) return;
+    final hide = hideIds.toSet();
+    _personal = _personal.where((m) => !hide.contains(m.id)).toList();
+    _recompute();
+    await _batchUpdate(hideIds, {
+      'cleared': true,
+      'read': true,
+      'consumed': true,
+    });
   }
 
   Future<void> _batchUpdate(
@@ -504,6 +548,30 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
         );
         return;
       case _TeamAction.shelf:
+        final sqlRaw = payload['listingSqlId'] ??
+            payload['sqlItemId'] ??
+            payload['itemId'];
+        final sql = sqlRaw is num
+            ? sqlRaw.toInt()
+            : int.tryParse('${sqlRaw ?? ''}');
+        final itemName = (payload['itemName'] ?? payload['name'] ?? '')
+            .toString()
+            .trim();
+        final firestoreId = (payload['marketplaceItemId'] ??
+                payload['firestoreId'] ??
+                '')
+            .toString()
+            .trim();
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => _TeamShelfItemPage(
+              listingSqlId: (sql != null && sql > 0) ? sql : null,
+              itemName: itemName,
+              firestoreId: firestoreId,
+            ),
+          ),
+        );
+        return;
       case _TeamAction.merchantListings:
         final email =
             (FirebaseAuth.instance.currentUser?.email ?? '').trim();
@@ -991,6 +1059,300 @@ class _TeamMarketplaceListingPage extends StatelessWidget {
         }
         return MarketPage(cartService: cart);
       },
+    );
+  }
+}
+
+class _ShelfListing {
+  const _ShelfListing({
+    required this.id,
+    required this.name,
+    required this.imageUrl,
+    this.sqlId,
+    this.stock,
+  });
+
+  final String id;
+  final String name;
+  final String imageUrl;
+  final int? sqlId;
+  final int? stock;
+
+  static _ShelfListing fromDoc(
+    DocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    final data = doc.data() ?? const <String, dynamic>{};
+    final rawSql = data['sqlItemId'] ?? data['backendId'] ?? data['itemId'];
+    final sql = rawSql is num ? rawSql.toInt() : int.tryParse('$rawSql');
+    final rawStock = data['stockQuantity'] ?? data['quantity'] ?? data['stock'];
+    final stock =
+        rawStock is num ? rawStock.toInt() : int.tryParse('$rawStock');
+    return _ShelfListing(
+      id: doc.id,
+      name: (data['name'] ?? data['title'] ?? 'Listing').toString().trim(),
+      imageUrl: (data['imageUrl'] ?? data['image'] ?? data['photo'] ?? '')
+          .toString()
+          .trim(),
+      sqlId: (sql != null && sql > 0) ? sql : null,
+      stock: stock,
+    );
+  }
+}
+
+/// Sold-out shelf tip: open that listing and let the merchant take it down.
+class _TeamShelfItemPage extends StatefulWidget {
+  const _TeamShelfItemPage({
+    this.listingSqlId,
+    this.itemName = '',
+    this.firestoreId = '',
+  });
+
+  final int? listingSqlId;
+  final String itemName;
+  final String firestoreId;
+
+  @override
+  State<_TeamShelfItemPage> createState() => _TeamShelfItemPageState();
+}
+
+class _TeamShelfItemPageState extends State<_TeamShelfItemPage> {
+  static const _brandOrange = Color(0xFFFF8A00);
+
+  late Future<_ShelfListing?> _future;
+  bool _removing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+  }
+
+  Future<_ShelfListing?> _load() async {
+    final col = FirebaseFirestore.instance.collection('marketplace_items');
+    final uid = (FirebaseAuth.instance.currentUser?.uid ?? '').trim();
+    final docId = widget.firestoreId.trim();
+    if (docId.isNotEmpty) {
+      final snap = await col.doc(docId).get();
+      if (snap.exists) return _ShelfListing.fromDoc(snap);
+    }
+
+    final sql = widget.listingSqlId;
+    if (sql != null && sql > 0) {
+      for (final field in ['sqlItemId', 'itemId', 'backendId']) {
+        final q = await col.where(field, isEqualTo: sql).limit(5).get();
+        final owned = _ownedDoc(q.docs, uid);
+        if (owned != null) return _ShelfListing.fromDoc(owned);
+      }
+    }
+
+    final name = widget.itemName.trim().toLowerCase();
+    if (uid.isEmpty || name.isEmpty) return null;
+    final mine = await col.where('merchantId', isEqualTo: uid).limit(40).get();
+    for (final d in mine.docs) {
+      final n = (d.data()['name'] ?? d.data()['title'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      if (n == name) return _ShelfListing.fromDoc(d);
+    }
+    return null;
+  }
+
+  QueryDocumentSnapshot<Map<String, dynamic>>? _ownedDoc(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    String uid,
+  ) {
+    for (final d in docs) {
+      final owner = (d.data()['merchantId'] ?? '').toString().trim();
+      if (uid.isEmpty || owner.isEmpty || owner == uid) return d;
+    }
+    return null;
+  }
+
+  Future<void> _remove(_ShelfListing item) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove from shelf'),
+        content: Text(
+          'Remove "${item.name}"? Buyers will no longer be able to order it.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Remove',
+              style: TextStyle(color: Colors.red, fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _removing = true);
+    try {
+      final sql = item.sqlId ?? widget.listingSqlId;
+      if (sql != null && sql > 0) {
+        try {
+          await MarketplaceService().deleteItem(sql);
+        } catch (_) {}
+      }
+      await FirebaseFirestore.instance
+          .collection('marketplace_items')
+          .doc(item.id)
+          .delete();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Removed "${item.name}" from your shelf')),
+      );
+      Navigator.of(context).pop();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _removing = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not remove this item. Try again.')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = widget.itemName.trim().isEmpty ? 'Listing' : widget.itemName.trim();
+    return Scaffold(
+      backgroundColor: const Color(0xFFF7F4EF),
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        foregroundColor: const Color(0xFF101010),
+        elevation: 0,
+        title: const Text(
+          'Manage shelf',
+          style: TextStyle(fontWeight: FontWeight.w800),
+        ),
+      ),
+      body: FutureBuilder<_ShelfListing?>(
+        future: _future,
+        builder: (context, snap) {
+          if (snap.connectionState != ConnectionState.done) {
+            return const Center(
+              child: CircularProgressIndicator(color: _brandOrange),
+            );
+          }
+          final item = snap.data;
+          if (item == null) {
+            return Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'Could not find "$title" on your shelf.',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _brandOrange,
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: () {
+                      final email =
+                          (FirebaseAuth.instance.currentUser?.email ?? '')
+                              .trim();
+                      Navigator.of(context).pushReplacement(
+                        MaterialPageRoute(
+                          builder: (_) => MarketplaceMerchantDashboard(
+                            email: email,
+                            merchantUid: FirebaseAuth.instance.currentUser?.uid,
+                            initialInnerTab: 2,
+                            onBackToHomeTab: () {},
+                          ),
+                        ),
+                      );
+                    },
+                    child: const Text(
+                      'Open my listings',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: AspectRatio(
+                  aspectRatio: 1.2,
+                  child: item.imageUrl.isEmpty
+                      ? const ColoredBox(
+                          color: Color(0xFFE8E4DE),
+                          child: Icon(Icons.inventory_2_outlined, size: 48),
+                        )
+                      : Image.network(
+                          item.imageUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const ColoredBox(
+                            color: Color(0xFFE8E4DE),
+                            child: Icon(Icons.inventory_2_outlined, size: 48),
+                          ),
+                        ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                item.name,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 20,
+                  color: Color(0xFF101010),
+                ),
+              ),
+              if (item.stock != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  'Quantity left: ${item.stock}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF6B6B6B),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 8),
+              const Text(
+                'This listing looks sold out. Remove it so buyers cannot order it again.',
+                style: TextStyle(height: 1.4, color: Color(0xFF101010)),
+              ),
+              const SizedBox(height: 20),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFC62828),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                onPressed: _removing ? null : () => _remove(item),
+                child: Text(
+                  _removing ? 'Removing…' : 'Remove from shelf',
+                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 }

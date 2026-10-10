@@ -2,7 +2,7 @@ name: vero360_app
 description: "Vero360 - One App. Everything."
 publish_to: 'none'
 
-version: 1.2.8+10025
+version: 1.2.9+10026
 
 environment:
   sdk: ^3.9.0
@@ -52,6 +52,7 @@ dependencies:
   # File / Path
   path_provider: ^2.1.4
   path: ^1.9.0
+  package_info_plus: ^8.3.1
 
   # Environment
   flutter_dotenv: ^5.1.0
@@ -107,6 +108,7 @@ dependencies:
   webview_flutter_wkwebview: ^3.17.0
   webview_windows: ^0.4.0
   crypto: ^3.0.7
+  flutter_webrtc: ^1.6.2+hotfix.4
 
   # Native Didit SDK requires Dart >=3.11 (Flutter ~3.44+).
   # This app currently uses Didit's hosted verification URL

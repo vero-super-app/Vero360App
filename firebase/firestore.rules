@@ -116,7 +116,13 @@ service cloud.firestore {
         && resource.data.merchantId == request.auth.uid;
 
       match /viewers/{viewerId} {
-        allow read: if true;
+        // Likes and the viewer list are for the story owner.
+        // A viewer may read only their own row (so their heart stays filled).
+        allow read: if isSignedIn() && (
+          request.auth.uid == viewerId
+          || get(/databases/$(database)/documents/merchant_stories/$(storyId)).data.merchantId
+            == request.auth.uid
+        );
         allow create, update: if isSignedIn()
           && request.auth.uid == viewerId;
         allow delete: if isSignedIn()
@@ -257,6 +263,15 @@ service cloud.firestore {
     match /sell_banners/{bannerId} {
       allow read: if true;
       allow write: if false;
+    }
+
+    // Shop gallery photos and videos. Public read; only the owner writes.
+    match /shop_media/{mediaId} {
+      allow read: if true;
+      allow create: if isSignedIn()
+        && request.resource.data.merchantId == request.auth.uid;
+      allow update, delete: if isSignedIn()
+        && resource.data.merchantId == request.auth.uid;
     }
 
     // Admin → Vero360 Team chat broadcasts (everyone).

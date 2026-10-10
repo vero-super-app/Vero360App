@@ -194,9 +194,9 @@ class _DetailsPageState extends State<DetailsPage> {
     final videos = it.videos.where((u) => u.toString().trim().isNotEmpty).toList();
     final mainImg = it.image.toString().trim();
     _media = [
+      ...videos.map((u) => _Media.video(u.toString().trim())),
       if (mainImg.isNotEmpty) _Media.image(mainImg),
       ...images.map((u) => _Media.image(u.toString().trim())),
-      ...videos.map((u) => _Media.video(u.toString().trim())),
     ];
     if (_media.length > 1) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -261,6 +261,11 @@ class _DetailsPageState extends State<DetailsPage> {
   // autoplay
   void _startAutoplay() {
     _autoTimer?.cancel();
+    if (_page >= 0 &&
+        _page < _media.length &&
+        _media[_page].isVideo) {
+      return;
+    }
     _autoTimer = Timer.periodic(_autoInterval, (_) {
       if (!mounted || _media.length <= 1) return;
       final next = (_page + 1) % _media.length;
@@ -1099,13 +1104,6 @@ class _DetailsPageState extends State<DetailsPage> {
     );
   }
 
-  void _openVideo(String url) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => VideoPlayerPage(url: url)),
-    );
-  }
-
   /// Open fullscreen image viewer with watermark (merchant name + Vero360App) and download.
   void _openImageViewer(String imageUrl, {String? merchantName}) {
     Navigator.push(
@@ -1216,7 +1214,7 @@ class _DetailsPageState extends State<DetailsPage> {
             productContext: productContext,
             peerMerchantId: item.merchantId ?? item.serviceProviderId,
             peerUserId: peerUserId,
-            sendProductEnquiry: true,
+            sendProductEnquiry: false,
             resolveSqlItemId: item.id > 0 ? item.id : null,
             resolveOwnerId: ownerId,
             resolveSellerUserId: item.sellerUserId,
@@ -1338,29 +1336,10 @@ class _DetailsPageState extends State<DetailsPage> {
                     child: _buildMarketplaceImage(m.url, fit: BoxFit.cover),
                   );
                 }
-                return InkWell(
-                  onTap: () => _openVideo(m.url),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      ColoredBox(color: Colors.black.withValues(alpha: 0.35)),
-                      Center(
-                        child: Container(
-                          width: 64,
-                          height: 64,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.92),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.play_arrow_rounded,
-                            size: 40,
-                            color: _brandOrange,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                return InlineAutoplayVideo(
+                  key: ValueKey('listing-video-${m.url}'),
+                  url: m.url,
+                  play: i == _page,
                 );
               },
             ),

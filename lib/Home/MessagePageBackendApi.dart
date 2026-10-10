@@ -20,6 +20,7 @@ import 'package:record/record.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
+import 'package:video_player/video_player.dart';
 
 import 'package:vero360_app/GeneralModels/call_model.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
@@ -27,6 +28,7 @@ import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_cache.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/GernalServices/call_service_impl.dart';
+import 'package:vero360_app/GernalServices/live_call_session.dart';
 import 'package:vero360_app/GernalServices/chat_outbox.dart';
 import 'package:vero360_app/GernalServices/chat_notification_service.dart';
 import 'package:vero360_app/GernalServices/chat_receipt_service.dart';
@@ -106,12 +108,14 @@ class MessagePageBackendApi extends StatefulWidget {
   State<MessagePageBackendApi> createState() => _MessagePageBackendApiState();
 }
 
-class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
+class _MessagePageBackendApiState extends State<MessagePageBackendApi>
+    with WidgetsBindingObserver {
   String? _me;
   int? _myUserId;
   late String _chatId;
   int? _peerUserId;
   late String _peerDisplayName;
+  String _peerAvatarUrl = '';
 
   final _input = TextEditingController();
   final _scroll = ScrollController();
@@ -119,7 +123,24 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   bool _loading = true;
   bool _bootComplete = false;
   bool _resolvingChat = false;
-  bool _wsConnected = false;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _peerPresenceSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _memberSub;
+  String? _presenceRoomId;
+  bool _roomKnown = false;
+  bool _roomFlagged = false;
+  bool _roomTypingFlag = false;
+  bool _roomOnline = false;
+  bool _roomTyping = false;
+  DateTime? _roomSeen;
+  DateTime? _roomTypingAt;
+  Timer? _presenceTick;
+  String? _watchedPeerUid;
+  bool _peerPresenceKnown = false;
+  bool _peerPresenceFlagged = false;
+  bool _peerOnline = false;
+  bool _peerTyping = false;
+  DateTime? _peerLastSeen;
+  DateTime? _peerTypingUntil;
   bool _productTagAttached = false;
   String? _loadError;
   List<BackendChatMessage> _messages = [];
@@ -165,6 +186,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
   static const _reactionEmojis = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
   static const _imgPrefix = 'img::';
+  static const _vidPrefix = 'vid::';
   static const _audPrefix = 'aud::';
   static const _minVoiceMs = 800;
   static const _maxVoiceMs = 180000;
@@ -175,16 +197,20 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _chatId = widget.peerId.trim();
     _peerUserId = widget.peerUserId;
     _peerDisplayName = widget.peerName.trim().isEmpty ? 'Chat' : widget.peerName.trim();
+    _peerAvatarUrl = (widget.peerAvatarUrl ?? '').trim();
     _resolvingChat = _chatId.isEmpty;
     // Show seller chat chrome immediately (messages may still be loading).
     _bootComplete = _peerDisplayName.isNotEmpty &&
         _peerDisplayName.toLowerCase() != 'chat';
 
     unawaited(UserPresenceService.goOnline());
+    if (_chatId.isNotEmpty) unawaited(_syncPresenceRoom());
     unawaited(_hydratePeerDisplayName());
+    unawaited(_hydratePeerAvatar());
 
     if (_chatId.isNotEmpty) {
       BackendChatService.setActiveChatId(_chatId);
@@ -211,10 +237,20 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     _input.addListener(() {
       if (!mounted) return;
       setState(() {});
+      final text = _input.text.trim();
+      if (text.isEmpty) {
+        unawaited(UserPresenceService.clearTyping());
+      } else {
+        unawaited(UserPresenceService.pulseTyping(_chatId));
+      }
     });
     _scroll.addListener(_onScrollPositionChanged);
 
     _startRealtime();
+    unawaited(_bindPeerPresence());
+    _presenceTick = Timer.periodic(const Duration(seconds: 5), (_) {
+      _recomputePresence();
+    });
   }
 
   /// WhatsApp-style: show local history immediately, then refresh from network.
@@ -320,7 +356,6 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     _wsConnectionSub =
         BackendMessagingSocket.connectionStream.listen((connected) {
       if (!mounted) return;
-      setState(() => _wsConnected = connected);
       if (connected) {
         _fallbackPollTimer?.cancel();
         _fallbackPollTimer = null;
@@ -353,7 +388,21 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final id = _chatId.trim();
+    if (state == AppLifecycleState.resumed) {
+      unawaited(UserPresenceService.goOnline());
+      if (id.isNotEmpty) unawaited(UserPresenceService.enterChat(id));
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
+      unawaited(UserPresenceService.goOffline());
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     final chatId = _chatId.trim();
     final myUserId = _myUserId;
     if (chatId.isNotEmpty) {
@@ -375,6 +424,13 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       }
     }
     BackendChatService.setActiveChatId(null);
+    unawaited(UserPresenceService.clearTyping());
+    if (_presenceRoomId != null && _presenceRoomId!.isNotEmpty) {
+      unawaited(UserPresenceService.leaveChat(_presenceRoomId!));
+    }
+    _presenceTick?.cancel();
+    unawaited(_peerPresenceSub?.cancel());
+    unawaited(_memberSub?.cancel());
     _fallbackPollTimer?.cancel();
     _readStatusPollTimer?.cancel();
     _recordTimer?.cancel();
@@ -420,6 +476,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       _chatId = result.chat.id;
       _peerUserId = result.sellerId;
       BackendChatService.setActiveChatId(_chatId);
+      unawaited(_syncPresenceRoom());
       BackendChatService.clearThreadUnread(_chatId);
 
       final cached = BackendChatService.peekCachedMessages(_chatId);
@@ -492,13 +549,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       }
 
       // Don't block message fetch on joinChat.
-      unawaited(BackendMessagingSocket.joinChat(_chatId).then((_) {
-        if (mounted) {
-          setState(() => _wsConnected = BackendMessagingSocket.isConnected);
-        }
-      }).catchError((_) {
-        if (mounted) setState(() => _wsConnected = false);
-      }));
+      unawaited(_bindPeerPresence());
+      unawaited(BackendMessagingSocket.joinChat(_chatId).catchError((_) {}));
 
       await authFuture;
       final userId = await BackendChatService.getUserId();
@@ -878,6 +930,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     if ((_peerUserId ?? 0) > 0) {
       _bindPeerReceiptListener(myId);
       unawaited(_hydratePeerDisplayName());
+      unawaited(_hydratePeerAvatar());
       return;
     }
     for (final m in _messages) {
@@ -885,6 +938,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         _peerUserId = m.senderId;
         _bindPeerReceiptListener(myId);
         unawaited(_hydratePeerDisplayName());
+        unawaited(_hydratePeerAvatar());
         return;
       }
     }
@@ -896,6 +950,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       _bindPeerReceiptListener(myId);
     }
     unawaited(_hydratePeerDisplayName());
+    unawaited(_hydratePeerAvatar());
   }
 
   bool _isPlaceholderPeerName(String raw) {
@@ -911,6 +966,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
   /// Notification opens often arrive as "Chat" — fill the real peer name ASAP.
   Future<void> _hydratePeerDisplayName() async {
+    await BackendChatService.ensureBusinessNameCacheLoaded();
+    if (!mounted) return;
     if (!_isPlaceholderPeerName(_peerDisplayName)) return;
 
     String? next;
@@ -963,6 +1020,103 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       _peerDisplayName = next!;
       _bootComplete = true;
     });
+  }
+
+  String? get _shownPeerAvatar {
+    final live = _peerAvatarUrl.trim();
+    if (live.startsWith('http')) return live;
+    final passed = (widget.peerAvatarUrl ?? '').trim();
+    if (passed.startsWith('http')) return passed;
+    return null;
+  }
+
+  String _senderProfileUrl(BackendChatMessage m) {
+    final sender = m.sender;
+    if (sender == null) return '';
+    for (final key in [
+      'profilePicture',
+      'profilepicture',
+      'avatarUrl',
+      'photoUrl',
+      'photoURL',
+    ]) {
+      final v = (sender[key] ?? '').toString().trim();
+      if (v.startsWith('http')) return v;
+    }
+    return '';
+  }
+
+  bool _samePhotoUrl(String a, String b) {
+    String norm(String raw) {
+      final uri = Uri.tryParse(raw.trim());
+      if (uri == null) return raw.trim();
+      return '${uri.scheme}://${uri.host}${uri.path}';
+    }
+
+    return norm(a) == norm(b);
+  }
+
+  bool _isSenderProfilePhoto(String url, BackendChatMessage m) {
+    final candidates = <String>[
+      _senderProfileUrl(m),
+      _peerAvatarUrl,
+      widget.peerAvatarUrl ?? '',
+    ];
+    for (final candidate in candidates) {
+      if (candidate.trim().isEmpty) continue;
+      if (_samePhotoUrl(url, candidate)) return true;
+    }
+    return false;
+  }
+
+  /// Keep the other person's photo on the header and their messages.
+  Future<void> _hydratePeerAvatar() async {
+    await BackendChatService.ensureAvatarCacheLoaded();
+    if (!mounted) return;
+
+    String next = _peerAvatarUrl.trim();
+    if (!next.startsWith('http')) {
+      final passed = (widget.peerAvatarUrl ?? '').trim();
+      if (passed.startsWith('http')) next = passed;
+    }
+
+    if (!next.startsWith('http')) {
+      final cached = BackendChatService.cachedPeerLabelForChat(_chatId);
+      final avatar = cached?.avatarUrl.trim() ?? '';
+      if (avatar.startsWith('http')) next = avatar;
+    }
+
+    final myId = _myUserId;
+    if (!next.startsWith('http') && myId != null) {
+      for (final m in _messages.reversed) {
+        if (m.isMine(myId)) continue;
+        final photo = _senderProfileUrl(m);
+        if (photo.isNotEmpty) {
+          next = photo;
+          break;
+        }
+      }
+    }
+
+    if (!next.startsWith('http') && _chatId.isNotEmpty) {
+      final thread = BackendChatService.findCachedThreadById(_chatId);
+      final id = myId ?? 0;
+      if (thread != null && id > 0) {
+        final url = BackendChatService.peerAvatarUrlForThread(thread, id);
+        if (url.startsWith('http')) next = url;
+      }
+    }
+
+    if (!next.startsWith('http')) return;
+    final peerId = _peerUserId ?? widget.peerUserId ?? 0;
+    if (peerId > 0) {
+      BackendChatService.rememberPeerAvatar(
+        ChatParticipant(id: peerId, name: _peerDisplayName, email: ''),
+        next,
+      );
+    }
+    if (next == _peerAvatarUrl || !mounted) return;
+    setState(() => _peerAvatarUrl = next);
   }
 
   /// Tell the peer how far we've delivered/read their messages (for their ticks).
@@ -1238,6 +1392,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     }
     if (text.startsWith(_audPrefix)) return 'Voice note';
     if (text.startsWith(_imgPrefix)) return 'Photo';
+    if (text.startsWith(_vidPrefix)) return 'Video';
     final masked = ChatOffPlatformDetector.maskPhones(text);
     return masked.length > 120 ? '${masked.substring(0, 120)}…' : masked;
   }
@@ -1341,6 +1496,12 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
   String? _storyReplyBody(BackendChatMessage m) {
     final content = (m.content ?? '').trim();
     if (content.isEmpty) return null;
+    if (content.startsWith(_imgPrefix) || content.startsWith(_vidPrefix)) {
+      final parts = content.split('\n');
+      if (parts.length < 2) return null;
+      final rest = parts.sublist(1).join('\n').trim();
+      return rest.isEmpty ? null : rest;
+    }
     final lines = content.split('\n');
     if (lines.isEmpty) return content;
     if (!lines.first.contains('Story reply')) return content;
@@ -2467,10 +2628,25 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
 
   bool _isEditableText(BackendChatMessage m) {
     final content = (m.content ?? '').trim();
-    if (content.startsWith(_audPrefix) || content.startsWith(_imgPrefix)) {
+    if (content.startsWith(_audPrefix) ||
+        content.startsWith(_imgPrefix) ||
+        content.startsWith(_vidPrefix)) {
       return false;
     }
     return m.type == 'text' && content.isNotEmpty;
+  }
+
+  String? _messageVideoUrl(BackendChatMessage m) {
+    final content = m.content?.trim() ?? '';
+    if (content.startsWith(_vidPrefix)) {
+      final url = content.split('\n').first.substring(_vidPrefix.length).trim();
+      if (url.startsWith('http')) return _preferHttps(url);
+    }
+    if (m.type == 'video' &&
+        (content.startsWith('http://') || content.startsWith('https://'))) {
+      return _preferHttps(content);
+    }
+    return null;
   }
 
   String? _messageImageUrl(BackendChatMessage m) {
@@ -2484,14 +2660,19 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     }
     if (m.type == 'image') {
       if (content.startsWith('http://') || content.startsWith('https://')) {
-        return _preferHttps(content);
+        if (!_isSenderProfilePhoto(content, m)) return _preferHttps(content);
       }
     }
     final atts = m.attachments;
     if (atts != null && atts.isNotEmpty) {
       for (final att in atts) {
+        final kind = (att['type'] ?? att['kind'] ?? '').toString().toLowerCase();
+        if (kind.contains('avatar') || kind.contains('profile')) continue;
         final url = att['url']?.toString().trim();
-        if (url != null && url.isNotEmpty && url.startsWith('http')) {
+        if (url != null &&
+            url.isNotEmpty &&
+            url.startsWith('http') &&
+            !_isSenderProfilePhoto(url, m)) {
           return _preferHttps(url);
         }
       }
@@ -2513,7 +2694,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
       final body = _storyReplyBody(m);
       return body == null ? null : ChatOffPlatformDetector.maskPhones(body);
     }
-    if (content.startsWith(_imgPrefix)) {
+    if (content.startsWith(_vidPrefix) || content.startsWith(_imgPrefix)) {
       final parts = content.split('\n');
       if (parts.length < 2) return null;
       final caption = _stripForwardedMarker(parts.sublist(1).join('\n'));
@@ -2694,7 +2875,9 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     if (caption != null && caption.trim().isNotEmpty) return caption.trim();
     final content = (m.content ?? '').trim();
     if (content.isEmpty) return null;
-    if (content.startsWith(_audPrefix) || content.startsWith(_imgPrefix)) {
+    if (content.startsWith(_audPrefix) ||
+        content.startsWith(_imgPrefix) ||
+        content.startsWith(_vidPrefix)) {
       return null;
     }
     if (m.type == 'audio' || m.type == 'image') return null;
@@ -3602,7 +3785,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
             : (me.displayName ?? me.email ?? 'Vero360 user'),
         initiatorAvatar: me.photoURL,
         recipientName: widget.peerName,
-        recipientAvatar: widget.peerAvatarUrl,
+        recipientAvatar: _shownPeerAvatar,
       );
 
       // Best-effort push so the peer rings even if the app is backgrounded.
@@ -3638,7 +3821,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
           builder: (_) => ChatCallScreen(
             call: call,
             peerName: widget.peerName,
-            peerAvatarUrl: widget.peerAvatarUrl,
+            peerAvatarUrl: _shownPeerAvatar,
             peerUid: peerUid,
             video: video,
           ),
@@ -3700,14 +3883,196 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     );
   }
 
+  Future<void> _bindPeerPresence() async {
+    final chatId = _chatId.trim();
+    if (chatId.isEmpty) return;
+    final myUid = (FirebaseAuth.instance.currentUser?.uid ?? '').trim();
+    final rawHint = (_resolvedMerchantId() ?? '').trim();
+    final hint = (rawHint.isNotEmpty && rawHint != myUid) ? rawHint : null;
+    final uid = (await BackendChatService.resolvePeerFirebaseUid(
+          chatId: chatId,
+          peerUserId: widget.peerUserId ?? _peerUserId,
+          hintFirebaseUid: hint,
+        ))
+            ?.trim() ??
+        '';
+    if (!mounted || uid.isEmpty || uid == _watchedPeerUid) return;
+    await _peerPresenceSub?.cancel();
+    _watchedPeerUid = uid;
+    _peerPresenceSub = FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .snapshots()
+        .listen((snap) {
+      if (!mounted) return;
+      final data = snap.data() ?? const <String, dynamic>{};
+      final typingChat = (data['typingChatId'] ?? '').toString().trim();
+      final typingAt = _readTime(data['typingAt']);
+      final typingFresh = typingAt != null &&
+          _ageOk(typingAt, const Duration(seconds: 5));
+      final typingHere =
+          (typingChat.isNotEmpty && typingChat == _chatId.trim()) ||
+              typingFresh;
+      _peerPresenceKnown = true;
+      _peerPresenceFlagged = data['isOnline'] == true ||
+          data['online'] == true ||
+          data['presence'] == 'online';
+      _peerLastSeen = _presenceSeenAt(data);
+      _peerTypingUntil = typingHere
+          ? DateTime.now().add(const Duration(seconds: 4))
+          : null;
+      _recomputePresence(force: true);
+    }, onError: (_) {});
+  }
+
+  void _recomputePresence({bool force = false}) {
+    if (!mounted) return;
+    if (!_peerPresenceKnown && !_roomKnown) return;
+    final seen = _peerLastSeen;
+    // Heartbeat is 12s. A stuck isOnline flag must not keep "Online" up.
+    final online = _peerPresenceFlagged &&
+        seen != null &&
+        _ageOk(seen, const Duration(seconds: 25));
+    final typing = _peerTypingUntil != null &&
+        DateTime.now().isBefore(_peerTypingUntil!);
+    final roomOnline = _roomFlagged &&
+        _roomSeen != null &&
+        _ageOk(_roomSeen!, const Duration(seconds: 20));
+    final roomTyping = _roomTypingFlag &&
+        _roomTypingAt != null &&
+        _ageOk(_roomTypingAt!, const Duration(seconds: 4));
+    if (!force &&
+        online == _peerOnline &&
+        typing == _peerTyping &&
+        roomOnline == _roomOnline &&
+        roomTyping == _roomTyping) {
+      return;
+    }
+    setState(() {
+      _peerOnline = online;
+      _peerTyping = typing;
+      _roomOnline = roomOnline;
+      _roomTyping = roomTyping;
+    });
+  }
+
+  /// Clock skew can put [seen] slightly in the future. Clamp that so it
+  /// starts aging immediately instead of looking online for minutes.
+  bool _ageOk(DateTime seen, Duration window) {
+    final now = DateTime.now();
+    final at = seen.isAfter(now) ? now : seen;
+    return now.difference(at) <= window;
+  }
+
+  bool get _headerOnline => _roomKnown ? _roomOnline : _peerOnline;
+  bool get _headerTyping => _roomKnown ? _roomTyping : _peerTyping;
+
+  Future<void> _syncPresenceRoom() async {
+    final id = _chatId.trim();
+    if (id.isEmpty) return;
+    if (_presenceRoomId != id) {
+      final prev = _presenceRoomId;
+      _presenceRoomId = id;
+      await _memberSub?.cancel();
+      _memberSub = null;
+      if (prev != null && prev.isNotEmpty) {
+        await UserPresenceService.leaveChat(prev);
+      }
+      _memberSub = FirebaseFirestore.instance
+          .collection('chat_presence')
+          .doc(id)
+          .collection('members')
+          .snapshots()
+          .listen(_onChatMembers, onError: (_) {});
+    }
+    await UserPresenceService.enterChat(id);
+  }
+
+  void _onChatMembers(QuerySnapshot<Map<String, dynamic>> snap) {
+    if (!mounted) return;
+    final myUid = (FirebaseAuth.instance.currentUser?.uid ?? '').trim();
+    var sawOther = false;
+    var flagged = false;
+    var typingFlag = false;
+    DateTime? seen;
+    DateTime? typingAt;
+    for (final doc in snap.docs) {
+      if (myUid.isNotEmpty && doc.id == myUid) continue;
+      sawOther = true;
+      final data = doc.data();
+      final seenAt = _readTime(data['seenAt']);
+      final typedAt = _readTime(data['typingAt']);
+      if (seenAt != null && (seen == null || seenAt.isAfter(seen))) {
+        seen = seenAt;
+      }
+      if (data['online'] == true) flagged = true;
+      if (data['typing'] == true) {
+        typingFlag = true;
+        if (typedAt != null &&
+            (typingAt == null || typedAt.isAfter(typingAt))) {
+          typingAt = typedAt;
+        }
+      }
+    }
+    _roomKnown = sawOther;
+    _roomFlagged = flagged;
+    _roomTypingFlag = typingFlag;
+    _roomSeen = seen;
+    _roomTypingAt = typingAt;
+    _recomputePresence(force: true);
+  }
+
+  DateTime? _presenceSeenAt(Map<String, dynamic> data) {
+    return _readTime(data['lastSeen']) ?? _readTime(data['lastActiveAt']);
+  }
+
+  DateTime? _readTime(dynamic raw) {
+    if (raw is Timestamp) return raw.toDate();
+    if (raw is DateTime) return raw;
+    if (raw is String) return DateTime.tryParse(raw);
+    if (raw is int) {
+      return DateTime.fromMillisecondsSinceEpoch(
+        raw > 20000000000 ? raw : raw * 1000,
+      );
+    }
+    return null;
+  }
+
+  String _chatStatusLabel() {
+    if (_headerTyping) return 'typing…';
+    if (_roomKnown) {
+      if (_roomOnline) return 'Online';
+      final seen = _roomSeen;
+      if (seen == null) return 'Offline';
+      return _lastSeenLabel(seen);
+    }
+    if (!_peerPresenceKnown) return '';
+    if (_peerOnline) return 'Online';
+    final seen = _peerLastSeen;
+    if (seen == null) return 'Offline';
+    return _lastSeenLabel(seen);
+  }
+
+  String _lastSeenLabel(DateTime seen) {
+    final at = seen.isAfter(DateTime.now()) ? DateTime.now() : seen;
+    final diff = DateTime.now().difference(at);
+    if (diff.inSeconds < 60) return 'last seen just now';
+    if (diff.inMinutes < 60) return 'last seen ${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return 'last seen ${diff.inHours}h ago';
+    return 'Offline';
+  }
+
   PreferredSizeWidget _buildModernAppBar({
     required String title,
     required ChatProductContext? activeProduct,
   }) {
     const ink = Color(0xFF101010);
-    final subtitle = activeProduct != null
-        ? 'View shop · ${activeProduct.name}'
-        : (_wsConnected ? 'Online' : 'Connecting…');
+    final status = _chatStatusLabel();
+    final subtitle = status.isNotEmpty
+        ? status
+        : (activeProduct != null
+            ? 'View shop · ${activeProduct.name}'
+            : '');
 
     return AppBar(
       elevation: 0,
@@ -3728,7 +4093,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Row(
               children: [
-                _avatar(widget.peerAvatarUrl, size: 42),
+                _avatar(_shownPeerAvatar, size: 42),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -3748,13 +4113,13 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                       const SizedBox(height: 2),
                       Row(
                         children: [
-                          if (activeProduct == null) ...[
+                          if (activeProduct == null || _headerTyping) ...[
                             Icon(
                               Icons.circle,
                               size: 8,
-                              color: _wsConnected
+                              color: (_headerOnline || _headerTyping)
                                   ? const Color(0xFF22C55E)
-                                  : const Color(0xFFF59E0B),
+                                  : const Color(0xFF9CA3AF),
                             ),
                             const SizedBox(width: 6),
                           ] else ...[
@@ -3773,9 +4138,14 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
-                                color: activeProduct != null
-                                    ? _brandOrange
-                                    : const Color(0xFF6B7280),
+                                fontStyle: _headerTyping
+                                    ? FontStyle.italic
+                                    : FontStyle.normal,
+                                color: _headerTyping
+                                    ? const Color(0xFF16A34A)
+                                    : (activeProduct != null
+                                        ? _brandOrange
+                                        : const Color(0xFF6B7280)),
                               ),
                             ),
                           ),
@@ -4198,7 +4568,9 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     final isUnsent = isPending || isFailed;
     final showDateSeparator = _isDifferentDay(msg, prevMsg);
     final localBytes = _localImageFor(msg);
-    final imageUrl = localBytes == null ? _messageImageUrl(msg) : null;
+    final videoUrl = _messageVideoUrl(msg);
+    final imageUrl =
+        videoUrl == null && localBytes == null ? _messageImageUrl(msg) : null;
     final caption = _visibleCaption(msg, imageUrl);
     final audio = _messageAudio(msg);
     final localVoicePath = _localVoicePathFor(msg);
@@ -4222,7 +4594,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           if (!isMine)
-            _avatar(widget.peerAvatarUrl, size: 28)
+            _avatar(_shownPeerAvatar, size: 28)
           else
             const SizedBox(width: 28),
           const SizedBox(width: 8),
@@ -4301,6 +4673,9 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                             ),
                           ),
                           if (caption != null) const SizedBox(height: 8),
+                        ] else if (videoUrl != null) ...[
+                          _ChatVideoTile(url: videoUrl),
+                          if (caption != null) const SizedBox(height: 8),
                         ] else if (imageUrl != null) ...[
                           ClipRRect(
                             borderRadius: BorderRadius.circular(12),
@@ -4344,6 +4719,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
                         if (caption == null &&
                             localBytes == null &&
                             imageUrl == null &&
+                            videoUrl == null &&
                             audio == null &&
                             localVoicePath == null &&
                             _productTagsFor(msg).isNotEmpty)
@@ -4802,6 +5178,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (_headerTyping) _buildPeerTypingBar(),
             if (_recording) _buildRecordingBar(),
             if (_replyingTo != null) _buildComposerReplyBar(),
             if (_pendingImage != null)
@@ -4987,6 +5364,25 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi> {
     );
   }
 
+  Widget _buildPeerTypingBar() {
+    final name = _peerDisplayName.trim().isEmpty ? 'They' : _peerDisplayName.trim();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          '$name is typing…',
+          style: const TextStyle(
+            color: Color(0xFF16A34A),
+            fontWeight: FontWeight.w700,
+            fontStyle: FontStyle.italic,
+            fontSize: 13,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildRecordingBar() {
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
@@ -5114,6 +5510,7 @@ enum _CallPhase { calling, ringing, connected }
 class _ChatCallScreenState extends State<ChatCallScreen> {
   static const _orange = Color(0xFFFF8A00);
   final _calls = CallServiceImpl();
+  late final LiveCallSession _media;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _callSub;
   Timer? _presenceTimer;
   Timer? _durationTimer;
@@ -5129,6 +5526,13 @@ class _ChatCallScreenState extends State<ChatCallScreen> {
   void initState() {
     super.initState();
     _phase = _CallPhase.calling;
+    _media = LiveCallSession(
+      callId: widget.call.id,
+      isCaller: true,
+      video: widget.video,
+    );
+    _media.addListener(_onMedia);
+    unawaited(_media.start());
     unawaited(UserPresenceService.goOnline());
     unawaited(_refreshPeerPresence(initial: true));
     // Always progress to Ringing so presence alone cannot block dial UX.
@@ -5230,8 +5634,14 @@ class _ChatCallScreenState extends State<ChatCallScreen> {
     });
   }
 
+  void _onMedia() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _media.removeListener(_onMedia);
+    unawaited(_media.hangup());
     _callSub?.cancel();
     _presenceTimer?.cancel();
     _durationTimer?.cancel();
@@ -5324,52 +5734,51 @@ class _ChatCallScreenState extends State<ChatCallScreen> {
             ),
             const SizedBox(height: 6),
             Text(
-              _phase == _CallPhase.connected
-                  ? 'Connected'
-                  : (_peerOnline ? 'Online' : 'Ringing their device…'),
+              _media.mediaLive
+                  ? 'Live'
+                  : (_phase == _CallPhase.connected
+                      ? 'Connecting audio…'
+                      : (_peerOnline ? 'Online' : 'Ringing their device…')),
               style: TextStyle(
-                color: _phase == _CallPhase.connected || _peerOnline
+                color: _media.mediaLive ||
+                        _phase == _CallPhase.connected ||
+                        _peerOnline
                     ? const Color(0xFF22C55E)
                     : Colors.white54,
                 fontWeight: FontWeight.w600,
                 fontSize: 13,
               ),
             ),
+            if ((_media.error ?? '').isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                _media.error!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Color(0xFFF87171),
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
+              ),
+            ],
             if (widget.video) ...[
               const SizedBox(height: 24),
               Expanded(
                 child: Container(
                   margin: const EdgeInsets.symmetric(horizontal: 20),
+                  clipBehavior: Clip.antiAlias,
                   decoration: BoxDecoration(
                     color: Colors.white10,
                     borderRadius: BorderRadius.circular(22),
                     border: Border.all(color: Colors.white12),
                   ),
-                  alignment: Alignment.center,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        _camOn
-                            ? Icons.videocam_rounded
-                            : Icons.videocam_off_rounded,
-                        color: Colors.white70,
-                        size: 42,
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        _camOn ? 'Camera on' : 'Camera off',
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.7),
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
+                  child: LiveCallVideoPane(session: _media),
                 ),
               ),
-            ] else
+            ] else ...[
+              LiveCallAudioSink(session: _media),
               const Spacer(),
+            ],
             Padding(
               padding: const EdgeInsets.fromLTRB(28, 12, 28, 28),
               child: Row(
@@ -5378,7 +5787,18 @@ class _ChatCallScreenState extends State<ChatCallScreen> {
                   _roundBtn(
                     icon: _micOn ? Icons.mic_rounded : Icons.mic_off_rounded,
                     label: _micOn ? 'Mute' : 'Unmute',
-                    onTap: () => setState(() => _micOn = !_micOn),
+                    onTap: () {
+                      final next = !_micOn;
+                      setState(() => _micOn = next);
+                      unawaited(_media.setMicEnabled(next));
+                    },
+                  ),
+                  _roundBtn(
+                    icon: _media.speakerOn
+                        ? Icons.volume_up_rounded
+                        : Icons.hearing_rounded,
+                    label: _media.speakerOn ? 'Speaker' : 'Earpiece',
+                    onTap: () => unawaited(_media.setSpeaker(!_media.speakerOn)),
                   ),
                   if (widget.video)
                     _roundBtn(
@@ -5386,7 +5806,11 @@ class _ChatCallScreenState extends State<ChatCallScreen> {
                           ? Icons.videocam_rounded
                           : Icons.videocam_off_rounded,
                       label: _camOn ? 'Camera' : 'Cam off',
-                      onTap: () => setState(() => _camOn = !_camOn),
+                      onTap: () {
+                        final next = !_camOn;
+                        setState(() => _camOn = next);
+                        unawaited(_media.setCameraEnabled(next));
+                      },
                     ),
                   _roundBtn(
                     icon: Icons.call_end_rounded,
@@ -5712,6 +6136,101 @@ class _VoiceNoteInfo {
     required this.url,
     required this.durationMs,
   });
+}
+
+class _ChatVideoTile extends StatelessWidget {
+  final String url;
+
+  const _ChatVideoTile({required this.url});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () {
+        showDialog<void>(
+          context: context,
+          barrierColor: Colors.black87,
+          builder: (_) => _ChatVideoDialog(url: url),
+        );
+      },
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          width: 220,
+          height: 140,
+          color: Colors.black,
+          alignment: Alignment.center,
+          child: const Icon(
+            Icons.play_circle_fill_rounded,
+            color: Colors.white,
+            size: 48,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ChatVideoDialog extends StatefulWidget {
+  final String url;
+
+  const _ChatVideoDialog({required this.url});
+
+  @override
+  State<_ChatVideoDialog> createState() => _ChatVideoDialogState();
+}
+
+class _ChatVideoDialogState extends State<_ChatVideoDialog> {
+  late final VideoPlayerController _controller;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url))
+      ..initialize().then((_) {
+        if (!mounted) return;
+        _controller.play();
+        setState(() => _ready = true);
+      });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      type: MaterialType.transparency,
+      child: SafeArea(
+        child: Stack(
+          children: [
+            Center(
+              child: _ready
+                  ? AspectRatio(
+                      aspectRatio: _controller.value.aspectRatio == 0
+                          ? 9 / 16
+                          : _controller.value.aspectRatio,
+                      child: VideoPlayer(_controller),
+                    )
+                  : const CircularProgressIndicator(color: Colors.white),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: IconButton(
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.close, color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _ChatBgPainter extends CustomPainter {

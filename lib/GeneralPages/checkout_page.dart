@@ -998,35 +998,6 @@ class _CheckoutPageState extends State<CheckoutPage> {
                 children: [
                   _stepsHeader(),
                   const SizedBox(height: 14),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                          color: Colors.black.withValues(alpha: 0.06)),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.lock_outline_rounded,
-                            size: 18,
-                            color: _brandNavy.withValues(alpha: 0.7)),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Secure checkout · PayChangu protected',
-                            style: TextStyle(
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.grey.shade700,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 14),
                   _section(
                     title: 'Your order',
                     child: Row(

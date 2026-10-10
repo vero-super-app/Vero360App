@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:vero360_app/utils/low_ram_android.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
@@ -29,6 +30,7 @@ import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
 import 'package:vero360_app/GernalServices/incoming_call_listener.dart';
 import 'package:vero360_app/GernalServices/user_presence_service.dart';
+import 'package:vero360_app/utils/app_update_checker.dart';
 import 'package:vero360_app/utils/session_local_cache.dart';
 import 'package:vero360_app/app_nav_key.dart';
 import 'package:vero360_app/app_shell_coordinator.dart';
@@ -77,6 +79,8 @@ class _BottomnavbarState extends State<Bottomnavbar>
 
   final cartService = CartServiceProvider.getInstance();
   StreamSubscription<User?>? _authSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _teamUnreadSub;
+  int _teamUnread = 0;
 
   @override
   void initState() {
@@ -92,6 +96,10 @@ class _BottomnavbarState extends State<Bottomnavbar>
     _authSub =
         FirebaseAuth.instance.authStateChanges().listen((_) => _refreshAuthState());
     _initialize();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(AppUpdateChecker.maybeRemindOncePerDay(context));
+    });
   }
 
   List<Widget> _defaultPages() {
@@ -129,8 +137,37 @@ class _BottomnavbarState extends State<Bottomnavbar>
   void dispose() {
     IncomingCallListener.stop();
     _authSub?.cancel();
+    _teamUnreadSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  /// Unread Vero360 Team alerts count on the Messages tab even before that tab opens.
+  void _listenTeamUnread() {
+    _teamUnreadSub?.cancel();
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) {
+      if (_teamUnread != 0 && mounted) setState(() => _teamUnread = 0);
+      return;
+    }
+    _teamUnreadSub = FirebaseFirestore.instance
+        .collection('order_party_alerts')
+        .where('toUid', isEqualTo: uid)
+        .snapshots()
+        .listen((snap) {
+      var n = 0;
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        if (data['cleared'] == true) continue;
+        if (data['read'] == true || data['consumed'] == true) continue;
+        final body = (data['body'] ?? '').toString().trim();
+        final title = (data['title'] ?? '').toString().trim();
+        if (body.isEmpty && title.isEmpty) continue;
+        n++;
+      }
+      if (!mounted || n == _teamUnread) return;
+      setState(() => _teamUnread = n);
+    }, onError: (_) {});
   }
 
   @override
@@ -140,6 +177,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
       unawaited(UserPresenceService.goOnline());
       IncomingCallListener.start();
     } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached) {
       unawaited(UserPresenceService.goOffline());
     }
@@ -206,6 +244,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
     } else {
       IncomingCallListener.stop();
       unawaited(UserPresenceService.goOffline());
+      _listenTeamUnread();
     }
     // Guests may use Home + Marketplace. Only kick off Messages/Cart/Profile.
     if (!loggedIn && _tabIsProtected(_selectedIndex)) {
@@ -218,6 +257,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
     if (loggedIn) {
       unawaited(_fetchAndUpdateRoleFromServer());
       unawaited(_bootstrapMessaging());
+      _listenTeamUnread();
     }
   }
 
@@ -647,7 +687,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
             onTap: _onItemTapped,
             isDark: isDark,
             isMerchant: _isMerchant,
-            messagesBadgeCount: snap.data ?? 0,
+            messagesBadgeCount: (snap.data ?? 0) + _teamUnread,
           );
         },
       ),

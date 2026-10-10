@@ -62,6 +62,11 @@ class BlockedMerchantService {
     return Set<String>.from(_ids);
   }
 
+  /// Ids already in memory. Empty until the first load finishes.
+  static Set<String> cachedIds() => Set<String>.from(_ids);
+
+  static bool get isReady => _loaded;
+
   static bool isBlockedSync(String? merchantId) {
     final id = (merchantId ?? '').trim();
     if (id.isEmpty) return false;

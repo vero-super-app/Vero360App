@@ -638,6 +638,7 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
     final byApiIdAvailability = <int, bool>{};
     final byApiIdAmenities = <int, List<String>>{};
     final byApiIdPromotedUntil = <int, DateTime>{};
+    final byApiIdVideos = <int, List<String>>{};
     final byApiIdRooms = <int, List<AccommodationRoomOffer>>{};
     final byApiIdHalls = <int, List<AccommodationConferenceOffer>>{};
     try {
@@ -709,6 +710,14 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
             until = DateTime.tryParse(rawPromo.toString());
           }
           if (until != null) byApiIdPromotedUntil[apiId] = until;
+          final rawVideos = d['videos'];
+          if (rawVideos is List) {
+            final urls = rawVideos
+                .map((e) => e.toString().trim())
+                .where((s) => s.isNotEmpty)
+                .toList();
+            if (urls.isNotEmpty) byApiIdVideos[apiId] = urls;
+          }
           _mergeRoomOffers(
             byApiIdRooms,
             apiId,
@@ -746,7 +755,8 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
     if (byApiId.isEmpty &&
         byApiIdCapacity.isEmpty &&
         byApiIdAmenities.isEmpty &&
-        byApiIdPromotedUntil.isEmpty) {
+        byApiIdPromotedUntil.isEmpty &&
+        byApiIdVideos.isEmpty) {
       return list;
     }
     final merged = list
@@ -762,6 +772,10 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
             updated = updated.withAmenities(amenities);
           }
           if (promo != null) updated = updated.withPromotedUntil(promo);
+          final videos = byApiIdVideos[a.id];
+          if (videos != null && videos.isNotEmpty) {
+            updated = updated.withVideos(videos);
+          }
           return updated;
         })
         .toList();

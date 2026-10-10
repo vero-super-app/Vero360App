@@ -792,7 +792,7 @@ class _FoodPageState extends State<FoodPage> {
             productContext: productContext,
             peerMerchantId: mid,
             peerUserId: peerUserId,
-            sendProductEnquiry: true,
+            sendProductEnquiry: false,
             resolveSqlItemId: item.id > 0 ? item.id : null,
             resolveMerchantId: mid,
             resolveFirestoreItemDocId: item.firestoreListingId,

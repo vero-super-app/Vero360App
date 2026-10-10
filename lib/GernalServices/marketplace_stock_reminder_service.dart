@@ -116,6 +116,7 @@ class MarketplaceStockReminderService {
           merchantUid: mid,
           itemName: name,
           listingSqlId: sqlId,
+          marketplaceItemId: doc.id,
         );
         await prefs.setBool(key, true);
       }

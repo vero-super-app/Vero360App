@@ -36,6 +36,14 @@ class _StorySectionState extends State<StorySection> {
     _stream = _service.getActiveStoriesStream(viewerId: viewerId);
     _lastGroups = StoryService.lastActiveGroups;
     _loadOwnProfile();
+    if (_lastGroups == null) {
+      StoryService.loadPersistedGroups().then((saved) {
+        if (!mounted || saved == null || saved.isEmpty) return;
+        if (StoryService.lastActiveGroups != null) return;
+        StoryService.lastActiveGroups = saved;
+        setState(() => _lastGroups = saved);
+      });
+    }
   }
 
   Future<void> _loadOwnProfile() async {

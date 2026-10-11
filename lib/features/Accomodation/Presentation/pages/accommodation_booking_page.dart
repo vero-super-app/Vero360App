@@ -62,6 +62,8 @@ class AccommodationBookingPage extends StatefulWidget {
   final String? hostMerchantUid;
   final String? hostDisplayName;
   final List<String>? amenities;
+  final List<AccommodationRoomOffer> roomOffers;
+  final List<AccommodationConferenceOffer> conferences;
 
   final AccommodationAfterPayCallback? afterSuccessfulPayment;
 
@@ -79,6 +81,8 @@ class AccommodationBookingPage extends StatefulWidget {
     this.hostMerchantUid,
     this.hostDisplayName,
     this.amenities,
+    this.roomOffers = const [],
+    this.conferences = const [],
     this.afterSuccessfulPayment,
   });
 
@@ -105,6 +109,8 @@ class AccommodationBookingPage extends StatefulWidget {
 
   factory AccommodationBookingPage.fromAccommodation(
     Accommodation a, {
+    List<AccommodationRoomOffer>? roomOffers,
+    List<AccommodationConferenceOffer>? conferences,
     AccommodationAfterPayCallback? afterSuccessfulPayment,
   }) {
     final raw = <String>[
@@ -130,6 +136,8 @@ class AccommodationBookingPage extends StatefulWidget {
       hostMerchantUid: a.hostMerchantUid,
       hostDisplayName: a.owner?.name,
       amenities: List<String>.from(a.amenities),
+      roomOffers: roomOffers ?? const [],
+      conferences: conferences ?? const [],
       afterSuccessfulPayment: afterSuccessfulPayment,
     );
   }
@@ -220,7 +228,10 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     super.initState();
     _heroController = PageController();
     _amenities = List<String>.from(widget.amenities ?? const []);
+    _roomOffers = List<AccommodationRoomOffer>.from(widget.roomOffers);
+    _conferences = List<AccommodationConferenceOffer>.from(widget.conferences);
     _isLoggedIn = FirebaseAuth.instance.currentUser != null;
+    _warmOfferImageUrls();
     _startWatching();
     WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrap());
   }
@@ -704,6 +715,49 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     });
   }
 
+  void _warmOfferImageUrls() {
+    for (final room in _roomOffers) {
+      for (final url in room.imageUrls) {
+        unawaited(accListingToFirebaseDownloadUrl(url));
+      }
+    }
+    for (final hall in _conferences) {
+      for (final url in hall.imageUrls) {
+        unawaited(accListingToFirebaseDownloadUrl(url));
+      }
+    }
+  }
+
+  bool _sameRoomOffers(
+    List<AccommodationRoomOffer> a,
+    List<AccommodationRoomOffer> b,
+  ) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].name != b[i].name || a[i].price != b[i].price) return false;
+      if (a[i].imageUrls.length != b[i].imageUrls.length) return false;
+      for (var j = 0; j < a[i].imageUrls.length; j++) {
+        if (a[i].imageUrls[j] != b[i].imageUrls[j]) return false;
+      }
+    }
+    return true;
+  }
+
+  bool _sameHallOffers(
+    List<AccommodationConferenceOffer> a,
+    List<AccommodationConferenceOffer> b,
+  ) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].name != b[i].name || a[i].price != b[i].price) return false;
+      if (a[i].imageUrls.length != b[i].imageUrls.length) return false;
+      for (var j = 0; j < a[i].imageUrls.length; j++) {
+        if (a[i].imageUrls[j] != b[i].imageUrls[j]) return false;
+      }
+    }
+    return true;
+  }
+
   Future<void> _loadAmenitiesFromFirestore() async {
     if (widget.accommodationId <= 0) return;
     try {
@@ -713,6 +767,8 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
           .limit(5)
           .get();
       final found = <String>[];
+      final rooms = <AccommodationRoomOffer>[];
+      final halls = <AccommodationConferenceOffer>[];
       for (final doc in snap.docs) {
         final d = doc.data();
         found.addAll(
@@ -720,6 +776,20 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
             d['amenities'] ?? d['servicesOffered'] ?? d['facilities'],
           ),
         );
+        rooms.addAll(parseAccommodationRoomOffers(d['roomOffers']));
+        halls.addAll(parseAccommodationConferenceOffers(d['conferences']));
+      }
+      if (!mounted) return;
+      final roomsChanged =
+          rooms.isNotEmpty && !_sameRoomOffers(_roomOffers, rooms);
+      final hallsChanged =
+          halls.isNotEmpty && !_sameHallOffers(_conferences, halls);
+      if (roomsChanged || hallsChanged) {
+        setState(() {
+          if (roomsChanged) _roomOffers = rooms;
+          if (hallsChanged) _conferences = halls;
+        });
+        _warmOfferImageUrls();
       }
       if (found.isEmpty && widget.hostMerchantUid != null) {
         final mid = widget.hostMerchantUid!.trim();
@@ -735,24 +805,16 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
           );
         }
       }
-      final rooms = <AccommodationRoomOffer>[];
-      final halls = <AccommodationConferenceOffer>[];
-      for (final doc in snap.docs) {
-        final d = doc.data();
-        rooms.addAll(parseAccommodationRoomOffers(d['roomOffers']));
-        halls.addAll(parseAccommodationConferenceOffers(d['conferences']));
-      }
       if (!mounted) return;
-      if (found.isEmpty && rooms.isEmpty && halls.isEmpty) return;
+      if (found.isEmpty) return;
       final merged = <String>[..._amenities];
       for (final a in found) {
         if (!merged.contains(a)) merged.add(a);
       }
-      setState(() {
-        if (merged.isNotEmpty) _amenities = merged;
-        if (rooms.isNotEmpty) _roomOffers = rooms;
-        if (halls.isNotEmpty) _conferences = halls;
-      });
+      final amenitiesChanged = merged.length != _amenities.length ||
+          merged.any((a) => !_amenities.contains(a));
+      if (!amenitiesChanged || merged.isEmpty) return;
+      setState(() => _amenities = merged);
     } catch (_) {}
   }
 

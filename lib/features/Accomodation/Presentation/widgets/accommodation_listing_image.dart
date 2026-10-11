@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 final Map<String, Future<String>> _accDlUrlCache = {};
+final Map<String, String> _accResolvedUrl = {};
 
 bool accListingIsHttp(String s) =>
     s.startsWith('http://') || s.startsWith('https://');
@@ -20,11 +21,18 @@ bool accListingLooksLikeBase64(String s) {
 Future<String?> accListingToFirebaseDownloadUrl(String raw) async {
   final s = raw.trim();
   if (s.isEmpty) return null;
-  if (accListingIsHttp(s)) return s;
+  if (accListingIsHttp(s)) {
+    _accResolvedUrl[s] = s;
+    return s;
+  }
+  final resolved = _accResolvedUrl[s];
+  if (resolved != null && resolved.isNotEmpty) return resolved;
 
   if (_accDlUrlCache.containsKey(s)) {
     try {
-      return await _accDlUrlCache[s]!;
+      final url = await _accDlUrlCache[s]!;
+      if (url.isNotEmpty) _accResolvedUrl[s] = url;
+      return url;
     } catch (_) {
       return null;
     }
@@ -39,7 +47,9 @@ Future<String?> accListingToFirebaseDownloadUrl(String raw) async {
 
   _accDlUrlCache[s] = fut();
   try {
-    return await _accDlUrlCache[s]!;
+    final url = await _accDlUrlCache[s]!;
+    if (url.isNotEmpty) _accResolvedUrl[s] = url;
+    return url;
   } catch (_) {
     return null;
   }
@@ -80,10 +90,11 @@ Widget accImageFromAnySource(
     } catch (_) {}
   }
 
-  if (accListingIsHttp(s)) {
+  final readyUrl = accListingIsHttp(s) ? s : _accResolvedUrl[s];
+  if (readyUrl != null && readyUrl.isNotEmpty) {
     return wrap(
       ResilientCachedNetworkImage(
-        url: s,
+        url: readyUrl,
         fit: fit,
         width: width,
         height: height,

@@ -91,7 +91,7 @@ class _SettingsPageState extends State<SettingsPage> {
   String _defaultAddressDisplay = ''; // default address line on profile card
 
   // personalization
-  bool _compactMode = false;
+  bool _compactMode = true;
   bool _haptics = true;
   String _languageCode = 'en'; // en = English, ny = Chichewa
 
@@ -203,7 +203,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
     setState(() {
-      _compactMode = prefs.getBool('pref_compact_mode') ?? false;
+      _compactMode = prefs.getBool('pref_compact_mode') ?? true;
       _haptics = prefs.getBool('pref_haptics') ?? true;
       _languageCode = prefs.getString('pref_language_code') ?? 'en';
       _notificationsEnabled = prefs.getBool('pref_notifications_enabled') ?? true;

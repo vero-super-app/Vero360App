@@ -14,3 +14,11 @@
 -keepclasseswithmembernames class * {
     native <methods>;
 }
+
+# Play looks for EdgeToEdge.enable / enableEdgeToEdge by name. R8 was renaming
+# that helper, so Console both missed the backward-compat call and listed its
+# internal window-color calls as if they were app code.
+-keep class androidx.activity.EdgeToEdge { *; }
+-keep class androidx.activity.EdgeToEdgeKt { *; }
+-keep class androidx.activity.EdgeToEdge* { *; }
+-keep class com.vero265.app.MainActivity { *; }

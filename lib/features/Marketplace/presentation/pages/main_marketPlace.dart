@@ -3317,7 +3317,11 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: const SystemUiOverlayStyle(statusBarColor: Colors.white, statusBarIconBrightness: Brightness.dark),
+      value: const SystemUiOverlayStyle(
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
+        systemNavigationBarIconBrightness: Brightness.dark,
+      ),
       child: Scaffold(
         backgroundColor: _kCream,
         body: Column(children: [

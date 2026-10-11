@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:math' show min;
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_amenities.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_offers.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accomodation_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/Accomodation_service.dart';
@@ -129,6 +131,8 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
   bool _isLoggedIn = false;
   bool _isAccommodationMerchantUser = false;
   int? _openingAccommodationId;
+  final Map<int, List<AccommodationRoomOffer>> _roomOffersById = {};
+  final Map<int, List<AccommodationConferenceOffer>> _conferencesById = {};
 
   /// Paid stays for the signed-in guest — fallback while shared occupancy loads.
   List<BookingItem> _guestPaidStays = [];
@@ -357,11 +361,12 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
 
   Future<void> _openBookingFlow(Accommodation accommodation) async {
     if (_openingAccommodationId == accommodation.id) return;
-    if (mounted) {
-      setState(() => _openingAccommodationId = accommodation.id);
-    }
+    // Guard double-taps without rebuilding the whole Discover list first.
+    // A setState here delays the route until every stay card rebuilds.
+    _openingAccommodationId = accommodation.id;
+    var showedSpinner = false;
     try {
-    // Fast path: if auth state is already known + logged in, navigate immediately.
+    // Fast path: auth is already known. Push immediately.
     if (_authReady && _isLoggedIn) {
       await _pushBookingPage(accommodation);
       if (mounted) {
@@ -374,6 +379,8 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
 
     // Fallback: refresh only when auth state is unknown/stale.
     if (!_authReady) {
+      showedSpinner = true;
+      if (mounted) setState(() {});
       await _refreshSession();
       if (!mounted) return;
     }
@@ -392,9 +399,8 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
       unawaited(_loadSharedTonightCounts([accommodation.id]));
     }
     } finally {
-      if (mounted) {
-        setState(() => _openingAccommodationId = null);
-      }
+      _openingAccommodationId = null;
+      if (showedSpinner && mounted) setState(() {});
     }
   }
 
@@ -403,6 +409,8 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
       MaterialPageRoute<void>(
         builder: (_) => AccommodationBookingPage.fromAccommodation(
           accommodation,
+          roomOffers: _roomOffersById[accommodation.id],
+          conferences: _conferencesById[accommodation.id],
           afterSuccessfulPayment: (bookingCtx, accId) {
             if (!bookingCtx.mounted) return;
             // Replace booking page with My bookings so the stay is visible immediately.
@@ -630,6 +638,8 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
     final byApiIdAvailability = <int, bool>{};
     final byApiIdAmenities = <int, List<String>>{};
     final byApiIdPromotedUntil = <int, DateTime>{};
+    final byApiIdRooms = <int, List<AccommodationRoomOffer>>{};
+    final byApiIdHalls = <int, List<AccommodationConferenceOffer>>{};
     try {
       final idList = ids.toList();
       final chunks = <List<int>>[];
@@ -699,11 +709,29 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
             until = DateTime.tryParse(rawPromo.toString());
           }
           if (until != null) byApiIdPromotedUntil[apiId] = until;
+          _mergeRoomOffers(
+            byApiIdRooms,
+            apiId,
+            parseAccommodationRoomOffers(d['roomOffers']),
+          );
+          _mergeHallOffers(
+            byApiIdHalls,
+            apiId,
+            parseAccommodationConferenceOffers(d['conferences']),
+          );
         }
       }));
     } catch (_) {
       return list;
     }
+
+    _roomOffersById
+      ..clear()
+      ..addAll(byApiIdRooms);
+    _conferencesById
+      ..clear()
+      ..addAll(byApiIdHalls);
+    _warmOfferPhotos(byApiIdRooms.values, byApiIdHalls.values);
 
     _hostelGenderByApiId
       ..clear()
@@ -740,6 +768,92 @@ class _AccommodationMainPageState extends State<AccommodationMainPage>
     final promoted = merged.where((a) => a.isPromotedNow).toList();
     final rest = merged.where((a) => !a.isPromotedNow).toList();
     return [...promoted, ...rest];
+  }
+
+  void _mergeRoomOffers(
+    Map<int, List<AccommodationRoomOffer>> into,
+    int apiId,
+    List<AccommodationRoomOffer> rooms,
+  ) {
+    if (rooms.isEmpty) return;
+    final existing = into.putIfAbsent(apiId, () => []);
+    for (final room in rooms) {
+      final already = existing.any(
+        (e) => e.name == room.name && e.price == room.price,
+      );
+      if (!already) existing.add(room);
+    }
+  }
+
+  void _mergeHallOffers(
+    Map<int, List<AccommodationConferenceOffer>> into,
+    int apiId,
+    List<AccommodationConferenceOffer> halls,
+  ) {
+    if (halls.isEmpty) return;
+    final existing = into.putIfAbsent(apiId, () => []);
+    for (final hall in halls) {
+      final already = existing.any(
+        (e) => e.name == hall.name && e.price == hall.price,
+      );
+      if (!already) existing.add(hall);
+    }
+  }
+
+  /// Resolve storage URLs and decode the first photo of each room and hall
+  /// while the guest is still on Discover, so Book stay does not wait.
+  void _warmOfferPhotos(
+    Iterable<List<AccommodationRoomOffer>> roomGroups,
+    Iterable<List<AccommodationConferenceOffer>> hallGroups,
+  ) {
+    final first = <String>[];
+    final rest = <String>[];
+    void take(List<String> urls) {
+      if (urls.isEmpty) return;
+      first.add(urls.first);
+      if (urls.length > 1) rest.addAll(urls.skip(1));
+    }
+
+    for (final rooms in roomGroups) {
+      for (final room in rooms) {
+        take(room.imageUrls);
+      }
+    }
+    for (final halls in hallGroups) {
+      for (final hall in halls) {
+        take(hall.imageUrls);
+      }
+    }
+    if (first.isEmpty && rest.isEmpty) return;
+    unawaited(_prefetchOfferImages([...first, ...rest]));
+  }
+
+  Future<void> _prefetchOfferImages(List<String> raws) async {
+    final seen = <String>{};
+    var started = 0;
+    const maxImages = 24;
+    final batch = <Future<void>>[];
+    for (final raw in raws) {
+      if (started >= maxImages) break;
+      final s = raw.trim();
+      if (s.isEmpty || !seen.add(s)) continue;
+      started++;
+      batch.add(_prefetchOneOfferImage(s));
+      if (batch.length >= 4) {
+        await Future.wait(batch);
+        batch.clear();
+        if (!mounted) return;
+      }
+    }
+    if (batch.isNotEmpty) await Future.wait(batch);
+  }
+
+  Future<void> _prefetchOneOfferImage(String raw) async {
+    try {
+      final url = await accListingToFirebaseDownloadUrl(raw);
+      if (!mounted || url == null || !accListingIsHttp(url)) return;
+      await precacheImage(CachedNetworkImageProvider(url), context);
+    } catch (_) {}
   }
 
   void _showDistrictPicker() {

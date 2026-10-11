@@ -321,7 +321,7 @@ class _SlidingOfferCardState extends State<_SlidingOfferCard> {
       fit: BoxFit.cover,
       width: double.infinity,
       height: double.infinity,
-      memCacheWidth: 480,
+      memCacheWidth: 336,
     );
   }
 }

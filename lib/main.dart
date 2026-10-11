@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart'
     show kIsWeb, kReleaseMode, kDebugMode, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 
 // Deep links
 import 'package:app_links/app_links.dart';
@@ -296,6 +297,9 @@ Future<bool> _ensureFirebaseHealthy({
 // ───────────────────────────────────────────────
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Draw behind the system bars. Flutter then reports the insets so screens
+  // can pad content. Bar colors are left unset; Android 15 ignores them.
+  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
   // Release builds must not echo debug logs (PII, tokens, session JSON) to logcat.
   if (kReleaseMode) {
@@ -361,6 +365,14 @@ Future<void> main() async {
     launchApp();
   }
 }
+
+// Icon brightness only. Bar colors call Window.setStatusBarColor, which
+// Android 15 deprecates. AppBar uses this instead of painting a bar color.
+const SystemUiOverlayStyle _kEdgeToEdgeOverlay = SystemUiOverlayStyle(
+  statusBarIconBrightness: Brightness.dark,
+  statusBarBrightness: Brightness.light,
+  systemNavigationBarIconBrightness: Brightness.dark,
+);
 
 // ───────────────────────────────────────────────
 //  AppBootstrap — launcher + Firebase self-heal
@@ -587,6 +599,9 @@ class _AppBootstrapState extends State<AppBootstrap> {
               useMaterial3: true,
               scaffoldBackgroundColor: _splashBg,
               colorSchemeSeed: const Color(0xFFFF6B00),
+              appBarTheme: const AppBarTheme(
+                systemOverlayStyle: _kEdgeToEdgeOverlay,
+              ),
             ),
             builder: _androidGpuSoftened,
             home: VeroLaunchSplash(
@@ -1195,6 +1210,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             useMaterial3: true,
             scaffoldBackgroundColor: const Color(0xFFFFFBF6),
             colorSchemeSeed: const Color(0xFFFF8A00),
+            appBarTheme: const AppBarTheme(
+              systemOverlayStyle: _kEdgeToEdgeOverlay,
+            ),
           ),
 
           // ✅ Wrap app shell with RideRequestOverlay; show biometric lock when enabled and returning to app

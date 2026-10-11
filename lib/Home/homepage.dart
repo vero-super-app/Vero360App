@@ -391,10 +391,8 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
   Widget build(BuildContext context) {
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
-        statusBarColor:                 Colors.transparent,
         statusBarIconBrightness:        Brightness.light,
         statusBarBrightness:            Brightness.dark,
-        systemNavigationBarColor:       Colors.white,
         systemNavigationBarIconBrightness: Brightness.dark,
       ),
       child: Scaffold(

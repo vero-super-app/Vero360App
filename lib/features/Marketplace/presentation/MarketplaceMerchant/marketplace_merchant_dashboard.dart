@@ -3349,12 +3349,12 @@ class _MarketplaceMerchantDashboardState
                 shape: const RoundedRectangleBorder(
                   borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
                 ),
-                builder: (_) => SafeArea(
+                builder: (sourceSheetContext) => SafeArea(
                   child: Wrap(
                     children: [
                       InkWell(
                         onTap: () {
-                          Navigator.pop(_);
+                          Navigator.pop(sourceSheetContext);
                           pickNewCoverFrom(ImageSource.camera);
                         },
                         borderRadius: BorderRadius.circular(16),
@@ -3400,7 +3400,7 @@ class _MarketplaceMerchantDashboardState
                       ),
                       InkWell(
                         onTap: () {
-                          Navigator.pop(_);
+                          Navigator.pop(sourceSheetContext);
                           pickNewCoverFrom(ImageSource.gallery);
                         },
                         borderRadius: BorderRadius.circular(16),

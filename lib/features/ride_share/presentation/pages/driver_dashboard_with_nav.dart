@@ -1559,14 +1559,14 @@ class _MarketplaceMerchantDashboardState
                 shape: const RoundedRectangleBorder(
                   borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
                 ),
-                builder: (_) => SafeArea(
+                builder: (sourceSheetContext) => SafeArea(
                   child: Wrap(
                     children: [
                       ListTile(
                         leading: const Icon(Icons.photo_camera_outlined),
                         title: const Text('Take a photo'),
                         onTap: () {
-                          Navigator.pop(_);
+                          Navigator.pop(sourceSheetContext);
                           pickNewCoverFrom(ImageSource.camera);
                         },
                       ),
@@ -1574,13 +1574,14 @@ class _MarketplaceMerchantDashboardState
                         leading: const Icon(Icons.photo_library_outlined),
                         title: const Text('Choose from gallery'),
                         onTap: () {
-                          Navigator.pop(_);
+                          Navigator.pop(sourceSheetContext);
                           pickNewCoverFrom(ImageSource.gallery);
                         },
                       ),
                     ],
                   ),
                 ),
+
               );
             }
 

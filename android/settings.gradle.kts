@@ -29,7 +29,7 @@ plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
 
     // ✅ Upgrade AGP to satisfy the AndroidX metadata requirements
-    id("com.android.application") version "8.11.0" apply false
+    id("com.android.application") version "9.0.1" apply false
 
     // Keep this for now (your warning is “soon”, not blocking)
     id("org.jetbrains.kotlin.android") version "2.1.20" apply false

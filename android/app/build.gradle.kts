@@ -41,7 +41,8 @@ android {
     namespace = "com.vero265.app"
 
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // Plugins (Firebase, Maps, WebView, …) require NDK 28. It is backward compatible.
+    ndkVersion = "28.2.13676358"
 
     // NDK r28 crashes CMake 3.22.1 on Windows (access violation -1073741819).
     // 3.31.6 is installed under the Android SDK; pin it so AGP does not keep 3.22.1.

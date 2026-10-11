@@ -1,24 +1,31 @@
-// Merchant post story — photos with caption only, 24h story.
+// Merchant post story — photos or a gallery video, caption, 24h story.
 
+import 'dart:io';
 import 'dart:typed_data';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:vero360_app/Home/merchant_story_model.dart';
 import 'package:vero360_app/Home/story_service.dart';
+import 'package:vero360_app/Home/story_viewer_screen.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
-/// One slide in the composer (before posting) — photo + caption.
+/// One slide in the composer (before posting) — photo or gallery video.
 class _DraftSlide {
   final Uint8List bytes;
+  final String mediaType;
+  final String? videoPath;
   final TextEditingController captionController;
 
   _DraftSlide({
     required this.bytes,
+    this.mediaType = 'image',
+    this.videoPath,
     TextEditingController? captionController,
   }) : captionController = captionController ?? TextEditingController();
+
+  bool get isVideo => mediaType == 'video';
 
   void dispose() => captionController.dispose();
 }
@@ -190,7 +197,8 @@ class _PostStoryPageState extends State<PostStoryPage> {
         final cap = s.captionController.text.trim();
         return StorySlideInput(
           bytes: s.bytes,
-          mediaType: 'image',
+          mediaType: s.mediaType,
+          videoPath: s.videoPath,
           caption: cap.isEmpty ? null : cap,
         );
       }).toList();
@@ -212,7 +220,7 @@ class _PostStoryPageState extends State<PostStoryPage> {
           context,
           result.posted == 1
               ? 'Status posted! Visible for 24 hours.'
-              : '${result.posted} status photos posted! Visible for 24 hours.',
+              : '${result.posted} status updates posted! Visible for 24 hours.',
           isSuccess: true,
           errorMessage: '',
         );
@@ -415,120 +423,38 @@ class _PostStoryPageState extends State<PostStoryPage> {
   }
 
   Future<void> _showViewersSheet(String storyId) async {
-    final viewers = await _storyService.getStoryViewers(storyId);
+    List<StoryViewerInfo> viewers = const [];
+    try {
+      viewers = await _storyService.getStoryViewers(storyId);
+    } catch (_) {}
     if (!mounted) return;
-    showModalBottomSheet<void>(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.5,
-        minChildSize: 0.25,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (_, scrollController) => Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 36,
-                  height: 4,
-                  margin: const EdgeInsets.only(bottom: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade400,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                ),
-              ),
-              Text(
-                'Viewers (${viewers.length})',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 8),
-              Expanded(
-                child: viewers.isEmpty
-                    ? const Center(
-                        child: Text(
-                          'No one has viewed this story yet.',
-                          style: TextStyle(color: Colors.grey),
-                        ),
-                      )
-                    : ListView.builder(
-                        controller: scrollController,
-                        itemCount: viewers.length,
-                        itemBuilder: (_, i) {
-                          final v = viewers[i];
-                          return ListTile(
-                            leading: _buildViewerAvatar(v),
-                            title: Text(v.viewerName.isEmpty ? 'Unknown' : v.viewerName),
-                            subtitle: Text(
-                              _formatViewedAt(v.viewedAt),
-                              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                            ),
-                          );
-                        },
-                      ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildViewerAvatar(StoryViewerInfo v) {
-    final hasProfileUrl = v.viewerProfileImageUrl != null && v.viewerProfileImageUrl!.trim().isNotEmpty;
-    final fallback = CircleAvatar(
-      backgroundColor: const Color(0xFFFF8A00).withOpacity(0.3),
-      child: Text(
-        (v.viewerName.isNotEmpty ? v.viewerName[0] : '?').toUpperCase(),
-        style: const TextStyle(
-          color: Color(0xFFFF8A00),
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-    );
-    if (!hasProfileUrl) return fallback;
-    return ClipOval(
-      child: Image.network(
-        v.viewerProfileImageUrl!,
-        fit: BoxFit.cover,
-        width: 40,
-        height: 40,
-        errorBuilder: (_, __, ___) => fallback,
-      ),
-    );
-  }
-
-  String _formatViewedAt(DateTime viewedAt) {
-    final d = DateTime.now().difference(viewedAt);
-    if (d.inMinutes < 1) return 'Just now';
-    if (d.inMinutes < 60) return '${d.inMinutes}m ago';
-    if (d.inHours < 24) return '${d.inHours}h ago';
-    return '${d.inDays}d ago';
+    await showStoryViewersSheet(context, viewers);
   }
 
   Widget _buildThumbnail(MerchantStoryItem item) {
-    if (item.hasInlineImage && item.imageBase64 != null) {
-      try {
-        final bytes = base64Decode(item.imageBase64!);
-        return Image.memory(
-          bytes,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) =>
-              const Icon(Icons.store_rounded, color: Colors.grey),
-        );
-      } catch (_) {
-        return const Icon(Icons.store_rounded, color: Colors.grey);
-      }
+    if (item.mediaType == 'video') {
+      return const ColoredBox(
+        color: Colors.black,
+        child: Center(
+          child: Icon(Icons.play_circle_fill_rounded, color: Colors.white, size: 32),
+        ),
+      );
+    }
+    final inline = StoryInlineImageCache.bytesFor(item.storyId, item.imageBase64);
+    if (inline != null) {
+      return Image.memory(
+        inline,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) =>
+            const Icon(Icons.store_rounded, color: Colors.grey),
+      );
     }
     if (item.mediaUrl.isNotEmpty) {
       return Image.network(
         item.mediaUrl,
         fit: BoxFit.cover,
+        gaplessPlayback: true,
         errorBuilder: (_, __, ___) =>
             const Icon(Icons.store_rounded, color: Colors.grey),
       );
@@ -605,7 +531,7 @@ class _PostStoryPageState extends State<PostStoryPage> {
               const Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'Add photo',
+                  'Add to status',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w900,
@@ -705,6 +631,52 @@ class _PostStoryPageState extends State<PostStoryPage> {
                   ),
                 ),
               ),
+              InkWell(
+                onTap: () => Navigator.of(ctx).pop('video_gallery'),
+                borderRadius: BorderRadius.circular(16),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF111111),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.videocam_outlined,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Text(
+                            'Choose video',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF222222),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -715,6 +687,44 @@ class _PostStoryPageState extends State<PostStoryPage> {
       await _addSlide(ImageSource.camera);
     } else if (choice == 'photo_gallery') {
       await _addSlide(ImageSource.gallery);
+    } else if (choice == 'video_gallery') {
+      await _addVideoFromGallery();
+    }
+  }
+
+  Future<void> _addVideoFromGallery() async {
+    if (_posting) return;
+    try {
+      final file = await _picker.pickVideo(source: ImageSource.gallery);
+      if (file == null || !mounted) return;
+      final length = await File(file.path).length();
+      const maxBytes = 40 * 1024 * 1024;
+      if (length > maxBytes) {
+        ToastHelper.showCustomToast(
+          context,
+          'That video is too large. Choose one under 40 MB.',
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return;
+      }
+      setState(() {
+        _draftSlides.add(
+          _DraftSlide(
+            bytes: Uint8List(0),
+            mediaType: 'video',
+            videoPath: file.path,
+          ),
+        );
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Could not add that video',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
     }
   }
 
@@ -759,10 +769,22 @@ class _PostStoryPageState extends State<PostStoryPage> {
                           child: SizedBox(
                             height: 200,
                             width: double.infinity,
-                            child: Image.memory(
-                              slide.bytes,
-                              fit: BoxFit.cover,
-                            ),
+                            child: slide.isVideo
+                                ? const ColoredBox(
+                                    color: Colors.black,
+                                    child: Center(
+                                      child: Icon(
+                                        Icons.play_circle_fill_rounded,
+                                        color: Colors.white,
+                                        size: 48,
+                                      ),
+                                    ),
+                                  )
+                                : Image.memory(
+                                    slide.bytes,
+                                    fit: BoxFit.cover,
+                                    gaplessPlayback: true,
+                                  ),
                           ),
                         ),
                         Positioned(
@@ -815,7 +837,7 @@ class _PostStoryPageState extends State<PostStoryPage> {
         ),
         const SizedBox(height: 8),
         Text(
-          '${_draftSlides.length} photo${_draftSlides.length == 1 ? '' : 's'} ready · visible 24h after posting',
+          '${_draftSlides.length} item${_draftSlides.length == 1 ? '' : 's'} ready · visible 24h after posting',
           style: TextStyle(fontSize: 12, color: Colors.grey[600]),
         ),
         const SizedBox(height: 16),
@@ -846,7 +868,7 @@ class _PostStoryPageState extends State<PostStoryPage> {
                     child: OutlinedButton.icon(
                       onPressed: _posting ? null : _showAddMediaPicker,
                       icon: const Icon(Icons.add_photo_alternate_outlined, size: 20),
-                      label: const Text('Add photo'),
+                      label: const Text('Add more'),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: const Color(0xFF101010),
                         side: BorderSide(color: Colors.grey.shade300),
@@ -897,7 +919,7 @@ class _PostStoryPageState extends State<PostStoryPage> {
                   onPressed: _posting ? null : _showAddMediaPicker,
                   icon: const Icon(Icons.add_photo_alternate_rounded),
                   label: const Text(
-                    'Add photo',
+                    'Add photo or video',
                     style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
                   ),
                   style: ElevatedButton.styleFrom(

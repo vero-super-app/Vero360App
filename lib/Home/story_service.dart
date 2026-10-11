@@ -3,10 +3,12 @@
 
 import 'dart:convert';
 import 'dart:async';
+import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
@@ -26,6 +28,16 @@ const int _maxFallbackImageBytes = 350000;
 /// Target max bytes for Storage uploads (keeps uploads reliable on weak networks).
 const int _maxUploadImageBytes = 900000;
 
+class StoryLikeState {
+  final int likeCount;
+  final bool mineLiked;
+
+  const StoryLikeState({
+    required this.likeCount,
+    required this.mineLiked,
+  });
+}
+
 class StoryService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
@@ -40,11 +52,114 @@ class StoryService {
   /// Last emitted home story groups (with viewed flags). Survives tab switches.
   static List<MerchantStoryGroup>? lastActiveGroups;
 
+  static const _diskKey = 'home_story_rings_v1';
+
+  /// Small ring list for the next cold open. Photos stay as URLs, not base64.
+  static Future<void> persistActiveGroups(List<MerchantStoryGroup> groups) async {
+    try {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final slim = <Map<String, dynamic>>[];
+      for (final g in groups) {
+        final items = <Map<String, dynamic>>[];
+        for (final i in g.items) {
+          if (i.expiresAt.millisecondsSinceEpoch <= now) continue;
+          if (i.mediaUrl.trim().isEmpty &&
+              (i.imageBase64 == null || i.imageBase64!.isEmpty)) {
+            continue;
+          }
+          items.add({
+            'storyId': i.storyId,
+            'mediaUrl': i.mediaUrl,
+            'mediaType': i.mediaType,
+            'caption': i.caption,
+            'serviceType': i.serviceType,
+            'createdAt': i.createdAt.millisecondsSinceEpoch,
+            'expiresAt': i.expiresAt.millisecondsSinceEpoch,
+          });
+        }
+        if (items.isEmpty) continue;
+        slim.add({
+          'merchantId': g.merchantId,
+          'merchantName': g.merchantName,
+          'merchantImageUrl': g.merchantImageUrl,
+          'hasUnviewed': g.hasUnviewed,
+          'items': items,
+        });
+        if (slim.length >= 24) break;
+      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_diskKey, jsonEncode(slim));
+    } catch (_) {}
+  }
+
+  static Future<List<MerchantStoryGroup>?> loadPersistedGroups() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_diskKey);
+      if (raw == null || raw.isEmpty) return null;
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return null;
+      final now = DateTime.now();
+      final groups = <MerchantStoryGroup>[];
+      for (final entry in decoded) {
+        if (entry is! Map) continue;
+        final map = Map<String, dynamic>.from(entry);
+        final merchantId = (map['merchantId'] ?? '').toString();
+        if (merchantId.isEmpty) continue;
+        final itemMaps = map['items'];
+        if (itemMaps is! List) continue;
+        final items = <MerchantStoryItem>[];
+        for (final rawItem in itemMaps) {
+          if (rawItem is! Map) continue;
+          final item = Map<String, dynamic>.from(rawItem);
+          final expires = DateTime.fromMillisecondsSinceEpoch(
+            (item['expiresAt'] as num?)?.toInt() ?? 0,
+          );
+          if (!expires.isAfter(now)) continue;
+          final storyId = (item['storyId'] ?? '').toString();
+          if (storyId.isEmpty) continue;
+          items.add(MerchantStoryItem(
+            storyId: storyId,
+            merchantId: merchantId,
+            merchantName: (map['merchantName'] ?? 'Merchant').toString(),
+            merchantImageUrl: map['merchantImageUrl'] as String?,
+            serviceType: item['serviceType'] as String?,
+            mediaUrl: (item['mediaUrl'] ?? '').toString(),
+            mediaType: (item['mediaType'] ?? 'image').toString(),
+            caption: item['caption'] as String?,
+            createdAt: DateTime.fromMillisecondsSinceEpoch(
+              (item['createdAt'] as num?)?.toInt() ??
+                  now.millisecondsSinceEpoch,
+            ),
+            expiresAt: expires,
+          ));
+        }
+        if (items.isEmpty) continue;
+        groups.add(MerchantStoryGroup(
+          merchantId: merchantId,
+          merchantName: (map['merchantName'] ?? 'Merchant').toString(),
+          merchantImageUrl: map['merchantImageUrl'] as String?,
+          items: items,
+          hasUnviewed: map['hasUnviewed'] == true,
+        ));
+      }
+      return groups.isEmpty ? null : groups;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// viewerId::merchantId → hasUnviewed
   static final Map<String, bool> _merchantUnviewedCache = {};
 
   /// viewerId::storyId → viewed
   static final Map<String, bool> _storyViewedCache = {};
+
+  /// storyId → like count. Survives rebuilds so the number does not flash off.
+  static final Map<String, int> _likeCountCache = {};
+
+  /// viewerId::storyId → whether this viewer liked it.
+  static final Map<String, bool> _myLikeCache = {};
 
   static Stream<String> get merchantViewRefreshStream =>
       _merchantViewRefresh.stream;
@@ -81,6 +196,87 @@ class StoryService {
     _storyViewedCache[_storyCacheKey(viewerId, storyId)] = true;
   }
 
+  static int? peekLikeCount(String storyId) {
+    if (storyId.isEmpty) return null;
+    return _likeCountCache[storyId];
+  }
+
+  static bool? peekMyLike(String viewerId, String storyId) {
+    if (viewerId.isEmpty || storyId.isEmpty) return null;
+    return _myLikeCache[_storyCacheKey(viewerId, storyId)];
+  }
+
+  static void _rememberLikes({
+    required String storyId,
+    required int likeCount,
+    String? viewerId,
+    bool? mineLiked,
+  }) {
+    if (storyId.isEmpty) return;
+    _likeCountCache[storyId] = likeCount;
+    if (viewerId != null && viewerId.isNotEmpty && mineLiked != null) {
+      _myLikeCache[_storyCacheKey(viewerId, storyId)] = mineLiked;
+    }
+  }
+
+  static bool isLikedFlag(dynamic value) =>
+      value == true || value == 1 || value == 'true';
+
+  /// Live like total for one story. Emits the cached count first when known.
+  Stream<StoryLikeState> watchStoryLikes({
+    required String storyId,
+    String? viewerId,
+  }) {
+    final controller = StreamController<StoryLikeState>();
+    StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? sub;
+
+    StoryLikeState stateFrom(
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    ) {
+      var likes = 0;
+      var mine = false;
+      for (final doc in docs) {
+        final liked = isLikedFlag(doc.data()['liked']);
+        if (!liked) continue;
+        likes++;
+        if (viewerId != null && doc.id == viewerId) mine = true;
+      }
+      _rememberLikes(
+        storyId: storyId,
+        likeCount: likes,
+        viewerId: viewerId,
+        mineLiked: viewerId == null ? null : mine,
+      );
+      return StoryLikeState(likeCount: likes, mineLiked: mine);
+    }
+
+    controller.onListen = () {
+      final cachedCount = peekLikeCount(storyId);
+      final cachedMine = viewerId == null ? null : peekMyLike(viewerId, storyId);
+      if (cachedCount != null && !controller.isClosed) {
+        controller.add(
+          StoryLikeState(
+            likeCount: cachedCount,
+            mineLiked: cachedMine ?? false,
+          ),
+        );
+      }
+      sub = _firestore
+          .collection(_collection)
+          .doc(storyId)
+          .collection(_viewersSubcollection)
+          .snapshots()
+          .listen(
+        (snap) {
+          if (!controller.isClosed) controller.add(stateFrom(snap.docs));
+        },
+        onError: (_) {},
+      );
+    };
+    controller.onCancel = () => sub?.cancel();
+    return controller.stream;
+  }
+
   static bool? peekMerchantUnviewed(String viewerId, String merchantId) {
     if (viewerId.isEmpty || merchantId.isEmpty) return null;
     return _merchantUnviewedCache[_merchantCacheKey(viewerId, merchantId)];
@@ -103,29 +299,27 @@ class StoryService {
     ) async {
       if (controller.isClosed) return;
       final myGen = ++emitGen;
-      await BlockedMerchantService.ensureLoaded();
-      final blocked = await BlockedMerchantService.blockedIds();
-      var groups = _groupByMerchant(snap.docs);
-      if (blocked.isNotEmpty) {
-        groups = groups
-            .where((g) => !blocked.contains(g.merchantId.trim()))
-            .toList();
-      }
+      // Paint rings before any extra reads. Blocked-merchant and name
+      // lookups were holding the whole row until the network returned.
+      var groups = _withoutBlocked(_groupByMerchant(snap.docs));
       final painted = _applyCachedUnviewedFlags(groups, viewerId);
       lastActiveGroups = painted;
       if (!controller.isClosed) controller.add(painted);
+      unawaited(persistActiveGroups(painted));
 
-      final named = await _resolveLiveMerchantNames(groups);
+      final named = _withoutBlocked(await _resolveLiveMerchantNames(groups));
       if (myGen != emitGen || controller.isClosed) return;
       final namedPainted = _applyCachedUnviewedFlags(named, viewerId);
       lastActiveGroups = namedPainted;
       if (!controller.isClosed) controller.add(namedPainted);
+      unawaited(persistActiveGroups(namedPainted));
 
       if (viewerId == null || viewerId.isEmpty || named.isEmpty) return;
       final resolved = await _attachUnviewedFlags(named, viewerId);
       if (myGen != emitGen || controller.isClosed) return;
       lastActiveGroups = resolved;
       controller.add(resolved);
+      unawaited(persistActiveGroups(resolved));
     }
 
     controller.onListen = () {
@@ -134,8 +328,20 @@ class StoryService {
       if (cached != null && cached.isNotEmpty && !controller.isClosed) {
         controller.add(cached);
       }
+      unawaited(BlockedMerchantService.ensureLoaded());
 
       final now = Timestamp.now();
+      unawaited(() async {
+        try {
+          final cachedSnap = await _firestore
+              .collection(_collection)
+              .where('expiresAt', isGreaterThan: now)
+              .orderBy('expiresAt', descending: false)
+              .limit(100)
+              .get(const GetOptions(source: Source.cache));
+          await emitFromSnap(cachedSnap);
+        } catch (_) {}
+      }());
       storySub = _firestore
           .collection(_collection)
           .where('expiresAt', isGreaterThan: now)
@@ -171,6 +377,14 @@ class StoryService {
     return controller.stream;
   }
 
+  List<MerchantStoryGroup> _withoutBlocked(List<MerchantStoryGroup> groups) {
+    final blocked = BlockedMerchantService.cachedIds();
+    if (blocked.isEmpty) return groups;
+    return groups
+        .where((g) => !blocked.contains(g.merchantId.trim()))
+        .toList();
+  }
+
   List<MerchantStoryGroup> _applyCachedUnviewedFlags(
     List<MerchantStoryGroup> groups,
     String? viewerId,
@@ -201,6 +415,7 @@ class StoryService {
     final controller = StreamController<MerchantStoryRingState>();
     StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? storySub;
     StreamSubscription<String>? viewSub;
+    MerchantStoryRingState? last;
 
     Future<void> emit() async {
       if (controller.isClosed) return;
@@ -209,9 +424,12 @@ class StoryService {
             .collection(_collection)
             .where('merchantId', isEqualTo: merchantId)
             .get();
-        controller.add(await _buildRingStateFromDocs(snap.docs, viewerId));
+        final built = await _buildRingStateFromDocs(snap.docs, viewerId);
+        last = built;
+        if (!controller.isClosed) controller.add(built);
       } catch (_) {
-        if (!controller.isClosed) controller.add(MerchantStoryRingState.empty);
+        if (controller.isClosed) return;
+        controller.add(last ?? MerchantStoryRingState.empty);
       }
     }
 
@@ -442,7 +660,9 @@ class StoryService {
       description: d['description'] as String?,
       price: d['price'] is num ? d['price'] as num : num.tryParse('${d['price']}'),
       mediaUrl: d['mediaUrl'] as String? ?? '',
-      imageBase64: d['imageBase64'] as String?,
+      imageBase64: ((d['mediaUrl'] as String?) ?? '').trim().isNotEmpty
+          ? null
+          : d['imageBase64'] as String?,
       mediaType: d['mediaType'] as String? ?? 'image',
       caption: d['caption'] as String?,
       musicTrackId: d['musicTrackId'] as String?,
@@ -514,6 +734,7 @@ class StoryService {
     String? musicTrackId,
     String? musicTrackName,
     String mediaType = 'image',
+    String? videoFilePath,
     bool notifyFollowers = true,
   }) async {
     final user = FirebaseAuth.instance.currentUser;
@@ -539,7 +760,14 @@ class StoryService {
     var bytes = imageBytes;
 
     if (mediaType == 'video') {
-      mediaUrl = await _uploadVideoToStorage(merchantId, bytes);
+      final path = videoFilePath?.trim() ?? '';
+      if (path.isNotEmpty) {
+        mediaUrl = await _uploadVideoFile(merchantId, path);
+      } else if (bytes.isNotEmpty) {
+        mediaUrl = await _uploadVideoToStorage(merchantId, bytes);
+      } else {
+        throw Exception('Choose a video from your gallery.');
+      }
     } else {
       bytes = await prepareStoryImageBytes(bytes);
       try {
@@ -648,6 +876,7 @@ class StoryService {
           musicTrackId: slide.musicTrackId,
           musicTrackName: slide.musicTrackName,
           mediaType: slide.mediaType,
+          videoFilePath: slide.videoPath,
           notifyFollowers: false,
         );
         posted++;
@@ -688,6 +917,21 @@ class StoryService {
       SettableMetadata(contentType: 'image/jpeg'),
     );
     return await ref.getDownloadURL();
+  }
+
+  Future<String> _uploadVideoFile(String merchantId, String filePath) async {
+    final file = File(filePath);
+    if (!file.existsSync()) {
+      throw Exception('That video is no longer on this phone.');
+    }
+    final now = DateTime.now();
+    final path = '$_storagePathPrefix/$merchantId/${now.millisecondsSinceEpoch}.mp4';
+    final ref = _storage.ref().child(path);
+    await ref.putFile(
+      file,
+      SettableMetadata(contentType: 'video/mp4'),
+    );
+    return ref.getDownloadURL();
   }
 
   Future<String> _uploadVideoToStorage(String merchantId, Uint8List videoBytes) async {
@@ -754,19 +998,101 @@ class StoryService {
         .collection(_collection)
         .doc(storyId)
         .collection(_viewersSubcollection)
-        .orderBy('viewedAt', descending: true)
         .get();
-    return snap.docs.map((d) {
+    final viewers = snap.docs.map((d) {
       final data = d.data();
-      final viewedAt = (data['viewedAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+      final viewedAt = (data['viewedAt'] as Timestamp?)?.toDate() ??
+          (data['likedAt'] as Timestamp?)?.toDate() ??
+          DateTime.now();
       final profileUrl = data['viewerProfileImageUrl'] as String?;
       return StoryViewerInfo(
-        viewerId: data['viewerId'] as String? ?? '',
+        viewerId: data['viewerId'] as String? ?? d.id,
         viewerName: data['viewerName'] as String? ?? 'Unknown',
         viewedAt: viewedAt,
-        viewerProfileImageUrl: profileUrl != null && profileUrl.isNotEmpty ? profileUrl : null,
+        viewerProfileImageUrl:
+            profileUrl != null && profileUrl.isNotEmpty ? profileUrl : null,
+        liked: isLikedFlag(data['liked']),
       );
     }).toList();
+    viewers.sort((a, b) {
+      if (a.liked != b.liked) return a.liked ? -1 : 1;
+      return b.viewedAt.compareTo(a.viewedAt);
+    });
+    return viewers;
+  }
+
+  /// Whether [viewerId] has liked this story.
+  Future<bool> viewerHasLiked({
+    required String storyId,
+    required String viewerId,
+  }) async {
+    if (storyId.isEmpty || viewerId.isEmpty) return false;
+    final snap = await _firestore
+        .collection(_collection)
+        .doc(storyId)
+        .collection(_viewersSubcollection)
+        .doc(viewerId)
+        .get();
+    final liked = isLikedFlag(snap.data()?['liked']);
+    _myLikeCache[_storyCacheKey(viewerId, storyId)] = liked;
+    return liked;
+  }
+
+  /// Like or unlike a story. A new like notifies the story owner once.
+  Future<bool> setStoryLiked({
+    required String storyId,
+    required String viewerId,
+    required String viewerName,
+    String? viewerProfileImageUrl,
+    required bool liked,
+  }) async {
+    if (storyId.isEmpty || viewerId.isEmpty) return false;
+    final storyRef = _firestore.collection(_collection).doc(storyId);
+    final storySnap = await storyRef.get();
+    final merchantId =
+        storySnap.data()?['merchantId']?.toString().trim() ?? '';
+    final viewerRef = storyRef.collection(_viewersSubcollection).doc(viewerId);
+    final existing = await viewerRef.get();
+    final wasLiked = isLikedFlag(existing.data()?['liked']);
+    final name = viewerName.trim().isEmpty ? 'Someone' : viewerName.trim();
+
+    final known = peekLikeCount(storyId);
+    if (known != null) {
+      final nextCount = liked
+          ? (wasLiked ? known : known + 1)
+          : (wasLiked ? (known - 1).clamp(0, known) : known);
+      _rememberLikes(
+        storyId: storyId,
+        likeCount: nextCount,
+        viewerId: viewerId,
+        mineLiked: liked,
+      );
+    } else {
+      _myLikeCache[_storyCacheKey(viewerId, storyId)] = liked;
+    }
+
+    await viewerRef.set({
+      'viewerId': viewerId,
+      'viewerName': name,
+      'liked': liked,
+      if (!existing.exists) 'viewedAt': FieldValue.serverTimestamp(),
+      if (liked) 'likedAt': FieldValue.serverTimestamp(),
+      if (viewerProfileImageUrl != null && viewerProfileImageUrl.isNotEmpty)
+        'viewerProfileImageUrl': viewerProfileImageUrl,
+    }, SetOptions(merge: true));
+
+    if (liked &&
+        !wasLiked &&
+        merchantId.isNotEmpty &&
+        merchantId != viewerId) {
+      await OrderPartyNotificationService.publishStoryLiked(
+        ownerUid: merchantId,
+        likerUid: viewerId,
+        likerName: name,
+        storyId: storyId,
+      );
+    }
+    return liked;
   }
 
   /// Get viewer count for a story.
@@ -794,6 +1120,7 @@ class StoryService {
 class StorySlideInput {
   final Uint8List bytes;
   final String mediaType; // 'image' or 'video'
+  final String? videoPath;
   final String? caption;
   final String? musicTrackId;
   final String? musicTrackName;
@@ -801,10 +1128,35 @@ class StorySlideInput {
   const StorySlideInput({
     required this.bytes,
     this.mediaType = 'image',
+    this.videoPath,
     this.caption,
     this.musicTrackId,
     this.musicTrackName,
   });
+}
+
+/// Decoded story photos, keyed by story id, so rebuilds do not flash.
+class StoryInlineImageCache {
+  StoryInlineImageCache._();
+
+  static final Map<String, Uint8List> _cache = {};
+
+  static Uint8List? bytesFor(String storyId, String? base64) {
+    final raw = base64?.trim() ?? '';
+    if (storyId.isEmpty || raw.isEmpty) return null;
+    final hit = _cache[storyId];
+    if (hit != null) return hit;
+    try {
+      final decoded = base64Decode(raw);
+      if (_cache.length > 48) {
+        _cache.remove(_cache.keys.first);
+      }
+      _cache[storyId] = decoded;
+      return decoded;
+    } catch (_) {
+      return null;
+    }
+  }
 }
 
 /// Result of posting multiple story slides.

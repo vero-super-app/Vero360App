@@ -1,8 +1,10 @@
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:vero360_app/utils/app_version_info.dart';
 
@@ -10,6 +12,7 @@ import 'package:vero360_app/utils/app_version_info.dart';
 class AppUpdateCheckResult {
   final String installedVersion;
   final String? storeVersion;
+  final String? storeBuild;
   final String storeUrl;
   final bool updateAvailable;
   final String? errorMessage;
@@ -17,6 +20,7 @@ class AppUpdateCheckResult {
   const AppUpdateCheckResult({
     required this.installedVersion,
     required this.storeVersion,
+    this.storeBuild,
     required this.storeUrl,
     required this.updateAvailable,
     this.errorMessage,
@@ -50,13 +54,157 @@ class AppUpdateChecker {
   /// Example fields:
   /// ```
   /// latestVersion: "1.1.5"
+  /// latestBuild: "10027" (optional; reminds when the version matches but the build is older)
   /// androidVersion / iosVersion: optional overrides
   /// androidPackageId / iosBundleId / appleAppId
   /// playStoreUrl / appStoreUrl
   /// ```
   static const firestoreConfigPath = 'app_config/app_version';
+  static const _promptPrefKey = 'app_update_daily_prompt_v1';
+  static bool _promptInFlight = false;
+
+  /// Shows an update reminder at most once per day while this install is behind
+  /// the published version (or build, when Firestore sets `latestBuild`).
+  static Future<void> maybeRemindOncePerDay(BuildContext context) async {
+    if (_promptInFlight || kIsWeb) return;
+    _promptInFlight = true;
+    try {
+      final result = await check();
+      if (!result.updateAvailable || !context.mounted) return;
+
+      final target =
+          '${result.storeVersion ?? ''}+${result.storeBuild ?? ''}'.trim();
+      final today = _todayKey();
+      final prefs = await SharedPreferences.getInstance();
+      final stamp = prefs.getString(_promptPrefKey) ?? '';
+      if (stamp == '$today|$target') return;
+      if (!context.mounted) return;
+
+      await prefs.setString(_promptPrefKey, '$today|$target');
+
+      final lang = prefs.getString('pref_language_code') ?? 'en';
+      final ny = lang == 'ny';
+      final installed = result.installedVersion.trim();
+      final build = AppVersionInfo.buildNumber.trim();
+      final store = (result.storeVersion ?? '').trim();
+      final storeBuild = (result.storeBuild ?? '').trim();
+      final storeLabel = storeBuild.isEmpty ? 'v$store' : 'v$store ($storeBuild)';
+      final hereLabel = build.isEmpty ? 'v$installed' : 'v$installed (build $build)';
+      if (!context.mounted) return;
+
+      final go = await showDialog<bool>(
+        context: context,
+        barrierDismissible: true,
+        builder: (ctx) => Dialog(
+          backgroundColor: Colors.white,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 58,
+                  height: 58,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFF8A00).withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.system_update_rounded,
+                    color: Color(0xFFFF8A00),
+                    size: 28,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  ny ? 'Sinthani Vero360' : 'Update Vero360',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                    color: Color(0xFF101010),
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  ny
+                      ? 'Pulogalamu yanu ndi yakale. $storeLabel ili pa sitolo. Muli pa $hereLabel. Sinthani kuti maoda, mauthenga, ndi malipiro agwire ntchito bwino.'
+                      : 'This install is behind the latest build. $storeLabel is on the store. You are on $hereLabel. Update so orders, chats, and payments keep working.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    height: 1.45,
+                    color: Color(0xFF6B7280),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          side: const BorderSide(color: Color(0xFFE5E7EB)),
+                        ),
+                        child: Text(
+                          ny ? 'Pambuyo' : 'Not now',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF374151),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFFFF8A00),
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: Text(
+                          ny ? 'Sinthani' : 'Update',
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      if (go == true) {
+        await openStore(result.storeUrl);
+      }
+    } catch (_) {
+    } finally {
+      _promptInFlight = false;
+    }
+  }
+
+  static String _todayKey() {
+    final now = DateTime.now();
+    final m = now.month.toString().padLeft(2, '0');
+    final d = now.day.toString().padLeft(2, '0');
+    return '${now.year}-$m-$d';
+  }
 
   static Future<AppUpdateCheckResult> check() async {
+    await AppVersionInfo.ensureLoaded();
     final installed = AppVersionInfo.version.trim();
 
     if (kIsWeb) {
@@ -86,11 +234,20 @@ class AppUpdateChecker {
 
     if (remoteVersion != null && remoteVersion.isNotEmpty) {
       final storeUrl = (remoteUrl ?? defaultStoreUrl(isIos: isIos)).trim();
+      final remoteBuild = isIos
+          ? (remote?.iosBuild ?? remote?.latestBuild)
+          : (remote?.androidBuild ?? remote?.latestBuild);
       return AppUpdateCheckResult(
         installedVersion: installed,
         storeVersion: remoteVersion,
+        storeBuild: remoteBuild,
         storeUrl: storeUrl,
-        updateAvailable: isNewerVersion(remoteVersion, installed),
+        updateAvailable: _isBehind(
+          installedVersion: installed,
+          installedBuild: AppVersionInfo.buildNumber,
+          storeVersion: remoteVersion,
+          storeBuild: remoteBuild,
+        ),
       );
     }
 
@@ -416,6 +573,20 @@ class AppUpdateChecker {
     return null;
   }
 
+  static bool _isBehind({
+    required String installedVersion,
+    required String installedBuild,
+    required String storeVersion,
+    String? storeBuild,
+  }) {
+    if (isNewerVersion(storeVersion, installedVersion)) return true;
+    if (isNewerVersion(installedVersion, storeVersion)) return false;
+    final remote = int.tryParse((storeBuild ?? '').trim());
+    final local = int.tryParse(installedBuild.trim());
+    if (remote == null || local == null) return false;
+    return remote > local;
+  }
+
   /// True when [candidate] is strictly newer than [current].
   static bool isNewerVersion(String candidate, String current) {
     final a = _versionParts(candidate);
@@ -448,6 +619,9 @@ class _RemoteVersionConfig {
   final String? appleAppId;
   final String? playStoreUrl;
   final String? appStoreUrl;
+  final String? latestBuild;
+  final String? androidBuild;
+  final String? iosBuild;
 
   const _RemoteVersionConfig({
     this.latestVersion,
@@ -458,6 +632,9 @@ class _RemoteVersionConfig {
     this.appleAppId,
     this.playStoreUrl,
     this.appStoreUrl,
+    this.latestBuild,
+    this.androidBuild,
+    this.iosBuild,
   });
 
   factory _RemoteVersionConfig.fromMap(Map<String, dynamic> data) {
@@ -475,6 +652,9 @@ class _RemoteVersionConfig {
       appleAppId: s(data['appleAppId'] ?? data['iosAppId'] ?? data['trackId']),
       playStoreUrl: s(data['playStoreUrl'] ?? data['androidStoreUrl']),
       appStoreUrl: s(data['appStoreUrl'] ?? data['iosStoreUrl']),
+      latestBuild: s(data['latestBuild'] ?? data['buildNumber']),
+      androidBuild: s(data['androidBuild'] ?? data['androidBuildNumber']),
+      iosBuild: s(data['iosBuild'] ?? data['iosBuildNumber']),
     );
   }
 }

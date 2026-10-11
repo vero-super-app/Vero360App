@@ -35,6 +35,8 @@ import 'package:vero360_app/config/paychangu_config.dart';
 
 import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/Latest_model.dart';
+import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart'
+    show veroFloatingNavClearance;
 import 'package:vero360_app/features/Marketplace/presentation/pages/main_marketPlace.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/MarkeplaceMerchantServices/latest_Services.dart';
@@ -63,9 +65,11 @@ import 'package:vero360_app/features/Promotions/presentation/promo_detail_page.d
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
 import 'package:vero360_app/features/DigitalServices/digital_services_catalog.dart';
-import 'package:vero360_app/features/DigitalServices/digital_service_order_service.dart';
+import 'package:vero360_app/features/DigitalServices/presentation/digital_service_order_service.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_services_page.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_product_amount_page.dart';
+import 'package:vero360_app/features/DigitalServices/chatgpt_plans.dart';
+import 'package:vero360_app/features/DigitalServices/presentation/chatgpt_plan_picker_page.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/netflix_plan_picker_page.dart';
 import 'package:vero360_app/features/DigitalServices/netflix_plans.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
@@ -115,6 +119,7 @@ const List<Mini> kQuickServices = [
   Mini('vero_bike',        'Vero Bike', Icons.two_wheeler_rounded),
   Mini('fx',               'Forex',     Icons.currency_exchange_rounded),
   Mini('food',             'Food',      Icons.restaurant_rounded),
+  Mini('gift_cards',       'Gift Cards', Icons.card_giftcard_rounded),
   Mini('jobs',             'Jobs',      Icons.business_center_rounded),
   Mini('tenders',          'Tenders',   Icons.description_rounded),
   Mini('accommodation',    'Stay',      Icons.hotel_rounded),
@@ -130,6 +135,7 @@ const Map<String, String> kQuickServiceGuideNotes = {
   'vero_bike':        'Book fast, affordable bike rides.',
   'fx':               'Check live exchange rates instantly.',
   'food':             'Browse restaurants and order food.',
+  'gift_cards':       'Buy Netflix, PlayStation, Amazon, and other gift cards.',
   'jobs':             'Discover job opportunities near you.',
   'tenders':          'Browse Malawi procurement notices and RFQs.',
   'accommodation':    'Find hotels and places to stay.',
@@ -450,13 +456,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                     child: _ServicesCard(
                       items:    kQuickServices,
                       tileKeys: _serviceTileKeys,
-                      onOpen: (key) => RideShareEntryResolver.isRideShareServiceKey(key)
-                          ? _openRideShareEntry()
-                          : _openServiceStatic(
-                              context,
-                              key,
-                              isDriverHome: widget.isDriverHome,
-                            ),
+                      onOpen: _openQuickService,
                     ),
                   ),
                 ),
@@ -496,16 +496,20 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                     padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
                     child: DigitalServicesSection(
                       onBuy: _openDigitalAmount,
-                      onSeeAll: _openDigitalServices,
                     ),
                   ),
                 ),
 
                 /* ── Latest arrivals ─────────────────────── */
-                const SliverToBoxAdapter(
+                SliverToBoxAdapter(
                   child: Padding(
-                    padding: EdgeInsets.fromLTRB(16, 24, 16, 32),
-                    child: LatestArrivalsSection(),
+                    padding: EdgeInsets.fromLTRB(
+                      16,
+                      24,
+                      16,
+                      veroFloatingNavClearance(context),
+                    ),
+                    child: const LatestArrivalsSection(),
                   ),
                 ),
               ],
@@ -542,15 +546,24 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       context: context,
       delegate: QuickServiceSearchDelegate(services: kQuickServices),
     );
-    if (picked != null) {
-      RideShareEntryResolver.isRideShareServiceKey(picked.keyId)
-          ? _openRideShareEntry()
-          : _openServiceStatic(
-              context,
-              picked.keyId,
-              isDriverHome: widget.isDriverHome,
-            );
+    if (picked != null) _openQuickService(picked.keyId);
+  }
+
+  void _openQuickService(String key, {bool nearbyLocation = false}) {
+    if (key == 'gift_cards' || key == 'giftcards') {
+      _openDigitalServices(initialCategory: 'gift_cards');
+      return;
     }
+    if (RideShareEntryResolver.isRideShareServiceKey(key)) {
+      _openRideShareEntry();
+      return;
+    }
+    _openServiceStatic(
+      context,
+      key,
+      isDriverHome: widget.isDriverHome,
+      nearbyLocation: nearbyLocation,
+    );
   }
 
   void _openRideShareEntry() {
@@ -631,6 +644,23 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
   }
 
   Future<void> _openDigitalAmount(DigitalProduct p) async {
+    // ChatGPT hub → Basic (shared) or Plus (private) first.
+    if (p.isChatGptHub || isChatGptHubKey(p.key)) {
+      if (!mounted) return;
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => ChatGptPlanPickerPage(
+          onSelectPlan: (plan) {
+            _openDigitalCheckout(
+              product: plan,
+              selectedUsd: 0,
+              payMethod: DigitalPayMethod.paychangu,
+            );
+          },
+        ),
+      ));
+      return;
+    }
+
     // Netflix hub → choose Mobile / Basic / Standard / Premium first.
     if (p.isNetflixHub || isNetflixHubKey(p.key)) {
       if (!mounted) return;
@@ -738,9 +768,10 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
     ));
   }
 
-  void _openDigitalServices() {
+  void _openDigitalServices({String initialCategory = 'all'}) {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => DigitalServicesPage(
+        initialCategory: initialCategory,
         onContinueCheckout: ({
           required product,
           required selectedUsd,
@@ -2487,11 +2518,9 @@ class _PromoCtaSlide extends StatelessWidget {
 ═══════════════════════════════════════════════════ */
 class DigitalServicesSection extends StatefulWidget {
   final void Function(DigitalProduct) onBuy;
-  final VoidCallback onSeeAll;
   const DigitalServicesSection({
     super.key,
     required this.onBuy,
-    required this.onSeeAll,
   });
 
   @override
@@ -2520,29 +2549,15 @@ class _DigitalServicesSectionState extends State<DigitalServicesSection> {
 
   @override
   Widget build(BuildContext context) {
-    final products = _catalog.homepageProducts;
+    final products = _catalog.homepageProducts
+        .where((p) => p.category != 'gift_cards')
+        .toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _SectionHeader(
-          title:    'Digital Services',
+        const _SectionHeader(
+          title: 'Digital Services',
           subtitle: 'Subscriptions & top-ups',
-          action: TextButton.icon(
-            onPressed: widget.onSeeAll,
-            icon: const Icon(
-              Icons.card_giftcard_rounded,
-              size: 18,
-              color: AppColors.brandOrange,
-            ),
-            label: const Text(
-              'Gift Cards',
-              style: TextStyle(
-                color: AppColors.brandOrange,
-                fontWeight: FontWeight.w800,
-                fontSize: 13,
-              ),
-            ),
-          ),
         ),
         const SizedBox(height: 12),
         LayoutBuilder(
@@ -2665,7 +2680,7 @@ class _DigitalTileState extends State<_DigitalTile> with SingleTickerProviderSta
                           color: AppColors.brandOrange,
                         ),
                       ),
-                    ] else if (widget.p.isNetflixHub) ...[
+                    ] else if (widget.p.isNetflixHub || widget.p.isChatGptHub) ...[
                       const SizedBox(height: 2),
                       Text(
                         'Choose a plan',
@@ -3089,7 +3104,7 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
             ),
             peerMerchantId: merchantRef,
             peerUserId: peerUserId,
-            sendProductEnquiry: true,
+            sendProductEnquiry: false,
             resolveSqlItemId: int.tryParse(it.id),
             resolveOwnerId: ownerId,
             resolveSellerUserId: it.sellerUserId,

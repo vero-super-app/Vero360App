@@ -66,6 +66,9 @@ class _ChatListPageState extends State<ChatListPage> {
   /// Latest Vero360 Team messages → one pinned chat row (content opens in chat).
   List<_VeroTeamInboxItem> _teamInbox = const [];
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _teamInboxSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _teamBroadcastSub;
+  String _teamBroadcastBody = '';
+  DateTime? _teamBroadcastAt;
 
   @override
   void initState() {
@@ -92,6 +95,7 @@ class _ChatListPageState extends State<ChatListPage> {
     _messageSub?.cancel();
     _wsConnectionSub?.cancel();
     _teamInboxSub?.cancel();
+    _teamBroadcastSub?.cancel();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -566,6 +570,34 @@ class _ChatListPageState extends State<ChatListPage> {
     }, onError: (_) {
       // Soft fail — never block messaging.
     });
+
+    _teamBroadcastSub?.cancel();
+    _teamBroadcastSub = FirebaseFirestore.instance
+        .collection('vero_team_broadcasts')
+        .limit(20)
+        .snapshots()
+        .listen((snap) {
+      String body = '';
+      DateTime? at;
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        final text = (data['body'] ?? data['title'] ?? '').toString().trim();
+        if (text.isEmpty) continue;
+        DateTime? created;
+        final rawAt = data['createdAt'];
+        if (rawAt is Timestamp) created = rawAt.toDate();
+        if (at == null ||
+            (created != null && created.isAfter(at))) {
+          at = created;
+          body = text;
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _teamBroadcastBody = body;
+        _teamBroadcastAt = at;
+      });
+    }, onError: (_) {});
   }
 
   bool get _showVeroTeamChatRow {
@@ -588,10 +620,19 @@ class _ChatListPageState extends State<ChatListPage> {
   Widget _buildVeroTeamChatRow() {
     final latest = _teamInbox.isEmpty ? null : _teamInbox.first;
     final unread = _teamUnreadCount;
-    final preview = (latest?.body ?? '').trim().isNotEmpty
-        ? latest!.body
-        : 'Tips on Send Parcel and Received Parcel';
-    final at = latest?.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+    final personalAt = latest?.createdAt;
+    final broadcastNewer = _teamBroadcastBody.isNotEmpty &&
+        (personalAt == null ||
+            (_teamBroadcastAt != null &&
+                _teamBroadcastAt!.isAfter(personalAt)));
+    final preview = broadcastNewer
+        ? _teamBroadcastBody
+        : ((latest?.body ?? '').trim().isNotEmpty
+            ? latest!.body
+            : 'Tips on Send Parcel and Received Parcel');
+    final at = broadcastNewer
+        ? (_teamBroadcastAt ?? DateTime.fromMillisecondsSinceEpoch(0))
+        : (personalAt ?? DateTime.fromMillisecondsSinceEpoch(0));
 
     return Material(
       color: unread > 0 ? const Color(0xFFFFF9F2) : const Color(0xFFFFFBF5),
@@ -759,6 +800,7 @@ class _ChatListPageState extends State<ChatListPage> {
 
     final tiles = raw
         .where((t) => !_hiddenIds.contains(t.id))
+        .where((t) => t.hasConversation)
         .map(
           (t) {
             final other = t.otherParticipant(
@@ -819,6 +861,16 @@ class _ChatListPageState extends State<ChatListPage> {
       if (other != null) peers.add(other);
     }
     for (final p in peers) {
+      final local = (p.businessName ?? '').trim().isNotEmpty
+          ? p.businessName!.trim()
+          : p.preferredDisplayName.trim();
+      if (local.isNotEmpty &&
+          !local.contains('@') &&
+          local.toLowerCase() != 'chat' &&
+          !ChatParticipant.isPlaceholderName(local)) {
+        BackendChatService.rememberPeerDisplayName(p, local);
+        _resolvedPeerNames[p.displayLookupKey] = local;
+      }
       final key = p.displayLookupKey;
       final memo = BackendChatService.peekCachedBusinessName(key) ??
           (p.id > 0

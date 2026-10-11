@@ -7,12 +7,15 @@ class StoryViewerInfo {
   final DateTime viewedAt;
   /// Optional profile picture URL (e.g. from Firebase Auth photoURL).
   final String? viewerProfileImageUrl;
+  /// True when this person liked the story.
+  final bool liked;
 
   const StoryViewerInfo({
     required this.viewerId,
     required this.viewerName,
     required this.viewedAt,
     this.viewerProfileImageUrl,
+    this.liked = false,
   });
 }
 

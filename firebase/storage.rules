@@ -66,6 +66,15 @@ service firebase.storage {
       allow write: if false;
     }
 
+    // Persistent shop gallery (photos and short videos). Owner folder = Firebase uid.
+    match /shop_media/{userId}/{fileName} {
+      allow read: if true;
+      allow create, update: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.size < 40 * 1024 * 1024;
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
     // Deny everything else (production default)
     match /{allPaths=**} {
       allow read, write: if false;

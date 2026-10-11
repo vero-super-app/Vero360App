@@ -272,6 +272,7 @@ class MarketplaceDetailModel {
   final String? merchantName;
   final String? serviceType;
   final List<String> gallery;
+  final List<String> videos;
   final String? sellerBusinessName;
   final String? sellerOpeningHours;
   final String? sellerStatus;
@@ -295,6 +296,7 @@ class MarketplaceDetailModel {
     this.sqlItemId, this.imageBytes, this.description, this.location,
     this.latitude, this.longitude,
     this.isActive = true, this.createdAt, this.gallery = const [],
+    this.videos = const [],
     this.sellerBusinessName, this.sellerOpeningHours, this.sellerStatus,
     this.sellerBusinessDescription, this.sellerRating, this.sellerReviewCount = 0, this.sellerLogoUrl,
     this.serviceProviderId, this.sellerUserId, this.merchantId,
@@ -342,6 +344,7 @@ class MarketplaceDetailModel {
       isActive: isActive,
       createdAt: createdAt,
       gallery: gallery,
+      videos: videos,
       sellerBusinessName: sellerBusinessName,
       sellerOpeningHours: sellerOpeningHours,
       sellerStatus: sellerStatus,
@@ -405,6 +408,7 @@ class MarketplaceDetailModel {
     final fromGalleryUrls = parseGalleryField(data['galleryUrls']);
     final seen = <String>{}; final gallery = <String>[];
     for (final s in [...fromGallery, ...fromGalleryUrls]) { final t = s.trim(); if (t.isEmpty || seen.contains(t)) continue; seen.add(t); gallery.add(t); }
+    final videos = parseGalleryField(data['videos']);
     double? sellerRating;
     final r = data['sellerRating'] ?? data['averageRating'] ?? data['rating'];
     if (r is num) sellerRating = r.toDouble();
@@ -420,7 +424,7 @@ class MarketplaceDetailModel {
       latitude: parseDouble(data['latitude'] ?? data['lat']),
       longitude: parseDouble(data['longitude'] ?? data['lng']),
       isActive: MarketplaceModeration.isPubliclyVisible(data),
-      createdAt: created, sqlItemId: sqlId, gallery: gallery,
+      createdAt: created, sqlItemId: sqlId, gallery: gallery, videos: videos,
       sellerBusinessName: data['sellerBusinessName']?.toString(), sellerOpeningHours: data['sellerOpeningHours']?.toString(),
       sellerStatus: data['sellerStatus']?.toString(), sellerBusinessDescription: data['sellerBusinessDescription']?.toString(),
       sellerRating: sellerRating, sellerReviewCount: sellerReviewCount, sellerLogoUrl: data['sellerLogoUrl']?.toString(),
@@ -2013,7 +2017,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
 
   core.MarketplaceDetailModel _toCoreDetailModel(MarketplaceDetailModel item) {
     final id = item.hasValidSqlItemId ? item.sqlItemId! : _stablePositiveIdFromString(item.id);
-    return core.MarketplaceDetailModel(id: id, name: item.name, category: item.category, price: item.price, image: item.image, description: item.description ?? '', location: item.location ?? '', comment: null, gallery: item.gallery, videos: const [], sellerBusinessName: item.sellerBusinessName, sellerOpeningHours: item.sellerOpeningHours, sellerStatus: item.sellerStatus, sellerBusinessDescription: item.sellerBusinessDescription, sellerRating: item.sellerRating, sellerLogoUrl: item.sellerLogoUrl, serviceProviderId: item.serviceProviderId, sellerUserId: item.sellerUserId, merchantId: item.merchantId, merchantName: item.merchantName, merchantBackendId: item.merchantBackendId, firestoreDocId: item.id, serviceType: item.serviceType ?? 'marketplace', createdAt: item.createdAt, stockQuantity: item.stockQuantity);
+    return core.MarketplaceDetailModel(id: id, name: item.name, category: item.category, price: item.price, image: item.image, description: item.description ?? '', location: item.location ?? '', comment: null, gallery: item.gallery, videos: item.videos, sellerBusinessName: item.sellerBusinessName, sellerOpeningHours: item.sellerOpeningHours, sellerStatus: item.sellerStatus, sellerBusinessDescription: item.sellerBusinessDescription, sellerRating: item.sellerRating, sellerLogoUrl: item.sellerLogoUrl, serviceProviderId: item.serviceProviderId, sellerUserId: item.sellerUserId, merchantId: item.merchantId, merchantName: item.merchantName, merchantBackendId: item.merchantBackendId, firestoreDocId: item.id, serviceType: item.serviceType ?? 'marketplace', createdAt: item.createdAt, stockQuantity: item.stockQuantity);
   }
 
   void _openDetailsPage(MarketplaceDetailModel item) {
@@ -2421,7 +2425,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
           productContext: productContext,
           peerMerchantId: item.merchantId ?? item.serviceProviderId,
           peerUserId: result.sellerId,
-          sendProductEnquiry: true,
+          sendProductEnquiry: false,
         ),
       ),
     );

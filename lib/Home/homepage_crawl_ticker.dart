@@ -208,6 +208,9 @@ class _HomepageCrawlTickerState extends State<HomepageCrawlTicker>
   void initState() {
     super.initState();
     _controller = AnimationController(vsync: this);
+    unawaited(AppVersionInfo.ensureLoaded().then((_) {
+      if (mounted) setState(() {});
+    }));
     _listenCrawls();
     _loadPromos();
   }

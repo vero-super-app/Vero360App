@@ -69,6 +69,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:google_maps_flutter_android/google_maps_flutter_android.dart';
 import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platform_interface.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
+import 'package:vero360_app/utils/app_version_info.dart';
 import 'package:vero360_app/utils/low_ram_android.dart';
 import 'package:vero360_app/utils/session_local_cache.dart';
 import 'package:vero360_app/utils/firebase_bootstrap.dart';
@@ -297,6 +298,7 @@ Future<bool> _ensureFirebaseHealthy({
 // ───────────────────────────────────────────────
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  unawaited(AppVersionInfo.ensureLoaded());
   // Draw behind the system bars. Flutter then reports the insets so screens
   // can pad content. Bar colors are left unset; Android 15 ignores them.
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);

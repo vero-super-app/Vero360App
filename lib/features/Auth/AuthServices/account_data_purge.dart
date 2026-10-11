@@ -64,6 +64,7 @@ class AccountDataPurge {
     unawaited(_deleteMyLatestArrivals(token));
     unawaited(_deleteMyPromos(token));
     unawaited(_deleteStoragePrefix('merchant_stories/$uid'));
+    unawaited(_deleteStoragePrefix('shop_media/$uid'));
     unawaited(_deleteStoragePrefix('profiles/$uid'));
     unawaited(_deleteStoragePrefix('marketplace/$uid'));
     unawaited(_deleteStoragePrefix('food/$uid'));
@@ -94,6 +95,7 @@ class AccountDataPurge {
       _deleteQueryDocs(
         _db.collection('merchant_stories').where('merchantId', isEqualTo: uid),
       ),
+      _deleteShopMedia(uid),
       _deleteQueryDocs(
         _db.collection('food_menu_items').where('merchantId', isEqualTo: uid),
       ),
@@ -528,6 +530,25 @@ class AccountDataPurge {
     try {
       await ref.delete();
     } catch (_) {}
+  }
+
+  static Future<void> _deleteShopMedia(String uid) async {
+    try {
+      final snap = await _db
+          .collection('shop_media')
+          .where('merchantId', isEqualTo: uid)
+          .get();
+      for (final doc in snap.docs) {
+        final path = doc.data()['storagePath']?.toString().trim() ?? '';
+        if (path.isEmpty) continue;
+        try {
+          await FirebaseStorage.instance.ref(path).delete();
+        } catch (_) {}
+      }
+    } catch (_) {}
+    await _deleteQueryDocs(
+      _db.collection('shop_media').where('merchantId', isEqualTo: uid),
+    );
   }
 
   static Future<void> _deleteQueryDocs(Query<Map<String, dynamic>> query) async {

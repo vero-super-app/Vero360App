@@ -102,25 +102,79 @@ Future<bool> showModernConfirmDialog(
   return result == true;
 }
 
-/// Short buyer notice before Pay now: escrow hold, confirm receipt, liability.
+/// Buyer notice before Pay now: hold, courier confirmation, liability.
 Future<bool> showEscrowPayNoticeDialog(BuildContext context) {
+  const ink = TextStyle(
+    fontSize: 13.5,
+    height: 1.35,
+    color: Color(0xFF4B5563),
+    fontWeight: FontWeight.w600,
+  );
+  const strong = TextStyle(
+    fontSize: 13.5,
+    height: 1.35,
+    color: Color(0xFF101010),
+    fontWeight: FontWeight.w800,
+  );
   return _showEscrowPayNoticeDialog(
     context,
-    rows: const [
+    rows: [
       _EscrowNoticeRow(
         icon: Icons.lock_clock_outlined,
-        text: 'Money is held in escrow for 7 days, then auto-released.',
+        message: Text.rich(
+          TextSpan(
+            style: ink,
+            children: const [
+              TextSpan(text: 'Funds are '),
+              TextSpan(
+                text: 'held securely until the transaction is complete',
+                style: strong,
+              ),
+              TextSpan(text: ' and all required steps are met.'),
+            ],
+          ),
+        ),
       ),
-      SizedBox(height: 10),
+      const SizedBox(height: 10),
       _EscrowNoticeRow(
         icon: Icons.local_shipping_outlined,
-        text: 'After courier delivery, confirm you received the parcel.',
+        message: Text.rich(
+          TextSpan(
+            style: ink,
+            children: const [
+              TextSpan(text: 'For '),
+              TextSpan(text: 'courier deliveries', style: strong),
+              TextSpan(text: ', confirm after '),
+              TextSpan(
+                text: 'receiving and checking your parcel',
+                style: strong,
+              ),
+              TextSpan(text: '. Payment is released '),
+              TextSpan(text: 'upon confirmation', style: strong),
+              TextSpan(text: ', or automatically '),
+              TextSpan(text: '7 days after delivery', style: strong),
+              TextSpan(text: ' if no issue is reported.'),
+            ],
+          ),
+        ),
       ),
-      SizedBox(height: 10),
+      const SizedBox(height: 10),
       _EscrowNoticeRow(
         icon: Icons.warning_amber_rounded,
-        text:
-            'Vero360 is not responsible if you confirm without receiving it.',
+        message: Text.rich(
+          TextSpan(
+            style: ink,
+            children: const [
+              TextSpan(
+                text: 'Do not confirm before receiving your parcel. ',
+                style: strong,
+              ),
+              TextSpan(text: 'Vero360 will '),
+              TextSpan(text: 'not be responsible', style: strong),
+              TextSpan(text: ' if you confirm without receiving it.'),
+            ],
+          ),
+        ),
       ),
     ],
   );
@@ -133,19 +187,21 @@ Future<bool> showFoodEscrowPayNoticeDialog(BuildContext context) {
     rows: const [
       _EscrowNoticeRow(
         icon: Icons.lock_clock_outlined,
-        text: 'Money is held until your food is delivered.',
+        message: Text('Money is held until your food is delivered.'),
       ),
       SizedBox(height: 10),
       _EscrowNoticeRow(
         icon: Icons.delivery_dining_rounded,
-        text:
-            'After Vero Courier delivery, confirm you received your order in My Orders.',
+        message: Text(
+          'After Vero Courier delivery, confirm you received your order in My Orders.',
+        ),
       ),
       SizedBox(height: 10),
       _EscrowNoticeRow(
         icon: Icons.warning_amber_rounded,
-        text:
-            'Vero360 is not responsible if you confirm delivered without receiving your food.',
+        message: Text(
+          'Vero360 is not responsible if you confirm delivered without receiving your food.',
+        ),
       ),
     ],
   );
@@ -200,7 +256,7 @@ Future<bool> _showEscrowPayNoticeDialog(
               const SizedBox(height: 12),
               ConstrainedBox(
                 constraints:
-                    BoxConstraints(maxHeight: (maxH - 220).clamp(80, 280)),
+                    BoxConstraints(maxHeight: (maxH - 200).clamp(80, 420)),
                 child: SingleChildScrollView(
                   child: Column(children: rows),
                 ),
@@ -267,8 +323,8 @@ Future<bool> _showEscrowPayNoticeDialog(
 
 class _EscrowNoticeRow extends StatelessWidget {
   final IconData icon;
-  final String text;
-  const _EscrowNoticeRow({required this.icon, required this.text});
+  final Widget message;
+  const _EscrowNoticeRow({required this.icon, required this.message});
 
   @override
   Widget build(BuildContext context) {
@@ -278,14 +334,14 @@ class _EscrowNoticeRow extends StatelessWidget {
         Icon(icon, size: 20, color: const Color(0xFFFF8A00)),
         const SizedBox(width: 10),
         Expanded(
-          child: Text(
-            text,
+          child: DefaultTextStyle(
             style: const TextStyle(
               fontSize: 13.5,
               height: 1.35,
               color: Color(0xFF4B5563),
               fontWeight: FontWeight.w600,
             ),
+            child: message,
           ),
         ),
       ],

@@ -306,8 +306,36 @@ async function scrapeFacebookUrl(link, token) {
   }
 }
 
-async function postLinkToFacebookPage({ link, message, pageId, token }) {
+function graphFailure(kind, status, json) {
+  console.error(`Facebook Graph ${kind} failed`, status, json);
+  if (isFacebookAuthError(json)) {
+    throw new Error(
+      'Facebook Page access token expired or invalid. ' +
+        'Refresh FACEBOOK_PAGE_ACCESS_TOKEN (Page token with pages_manage_posts). ' +
+        `Graph: ${JSON.stringify(json)}`,
+    );
+  }
+  throw new Error(`Facebook Graph ${kind} error ${status}: ${JSON.stringify(json)}`);
+}
+
+async function postFeedMessage({ message, pageId, token, link }) {
   const pid = String(pageId || DEFAULT_PAGE_ID).trim() || DEFAULT_PAGE_ID;
+  const access = String(token || '').trim();
+  const fields = {
+    access_token: access,
+    message,
+    published: 'true',
+  };
+  if (link) fields.link = link;
+  const { ok, status, json } = await graphPost(
+    `${encodeURIComponent(pid)}/feed`,
+    fields,
+  );
+  if (!ok) graphFailure(link ? 'link post' : 'feed post', status, json);
+  return json && json.id ? String(json.id) : null;
+}
+
+async function postLinkToFacebookPage({ link, message, pageId, token }) {
   const access = String(token || '').trim();
   if (!access) {
     console.warn(
@@ -315,37 +343,59 @@ async function postLinkToFacebookPage({ link, message, pageId, token }) {
     );
     return null;
   }
-
   await scrapeFacebookUrl(link, access);
+  return postFeedMessage({ message, pageId, token: access, link });
+}
 
-  const { ok, status, json } = await graphPost(
-    `${encodeURIComponent(pid)}/feed`,
-    {
-      access_token: access,
-      link,
-      message,
-      published: 'true',
-    },
-  );
-  if (!ok) {
-    console.error('Facebook Graph link post failed', status, json);
-    if (isFacebookAuthError(json)) {
-      throw new Error(
-        'Facebook Page access token expired or invalid. ' +
-          'Refresh FACEBOOK_PAGE_ACCESS_TOKEN (Page token with pages_manage_posts). ' +
-          `Graph: ${JSON.stringify(json)}`,
-      );
+function photoPostId(json) {
+  if (json && json.post_id) return String(json.post_id);
+  if (json && json.id) return String(json.id);
+  return null;
+}
+
+/** Download the listing image ourselves so Facebook does not crawl it later. */
+async function downloadListingImage(imageUrl) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const res = await fetch(imageUrl, {
+      redirect: 'follow',
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      throw new Error(`image fetch ${res.status}`);
     }
-    throw new Error(
-      `Facebook Graph error ${status}: ${JSON.stringify(json)}`,
-    );
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length < 200) throw new Error('image too small');
+    if (buf.length > 8 * 1024 * 1024) throw new Error('image over 8 MB');
+    return buf;
+  } finally {
+    clearTimeout(timer);
   }
-  return json && json.id ? String(json.id) : null;
+}
+
+/** Small JPEG so the Page photo is ready as soon as the post appears. */
+async function shrinkForFacebook(buf) {
+  const sharp = require('sharp');
+  return sharp(buf, { failOn: 'none' })
+    .rotate()
+    .resize({ width: 1080, height: 1080, fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 70 })
+    .toBuffer();
+}
+
+function shortPublicLink(link) {
+  try {
+    const u = new URL(String(link || '').trim());
+    return `${u.origin}${u.pathname}`;
+  } catch (_) {
+    return String(link || '').trim();
+  }
 }
 
 /**
- * Prefer a photo post (shows the product image on the Page) with caption + link.
- * Falls back to a plain link post when no public image URL is available.
+ * Upload the photo bytes with the caption so the picture is on the post
+ * immediately. A URL-only photo makes Facebook fetch the file later.
  */
 async function postPhotoToFacebookPage({
   imageUrl,
@@ -358,6 +408,34 @@ async function postPhotoToFacebookPage({
   const img = String(imageUrl || '').trim();
   if (!access || !img || !/^https?:\/\//i.test(img)) return null;
 
+  try {
+    const raw = await downloadListingImage(img);
+    const jpeg = await shrinkForFacebook(raw);
+    console.log(
+      'Facebook photo upload bytes',
+      raw.length,
+      '->',
+      jpeg.length,
+    );
+    const form = new FormData();
+    form.set('access_token', access);
+    form.set('caption', caption);
+    form.set('published', 'true');
+    form.set('source', new Blob([jpeg], { type: 'image/jpeg' }), 'listing.jpg');
+    const res = await fetch(
+      `https://graph.facebook.com/${GRAPH_VERSION}/${encodeURIComponent(pid)}/photos`,
+      { method: 'POST', body: form },
+    );
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) graphFailure('photo upload', res.status, json);
+    const id = photoPostId(json);
+    if (id) return id;
+  } catch (err) {
+    const msg = err && err.message ? String(err.message) : String(err);
+    if (isFacebookAuthError(msg)) throw err;
+    console.warn('Facebook photo upload fallback to URL', msg);
+  }
+
   const { ok, status, json } = await graphPost(
     `${encodeURIComponent(pid)}/photos`,
     {
@@ -367,14 +445,79 @@ async function postPhotoToFacebookPage({
       published: 'true',
     },
   );
-  if (!ok) {
-    console.warn('Facebook Graph photo post failed', status, json);
-    return null;
+  if (!ok) graphFailure('photo post', status, json);
+  return photoPostId(json);
+}
+
+/**
+ * Page posts fail in different ways (link field rejected, image host blocked).
+ * Try a photo, then a normal feed post with the link in the text, then a link card.
+ * An expired Page token still stops immediately.
+ */
+async function publishListingToPage({ link, message, imageUrl, pageId, token }) {
+  const access = String(token || '').trim();
+  if (!access) {
+    throw new Error('Missing FACEBOOK_PAGE_ACCESS_TOKEN secret');
   }
-  // Photo posts return { id: "<photo_id>", post_id: "<pageId_postId>" }
-  if (json && json.post_id) return String(json.post_id);
-  if (json && json.id) return String(json.id);
-  return null;
+  // Short page address in the caption so the post itself is clickable.
+  // Query params (including the slow image URL) stay off the caption.
+  const caption = [String(message || '').trim(), shortPublicLink(link)]
+    .filter(Boolean)
+    .join('\n');
+  const errors = [];
+  const img = String(imageUrl || '').trim();
+
+  if (/^https?:\/\//i.test(img)) {
+    try {
+      const id = await postPhotoToFacebookPage({
+        imageUrl: img,
+        caption,
+        pageId,
+        token: access,
+      });
+      if (id) return id;
+      errors.push('photo post returned no id');
+    } catch (err) {
+      const msg = err && err.message ? String(err.message) : String(err);
+      if (isFacebookAuthError(msg)) throw err;
+      errors.push(msg);
+    }
+  }
+
+  try {
+    const id = await postFeedMessage({
+      message: caption,
+      pageId,
+      token: access,
+    });
+    if (id) return id;
+    errors.push('feed post returned no id');
+  } catch (err) {
+    const msg = err && err.message ? String(err.message) : String(err);
+    if (isFacebookAuthError(msg)) throw err;
+    errors.push(msg);
+  }
+
+  if (String(link || '').trim()) {
+    try {
+      const id = await postLinkToFacebookPage({
+        link,
+        message,
+        pageId,
+        token: access,
+      });
+      if (id) return id;
+      errors.push('link post returned no id');
+    } catch (err) {
+      const msg = err && err.message ? String(err.message) : String(err);
+      if (isFacebookAuthError(msg)) throw err;
+      errors.push(msg);
+    }
+  }
+
+  throw new Error(
+    errors.filter(Boolean).join(' | ') || 'Graph returned no post id',
+  );
 }
 
 async function claimFacebookPostSlot(ref) {
@@ -535,22 +678,13 @@ async function handleFacebookPost({
 
   try {
     const imageUrl = firstHttpImage(after);
-    // Prefer a link card (embedded image preview + click opens Vero360).
-    // Plain photo posts open Facebook's photo viewer instead of our listing URL.
-    let postId = await postLinkToFacebookPage({
+    const postId = await publishListingToPage({
       link,
       message,
+      imageUrl,
       pageId: resolvedPageId,
       token: access,
     });
-    if (!postId && imageUrl) {
-      postId = await postPhotoToFacebookPage({
-        imageUrl,
-        caption: `${message}\n${link}`,
-        pageId: resolvedPageId,
-        token: access,
-      });
-    }
     // Never stamp facebookPostedAt without a real Graph post id — that permanently
     // blocks retries after auto-moderation when the token was missing or Graph
     // returned an empty body.
@@ -607,7 +741,7 @@ exports.FACEBOOK_PAGE_ID = FACEBOOK_PAGE_ID;
 
 const firestoreOpts = {
   timeoutSeconds: 60,
-  memory: '256MiB',
+  memory: '512MiB',
   serviceAccount: FUNCTIONS_SERVICE_ACCOUNT,
   secrets: [FACEBOOK_PAGE_ACCESS_TOKEN, FACEBOOK_PAGE_ID],
 };
@@ -882,21 +1016,14 @@ exports.onMarketplacePromotionFacebookPost = onDocumentWritten(
           : '';
       const message = `🔥 Promoted on Vero360 (${planLabel}): ${title}${price}\nShop now on Vero360`;
 
-      let postId = await postLinkToFacebookPage({
+      const imageUrl = firstHttpImage(item);
+      const postId = await publishListingToPage({
         link,
         message,
+        imageUrl,
         pageId,
         token,
       });
-      const imageUrl = firstHttpImage(item);
-      if (!postId && imageUrl) {
-        postId = await postPhotoToFacebookPage({
-          imageUrl,
-          caption: `${message}\n${link}`,
-          pageId,
-          token,
-        });
-      }
       if (!postId) {
         await clearFacebookPostClaim(afterSnap.ref);
         return;
@@ -957,28 +1084,13 @@ exports.onLatestArrivalFacebookPost = onDocumentWritten(
       const link = 'https://vero360.app/';
       const message = `🆕 Today's arrival on Vero360: ${name}${price}\nOpen the app to shop.`;
       const imageUrl = firstHttpImage(after);
-
-      let postId = null;
-      if (imageUrl) {
-        postId = await postPhotoToFacebookPage({
-          imageUrl,
-          caption: `${message}\n${link}`,
-          pageId,
-          token,
-        });
-      }
-      if (!postId) {
-        postId = await postLinkToFacebookPage({
-          link,
-          message,
-          pageId,
-          token,
-        });
-      }
-      if (!postId) {
-        await clearFacebookPostClaim(afterSnap.ref);
-        return;
-      }
+      const postId = await publishListingToPage({
+        link,
+        message,
+        imageUrl,
+        pageId,
+        token,
+      });
       await markPosted(afterSnap.ref, postId);
       console.log('Latest arrival Facebook Page post ok', docId, postId);
     } catch (err) {
@@ -1047,28 +1159,13 @@ exports.onMerchantPromotionFacebookPost = onDocumentWritten(
         .filter(Boolean)
         .join('\n');
       const imageUrl = firstHttpImage(after);
-
-      let postId = null;
-      if (imageUrl) {
-        postId = await postPhotoToFacebookPage({
-          imageUrl,
-          caption: `${message}\n${link}`,
-          pageId,
-          token,
-        });
-      }
-      if (!postId) {
-        postId = await postLinkToFacebookPage({
-          link,
-          message,
-          pageId,
-          token,
-        });
-      }
-      if (!postId) {
-        await clearFacebookPostClaim(afterSnap.ref);
-        return;
-      }
+      const postId = await publishListingToPage({
+        link,
+        message,
+        imageUrl,
+        pageId,
+        token,
+      });
       await markPosted(afterSnap.ref, postId);
       console.log('Merchant promo Facebook Page post ok', docId, postId);
     } catch (err) {

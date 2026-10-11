@@ -592,6 +592,7 @@ class OrderPartyNotificationService {
     String? orderNumber,
     String? orderId,
     int? listingSqlId,
+    String? marketplaceItemId,
   }) async {
     final uid = merchantUid.trim();
     if (uid.isEmpty) return;
@@ -607,9 +608,12 @@ class OrderPartyNotificationService {
             'or set quantity to 0 / turn it off so buyers cannot order it again.',
         'payload': {
           'type': 'out_of_stock_shelf',
+          'action': 'manage_shelf',
           'itemName': name,
           if (orderId != null && orderId.trim().isNotEmpty) 'orderId': orderId,
           if (listingSqlId != null && listingSqlId > 0) 'listingSqlId': listingSqlId,
+          if (marketplaceItemId != null && marketplaceItemId.trim().isNotEmpty)
+            'marketplaceItemId': marketplaceItemId.trim(),
           NotificationStore.kPayloadBadgeRoute:
               NotificationStore.kBadgePostArrival,
         },
@@ -620,6 +624,38 @@ class OrderPartyNotificationService {
       });
     } catch (e) {
       debugPrint('[OrderPartyNotification] publishOutOfStockShelfReminder: $e');
+    }
+  }
+
+  /// Story owner: someone liked their story.
+  static Future<void> publishStoryLiked({
+    required String ownerUid,
+    required String likerUid,
+    required String likerName,
+    required String storyId,
+  }) async {
+    final to = ownerUid.trim();
+    final from = likerUid.trim();
+    if (to.isEmpty || from.isEmpty || to == from) return;
+    final name = likerName.trim().isEmpty ? 'Someone' : likerName.trim();
+    try {
+      await FirebaseFirestore.instance.collection(collectionName).add({
+        'toUid': to,
+        'title': 'Story like',
+        'body': '$name liked your story.',
+        'payload': {
+          'type': 'story_liked',
+          'storyId': storyId,
+          'likerUid': from,
+          'likerName': name,
+          'merchantId': to,
+        },
+        'createdAt': FieldValue.serverTimestamp(),
+        'consumed': false,
+        'read': false,
+      });
+    } catch (e) {
+      debugPrint('[OrderPartyNotification] publishStoryLiked: $e');
     }
   }
 

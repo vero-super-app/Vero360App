@@ -22,3 +22,7 @@
 -keep class androidx.activity.EdgeToEdgeKt { *; }
 -keep class androidx.activity.EdgeToEdge* { *; }
 -keep class com.vero265.app.MainActivity { *; }
+
+# flutter_webrtc native entry points.
+-keep class org.webrtc.** { *; }
+-keep class com.cloudwebrtc.webrtc.** { *; }

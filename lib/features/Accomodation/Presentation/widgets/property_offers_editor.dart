@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_offers.dart';
+import 'package:vero360_app/widgets/merchant_commission_guide.dart';
 
 /// Host adds room types and conference halls, each with a photo.
 class PropertyOffersEditor extends StatelessWidget {
@@ -465,6 +466,13 @@ class _OfferComposerPageState extends State<_OfferComposerPage> {
               hintText: 'e.g. 100000',
               filled: true,
               fillColor: Colors.white,
+            ),
+          ),
+          ValueListenableBuilder<TextEditingValue>(
+            valueListenable: _price,
+            builder: (context, value, _) => MerchantCommissionGuide.priceNote(
+              context,
+              priceText: value.text,
             ),
           ),
           const SizedBox(height: 12),

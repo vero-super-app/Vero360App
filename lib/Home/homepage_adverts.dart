@@ -382,7 +382,34 @@ class _SellBannerSlide {
     this.audience = 'marketplace',
   });
 
-  bool get isDriver => audience == 'driver';
+  bool get isDriver {
+    if (audience == 'driver') return true;
+    final hay = '${title.toLowerCase()} ${ctaLabel.toLowerCase()}';
+    return hay.contains('driver') || hay.contains('drive now');
+  }
+
+  bool get isAccommodation {
+    if (audience == 'accommodation') return true;
+    final hay = '${title.toLowerCase()} ${ctaLabel.toLowerCase()}';
+    return hay.contains('accommodat') ||
+        hay.contains('accomodat') ||
+        hay.contains('stay');
+  }
+
+  bool get isFood {
+    if (audience == 'food') return true;
+    final hay = '${title.toLowerCase()} ${ctaLabel.toLowerCase()}';
+    return hay.contains('food') ||
+        hay.contains('restaurant') ||
+        hay.contains('restraunt') ||
+        hay.contains('resturant');
+  }
+
+  bool get isMarketplace {
+    if (audience == 'marketplace') return true;
+    final hay = '${title.toLowerCase()} ${ctaLabel.toLowerCase()}';
+    return hay.contains('marketplace') || hay.contains('market place');
+  }
 
   static const fallback = _SellBannerSlide(
     title: 'Start selling on Vero360',
@@ -421,13 +448,19 @@ Stream<List<_SellBannerSlide>> _watchSellBanners() {
               .trim()
               .toLowerCase();
       String audience;
-      if (audienceRaw == 'driver') {
+      if (audienceRaw.contains('driver') ||
+          audienceRaw == 'drive' ||
+          audienceRaw == 'taxi' ||
+          audienceRaw == 'ride' ||
+          audienceRaw == 'rideshare') {
         audience = 'driver';
-      } else if (audienceRaw == 'food' ||
-          audienceRaw == 'restaurant' ||
-          audienceRaw == 'restaurants') {
+      } else if (audienceRaw.contains('food') ||
+          audienceRaw.contains('restaurant') ||
+          audienceRaw.contains('restraunt') ||
+          audienceRaw.contains('resturant')) {
         audience = 'food';
-      } else if (audienceRaw == 'accommodation' ||
+      } else if (audienceRaw.contains('accommodat') ||
+          audienceRaw.contains('accomodat') ||
           audienceRaw == 'stay' ||
           audienceRaw == 'hotel') {
         audience = 'accommodation';
@@ -523,10 +556,13 @@ class _HomepageAdvertsSectionState extends State<HomepageAdvertsSection> {
     );
   }
 
-  void _openMerchantSignup() {
+  void _openMerchantSignup({String? serviceKey}) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => const RegisterScreen(initialRole: UserRole.merchant),
+        builder: (_) => RegisterScreen(
+          initialRole: UserRole.merchant,
+          initialMerchantServiceKey: serviceKey,
+        ),
       ),
     );
   }
@@ -542,6 +578,12 @@ class _HomepageAdvertsSectionState extends State<HomepageAdvertsSection> {
   void _openSellBanner(_SellBannerSlide banner) {
     if (banner.isDriver) {
       _openDriverSignup();
+    } else if (banner.isAccommodation) {
+      _openMerchantSignup(serviceKey: 'accommodation');
+    } else if (banner.isFood) {
+      _openMerchantSignup(serviceKey: 'food');
+    } else if (banner.isMarketplace) {
+      _openMerchantSignup(serviceKey: 'marketplace');
     } else {
       _openMerchantSignup();
     }

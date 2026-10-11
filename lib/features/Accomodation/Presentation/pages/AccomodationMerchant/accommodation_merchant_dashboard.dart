@@ -1,6 +1,7 @@
 // lib/Pages/MerchantDashboards/accommodation_merchant_dashboard.dart
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show File;
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -57,10 +58,14 @@ class _PropertyMedia {
   final Uint8List bytes;
   final String filename;
   final String? mime;
+  final bool isVideo;
+  final String? filePath;
   const _PropertyMedia({
     required this.bytes,
     required this.filename,
     this.mime,
+    this.isVideo = false,
+    this.filePath,
   });
 }
 
@@ -117,6 +122,9 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
   bool _postToFacebook = true;
   _PropertyMedia? _cover;
   final List<_PropertyMedia> _gallery = [];
+  final List<_PropertyMedia> _videos = [];
+  static const int _maxVideos = 2;
+  static const int _maxVideoBytes = 40 * 1024 * 1024;
   final Set<String> _selectedAmenities = {};
   List<AccommodationRoomOffer> _roomOffers = const [];
   List<AccommodationConferenceOffer> _conferences = const [];
@@ -265,6 +273,137 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
     }
     if (!mounted) return;
     setState(() => _gallery.addAll(batch));
+  }
+
+  void _showVideoSource() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _videoSourceRow(
+                color: const Color(0xFFFF8A00),
+                icon: Icons.videocam_outlined,
+                label: 'Record a video',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickPropertyVideo(ImageSource.camera);
+                },
+              ),
+              _videoSourceRow(
+                color: const Color(0xFF111111),
+                icon: Icons.video_library_outlined,
+                label: 'Choose from gallery',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickPropertyVideo(ImageSource.gallery);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _videoSourceRow({
+    required Color color,
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade50,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                child: Icon(icon, color: Colors.white, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF222222),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickPropertyVideo(ImageSource source) async {
+    try {
+      if (_videos.length >= _maxVideos) {
+        ToastHelper.showCustomToast(
+          context,
+          'You can add up to $_maxVideos videos.',
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return;
+      }
+      final x = await _picker.pickVideo(
+        source: source,
+        maxDuration: const Duration(minutes: 2),
+      );
+      if (x == null || !mounted) return;
+      final length = await File(x.path).length();
+      if (length > _maxVideoBytes) {
+        if (!mounted) return;
+        ToastHelper.showCustomToast(
+          context,
+          'That video is too large. Choose one under 40 MB.',
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return;
+      }
+      setState(() {
+        _videos.add(
+          _PropertyMedia(
+            bytes: Uint8List(0),
+            filename: x.name.isEmpty ? 'video.mp4' : x.name,
+            mime: lookupMimeType(x.name) ?? 'video/mp4',
+            isVideo: true,
+            filePath: x.path,
+          ),
+        );
+      });
+    } catch (_) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Could not add that video. Please try again.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+    }
   }
 
   Future<void> _pickOneFromCamera() async {
@@ -589,6 +728,116 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                       },
                     ),
                   ],
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Videos (optional)',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 13,
+                            color: Colors.grey.shade800,
+                          ),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _navy.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          '${_videos.length}/$_maxVideos',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 12,
+                            color: _navy,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed:
+                          _videos.length >= _maxVideos ? null : _showVideoSource,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.grey.shade900,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        side: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      icon: const Icon(Icons.videocam_outlined),
+                      label: Text(
+                        _videos.isEmpty ? 'Add a video' : 'Add another video',
+                        style: const TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                    ),
+                  ),
+                  if (_videos.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    GridView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: _videos.length,
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 4,
+                        crossAxisSpacing: 10,
+                        mainAxisSpacing: 10,
+                        childAspectRatio: 1,
+                      ),
+                      itemBuilder: (_, i) {
+                        return Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: const ColoredBox(
+                                color: Colors.black,
+                                child: Center(
+                                  child: Icon(
+                                    Icons.play_arrow_rounded,
+                                    color: Colors.white,
+                                    size: 28,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            Positioned(
+                              top: 4,
+                              right: 4,
+                              child: Material(
+                                color: Colors.black54,
+                                shape: const CircleBorder(),
+                                child: InkWell(
+                                  customBorder: const CircleBorder(),
+                                  onTap: () =>
+                                      setState(() => _videos.removeAt(i)),
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(4),
+                                    child: Icon(
+                                      Icons.close_rounded,
+                                      size: 14,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ],
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 20),
                     child: Divider(height: 1, color: Colors.grey.shade200),
@@ -765,6 +1014,14 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                       ),
                     ),
                   ),
+                  ValueListenableBuilder<TextEditingValue>(
+                    valueListenable: _priceController,
+                    builder: (context, value, _) =>
+                        MerchantCommissionGuide.priceNote(
+                      context,
+                      priceText: value.text,
+                    ),
+                  ),
                   if (_isMultiRoomType) ...[
                     const SizedBox(height: 12),
                     TextField(
@@ -892,6 +1149,11 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                                   galleryUrls
                                       .add(await widget.onUploadPhoto(m));
                                 }
+                                final videoUrls = <String>[];
+                                for (final m in _videos) {
+                                  videoUrls
+                                      .add(await widget.onUploadPhoto(m));
+                                }
                                 final uploadedRooms = <AccommodationRoomOffer>[];
                                 for (final room in _roomOffers) {
                                   uploadedRooms.add(await _uploadOfferPhoto(room));
@@ -944,6 +1206,8 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                                         _isHostelType ? _hostelIsAvailable : true,
                                     'coverUrl': coverUrl,
                                     'galleryUrls': galleryUrls,
+                                    if (videoUrls.isNotEmpty)
+                                      'videoUrls': videoUrls,
                                     'amenities':
                                         _selectedAmenities.toList(growable: false),
                                     if (uploadedRooms.isNotEmpty)
@@ -2026,6 +2290,25 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
 
   /// Backend expects `image` / gallery entries as short https URLs from `/vero/uploads`.
   Future<String> _uploadPropertyPhotoForApi(_PropertyMedia media) async {
+    if (media.isVideo) {
+      final path = (media.filePath ?? '').trim();
+      final uid = (_auth.currentUser?.uid ?? _uid).trim();
+      if (path.isNotEmpty && uid.isNotEmpty) {
+        final ref = FirebaseStorage.instance.ref().child(
+          'profile_photos/${uid}_listingvideo_${DateTime.now().millisecondsSinceEpoch}.mp4',
+        );
+        await ref.putFile(
+          File(path),
+          SettableMetadata(contentType: media.mime ?? 'video/mp4'),
+        );
+        return ref.getDownloadURL();
+      }
+      return _accommodationApi.uploadListingImage(
+        media.bytes,
+        filename: media.filename.trim().isEmpty ? 'video.mp4' : media.filename,
+        mimeType: media.mime ?? 'video/mp4',
+      );
+    }
     final bytes = _bytesForAccommodationApiImage(media.bytes);
     return _accommodationApi.uploadListingImage(
       bytes,
@@ -2114,6 +2397,11 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
               ?.map((e) => e.toString())
               .toList() ??
           <String>[];
+      final videoUrls = (payload['videoUrls'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .where((s) => s.trim().isNotEmpty)
+              .toList() ??
+          <String>[];
       final amenities = parseAccommodationAmenities(payload['amenities']);
       final roomOffers = parseAccommodationRoomOffers(payload['roomOffers']);
       final conferences =
@@ -2141,6 +2429,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         'image': coverUrl,
         'imageUrl': coverUrl,
         'galleryUrls': galleryUrls,
+        if (videoUrls.isNotEmpty) 'videos': videoUrls,
         if (amenities.isNotEmpty) 'amenities': amenities,
         if (roomOffers.isNotEmpty)
           'roomOffers': roomOffers.map((e) => e.toMap()).toList(),
@@ -2185,6 +2474,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
               if (coverUrl.isNotEmpty) 'image': coverUrl,
               if (coverUrl.isNotEmpty) 'imageUrl': coverUrl,
               if (galleryUrls.isNotEmpty) 'galleryUrls': galleryUrls,
+              if (videoUrls.isNotEmpty) 'videos': videoUrls,
               'accommodationType': selectedType,
               'type': selectedType,
               'postToFacebook': postToFacebook,
@@ -2905,6 +3195,14 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                               context,
                               priceText: priceController.text,
                             ),
+                          ),
+                        ),
+                        ValueListenableBuilder<TextEditingValue>(
+                          valueListenable: priceController,
+                          builder: (context, value, _) =>
+                              MerchantCommissionGuide.priceNote(
+                            context,
+                            priceText: value.text,
                           ),
                         ),
                         if (selectedType == 'hotel' ||

@@ -98,6 +98,7 @@ class _VeroCoinPageState extends State<VeroCoinPage>
   @override
   void dispose() {
     _financeSub?.cancel();
+    _stopCruise();
     _spinCtrl.dispose();
     _pulseCtrl.dispose();
     _enterCtrl.dispose();
@@ -122,15 +123,46 @@ class _VeroCoinPageState extends State<VeroCoinPage>
     }
   }
 
+  VoidCallback? _cruiseListener;
+
+  void _stopCruise() {
+    final cruise = _cruiseListener;
+    if (cruise == null) return;
+    _spinCtrl.removeListener(cruise);
+    _cruiseListener = null;
+    if (_spinCtrl.isAnimating) _spinCtrl.stop();
+  }
+
+  /// Keep the wheel moving while the prize is decided.
+  void _startCruise() {
+    _stopCruise();
+    _spinCtrl.duration = const Duration(milliseconds: 450);
+    var last = _spinCtrl.value;
+    void cruise() {
+      if (!mounted) return;
+      final v = _spinCtrl.value;
+      var delta = v - last;
+      if (delta < 0) delta += 1;
+      last = v;
+      setState(() => _wheelTurns += delta * 8);
+    }
+
+    _cruiseListener = cruise;
+    _spinCtrl.addListener(cruise);
+    _spinCtrl.repeat();
+  }
+
   Future<void> _spin(bool canSpin) async {
     if (_spinning || !canSpin) return;
     setState(() {
       _spinning = true;
       _lastSpinMessage = null;
     });
+    _startCruise();
 
     final res = await VeroRewardsService.spin();
     if (!mounted) return;
+    _stopCruise();
 
     if (!res.ok) {
       // Inline feedback under the wheel only — no toast (esp. "Try again").
@@ -147,11 +179,12 @@ class _VeroCoinPageState extends State<VeroCoinPage>
         prizes.indexWhere((p) => p.id == target.id).clamp(0, prizes.length - 1);
     final segment = 1.0 / prizes.length;
     final targetCenter = index * segment + segment / 2;
-    final extraTurns = 12 + math.Random().nextInt(5);
+    final extraTurns = 2;
     final endTurns = _wheelTurns.floor() + extraTurns + (1 - targetCenter);
 
+    _spinCtrl.duration = const Duration(milliseconds: 700);
     final anim = Tween<double>(begin: _wheelTurns, end: endTurns).animate(
-      CurvedAnimation(parent: _spinCtrl, curve: Curves.easeOutCubic),
+      CurvedAnimation(parent: _spinCtrl, curve: Curves.easeOut),
     );
     void listener() {
       setState(() => _wheelTurns = anim.value);
@@ -159,9 +192,7 @@ class _VeroCoinPageState extends State<VeroCoinPage>
 
     anim.addListener(listener);
     _spinCtrl.forward(from: 0);
-    await Future<void>.delayed(
-      _spinCtrl.duration ?? const Duration(milliseconds: 2200),
-    );
+    await Future<void>.delayed(_spinCtrl.duration!);
     anim.removeListener(listener);
 
     if (!mounted) return;
@@ -176,9 +207,8 @@ class _VeroCoinPageState extends State<VeroCoinPage>
   @override
   Widget build(BuildContext context) {
     final uid = FirebaseAuth.instance.currentUser?.uid;
-    final redeemCoins = VeroRewardsService.coinsPerRedeem;
-    final redeemMwk =
-        VeroRewardsService.formatMwk(VeroRewardsService.mwkPerRedeem);
+    final minCashMwk =
+        VeroRewardsService.formatMwk(VeroRewardsService.minCashOutMwk);
     final coinMwk =
         VeroRewardsService.formatMwk(VeroRewardsService.mwkPerCoin);
     final jackpot =
@@ -225,8 +255,12 @@ class _VeroCoinPageState extends State<VeroCoinPage>
                   stream: VeroRewardsService.watchBalance(uid),
                   builder: (context, snap) {
                     final b = snap.data ?? const VeroRewardsBalance();
-                    final canRedeem =
-                        _cashOutEnabled && b.coins >= redeemCoins;
+                    final canRedeem = _cashOutEnabled &&
+                        VeroRewardsService.canCashOutCoins(b.coins);
+                    final cashCoins = b.coins;
+                    final cashMwk = VeroRewardsService.formatMwk(
+                      cashCoins * VeroRewardsService.mwkPerCoin,
+                    );
                     final topPad = MediaQuery.paddingOf(context).top + kToolbarHeight + 8;
 
                     return FadeTransition(
@@ -347,7 +381,7 @@ class _VeroCoinPageState extends State<VeroCoinPage>
                                 _Rule(
                                   emoji: '💸',
                                   text:
-                                      '$redeemCoins coins = MWK $redeemMwk in your reward wallet',
+                                      'Cash out from MWK $minCashMwk. The full balance pays out (MWK $coinMwk each).',
                                 ),
                                 const _Rule(
                                   emoji: '📲',
@@ -380,8 +414,9 @@ class _VeroCoinPageState extends State<VeroCoinPage>
                           const SizedBox(height: 22),
                           _cashOutButton(
                             canRedeem: canRedeem,
-                            redeemCoins: redeemCoins,
-                            redeemMwk: redeemMwk,
+                            minCashMwk: minCashMwk,
+                            cashCoins: cashCoins,
+                            cashMwk: cashMwk,
                           ),
                         ],
                       ),
@@ -939,8 +974,9 @@ class _VeroCoinPageState extends State<VeroCoinPage>
 
   Widget _cashOutButton({
     required bool canRedeem,
-    required int redeemCoins,
-    required String redeemMwk,
+    required String minCashMwk,
+    required int cashCoins,
+    required String cashMwk,
   }) {
     return SizedBox(
       width: double.infinity,
@@ -969,8 +1005,8 @@ class _VeroCoinPageState extends State<VeroCoinPage>
                 !_cashOutEnabled
                     ? 'Cash-outs temporarily paused'
                     : canRedeem
-                        ? 'Cash out $redeemCoins coins → MWK $redeemMwk'
-                        : 'Need $redeemCoins coins (MWK $redeemMwk) to cash out',
+                        ? 'Cash out $cashCoins coins → MWK $cashMwk'
+                        : 'Need MWK $minCashMwk to cash out',
                 style: const TextStyle(
                   fontWeight: FontWeight.w800,
                   fontSize: 15,

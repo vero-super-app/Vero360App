@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:vero360_app/features/DigitalServices/chatgpt_plans.dart';
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
 import 'package:vero360_app/features/DigitalServices/netflix_plans.dart';
 
@@ -131,7 +132,7 @@ class DigitalServicesCatalog extends ChangeNotifier {
       // Never show baked-in MWK — wait for admin config.
       _homepage = kDigitalProducts
           .map((p) => p.copyWith(clearFixedMwkPrice: true, active: true))
-          .where((p) => !p.isNetflixPlan)
+          .where((p) => !p.isNetflixPlan && !p.isChatGptPlan)
           .toList();
       _all = [
         ...kAllDigitalProducts.map(
@@ -169,9 +170,10 @@ class DigitalServicesCatalog extends ChangeNotifier {
 
       if (cfg == null) {
         // No admin row → no subscription price (do not keep hardcoded seeds).
+        // ChatGPT plans keep their listed MWK prices.
         return base.copyWith(
           active: true,
-          clearFixedMwkPrice: isSub,
+          clearFixedMwkPrice: isSub && !base.isChatGptPlan,
         );
       }
 
@@ -188,6 +190,13 @@ class DigitalServicesCatalog extends ChangeNotifier {
             ? fixedRaw.toDouble()
             : double.tryParse('$fixedRaw');
         if (n != null && n > 0) fixed = n;
+      }
+      // Old admin default was MWK 35,000 for a single ChatGPT Plus plan.
+      if (base.isChatGptPlan &&
+          base.fixedMwkPrice != null &&
+          base.fixedMwkPrice! > 0 &&
+          (fixed == null || (base.key == 'chatgpt_plus' && fixed == 35000))) {
+        fixed = base.fixedMwkPrice;
       }
 
       double? mwkPerUnit;
@@ -224,11 +233,20 @@ class DigitalServicesCatalog extends ChangeNotifier {
       }
 
       return base.copyWith(
-        name: name.isNotEmpty ? name : null,
-        subtitle: subtitle.isNotEmpty ? subtitle : null,
-        brandTag: brandTag.isNotEmpty ? brandTag : null,
-        fixedMwkPrice: isSub ? fixed : base.fixedMwkPrice,
-        clearFixedMwkPrice: isSub && fixed == null,
+        name: name.isEmpty ? null : name,
+        subtitle: subtitle.isEmpty ||
+                (base.isChatGptPlan && subtitle == '1-month subscription')
+            ? null
+            : subtitle,
+        brandTag: brandTag.isEmpty ||
+                (base.isChatGptPlan && brandTag == 'GPT')
+            ? null
+            : brandTag,
+        fixedMwkPrice: isSub
+            ? (fixed ?? (base.isChatGptPlan ? base.fixedMwkPrice : null))
+            : base.fixedMwkPrice,
+        clearFixedMwkPrice:
+            isSub && fixed == null && !base.isChatGptPlan,
         usdAmounts: !isSub && amounts != null && amounts.isNotEmpty
             ? amounts
             : null,
@@ -318,7 +336,7 @@ class DigitalServicesCatalog extends ChangeNotifier {
     _homepage = kDigitalProducts
         .map(merge)
         .where((p) => p.active && !disabledKeys.contains(p.key))
-        .where((p) => !p.isNetflixPlan)
+        .where((p) => !p.isNetflixPlan && !p.isChatGptPlan)
         .toList();
     _all = [
       ...kAllDigitalProducts
@@ -326,7 +344,7 @@ class DigitalServicesCatalog extends ChangeNotifier {
           .where((p) => p.active && !disabledKeys.contains(p.key)),
     ];
     // Ensure Netflix plan products are always mergeable even if omitted from spread.
-    for (final base in kNetflixPlanProducts) {
+    for (final base in [...kNetflixPlanProducts, ...kChatGptPlanProducts]) {
       if (_all.any((p) => p.key == base.key)) continue;
       final merged = merge(base);
       if (merged.active && !disabledKeys.contains(merged.key)) {

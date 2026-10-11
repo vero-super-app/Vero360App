@@ -116,6 +116,7 @@ class MarketplaceStockReminderService {
           merchantUid: mid,
           itemName: name,
           listingSqlId: sqlId,
+          marketplaceItemId: doc.id,
         );
         await prefs.setBool(key, true);
       }
@@ -172,6 +173,7 @@ class MarketplaceStockReminderService {
             'stockQuantity': 0,
             'quantity': 0,
             'isActive': false,
+            'sold': true,
             'updatedAt': FieldValue.serverTimestamp(),
           },
           SetOptions(merge: true),

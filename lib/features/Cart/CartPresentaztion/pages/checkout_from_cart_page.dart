@@ -1847,9 +1847,15 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
           if (state == 'completed') {
             _handlePaymentSuccess();
           } else if (state == 'failed') {
-            _momoMessage =
-                (status['failure'] ?? 'Payment was declined.').toString();
-            _handlePaymentFailure();
+            _pollTimer?.cancel();
+            if (!mounted) return;
+            setState(() {
+              _momoBusy = false;
+              _momoWaiting = false;
+              _momoMessage = PawaPayPayment.explainFailure(
+                (status['failure'] ?? '').toString(),
+              );
+            });
           }
         } catch (_) {}
       });

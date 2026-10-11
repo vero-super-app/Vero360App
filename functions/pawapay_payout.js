@@ -74,6 +74,11 @@ function failureMessage(body) {
   return String((body && (body.message || body.error)) || 'PawaPay rejected the payout');
 }
 
+function moneyAmount(amount) {
+  const rounded = Math.round(Number(amount));
+  return String(rounded);
+}
+
 async function findWallet(uid) {
   const db = admin.firestore();
   const fixed = await db.collection('wallets').doc(uid).get();
@@ -207,7 +212,7 @@ async function sendPayout(payoutId, amount, phone, provider) {
     method: 'POST',
     body: JSON.stringify({
       payoutId,
-      amount: amount.toFixed(2),
+      amount: moneyAmount(amount),
       currency: 'MWK',
       recipient: {
         type: 'MMO',
@@ -283,6 +288,7 @@ async function pawapayRequest(path, options) {
   if (!token) {
     throw new HttpsError('failed-precondition', 'PawaPay is not configured.');
   }
+  const attempts = [];
   let last = { ok: false, status: 0, body: {} };
   for (const base of baseCandidates()) {
     const res = await fetch(`${base}${path}`, {
@@ -296,11 +302,17 @@ async function pawapayRequest(path, options) {
     });
     const body = await res.json().catch(() => ({}));
     last = { ok: res.ok, status: res.status, body };
+    const host = base.includes('sandbox') ? 'sandbox' : 'live';
+    attempts.push(`${host} ${res.status}`);
     if (isAuthFailure(res.status, body)) continue;
     resolvedBase = base;
     return last;
   }
-  return last;
+  console.error('PawaPay auth failed', { length: token.length, attempts });
+  throw new HttpsError(
+    'failed-precondition',
+    `PawaPay refused the saved secret (${token.length} characters: ${attempts.join(', ')}). Open the Sandbox dashboard, create a new credential, and paste only the value shown once. Do not copy the name from the list.`,
+  );
 }
 
 async function sendDeposit(depositId, amount, phone, provider, reference) {
@@ -308,7 +320,7 @@ async function sendDeposit(depositId, amount, phone, provider, reference) {
     method: 'POST',
     body: JSON.stringify({
       depositId,
-      amount: amount.toFixed(2),
+      amount: moneyAmount(amount),
       currency: 'MWK',
       clientReferenceId: String(reference || depositId).slice(0, 64),
       customerMessage: 'Vero360',
@@ -419,7 +431,7 @@ const getPawaPayDepositStatus = onCall(
       );
       return { depositId, status: 'completed' };
     }
-    if (status === 'FAILED' || status === 'REJECTED') {
+    if (status === 'FAILED') {
       const failure = failureMessage(remote || body);
       await ref.set(
         {

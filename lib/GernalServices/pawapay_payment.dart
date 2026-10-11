@@ -27,11 +27,32 @@ class PawaPayPayment {
     final raw = error is FirebaseFunctionsException
         ? (error.message ?? error.toString())
         : error.toString();
-    final text = raw.replaceFirst(RegExp(r'^Exception:\s*'), '').trim();
-    if (text.toLowerCase().contains('api token')) {
-      return 'PawaPay rejected the API token. Create it in the same dashboard you are using, Sandbox or Live, then set it again.';
+    return explainFailure(raw.replaceFirst(RegExp(r'^Exception:\s*'), '').trim());
+  }
+
+  static String explainFailure(String raw) {
+    final text = raw.toLowerCase();
+    if (text.contains('not approve') || text.contains('payment_not_approved')) {
+      return 'The prompt was not approved. Open it on your phone, enter your PIN, then try again.';
     }
-    return text;
+    if (text.contains('insufficient') || text.contains('enough funds')) {
+      return 'This wallet does not have enough money for this payment.';
+    }
+    if (text.contains('payer_not_found') ||
+        text.contains('does not belong') ||
+        text.contains('does not have an')) {
+      return 'This number is not registered on the network you selected.';
+    }
+    if (text.contains('in progress') || text.contains('payment_in_progress')) {
+      return 'A payment is already waiting on this number. Finish that prompt, then try again.';
+    }
+    if (text.contains('limit')) {
+      return 'This wallet has reached its mobile-money limit.';
+    }
+    if (raw.trim().isEmpty || text.contains('rejected the payout')) {
+      return 'The payment was not completed. Approve the prompt on your phone and try again.';
+    }
+    return raw;
   }
 
   static String formatMwk(int amount) {
@@ -286,11 +307,29 @@ class PawaPayCheckoutView extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    child: Text(
-                      waiting
-                          ? 'Waiting for approval'
-                          : 'Pay MWK ${PawaPayPayment.formatMwk(amountMwk)}',
-                    ),
+                    child: busy
+                        ? Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.2,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Text(
+                                waiting
+                                    ? 'Waiting for approval'
+                                    : 'Sending prompt',
+                              ),
+                            ],
+                          )
+                        : Text(
+                            'Pay MWK ${PawaPayPayment.formatMwk(amountMwk)}',
+                          ),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -489,7 +528,7 @@ class _PawaPayCheckoutPageState extends State<PawaPayCheckoutPage> {
         }
         if (state == 'failed') {
           throw Exception(
-            (status['failure'] ?? 'The payment was declined.').toString(),
+            PawaPayPayment.explainFailure((status['failure'] ?? '').toString()),
           );
         }
       }

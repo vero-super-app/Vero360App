@@ -24,25 +24,32 @@ class DriverOnlineSessionState {
   final bool isOnline;
   final int? taxiId;
   final Position? lastPosition;
+  final DateTime? availableUntil;
 
   const DriverOnlineSessionState({
     this.isOnline = false,
     this.taxiId,
     this.lastPosition,
+    this.availableUntil,
   });
 
   DriverOnlineSessionState copyWith({
     bool? isOnline,
     int? taxiId,
     Position? lastPosition,
+    DateTime? availableUntil,
     bool clearTaxiId = false,
     bool clearLastPosition = false,
+    bool clearAvailableUntil = false,
   }) {
     return DriverOnlineSessionState(
       isOnline: isOnline ?? this.isOnline,
       taxiId: clearTaxiId ? null : (taxiId ?? this.taxiId),
       lastPosition:
           clearLastPosition ? null : (lastPosition ?? this.lastPosition),
+      availableUntil: clearAvailableUntil
+          ? null
+          : (availableUntil ?? this.availableUntil),
     );
   }
 }
@@ -53,6 +60,7 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
 
   static const _prefsOnlineKey = 'driver_online_session_active';
   static const _prefsTaxiIdKey = 'driver_online_session_taxi_id';
+  static const _prefsUntilKey = 'driver_online_session_until';
 
   /// Used by auth logout (no [Ref] available) to stop broadcasting.
   static Future<void> forceOfflineGlobally() async {
@@ -151,6 +159,8 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
   Future<void> goOnline({
     required int taxiId,
     bool setAvailabilityOnBackend = true,
+    DateTime? availableUntil,
+    bool updateAvailableUntil = false,
   }) async {
     if (state.isOnline &&
         state.taxiId == taxiId &&
@@ -160,12 +170,22 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
     }
 
     final previous = state;
-    state = state.copyWith(isOnline: true, taxiId: taxiId);
+    final until = updateAvailableUntil ? availableUntil : state.availableUntil;
+    state = state.copyWith(
+      isOnline: true,
+      taxiId: taxiId,
+      availableUntil: until,
+      clearAvailableUntil: until == null,
+    );
     await _persistSession();
 
     try {
       if (setAvailabilityOnBackend) {
-        await _setTaxiAvailability(taxiId, true);
+        await _setTaxiAvailability(
+          taxiId,
+          true,
+          availableUntil: until,
+        );
       }
       _startPublishers();
     } catch (e) {
@@ -180,7 +200,7 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
   Future<void> goOffline({bool syncBackend = true}) async {
     _stopPublishers();
     final taxiId = state.taxiId;
-    state = state.copyWith(isOnline: false);
+    state = state.copyWith(isOnline: false, clearAvailableUntil: true);
     await _clearPersistedSession();
 
     if (syncBackend && taxiId != null) {
@@ -346,9 +366,28 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
     }
   }
 
-  Future<void> _setTaxiAvailability(int taxiId, bool isAvailable) async {
+  Future<void> setAvailableUntil(DateTime? until) async {
+    final taxiId = state.taxiId;
+    if (!state.isOnline || taxiId == null) return;
+    await _setTaxiAvailability(taxiId, true, availableUntil: until);
+    state = state.copyWith(
+      availableUntil: until,
+      clearAvailableUntil: until == null,
+    );
+    await _persistSession();
+  }
+
+  Future<void> _setTaxiAvailability(
+    int taxiId,
+    bool isAvailable, {
+    DateTime? availableUntil,
+  }) async {
     try {
-      await _driverService.setTaxiAvailability(taxiId, isAvailable);
+      await _driverService.setTaxiAvailability(
+        taxiId,
+        isAvailable,
+        availableUntil: availableUntil,
+      );
       if (kDebugMode) {
         print(
           '[DriverOnlineSession] ✓ availability=$isAvailable taxi=$taxiId',
@@ -382,7 +421,13 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
         return;
       }
       if (_active != this) return;
-      state = state.copyWith(isOnline: true, taxiId: taxiId);
+      final until = DateTime.tryParse(prefs.getString(_prefsUntilKey) ?? '');
+      state = state.copyWith(
+        isOnline: true,
+        taxiId: taxiId,
+        availableUntil: until,
+        clearAvailableUntil: until == null,
+      );
       _startPublishers();
       unawaited(_reassertOnline(taxiId: taxiId));
     } catch (e) {
@@ -398,9 +443,16 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
       if (state.isOnline && state.taxiId != null) {
         await prefs.setBool(_prefsOnlineKey, true);
         await prefs.setInt(_prefsTaxiIdKey, state.taxiId!);
+        final until = state.availableUntil;
+        if (until != null) {
+          await prefs.setString(_prefsUntilKey, until.toIso8601String());
+        } else {
+          await prefs.remove(_prefsUntilKey);
+        }
       } else {
         await prefs.remove(_prefsOnlineKey);
         await prefs.remove(_prefsTaxiIdKey);
+        await prefs.remove(_prefsUntilKey);
       }
     } catch (_) {}
   }
@@ -410,6 +462,7 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_prefsOnlineKey);
       await prefs.remove(_prefsTaxiIdKey);
+      await prefs.remove(_prefsUntilKey);
     } catch (_) {}
   }
 

@@ -46,19 +46,26 @@ class _DriverIncomingRideFromNotificationPageState
     _timerController = AnimationController(
       duration: const Duration(seconds: 30),
       vsync: this,
-    )..forward();
-    _timerController.addStatusListener((status) {
-      if (status == AnimationStatus.completed &&
-          mounted &&
-          !_accepting &&
-          !_declining) {
-        unawaited(_decline(pop: true));
-      }
-    });
+    );
+    final seeded = DriverRideOfferInbox.fromFcmMap(
+      widget.fcmData ??
+          <String, dynamic>{'rideId': widget.rideId, 'type': 'new_ride'},
+    );
+    if (seeded?.hasPickupWindow != true) {
+      _timerController.forward();
+      _timerController.addStatusListener((status) {
+        if (status == AnimationStatus.completed &&
+            mounted &&
+            !_accepting &&
+            !_declining) {
+          unawaited(_decline(pop: true));
+        }
+      });
+    }
 
     final seed = widget.fcmData ??
         <String, dynamic>{'rideId': widget.rideId, 'type': 'new_ride'};
-    _request = DriverRideOfferInbox.fromFcmMap(seed);
+    _request = seeded;
     unawaited(_hydrate(seed));
     unawaited(_resolvePickupEta());
   }
@@ -79,6 +86,9 @@ class _DriverIncomingRideFromNotificationPageState
         if (fetched != null) _request = fetched;
         _driver = driver;
       });
+      if (fetched?.hasPickupWindow == true) {
+        _timerController.stop();
+      }
     } catch (e) {
       if (!mounted) return;
       if (_request == null) {
@@ -120,6 +130,38 @@ class _DriverIncomingRideFromNotificationPageState
       return (taxis.first['id'] as num?)?.toInt();
     }
     return null;
+  }
+
+  Future<void> _offerEta(int minutes) async {
+    final request = _request;
+    if (request == null || _accepting || _declining) return;
+    final taxiId = _taxiId(request);
+    if (taxiId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Taxi is not ready to send a pickup time')),
+      );
+      return;
+    }
+    setState(() => _accepting = true);
+    _timerController.stop();
+    try {
+      await DriverRequestService.submitPickupOffer(
+        rideId: request.id,
+        taxiId: taxiId,
+        etaMinutes: minutes,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Offered a pickup in $minutes min')),
+      );
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _accepting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(UserFacingError.from(e, fallback: 'Could not send pickup time'))),
+      );
+    }
   }
 
   Future<void> _accept() async {
@@ -243,7 +285,7 @@ class _DriverIncomingRideFromNotificationPageState
                         constraints: const BoxConstraints(maxWidth: 440),
                         child: DriverRideRequestSheet(
                           request: request,
-                          timer: _timerController,
+                          timer: request.hasPickupWindow ? null : _timerController,
                           pickupKm: _pickupKm,
                           pickupMins: _pickupMins,
                           passengerShort:
@@ -252,6 +294,7 @@ class _DriverIncomingRideFromNotificationPageState
                           declining: _declining,
                           onAccept: _accept,
                           onDecline: () => unawaited(_decline()),
+                          onOfferEta: (minutes) => unawaited(_offerEta(minutes)),
                         ),
                       ),
                     ),

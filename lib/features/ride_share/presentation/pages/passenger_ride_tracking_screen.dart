@@ -10,6 +10,7 @@ import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/websocket_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/map_view_widget.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_completion_screen.dart';
@@ -38,6 +39,8 @@ class _PassengerRideTrackingScreenState
     extends ConsumerState<PassengerRideTrackingScreen> {
   GoogleMapController? _mapController;
   bool _hasNavigatedAway = false;
+  List<PickupOffer> _offers = const [];
+  StreamSubscription<Map<String, dynamic>>? _flexibleSub;
 
   @override
   void initState() {
@@ -47,13 +50,36 @@ class _PassengerRideTrackingScreenState
       ref
           .read(rideLifecycleProvider.notifier)
           .subscribeToRideAsPassenger(widget.rideId);
+      unawaited(_loadOffers());
+      _flexibleSub = ref
+          .read(rideShareHttpServiceProvider)
+          .flexibleEventStream
+          .listen((event) {
+        if (!mounted) return;
+        if ('${event['rideId']}' != '${widget.rideId}') return;
+        unawaited(_loadOffers());
+        unawaited(
+          ref.read(rideLifecycleProvider.notifier).refreshActiveRide(),
+        );
+      });
     });
   }
 
   @override
   void dispose() {
+    _flexibleSub?.cancel();
     _mapController?.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadOffers() async {
+    try {
+      final offers = await ref
+          .read(rideShareHttpServiceProvider)
+          .listPickupOffers(widget.rideId);
+      if (!mounted) return;
+      setState(() => _offers = offers);
+    } catch (_) {}
   }
 
   Place _placeFromCoords({
@@ -137,6 +163,76 @@ class _PassengerRideTrackingScreenState
         subject: 'Vero Ride trip',
       ),
     );
+  }
+
+  String _clock(DateTime time) {
+    final local = time.toLocal();
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
+
+  bool _isReadyNow(Ride ride) {
+    final ready = ride.passengerReadyAt;
+    if (ready == null) return false;
+    return !ready.isAfter(DateTime.now().add(const Duration(seconds: 30)));
+  }
+
+  bool _needsFiveMore(Ride ride) {
+    final ready = ride.passengerReadyAt;
+    if (ready == null) return false;
+    return ready.isAfter(DateTime.now().add(const Duration(seconds: 30)));
+  }
+
+  Future<void> _setWait(int minutes) async {
+    try {
+      final ride = await ref.read(rideShareHttpServiceProvider).updateMaxWait(
+            rideId: widget.rideId,
+            maxWaitMinutes: minutes,
+          );
+      if (!mounted) return;
+      await ref.read(rideLifecycleProvider.notifier).refreshActiveRide();
+      if (ride.id != widget.rideId) return;
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(UserFacingError.from(e))),
+      );
+    }
+  }
+
+  Future<void> _confirmOffer(PickupOffer offer) async {
+    try {
+      await ref.read(rideShareHttpServiceProvider).confirmPickupOffer(
+            rideId: widget.rideId,
+            offerId: offer.id,
+          );
+      if (!mounted) return;
+      setState(() => _offers = const []);
+      await ref.read(rideLifecycleProvider.notifier).refreshActiveRide();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(UserFacingError.from(e))),
+      );
+    }
+  }
+
+  Future<void> _setReady(int extraMinutes) async {
+    try {
+      await ref.read(rideShareHttpServiceProvider).updateRideTiming(
+            rideId: widget.rideId,
+            passengerReadyAt:
+                DateTime.now().add(Duration(minutes: extraMinutes)),
+          );
+      if (!mounted) return;
+      await ref.read(rideLifecycleProvider.notifier).refreshActiveRide();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(UserFacingError.from(e))),
+      );
+    }
   }
 
   Future<void> _handleCancel(
@@ -383,11 +479,42 @@ class _PassengerRideTrackingScreenState
           ],
           const SizedBox(height: 20),
           if (state.isRequested) ...[
-            const Text(
-              'Searching for nearby drivers…',
+            Text(
+              ride.searchDeadline == null
+                  ? 'Searching for nearby drivers…'
+                  : 'Looking until ${_clock(ride.searchDeadline!)}',
               textAlign: TextAlign.center,
-              style: TextStyle(color: RideShareColors.onSurfaceVariant),
+              style: const TextStyle(color: RideShareColors.onSurfaceVariant),
             ),
+            const SizedBox(height: 10),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 8,
+              children: [
+                for (final minutes in const [10, 20])
+                  ChoiceChip(
+                    label: Text('I\'ll wait $minutes min'),
+                    selected: ride.maxWaitMinutes == minutes,
+                    onSelected: state.isLoading
+                        ? null
+                        : (_) => _setWait(minutes),
+                  ),
+              ],
+            ),
+            if (_offers.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              for (final offer in _offers)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(
+                    '${offer.driverName} can pick you up in ${offer.etaMinutes} min',
+                  ),
+                  trailing: TextButton(
+                    onPressed: state.isLoading ? null : () => _confirmOffer(offer),
+                    child: const Text('Confirm'),
+                  ),
+                ),
+            ],
             const SizedBox(height: 14),
             RideSecondaryCta(
               label: 'Cancel Ride',
@@ -397,6 +524,37 @@ class _PassengerRideTrackingScreenState
                   : () => _handleCancel(context),
             ),
           ] else ...[
+            if (ride.driverDelayMinutes != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  ride.driverDelayMinutes == 0
+                      ? 'Driver is on time'
+                      : 'Driver is about ${ride.driverDelayMinutes} min late',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: RideShareColors.onSurfaceVariant),
+                ),
+              ),
+            if (!state.isInProgress)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 8,
+                  children: [
+                    ChoiceChip(
+                      label: const Text('Ready now'),
+                      selected: _isReadyNow(ride),
+                      onSelected: state.isLoading ? null : (_) => _setReady(0),
+                    ),
+                    ChoiceChip(
+                      label: const Text('Need 5 more min'),
+                      selected: _needsFiveMore(ride),
+                      onSelected: state.isLoading ? null : (_) => _setReady(5),
+                    ),
+                  ],
+                ),
+              ),
             RidePassengerActionGrid(
               onSafety: () => showRideSafetySheet(context),
               onShare: () => _shareTrip(ride),

@@ -297,6 +297,11 @@ class Ride {
   final DateTime? endTime;
   final String? cancellationReason;
   final String? passengerNotes;
+  final DateTime? pickupEarliestAt;
+  final DateTime? pickupLatestAt;
+  final int? maxWaitMinutes;
+  final DateTime? passengerReadyAt;
+  final int? driverDelayMinutes;
   final DateTime createdAt;
   final DateTime updatedAt;
   final Vehicle? taxi;
@@ -330,6 +335,11 @@ class Ride {
     this.endTime,
     this.cancellationReason,
     this.passengerNotes,
+    this.pickupEarliestAt,
+    this.pickupLatestAt,
+    this.maxWaitMinutes,
+    this.passengerReadyAt,
+    this.driverDelayMinutes,
     required this.createdAt,
     required this.updatedAt,
     this.taxi,
@@ -422,6 +432,17 @@ class Ride {
             json['endTime'] != null ? parseDateTime(json['endTime']) : null,
         cancellationReason: json['cancellationReason'] as String?,
         passengerNotes: json['passengerNotes'] as String?,
+        pickupEarliestAt: json['pickupEarliestAt'] != null
+            ? parseDateTime(json['pickupEarliestAt'])
+            : null,
+        pickupLatestAt: json['pickupLatestAt'] != null
+            ? parseDateTime(json['pickupLatestAt'])
+            : null,
+        maxWaitMinutes: parseInt(json['maxWaitMinutes']),
+        passengerReadyAt: json['passengerReadyAt'] != null
+            ? parseDateTime(json['passengerReadyAt'])
+            : null,
+        driverDelayMinutes: parseInt(json['driverDelayMinutes']),
         createdAt: parseDateTime(json['createdAt']),
         updatedAt: parseDateTime(json['updatedAt']),
         taxi: json['taxi'] != null && json['taxi'] is Map
@@ -459,6 +480,21 @@ class Ride {
       print('[Ride.fromJson] JSON data: $json');
       rethrow;
     }
+  }
+
+  bool get hasFlexibleTime =>
+      pickupLatestAt != null || (maxWaitMinutes != null && maxWaitMinutes! > 0);
+
+  /// When the passenger will keep looking. Null for a plain book-now request.
+  DateTime? get searchDeadline {
+    final times = <DateTime>[];
+    if (pickupLatestAt != null) times.add(pickupLatestAt!.toLocal());
+    if (maxWaitMinutes != null) {
+      times.add(createdAt.toLocal().add(Duration(minutes: maxWaitMinutes!)));
+    }
+    if (times.isEmpty) return null;
+    times.sort();
+    return times.first;
   }
 
   bool get isActive => [
@@ -530,10 +566,55 @@ class Ride {
         'endTime': endTime?.toIso8601String(),
         'cancellationReason': cancellationReason,
         'passengerNotes': passengerNotes,
+        'pickupEarliestAt': pickupEarliestAt?.toIso8601String(),
+        'pickupLatestAt': pickupLatestAt?.toIso8601String(),
+        'maxWaitMinutes': maxWaitMinutes,
+        'passengerReadyAt': passengerReadyAt?.toIso8601String(),
+        'driverDelayMinutes': driverDelayMinutes,
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
         'taxi': taxi?.toJson(),
       };
+}
+
+class PickupOffer {
+  final int id;
+  final int rideId;
+  final int taxiId;
+  final int driverId;
+  final int etaMinutes;
+  final String status;
+  final String driverName;
+
+  const PickupOffer({
+    required this.id,
+    required this.rideId,
+    required this.taxiId,
+    required this.driverId,
+    required this.etaMinutes,
+    required this.status,
+    this.driverName = 'Driver',
+  });
+
+  factory PickupOffer.fromJson(Map<String, dynamic> json) {
+    int asInt(dynamic value) {
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      return int.tryParse('$value') ?? 0;
+    }
+
+    return PickupOffer(
+      id: asInt(json['id'] ?? json['offerId']),
+      rideId: asInt(json['rideId']),
+      taxiId: asInt(json['taxiId']),
+      driverId: asInt(json['driverId']),
+      etaMinutes: asInt(json['etaMinutes']),
+      status: json['status'] as String? ?? 'PENDING',
+      driverName: (json['driverName'] as String?)?.trim().isNotEmpty == true
+          ? json['driverName'] as String
+          : 'Driver',
+    );
+  }
 }
 
 class FareEstimate {

@@ -10,6 +10,7 @@ import 'package:vero360_app/features/ride_share/presentation/providers/ride_shar
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_completion_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 import 'package:vero360_app/features/ride_share/ride_share_no_driver_help.dart';
+import 'package:vero360_app/providers/ride_share/nearby_vehicles_provider.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 /// Bottom sheet on the taxi home screen — search bar, ride options, confirm.
@@ -47,6 +48,9 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
   int _duration = 0;
   Map<String, dynamic> _estimatedFares = {};
   bool _faresLoaded = false;
+  _PickupChoice _pickupChoice = _PickupChoice.now;
+  DateTime? _customPickupStart;
+  int? _keepLookingMinutes;
 
   static const _vehicleTypes = [
     _VehicleOption(
@@ -161,6 +165,7 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
     });
 
     final lifecycle = ref.read(rideLifecycleProvider.notifier);
+    final window = _pickupWindow();
     await lifecycle.requestRide(
       pickupLat: pickup.latitude,
       pickupLng: pickup.longitude,
@@ -169,6 +174,11 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
       vehicleClass: vehicleClass,
       pickupAddress: pickup.address,
       dropoffAddress: dropoff.address,
+      pickupEarliestAt: window?.$1,
+      pickupLatestAt: window?.$2,
+      maxWaitMinutes: _pickupChoice == _PickupChoice.now
+          ? _keepLookingMinutes
+          : null,
     );
 
     if (!mounted) return;
@@ -331,6 +341,111 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
     return 'MK $buffer';
   }
 
+  (DateTime, DateTime)? _pickupWindow() {
+    final now = DateTime.now();
+    switch (_pickupChoice) {
+      case _PickupChoice.now:
+        return null;
+      case _PickupChoice.in15:
+        return (now, now.add(const Duration(minutes: 15)));
+      case _PickupChoice.in30:
+        return (now, now.add(const Duration(minutes: 30)));
+      case _PickupChoice.custom:
+        final start = _customPickupStart;
+        if (start == null) return null;
+        return (start, start.add(const Duration(minutes: 20)));
+    }
+  }
+
+  String _timeLabel(BuildContext context) {
+    switch (_pickupChoice) {
+      case _PickupChoice.now:
+        return 'Now';
+      case _PickupChoice.in15:
+        return '15 min';
+      case _PickupChoice.in30:
+        return '30 min';
+      case _PickupChoice.custom:
+        final start = _customPickupStart;
+        if (start == null) return 'Now';
+        return TimeOfDay.fromDateTime(start).format(context);
+    }
+  }
+
+  Future<void> _openTimeMenu() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: const Text('Now'),
+              onTap: () => Navigator.pop(ctx, 'now'),
+            ),
+            ListTile(
+              title: const Text('In 15 minutes'),
+              onTap: () => Navigator.pop(ctx, '15'),
+            ),
+            ListTile(
+              title: const Text('In 30 minutes'),
+              onTap: () => Navigator.pop(ctx, '30'),
+            ),
+            ListTile(
+              title: const Text('Pick a time today'),
+              onTap: () => Navigator.pop(ctx, 'pick'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || selected == null) return;
+    if (selected == 'pick') {
+      final time = await showTimePicker(
+        context: context,
+        initialTime: TimeOfDay.now(),
+      );
+      if (time == null || !mounted) return;
+      final now = DateTime.now();
+      final start = DateTime(now.year, now.month, now.day, time.hour, time.minute);
+      if (start.isBefore(now.subtract(const Duration(minutes: 1)))) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Choose a later time today')),
+        );
+        return;
+      }
+      setState(() {
+        _pickupChoice = _PickupChoice.custom;
+        _customPickupStart = start;
+        _keepLookingMinutes = null;
+      });
+      return;
+    }
+    setState(() {
+      _pickupChoice = switch (selected) {
+        '15' => _PickupChoice.in15,
+        '30' => _PickupChoice.in30,
+        _ => _PickupChoice.now,
+      };
+      _customPickupStart = null;
+      if (_pickupChoice != _PickupChoice.now) {
+        _keepLookingMinutes = null;
+      }
+    });
+  }
+
+  String _pickupEtaLabel() {
+    if (_pickupChoice != _PickupChoice.now) return 'Pickup in your window';
+    final vehicles = ref.watch(nearbyVehiclesProvider).vehicles;
+    if (vehicles.isEmpty) return '';
+    var nearest = vehicles.first.distance;
+    for (final vehicle in vehicles) {
+      if (vehicle.distance < nearest) nearest = vehicle.distance;
+    }
+    final mins = (nearest * 2.5).ceil().clamp(1, 90);
+    return 'Pickup · ~$mins min';
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasDropoff = widget.dropoffPlace != null;
@@ -361,7 +476,9 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: _SearchBar(
                   dropoffPlace: widget.dropoffPlace,
+                  timeLabel: _timeLabel(context),
                   onTap: _openSearch,
+                  onTimeTap: _openTimeMenu,
                   onClear: widget.onClearDropoff,
                 ),
               ),
@@ -407,7 +524,7 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
                           )
                         else
                           SizedBox(
-                            height: 164,
+                            height: 188,
                             child: ListView.separated(
                               scrollDirection: Axis.horizontal,
                               itemCount: _vehicleTypes.length,
@@ -419,6 +536,7 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
                                   option: v,
                                   price: _fareLabel(v.class_),
                                   durationMin: _duration,
+                                  pickupLabel: _pickupEtaLabel(),
                                   isSelected:
                                       _selectedVehicleClass == v.class_,
                                   onTap: () => setState(() {
@@ -433,6 +551,26 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
                             ),
                           ),
                         const SizedBox(height: 8),
+                        if (_pickupChoice == _PickupChoice.now)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Wrap(
+                              spacing: 8,
+                              children: [
+                                for (final minutes in const [10, 20])
+                                  ChoiceChip(
+                                    label: Text('Keep looking $minutes min'),
+                                    selected: _keepLookingMinutes == minutes,
+                                    onSelected: isBusy
+                                        ? null
+                                        : (selected) => setState(() {
+                                              _keepLookingMinutes =
+                                                  selected ? minutes : null;
+                                            }),
+                                  ),
+                              ],
+                            ),
+                          ),
                         _PaymentRow(),
                         if (_errorMessage != null) ...[
                           const SizedBox(height: 12),
@@ -688,12 +826,16 @@ class _RequestErrorBanner extends StatelessWidget {
 
 class _SearchBar extends StatelessWidget {
   final Place? dropoffPlace;
+  final String timeLabel;
   final VoidCallback onTap;
+  final VoidCallback onTimeTap;
   final VoidCallback? onClear;
 
   const _SearchBar({
     required this.dropoffPlace,
+    required this.timeLabel,
     required this.onTap,
+    required this.onTimeTap,
     this.onClear,
   });
 
@@ -749,14 +891,30 @@ class _SearchBar extends StatelessWidget {
                 margin: const EdgeInsets.symmetric(horizontal: 10),
                 color: RideShareColors.outlineVariant,
               ),
-              const Icon(Icons.schedule, size: 18, color: RideShareColors.primaryDeep),
-              const SizedBox(width: 4),
-              const Text(
-                'Now',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: RideShareColors.primaryDeep,
+              InkWell(
+                onTap: onTimeTap,
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.schedule,
+                        size: 18,
+                        color: RideShareColors.primaryDeep,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        timeLabel,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: RideShareColors.primaryDeep,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -787,6 +945,7 @@ class _VehicleCard extends StatelessWidget {
   final _VehicleOption option;
   final String price;
   final int durationMin;
+  final String pickupLabel;
   final bool isSelected;
   final VoidCallback onTap;
 
@@ -794,13 +953,14 @@ class _VehicleCard extends StatelessWidget {
     required this.option,
     required this.price,
     required this.durationMin,
+    required this.pickupLabel,
     required this.isSelected,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    final eta = durationMin > 0 ? '$durationMin min' : '…';
+    final trip = durationMin > 0 ? 'Trip · $durationMin min' : 'Trip · …';
 
     return GestureDetector(
       onTap: onTap,
@@ -859,7 +1019,7 @@ class _VehicleCard extends StatelessWidget {
             ),
             const SizedBox(height: 2),
             Text(
-              eta,
+              trip,
               style: const TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w500,
@@ -869,6 +1029,20 @@ class _VehicleCard extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
             ),
+            if (pickupLabel.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Text(
+                pickupLabel,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: RideShareColors.primaryDeep,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+              ),
+            ],
             const SizedBox(height: 4),
             FittedBox(
               fit: BoxFit.scaleDown,
@@ -1013,3 +1187,5 @@ class _QuickShortcut extends StatelessWidget {
     );
   }
 }
+
+enum _PickupChoice { now, in15, in30, custom }

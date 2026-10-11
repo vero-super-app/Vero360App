@@ -12,6 +12,7 @@ class DriverRideRequestSheet extends StatelessWidget {
   final String passengerShort;
   final VoidCallback? onAccept;
   final VoidCallback? onDecline;
+  final ValueChanged<int>? onOfferEta;
   final bool accepting;
   final bool declining;
 
@@ -23,6 +24,7 @@ class DriverRideRequestSheet extends StatelessWidget {
     this.pickupMins,
     this.onAccept,
     this.onDecline,
+    this.onOfferEta,
     this.accepting = false,
     this.declining = false,
     super.key,
@@ -184,6 +186,27 @@ class DriverRideRequestSheet extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 16),
+                if (request.pickupWindowLabel != null) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: RideShareColors.primarySoft,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      request.pickupWindowLabel!,
+                      style: const TextStyle(
+                        color: RideShareColors.primaryDeep,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -280,6 +303,32 @@ class DriverRideRequestSheet extends StatelessWidget {
                           ),
                   ),
                 ),
+                if (onOfferEta != null) ...[
+                  const SizedBox(height: 8),
+                  const Text(
+                    'I can pick up in',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: RideShareColors.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      for (final minutes in const [5, 10, 15])
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            child: OutlinedButton(
+                              onPressed: busy ? null : () => onOfferEta!(minutes),
+                              child: Text('$minutes min'),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 4),
                 TextButton(
                   onPressed: busy ? null : onDecline,

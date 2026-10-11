@@ -61,12 +61,14 @@ class _RideNotificationPopupState extends State<RideNotificationPopup>
         CurvedAnimation(parent: _slideController, curve: Curves.easeOut);
 
     _slideController.forward();
-    _timerController.forward();
-    _timerController.addStatusListener((status) {
-      if (status == AnimationStatus.completed && mounted) {
-        _dismiss();
-      }
-    });
+    if (!widget.rideRequest.hasPickupWindow) {
+      _timerController.forward();
+      _timerController.addStatusListener((status) {
+        if (status == AnimationStatus.completed && mounted) {
+          _dismiss();
+        }
+      });
+    }
 
     unawaited(_resolvePickupEta());
   }
@@ -91,6 +93,34 @@ class _RideNotificationPopupState extends State<RideNotificationPopup>
         _pickupMins = mins;
       });
     } catch (_) {}
+  }
+
+  Future<void> _offerEta(int minutes) async {
+    final taxiId = widget.rideRequest.candidateTaxiId;
+    if (taxiId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Taxi is not ready to send a pickup time')),
+      );
+      return;
+    }
+    _timerController.stop();
+    try {
+      await DriverRequestService.submitPickupOffer(
+        rideId: widget.rideRequest.id,
+        taxiId: taxiId,
+        etaMinutes: minutes,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Offered a pickup in $minutes min')),
+      );
+      await _dismiss();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not send pickup time: $e')),
+      );
+    }
   }
 
   Future<void> _dismiss() async {
@@ -140,13 +170,16 @@ class _RideNotificationPopupState extends State<RideNotificationPopup>
                         constraints: const BoxConstraints(maxWidth: 440),
                         child: DriverRideRequestSheet(
                           request: widget.rideRequest,
-                          timer: _timerController,
+                          timer: widget.rideRequest.hasPickupWindow
+                              ? null
+                              : _timerController,
                           pickupKm: _pickupKm,
                           pickupMins: _pickupMins,
                           passengerShort:
                               shortPassengerName(widget.rideRequest.passengerName),
                           onAccept: _accept,
                           onDecline: _dismiss,
+                          onOfferEta: _offerEta,
                         ),
                       ),
                     ),

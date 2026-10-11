@@ -52,6 +52,9 @@ class RideLifecycleNotifier extends Notifier<RideLifecycleState> {
     String? pickupAddress,
     String? dropoffAddress,
     String? notes,
+    DateTime? pickupEarliestAt,
+    DateTime? pickupLatestAt,
+    int? maxWaitMinutes,
   }) async {
     state = const RideRequesting();
     try {
@@ -74,6 +77,9 @@ class RideLifecycleNotifier extends Notifier<RideLifecycleState> {
         pickupAddress: pickupAddress,
         dropoffAddress: dropoffAddress,
         notes: notes,
+        pickupEarliestAt: pickupEarliestAt,
+        pickupLatestAt: pickupLatestAt,
+        maxWaitMinutes: maxWaitMinutes,
       );
 
       if (ride.isCancelled) {
@@ -95,6 +101,19 @@ class RideLifecycleNotifier extends Notifier<RideLifecycleState> {
   }
 
   // --------------- Join an existing ride (driver or resume) ---------------
+
+  Future<void> refreshActiveRide() async {
+    final rideId = _activeRideId;
+    final role = _activeRole;
+    if (rideId == null || role == null) return;
+    try {
+      final ride = await _httpService.getRideDetails(rideId);
+      if (_activeRideId != rideId) return;
+      _applyRideSnapshot(ride, role: role);
+    } catch (e) {
+      if (kDebugMode) debugPrint('[RideLifecycle] refresh error: $e');
+    }
+  }
 
   Future<void> subscribeToRide(int rideId) async {
     await subscribeToRideAsPassenger(rideId);
@@ -271,6 +290,10 @@ class RideLifecycleNotifier extends Notifier<RideLifecycleState> {
         if (_activeRideId != rideId) return;
         if (current is RideActive &&
             ride.status == current.ride.status &&
+            ride.passengerReadyAt == current.ride.passengerReadyAt &&
+            ride.driverDelayMinutes == current.ride.driverDelayMinutes &&
+            ride.maxWaitMinutes == current.ride.maxWaitMinutes &&
+            ride.pickupLatestAt == current.ride.pickupLatestAt &&
             !ride.isCompleted &&
             !ride.isCancelled) {
           return;

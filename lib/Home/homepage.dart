@@ -31,8 +31,6 @@ import 'package:vero360_app/Quickservices/jobs.dart';
 import 'package:vero360_app/Quickservices/tenders.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/verocourier.dart';
 import 'package:vero360_app/config/api_config.dart';
-import 'package:vero360_app/config/paychangu_config.dart';
-
 import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/Latest_model.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart'

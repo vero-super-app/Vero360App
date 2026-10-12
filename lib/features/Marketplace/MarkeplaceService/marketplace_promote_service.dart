@@ -8,7 +8,6 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/promote_packages_catalog.dart';
@@ -287,7 +286,7 @@ class MarketplacePromoteService {
     return doc.id;
   }
 
-  /// Confirms PayChangu payment on the server, then activates boost / FB ad order.
+  /// Confirms the PawaPay deposit on the server, then activates boost / FB ad order.
   /// Clients cannot write status=paid/active (Firestore rules + CF verify).
   static Future<void> activateAfterPayment({
     required String promoId,

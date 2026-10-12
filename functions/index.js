@@ -2096,7 +2096,7 @@ exports.onLatestArrivalFacebookPost =
 exports.onMerchantPromotionFacebookPost =
   facebookPagePost.onMerchantPromotionFacebookPost;
 
-/** PayChangu-verified promote activation — see ./activate_marketplace_promotion.js */
+/** PawaPay-verified promote activation — see ./activate_marketplace_promotion.js */
 const activateMarketplacePromotion = require('./activate_marketplace_promotion');
 exports.activateMarketplacePromotion =
   activateMarketplacePromotion.activateMarketplacePromotion;

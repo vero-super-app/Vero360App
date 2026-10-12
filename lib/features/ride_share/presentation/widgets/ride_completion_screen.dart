@@ -1,20 +1,15 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 import 'package:vero360_app/GernalServices/pawapay_payment.dart';
 import 'package:vero360_app/GernalServices/vero_rewards_service.dart';
-import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/widgets/vero_spin_reward_prompt.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
@@ -680,161 +675,6 @@ class _RideCompletionScreenState extends ConsumerState<RideCompletionScreen>
                 fontWeight: FontWeight.w600,
                 color: Colors.black87)),
       ],
-    );
-  }
-}
-
-/// In-app WebView that loads the PayChangu checkout page and polls
-/// for payment completion. Returns `true` on success, `false`/null on failure.
-class _RidePaymentWebView extends StatefulWidget {
-  final String checkoutUrl;
-  final String txRef;
-
-  const _RidePaymentWebView({
-    required this.checkoutUrl,
-    required this.txRef,
-  });
-
-  @override
-  State<_RidePaymentWebView> createState() => _RidePaymentWebViewState();
-}
-
-class _RidePaymentWebViewState extends State<_RidePaymentWebView> {
-  late final WebViewController _controller;
-  late final NavigatorState _navigator;
-  Timer? _pollTimer;
-  bool _isLoading = true;
-  bool _resultHandled = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(Colors.white)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onNavigationRequest: (req) {
-            final url = req.url.toLowerCase();
-            final uri = Uri.tryParse(req.url);
-
-            if (uri?.scheme == 'vero360' && uri?.host == 'payment-complete') {
-              _considerUrlStatus(uri!.queryParameters['status']);
-              return NavigationDecision.prevent;
-            }
-
-            if (url.contains('/vero/payments/callback') ||
-                url.contains('/vero/payments/return')) {
-              _considerUrlStatus(uri?.queryParameters['status']);
-              return NavigationDecision.prevent;
-            }
-
-            return NavigationDecision.navigate;
-          },
-          onProgress: (p) {
-            if (mounted) setState(() => _isLoading = p < 100);
-          },
-          onPageStarted: (_) {
-            if (mounted) setState(() => _isLoading = true);
-          },
-          onPageFinished: (url) {
-            if (mounted) setState(() => _isLoading = false);
-            final lower = url.toLowerCase();
-            if (lower.contains('/vero/payments/callback') ||
-                lower.contains('/vero/payments/return')) {
-              final uri = Uri.tryParse(url);
-              _considerUrlStatus(uri?.queryParameters['status']);
-            }
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse(widget.checkoutUrl));
-
-    _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      _pollPaymentStatus();
-    });
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _navigator = Navigator.of(context);
-  }
-
-  @override
-  void dispose() {
-    _pollTimer?.cancel();
-    super.dispose();
-  }
-
-  Future<void> _pollPaymentStatus() async {
-    if (!mounted || _resultHandled) return;
-    try {
-      final response = await http.get(
-        PayChanguConfig.verifyUri(widget.txRef),
-        headers: PayChanguConfig.authHeaders,
-      );
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        final dataNode = data['data'] is Map
-            ? data['data'] as Map<String, dynamic>
-            : <String, dynamic>{};
-        final status = (dataNode['status'] ??
-                dataNode['payment_status'] ??
-                '')
-            .toString()
-            .toLowerCase();
-
-        if ({'successful', 'success', 'paid', 'completed'}.contains(status)) {
-          _handleResult(true);
-        } else if (status == 'failed' || status == 'cancelled') {
-          _handleResult(false);
-        }
-      }
-    } catch (_) {}
-  }
-
-  void _considerUrlStatus(String? rawStatus) {
-    final s = (rawStatus ?? '').toLowerCase().trim();
-    if (s == 'failed' || s == 'cancelled') {
-      _handleResult(false);
-      return;
-    }
-    if ({'successful', 'success', 'paid', 'completed'}.contains(s)) {
-      _handleResult(true);
-    }
-  }
-
-  void _handleResult(bool success) {
-    if (_resultHandled) return;
-    _resultHandled = true;
-    _pollTimer?.cancel();
-    try {
-      _navigator.pop(success);
-    } catch (e) {
-      if (kDebugMode) debugPrint('[RidePaymentWebView] pop error: $e');
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Complete Payment'),
-        backgroundColor: const Color(0xFFFF8A00),
-        leading: IconButton(
-          icon: const Icon(Icons.close),
-          onPressed: () => _handleResult(false),
-        ),
-      ),
-      body: Stack(
-        children: [
-          WebViewWidget(controller: _controller),
-          if (_isLoading)
-            const Center(child: CircularProgressIndicator()),
-        ],
-      ),
     );
   }
 }

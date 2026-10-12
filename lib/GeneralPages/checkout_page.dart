@@ -16,7 +16,6 @@ import 'package:vero360_app/GeneralPages/address.dart';
 import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.model.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
-import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
@@ -706,7 +705,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     return ok;
   }
 
-  // ── Pay routing (Paychangu handles card/mobile on their page) ─────────────
+  // ── Pay routing (PawaPay phone prompt) ─────────────
   Future<void> _onPayPressed() async {
     if (_outOfStock) {
       ToastHelper.showCustomToast(
@@ -740,11 +739,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
     }
     if (!await showEscrowPayNoticeDialog(context)) return;
     if (!mounted) return;
-    await _startPayChanguPayment();
+    await _startPawaPayPayment();
   }
 
-  // ── Paychangu API (same flow as checkout_from_cart_page) ─────────────────
-  Future<void> _startPayChanguPayment() async {
+  Future<void> _startPawaPayPayment() async {
     setState(() => _submitting = true);
 
     try {

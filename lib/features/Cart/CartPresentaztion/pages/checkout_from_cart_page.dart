@@ -2554,30 +2554,104 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   Future<void> _onBackPressed() async {
     final isCartCheckout = widget.cartItemsForMerchantCredit != null &&
         widget.cartItemsForMerchantCredit!.isNotEmpty;
-    if (isCartCheckout) {
-      final goBack = await showDialog<bool>(
+    final goBack = await showDialog<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Cancel payment?'),
-          content: const Text(
-            'You can complete payment later from your cart.',
+        barrierDismissible: true,
+        builder: (ctx) => Dialog(
+          backgroundColor: Colors.white,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Stay'),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFF8A00).withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.payments_rounded,
+                    color: Color(0xFFFF8A00),
+                    size: 30,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'Cancel payment?',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 20,
+                    letterSpacing: -0.3,
+                    color: Color(0xFF16284C),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  isCartCheckout
+                      ? 'You can complete payment later from your cart.'
+                      : 'You can come back and pay when you are ready.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    height: 1.45,
+                    color: Color(0xFF8A5A32),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: FilledButton(
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFFFF8A00),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      textStyle: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15,
+                      ),
+                    ),
+                    child: const Text('Stay and pay'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  height: 46,
+                  child: TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    style: TextButton.styleFrom(
+                      foregroundColor: const Color(0xFF16284C),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      textStyle: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                    child: Text(
+                      isCartCheckout ? 'Back to checkout' : 'Leave payment',
+                    ),
+                  ),
+                ),
+              ],
             ),
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Back to checkout'),
-            ),
-          ],
+          ),
         ),
       );
-      if (goBack == true && mounted) Navigator.of(context).pop();
-    } else {
-      if (mounted) Navigator.of(context).pop();
-    }
+    if (goBack == true && mounted) Navigator.of(context).pop();
   }
 
   Widget _pawaPayBody() {
@@ -2602,23 +2676,24 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         _onBackPressed();
       },
       child: Scaffold(
-        backgroundColor: _usePawaPay ? const Color(0xFFF6F4F0) : null,
+        backgroundColor: _usePawaPay ? const Color(0xFFFFF8F2) : null,
         appBar: AppBar(
           elevation: 0,
           scrolledUnderElevation: 0,
           backgroundColor: _usePawaPay
-              ? const Color(0xFFF6F4F0)
+              ? const Color(0xFFFFF8F2)
               : const Color(0xFFFF8A00),
-          foregroundColor: _usePawaPay ? const Color(0xFF161513) : Colors.white,
+          foregroundColor: _usePawaPay ? const Color(0xFF16284C) : Colors.white,
           centerTitle: false,
           titleSpacing: 8,
           title: _usePawaPay
               ? const Text(
-                  'Pay',
+                  'Payment',
                   style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 17,
-                    color: Color(0xFF161513),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                    letterSpacing: -0.2,
+                    color: Color(0xFF16284C),
                   ),
                 )
               : const Row(

@@ -31,7 +31,9 @@
       { "source": "/stays", "destination": "/open.html" },
       { "source": "/stays/**", "destination": "/open.html" },
       { "source": "/marketplace", "destination": "/open.html" },
-      { "source": "/marketplace/**", "destination": "/open.html" }
+      { "source": "/marketplace/**", "destination": "/open.html" },
+      { "source": "/food", "destination": "/open.html" },
+      { "source": "/food/**", "destination": "/open.html" }
     ]
   }
 }

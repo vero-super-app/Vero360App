@@ -766,7 +766,7 @@ class StoryService {
       } else if (bytes.isNotEmpty) {
         mediaUrl = await _uploadVideoToStorage(merchantId, bytes);
       } else {
-        throw Exception('Choose a video from your gallery.');
+        throw Exception('Choose or record a video first.');
       }
     } else {
       bytes = await prepareStoryImageBytes(bytes);
@@ -919,30 +919,67 @@ class StoryService {
     return await ref.getDownloadURL();
   }
 
-  Future<String> _uploadVideoFile(String merchantId, String filePath) async {
-    final file = File(filePath);
-    if (!file.existsSync()) {
-      throw Exception('That video is no longer on this phone.');
+  /// Story videos go in profile_photos, which this account can already write.
+  /// merchant_stories/ is denied by the current storage rules, so video posts
+  /// failed while photos still saved through the Firestore fallback.
+  String _storyVideoStoragePath(String merchantId, String extension) {
+    final ext = extension.replaceAll('.', '').toLowerCase();
+    final safe = ext == 'mov' || ext == 'webm' || ext == '3gp' ? ext : 'mp4';
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    return 'profile_photos/${merchantId}_story_$stamp.$safe';
+  }
+
+  String _videoContentType(String extension) {
+    switch (extension.replaceAll('.', '').toLowerCase()) {
+      case 'mov':
+        return 'video/quicktime';
+      case 'webm':
+        return 'video/webm';
+      case '3gp':
+        return 'video/3gpp';
+      default:
+        return 'video/mp4';
     }
-    final now = DateTime.now();
-    final path = '$_storagePathPrefix/$merchantId/${now.millisecondsSinceEpoch}.mp4';
-    final ref = _storage.ref().child(path);
-    await ref.putFile(
-      file,
-      SettableMetadata(contentType: 'video/mp4'),
-    );
+  }
+
+  String _videoExtension(String filePath) {
+    final name = filePath.split('/').last.split('?').first;
+    final dot = name.lastIndexOf('.');
+    if (dot < 0 || dot == name.length - 1) return 'mp4';
+    return name.substring(dot + 1).toLowerCase();
+  }
+
+  Future<String> _uploadVideoFile(String merchantId, String filePath) async {
+    final ext = _videoExtension(filePath);
+    final ref = _storage.ref().child(_storyVideoStoragePath(merchantId, ext));
+    final meta = SettableMetadata(contentType: _videoContentType(ext));
+    final file = File(filePath);
+    try {
+      if (file.existsSync()) {
+        await ref.putFile(file, meta);
+      } else {
+        throw const FileSystemException('missing');
+      }
+    } catch (_) {
+      if (!file.existsSync()) {
+        throw Exception('That video is no longer on this phone.');
+      }
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) {
+        throw Exception('That video is empty. Record or choose another one.');
+      }
+      await ref.putData(bytes, meta);
+    }
     return ref.getDownloadURL();
   }
 
   Future<String> _uploadVideoToStorage(String merchantId, Uint8List videoBytes) async {
-    final now = DateTime.now();
-    final path = '$_storagePathPrefix/$merchantId/${now.millisecondsSinceEpoch}.mp4';
-    final ref = _storage.ref().child(path);
+    final ref = _storage.ref().child(_storyVideoStoragePath(merchantId, 'mp4'));
     await ref.putData(
       videoBytes,
       SettableMetadata(contentType: 'video/mp4'),
     );
-    return await ref.getDownloadURL();
+    return ref.getDownloadURL();
   }
 
   /// Record that a viewer saw this story (call when opening/viewing a story).

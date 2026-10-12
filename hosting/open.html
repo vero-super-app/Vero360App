@@ -73,6 +73,33 @@
     </div>
   </main>
   <script>
+    function money(value) { return Math.round(value * 100) / 100; }
+
+    function commissionRate(price) {
+      if (price <= 0) return 0;
+      if (price <= 5000) return 0.1;
+      if (price <= 10000) return 0.09;
+      if (price <= 20000) return 0.08;
+      if (price <= 50000) return 0.07;
+      if (price <= 100000) return 0.06;
+      if (price <= 500000) return 0.05;
+      if (price <= 2000000) return 0.04;
+      if (price <= 10000000) return 0.033;
+      return 0.03;
+    }
+
+    // Same bands as the app. A price that already has a thousands comma was
+    // shared as the customer total, so it is shown as-is.
+    function customerPriceLabel(raw) {
+      var text = String(raw || '').trim();
+      if (!text) return '';
+      if (text.indexOf(',') >= 0) return text;
+      var price = money(Number(text.replace(/[^\d.]/g, '')) || 0);
+      if (!price) return text;
+      var total = Math.round(price + money(price * commissionRate(price)));
+      return total.toLocaleString('en-US');
+    }
+
     (function () {
       var params = new URLSearchParams(location.search);
       var segs = location.pathname.replace(/\/+$/, '').split('/').filter(Boolean);
@@ -92,7 +119,10 @@
       if (name) document.getElementById('title').textContent = name;
       else if (!isStay) document.getElementById('title').textContent = 'Vero360 listing';
       if (loc) document.getElementById('loc').textContent = loc;
-      if (price) document.getElementById('price').textContent = 'MWK ' + price + (period ? ' ' + period : '');
+      if (price) {
+        document.getElementById('price').textContent =
+          'MWK ' + customerPriceLabel(price) + (period ? ' ' + period : '');
+      }
       if (img && /^https?:/i.test(img)) {
         var hero = document.getElementById('hero');
         hero.src = img;

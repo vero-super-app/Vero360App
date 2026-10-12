@@ -6,8 +6,6 @@ import 'package:vero360_app/features/Restraurants/RestraurantsService/food_servi
 class MarketplaceHubLoader {
   MarketplaceHubLoader._();
 
-  static const int perVerticalCap = 24;
-
   static Future<List<MarketplaceFeedItem>> loadFood({
     String query = '',
     double? latitude,
@@ -28,10 +26,7 @@ class MarketplaceHubLoader {
               longitude: longitude,
               attachPrep: false,
             );
-      return list
-          .take(perVerticalCap)
-          .map(MarketplaceFeedItem.fromFood)
-          .toList();
+      return list.map(MarketplaceFeedItem.fromFood).toList();
     } catch (_) {
       return const [];
     }
@@ -57,14 +52,10 @@ class MarketplaceHubLoader {
                       .toLowerCase();
               return hay.contains(lower);
             })
-            .take(perVerticalCap)
             .map(MarketplaceFeedItem.fromStay)
             .toList();
       }
-      return list
-          .take(perVerticalCap)
-          .map(MarketplaceFeedItem.fromStay)
-          .toList();
+      return list.map(MarketplaceFeedItem.fromStay).toList();
     } catch (_) {
       return const [];
     }
@@ -88,7 +79,7 @@ class MarketplaceHubLoader {
   /// 2-column grid does not look like "products left / food right".
   static List<MarketplaceFeedItem> mergeMixed(
     List<List<MarketplaceFeedItem>> sources, {
-    int maxTotal = 120,
+    int maxTotal = 2000,
   }) {
     final pooled = <MarketplaceFeedItem>[];
     final seen = <String>{};

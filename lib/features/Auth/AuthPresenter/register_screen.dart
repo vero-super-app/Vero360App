@@ -199,10 +199,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   String? _validateIdentifier(String? v) {
     final s = v?.trim() ?? '';
-    if (s.isEmpty) return 'Email or phone number is required';
+    if (s.isEmpty) return 'Email address is required';
     if (_looksLikeEmail(s)) return null;
     if (_looksLikePhone(s)) return null;
-    return 'Enter a valid email or phone (08/09xxxxxxxx or +2659xxxxxxxx)';
+    return 'Enter a valid email address';
   }
 
   String? _validatePassword(String? v) => SignupPasswordRules.validate(v);
@@ -968,7 +968,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (email.isEmpty && phone.isEmpty) {
       ToastHelper.showCustomToast(
         context,
-        'Enter email or phone number.',
+        'Enter an email address.',
         isSuccess: false,
         errorMessage: '',
       );
@@ -1409,9 +1409,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               keyboardType: TextInputType.emailAddress,
                               textInputAction: TextInputAction.next,
                               decoration: _dec(
-                                label: 'Phone number or email',
-                                hint: '09xxxxxxxx or you@vero360.app',
-                                icon: Icons.contact_mail_outlined,
+                                label: 'Email address',
+                                hint: 'you@vero360.app',
+                                icon: Icons.mail_outline_rounded,
                               ),
                               validator: _validateIdentifier,
                             ),

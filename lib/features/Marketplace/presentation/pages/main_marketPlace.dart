@@ -572,8 +572,12 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   List<MarketplaceDetailModel> _productCache = const [];
   DateTime? _productCacheAt;
   static const Duration _kProductCacheTtl = Duration(minutes: 3);
-  /// Cap first hub paint so Firestore payload stays small.
-  static const int _kHubProductLimit = 100;
+  /// Products load in pages so the grid is not stuck on the first slice.
+  static const int _kProductPage = 200;
+  static const int _kProductCeiling = 2000;
+  int _productLimit = _kProductPage;
+  bool _loadingMoreProducts = false;
+  bool _productsExhausted = false;
   int _searchGen = 0;
   int _loadGen = 0;
   bool _comfortableView = false;
@@ -1054,7 +1058,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     Query<Map<String, dynamic>> q = _firestore
         .collection('marketplace_items')
         .orderBy('createdAt', descending: true);
-    if (limited) q = q.limit(_kHubProductLimit);
+    if (limited) q = q.limit(_productLimit);
     return q;
   }
 
@@ -1293,6 +1297,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     _scrollCtrl.addListener(() {
       final show = _scrollCtrl.offset > 20;
       if (show != _showHeaderBlur) setState(() => _showHeaderBlur = show);
+      _maybeLoadMoreProducts();
     });
 
     _startSuggestionTimer();
@@ -1346,7 +1351,43 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
           _lastShopHits = result.shops;
         }
       });
+      _continueProductPages(snap);
     });
+  }
+
+  void _maybeLoadMoreProducts() {
+    if (_productsExhausted ||
+        _loadingMoreProducts ||
+        _productLimit >= _kProductCeiling) {
+      return;
+    }
+    if (!_scrollCtrl.hasClients) return;
+    final pos = _scrollCtrl.position;
+    if (pos.maxScrollExtent - pos.pixels > 900) return;
+    if (_hubVertical == MarketplaceHubVertical.food ||
+        _hubVertical == MarketplaceHubVertical.stays) {
+      return;
+    }
+    _loadingMoreProducts = true;
+    _productLimit = (_productLimit + _kProductPage).clamp(0, _kProductCeiling);
+    _startItemsListener();
+  }
+
+  void _continueProductPages(QuerySnapshot<Map<String, dynamic>> snap) {
+    if (snap.metadata.isFromCache) return;
+    _loadingMoreProducts = false;
+    if (snap.docs.length < _productLimit) {
+      _productsExhausted = true;
+      return;
+    }
+    if (_productLimit >= _kProductCeiling) return;
+    if (_hubVertical == MarketplaceHubVertical.food ||
+        _hubVertical == MarketplaceHubVertical.stays) {
+      return;
+    }
+    _loadingMoreProducts = true;
+    _productLimit = (_productLimit + _kProductPage).clamp(0, _kProductCeiling);
+    _startItemsListener();
   }
 
   @override

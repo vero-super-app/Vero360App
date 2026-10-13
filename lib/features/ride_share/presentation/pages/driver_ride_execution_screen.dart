@@ -36,6 +36,7 @@ class _DriverRideExecutionScreenState
   GoogleMapController? _mapController;
   bool _hasNavigatedAway = false;
   String? _lastActionError;
+  StreamSubscription<Map<String, dynamic>>? _flexibleSub;
 
   @override
   void initState() {
@@ -45,14 +46,39 @@ class _DriverRideExecutionScreenState
       ref
           .read(rideLifecycleProvider.notifier)
           .subscribeToRideAsDriver(widget.rideId);
+      _flexibleSub = ref
+          .read(rideShareHttpServiceProvider)
+          .flexibleEventStream
+          .listen((event) {
+        if (!mounted) return;
+        if ('${event['rideId']}' != '${widget.rideId}') return;
+        unawaited(ref.read(rideLifecycleProvider.notifier).refreshActiveRide());
+      });
     });
   }
 
   @override
   void dispose() {
+    _flexibleSub?.cancel();
     ref.read(rideLifecycleProvider.notifier).detachScreen();
     _mapController?.dispose();
     super.dispose();
+  }
+
+  Future<void> _setDelay(int minutes) async {
+    try {
+      await ref.read(rideShareHttpServiceProvider).updateRideTiming(
+            rideId: widget.rideId,
+            driverDelayMinutes: minutes,
+          );
+      if (!mounted) return;
+      await ref.read(rideLifecycleProvider.notifier).refreshActiveRide();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(UserFacingError.from(e))),
+      );
+    }
   }
 
   Place _placeFromRide({
@@ -394,6 +420,43 @@ class _DriverRideExecutionScreenState
                         fontSize: 13,
                       ),
                     ),
+                  ),
+                ],
+                if (ride.passengerReadyAt != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Text(
+                      ride.passengerReadyAt!.isAfter(
+                        DateTime.now().add(const Duration(seconds: 30)),
+                      )
+                          ? 'Passenger needs about 5 more minutes'
+                          : 'Passenger is ready',
+                      style: const TextStyle(
+                        color: RideShareColors.primaryDeep,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                if (state.isAccepted || state.isDriverArrived) ...[
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      ChoiceChip(
+                        label: const Text('On time'),
+                        selected: ride.driverDelayMinutes == 0,
+                        onSelected: state.isLoading
+                            ? null
+                            : (_) => _setDelay(0),
+                      ),
+                      ChoiceChip(
+                        label: const Text('About 5 min late'),
+                        selected: ride.driverDelayMinutes == 5,
+                        onSelected: state.isLoading
+                            ? null
+                            : (_) => _setDelay(5),
+                      ),
+                    ],
                   ),
                 ],
                 const SizedBox(height: 16),

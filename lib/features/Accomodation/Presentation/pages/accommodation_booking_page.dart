@@ -13,7 +13,6 @@ import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_amenities.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_offers.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/widgets/accommodation_offer_gallery.dart';

@@ -1,18 +1,14 @@
 /**
- * Activate a marketplace promote package only after PayChangu confirms payment.
+ * Activate a marketplace promote package only after PawaPay confirms payment.
  * Clients must not write status=paid/active themselves.
  *
- * Secret: set Firebase secret PAYCHANGU_SECRET_KEY (test or live key).
  * Deploy: firebase deploy --only functions:activateMarketplacePromotion
  */
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
-const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
 
 const FUNCTIONS_SERVICE_ACCOUNT =
   'vero360app-ca423@appspot.gserviceaccount.com';
-
-const PAYCHANGU_SECRET_KEY = defineSecret('PAYCHANGU_SECRET_KEY');
 
 function verticalItemsCollection(vertical) {
   const v = String(vertical || 'marketplace').trim().toLowerCase();
@@ -42,64 +38,34 @@ function isAlreadyActive(status) {
   return s === 'paid' || s === 'active' || s === 'fulfilled';
 }
 
-function paymentSucceeded(payload) {
-  // Prefer nested payment status — top-level "success" often means API OK only.
-  const nested = String(
-    payload?.data?.status || payload?.data?.payment_status || '',
-  )
-    .trim()
-    .toLowerCase();
-  if (
-    nested === 'success' ||
-    nested === 'successful' ||
-    nested === 'paid' ||
-    nested === 'completed'
-  ) {
-    return true;
-  }
-  if (nested) return false;
-
-  const status = String(payload?.status || '')
-    .trim()
-    .toLowerCase();
-  return (
-    status === 'successful' ||
-    status === 'paid' ||
-    status === 'completed'
-  );
-}
-
-async function verifyPayChanguTx(txRef, secret) {
-  const url = `https://api.paychangu.com/transaction/verify/${encodeURIComponent(txRef)}`;
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: {
-      Accept: 'application/json',
-      Authorization: secret.toLowerCase().startsWith('bearer ')
-        ? secret
-        : `Bearer ${secret}`,
-    },
+async function verifyPawaPayDeposit(txRef, uid, expectedAmount) {
+  const snap = await admin
+    .firestore()
+    .collection('pawapay_deposits')
+    .where('reference', '==', txRef)
+    .limit(5)
+    .get();
+  const hit = snap.docs.find((doc) => {
+    const data = doc.data() || {};
+    return (
+      String(data.userId || '') === uid &&
+      String(data.status || '').toLowerCase() === 'completed'
+    );
   });
-  const text = await res.text();
-  let json = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch (_) {
-    json = null;
-  }
-  if (!res.ok) {
+  if (!hit) {
     throw new HttpsError(
       'failed-precondition',
-      `Payment verify failed (${res.status}).`,
+      'Payment not confirmed yet. Approve the prompt on your phone, then try again.',
     );
   }
-  if (!paymentSucceeded(json || {})) {
+  const paid = Number((hit.data() || {}).amount || 0);
+  if (expectedAmount > 0 && Math.abs(paid - expectedAmount) > 1) {
     throw new HttpsError(
       'failed-precondition',
-      'Payment not confirmed yet. Try again after PayChangu shows success.',
+      'The paid amount does not match this promotion.',
     );
   }
-  return json;
+  return hit.id;
 }
 
 function parseTimestampMs(raw) {
@@ -212,14 +178,11 @@ async function activatePromoDoc({ promoRef, promo, txRef, uid }) {
   };
 }
 
-exports.PAYCHANGU_SECRET_KEY = PAYCHANGU_SECRET_KEY;
-
 exports.activateMarketplacePromotion = onCall(
   {
     timeoutSeconds: 45,
     memory: '256MiB',
     serviceAccount: FUNCTIONS_SERVICE_ACCOUNT,
-    secrets: [PAYCHANGU_SECRET_KEY],
   },
   async (request) => {
     if (!request.auth || !request.auth.uid) {
@@ -234,19 +197,6 @@ exports.activateMarketplacePromotion = onCall(
     }
     if (!txRef) {
       throw new HttpsError('invalid-argument', 'txRef is required.');
-    }
-
-    let secret = '';
-    try {
-      secret = String(PAYCHANGU_SECRET_KEY.value() || '').trim();
-    } catch (_) {
-      secret = String(process.env.PAYCHANGU_SECRET_KEY || '').trim();
-    }
-    if (!secret) {
-      throw new HttpsError(
-        'failed-precondition',
-        'PAYCHANGU_SECRET_KEY is not configured on Cloud Functions.',
-      );
     }
 
     const promoRef = admin
@@ -276,7 +226,11 @@ exports.activateMarketplacePromotion = onCall(
       );
     }
 
-    await verifyPayChanguTx(txRef, secret);
+    await verifyPawaPayDeposit(
+      txRef,
+      uid,
+      Number(promo.amountMwk || 0) || 0,
+    );
     const result = await activatePromoDoc({
       promoRef,
       promo,

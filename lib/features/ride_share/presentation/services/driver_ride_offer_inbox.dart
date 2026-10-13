@@ -90,6 +90,11 @@ class DriverRideOfferInbox {
       estimatedFare: d(data['estimatedFare']),
       passengerPhone: data['passengerPhone']?.toString(),
       candidateTaxiId: _parseInt(data['taxiId'] ?? data['candidateTaxiId']),
+      pickupEarliestAt: DateTime.tryParse(
+        '${data['pickupEarliestAt'] ?? ''}',
+      ),
+      pickupLatestAt: DateTime.tryParse('${data['pickupLatestAt'] ?? ''}'),
+      maxWaitMinutes: _parseInt(data['maxWaitMinutes']),
     );
   }
 

@@ -319,12 +319,17 @@ class DriverService {
 
   Future<Map<String, dynamic>> setTaxiAvailability(
     int taxiId,
-    bool isAvailable,
-  ) async {
+    bool isAvailable, {
+    DateTime? availableUntil,
+  }) async {
     try {
+      final data = <String, dynamic>{'isAvailable': isAvailable};
+      if (availableUntil != null) {
+        data['availableUntil'] = availableUntil.toUtc().toIso8601String();
+      }
       final response = await _dio.put(
         '/vero/taxis/$taxiId/availability',
-        data: {'isAvailable': isAvailable},
+        data: data,
       );
       return response.data as Map<String, dynamic>;
     } catch (e) {

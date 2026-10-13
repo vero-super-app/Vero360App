@@ -1098,19 +1098,18 @@ class _LoginScreenState extends State<LoginScreen> {
               autofillHints: const [
                 AutofillHints.username,
                 AutofillHints.email,
-                AutofillHints.telephoneNumber,
               ],
               textInputAction: TextInputAction.next,
               decoration: _fieldDecoration(
-                label: 'Phone number or email',
-                hint: '09xxxxxxxx or you@vero.com',
-                icon: Icons.person_outline,
+                label: 'Email address',
+                hint: 'you@vero.com',
+                icon: Icons.mail_outline_rounded,
               ),
               validator: (v) {
                 final val = v?.trim() ?? '';
-                if (val.isEmpty) return 'Email or phone is required';
+                if (val.isEmpty) return 'Email address is required';
                 if (!_looksLikeEmail(val) && !_looksLikePhone(val)) {
-                  return 'Enter a valid email or phone number';
+                  return 'Enter a valid email address';
                 }
                 return null;
               },

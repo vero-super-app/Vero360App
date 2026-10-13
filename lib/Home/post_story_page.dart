@@ -1,4 +1,4 @@
-// Merchant post story — photos or a gallery video, caption, 24h story.
+// Merchant post story — photos, a gallery video, or a camera recording.
 
 import 'dart:io';
 import 'dart:typed_data';
@@ -11,7 +11,7 @@ import 'package:vero360_app/Home/story_service.dart';
 import 'package:vero360_app/Home/story_viewer_screen.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
-/// One slide in the composer (before posting) — photo or gallery video.
+/// One slide in the composer (before posting) — photo or video.
 class _DraftSlide {
   final Uint8List bytes;
   final String mediaType;
@@ -632,6 +632,66 @@ class _PostStoryPageState extends State<PostStoryPage> {
                 ),
               ),
               InkWell(
+                onTap: () => Navigator.of(ctx).pop('video_camera'),
+                borderRadius: BorderRadius.circular(16),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFFF8A00),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.videocam_rounded,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Record video',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w900,
+                                  color: Color(0xFF222222),
+                                ),
+                              ),
+                              SizedBox(height: 2),
+                              Text(
+                                'Up to 1 minute',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF8A5A32),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              InkWell(
                 onTap: () => Navigator.of(ctx).pop('video_gallery'),
                 borderRadius: BorderRadius.circular(16),
                 child: Padding(
@@ -687,22 +747,36 @@ class _PostStoryPageState extends State<PostStoryPage> {
       await _addSlide(ImageSource.camera);
     } else if (choice == 'photo_gallery') {
       await _addSlide(ImageSource.gallery);
+    } else if (choice == 'video_camera') {
+      await _addVideo(ImageSource.camera);
     } else if (choice == 'video_gallery') {
-      await _addVideoFromGallery();
+      await _addVideo(ImageSource.gallery);
     }
   }
 
-  Future<void> _addVideoFromGallery() async {
+  Future<void> _addVideo(ImageSource source) async {
     if (_posting) return;
     try {
-      final file = await _picker.pickVideo(source: ImageSource.gallery);
+      final file = await _picker.pickVideo(
+        source: source,
+        maxDuration: const Duration(minutes: 1),
+      );
       if (file == null || !mounted) return;
-      final length = await File(file.path).length();
+      final length = await file.length();
       const maxBytes = 40 * 1024 * 1024;
       if (length > maxBytes) {
         ToastHelper.showCustomToast(
           context,
-          'That video is too large. Choose one under 40 MB.',
+          'That video is too large. Use one under 40 MB.',
+          isSuccess: false,
+          errorMessage: '',
+        );
+        return;
+      }
+      if (length <= 0) {
+        ToastHelper.showCustomToast(
+          context,
+          'That video is empty. Record or choose another one.',
           isSuccess: false,
           errorMessage: '',
         );

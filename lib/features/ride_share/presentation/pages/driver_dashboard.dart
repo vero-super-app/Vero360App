@@ -54,6 +54,15 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
 
   bool get _isOnline => ref.watch(driverOnlineSessionProvider).isOnline;
 
+  String _onlineChipLabel() {
+    final until = ref.watch(driverOnlineSessionProvider).availableUntil;
+    if (until == null) return 'You\'re live, waiting for requests';
+    final local = until.toLocal();
+    final h = local.hour.toString().padLeft(2, '0');
+    final m = local.minute.toString().padLeft(2, '0');
+    return 'You\'re live until $h:$m';
+  }
+
   Position? get _lastPosition =>
       _detectedPosition ??
       ref.watch(driverOnlineSessionProvider).lastPosition;
@@ -657,6 +666,7 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
               Positioned(
                 top: 14,
                 left: 14,
+                right: 72,
                 child: DriverGlassChip(
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -671,16 +681,48 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Text(
-                        _isOnline
-                            ? 'You\'re live, waiting for requests'
-                            : 'Go online to receive ride offers',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: RideShareColors.titleText,
+                      Flexible(
+                        child: Text(
+                          _isOnline
+                              ? _onlineChipLabel()
+                              : 'Go online to receive ride offers',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: RideShareColors.titleText,
+                          ),
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
+                      if (_isOnline)
+                        PopupMenuButton<int>(
+                          tooltip: 'Online until',
+                          padding: EdgeInsets.zero,
+                          onSelected: (hours) async {
+                            final until = hours == 0
+                                ? null
+                                : DateTime.now().add(Duration(hours: hours));
+                            try {
+                              await ref
+                                  .read(driverOnlineSessionProvider.notifier)
+                                  .setAvailableUntil(until);
+                            } catch (e) {
+                              if (!mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Could not update hours: $e')),
+                              );
+                            }
+                          },
+                          itemBuilder: (context) => const [
+                            PopupMenuItem(value: 0, child: Text('No end time')),
+                            PopupMenuItem(value: 2, child: Text('Online for 2 hours')),
+                            PopupMenuItem(value: 4, child: Text('Online for 4 hours')),
+                          ],
+                          child: const Padding(
+                            padding: EdgeInsets.only(left: 4),
+                            child: Icon(Icons.schedule, size: 16),
+                          ),
+                        ),
                     ],
                   ),
                 ),

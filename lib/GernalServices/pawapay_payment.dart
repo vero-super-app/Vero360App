@@ -98,6 +98,10 @@ class PawaPayPayment {
 }
 
 class PawaPayCheckoutView extends StatelessWidget {
+  static const _orange = Color(0xFFFF8A00);
+  static const _navy = Color(0xFF16284C);
+  static const _page = Color(0xFFFFF8F2);
+
   final int amountMwk;
   final TextEditingController phoneController;
   final String operatorId;
@@ -123,62 +127,34 @@ class PawaPayCheckoutView extends StatelessWidget {
   Widget build(BuildContext context) {
     final bottom = MediaQuery.paddingOf(context).bottom;
     return ColoredBox(
-      color: const Color(0xFFF6F4F0),
-      child: Column(
+      color: _page,
+      child: ListView(
+        padding: EdgeInsets.fromLTRB(20, 8, 20, 16 + bottom),
         children: [
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-              children: [
-                if (waiting) _WaitingPanel(phone: phoneController.text.trim())
+                if (waiting)
+                  _WaitingPanel(phone: phoneController.text.trim())
                 else ...[
+                  _AmountHero(amountMwk: amountMwk),
+                  const SizedBox(height: 26),
                   const Text(
-                    'Amount',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF6B6760),
-                      letterSpacing: 0.2,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'MWK ${PawaPayPayment.formatMwk(amountMwk)}',
-                    style: const TextStyle(
-                      fontSize: 40,
-                      height: 1.05,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -1.2,
-                      color: Color(0xFF161513),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'A prompt will arrive on this number. Approve it to finish payment.',
+                    'Pay with',
                     style: TextStyle(
                       fontSize: 15,
-                      height: 1.4,
-                      color: Color(0xFF5C5852),
+                      fontWeight: FontWeight.w800,
+                      color: _navy,
+                      letterSpacing: -0.2,
                     ),
                   ),
-                  const SizedBox(height: 28),
-                  const Text(
-                    'Network',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF161513),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                   Row(
                     children: [
                       Expanded(
                         child: _NetworkCard(
                           title: 'Airtel Money',
-                          hint: '099',
+                          hint: 'Numbers starting 099',
                           color: const Color(0xFFED1C24),
-                          selected: operatorId == PawaPayPayment.airtelOperatorId,
+                          selected:
+                              operatorId == PawaPayPayment.airtelOperatorId,
                           onTap: busy
                               ? null
                               : () => onOperatorChanged(
@@ -186,11 +162,11 @@ class PawaPayCheckoutView extends StatelessWidget {
                                   ),
                         ),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 12),
                       Expanded(
                         child: _NetworkCard(
                           title: 'TNM Mpamba',
-                          hint: '088',
+                          hint: 'Numbers starting 088',
                           color: const Color(0xFFF5B800),
                           selected: operatorId == PawaPayPayment.tnmOperatorId,
                           onTap: busy
@@ -206,9 +182,10 @@ class PawaPayCheckoutView extends StatelessWidget {
                   const Text(
                     'Mobile number',
                     style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF161513),
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      color: _navy,
+                      letterSpacing: -0.2,
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -228,13 +205,18 @@ class PawaPayCheckoutView extends StatelessWidget {
                     },
                     style: const TextStyle(
                       fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.3,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.4,
+                      color: _navy,
                     ),
                     decoration: InputDecoration(
                       hintText: '099 000 0000',
+                      prefixIcon: const Icon(
+                        Icons.phone_iphone_rounded,
+                        color: _orange,
+                      ),
                       hintStyle: const TextStyle(
-                        color: Color(0xFFB0AAA2),
+                        color: Color(0xFFC4B8A8),
                         fontWeight: FontWeight.w500,
                       ),
                       filled: true,
@@ -244,19 +226,16 @@ class PawaPayCheckoutView extends StatelessWidget {
                         vertical: 18,
                       ),
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        borderSide: const BorderSide(color: Color(0xFFE6E1D8)),
+                        borderRadius: BorderRadius.circular(18),
+                        borderSide: BorderSide.none,
                       ),
                       enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        borderSide: const BorderSide(color: Color(0xFFE6E1D8)),
+                        borderRadius: BorderRadius.circular(18),
+                        borderSide: const BorderSide(color: Color(0xFFFFE0C2)),
                       ),
                       focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        borderSide: const BorderSide(
-                          color: Color(0xFF161513),
-                          width: 1.5,
-                        ),
+                        borderRadius: BorderRadius.circular(18),
+                        borderSide: const BorderSide(color: _orange, width: 1.8),
                       ),
                     ),
                   ),
@@ -268,78 +247,179 @@ class PawaPayCheckoutView extends StatelessWidget {
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
                       color: const Color(0xFFFFF1F0),
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(16),
                       border: Border.all(color: const Color(0xFFFFD0CC)),
                     ),
-                    child: Text(
-                      message,
-                      style: const TextStyle(
-                        color: Color(0xFF9F2D22),
-                        fontSize: 14,
-                        height: 1.35,
-                        fontWeight: FontWeight.w600,
-                      ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(
+                          Icons.error_outline_rounded,
+                          color: Color(0xFF9F2D22),
+                          size: 20,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            message,
+                            style: const TextStyle(
+                              color: Color(0xFF9F2D22),
+                              fontSize: 14,
+                              height: 1.35,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
-              ],
-            ),
-          ),
-          Padding(
-            padding: EdgeInsets.fromLTRB(20, 8, 20, 16 + bottom),
-            child: Column(
-              children: [
-                SizedBox(
-                  width: double.infinity,
-                  height: 56,
-                  child: FilledButton(
-                    onPressed: busy ? null : onSubmit,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFF161513),
-                      disabledBackgroundColor: const Color(0xFF161513),
-                      foregroundColor: Colors.white,
-                      disabledForegroundColor: Colors.white70,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      textStyle: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    child: busy
-                        ? Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2.2,
-                                  color: Colors.white,
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Text(
-                                waiting
-                                    ? 'Waiting for approval'
-                                    : 'Sending prompt',
-                              ),
-                            ],
-                          )
-                        : Text(
-                            'Pay MWK ${PawaPayPayment.formatMwk(amountMwk)}',
-                          ),
+          const SizedBox(height: 18),
+          SizedBox(
+            width: double.infinity,
+            height: 56,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                gradient: const LinearGradient(
+                  colors: [Color(0xFFFF9A1F), Color(0xFFFF6A00)],
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: _orange.withValues(alpha: 0.32),
+                    blurRadius: 16,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: FilledButton(
+                onPressed: busy ? null : onSubmit,
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.transparent,
+                  disabledBackgroundColor: Colors.transparent,
+                  shadowColor: Colors.transparent,
+                  foregroundColor: Colors.white,
+                  disabledForegroundColor: Colors.white70,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Airtel Money and TNM Mpamba · confirmed by PawaPay',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 12, color: Color(0xFF8A847C)),
-                ),
-              ],
+                child: busy
+                    ? Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.2,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            waiting
+                                ? 'Waiting for approval'
+                                : 'Sending prompt',
+                          ),
+                        ],
+                      )
+                    : Text(
+                        'Pay MWK ${PawaPayPayment.formatMwk(amountMwk)}',
+                      ),
+              ),
             ),
+          ),
+          const SizedBox(height: 12),
+          const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.lock_rounded, size: 14, color: Color(0xFFB08968)),
+              SizedBox(width: 6),
+              Text(
+                'Secured by PawaPay',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFFB08968),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AmountHero extends StatelessWidget {
+  final int amountMwk;
+  const _AmountHero({required this.amountMwk});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(22, 22, 22, 20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFFF9A1F), Color(0xFFFF6A00)],
+        ),
+        borderRadius: BorderRadius.circular(26),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFFF8A00).withValues(alpha: 0.28),
+            blurRadius: 22,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Amount due',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.3,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'MWK ${PawaPayPayment.formatMwk(amountMwk)}',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 36,
+              height: 1.05,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -1.1,
+            ),
+          ),
+          const SizedBox(height: 14),
+          const Row(
+            children: [
+              Icon(Icons.lock_rounded, color: Colors.white, size: 16),
+              SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'A prompt arrives on your phone. Approve it to finish.',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    height: 1.3,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -357,12 +437,21 @@ class _WaitingPanel extends StatelessWidget {
       padding: const EdgeInsets.only(top: 36),
       child: Column(
         children: [
-          const SizedBox(
-            width: 28,
-            height: 28,
-            child: CircularProgressIndicator(
-              strokeWidth: 2.4,
-              color: Color(0xFF161513),
+          Container(
+            width: 84,
+            height: 84,
+            decoration: BoxDecoration(
+              color: const Color(0xFFFF8A00).withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: const SizedBox(
+              width: 32,
+              height: 32,
+              child: CircularProgressIndicator(
+                strokeWidth: 3,
+                color: Color(0xFFFF8A00),
+              ),
             ),
           ),
           const SizedBox(height: 22),
@@ -371,9 +460,9 @@ class _WaitingPanel extends StatelessWidget {
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 28,
-              fontWeight: FontWeight.w700,
+              fontWeight: FontWeight.w800,
               letterSpacing: -0.6,
-              color: Color(0xFF161513),
+              color: Color(0xFF16284C),
             ),
           ),
           const SizedBox(height: 8),
@@ -385,7 +474,8 @@ class _WaitingPanel extends StatelessWidget {
             style: const TextStyle(
               fontSize: 15,
               height: 1.45,
-              color: Color(0xFF5C5852),
+              color: Color(0xFF8A5A32),
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],
@@ -411,52 +501,73 @@ class _NetworkCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: selected ? const Color(0xFF161513) : const Color(0xFFE6E1D8),
-              width: selected ? 1.6 : 1,
-            ),
+    final fill = selected
+        ? const Color(0xFFFF8A00).withValues(alpha: 0.08)
+        : Colors.white;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 160),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        color: fill,
+        border: Border.all(
+          color: selected ? const Color(0xFFFF8A00) : const Color(0xFFFFE0C2),
+          width: selected ? 1.8 : 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFFF8A00).withValues(alpha: selected ? 0.16 : 0.06),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-                  ),
-                  const Spacer(),
-                  if (selected)
-                    const Icon(Icons.check_rounded, size: 18, color: Color(0xFF161513)),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF161513),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                    ),
+                    const Spacer(),
+                    if (selected)
+                      const Icon(
+                        Icons.check_circle_rounded,
+                        size: 18,
+                        color: Color(0xFFFF8A00),
+                      ),
+                  ],
                 ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                hint,
-                style: const TextStyle(fontSize: 12, color: Color(0xFF8A847C)),
-              ),
-            ],
+                const SizedBox(height: 14),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF16284C),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  hint,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    height: 1.25,
+                    color: Color(0xFF8A847C),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -546,15 +657,20 @@ class _PawaPayCheckoutPageState extends State<PawaPayCheckoutPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF6F4F0),
+      backgroundColor: const Color(0xFFFFF8F2),
       appBar: AppBar(
-        backgroundColor: const Color(0xFFF6F4F0),
-        foregroundColor: const Color(0xFF161513),
+        backgroundColor: const Color(0xFFFFF8F2),
+        foregroundColor: const Color(0xFF16284C),
         elevation: 0,
         scrolledUnderElevation: 0,
         title: const Text(
-          'Pay',
-          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 17),
+          'Payment',
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            fontSize: 18,
+            color: Color(0xFF16284C),
+            letterSpacing: -0.2,
+          ),
         ),
       ),
       body: PawaPayCheckoutView(

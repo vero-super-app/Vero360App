@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode, compute;
 import 'package:flutter/material.dart';
+import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/widgets/merchant_commission_guide.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -94,6 +95,10 @@ num _asNum(dynamic v) {
 }
 
 String mwk0(dynamic v) => _mwk0Fmt.format(_asNum(v)); // MWK 12,500
+
+/// Customer price on My Items: the amount the merchant entered plus commission.
+String mwkBuyer(dynamic v) =>
+    mwk0(BuyerCommission.buyerFacing(_asNum(v)));
 String mwk2(dynamic v) => _mwk2Fmt.format(_asNum(v)); // MWK 12,500.00
 // ---------------------------------------------------------------------------
 
@@ -279,6 +284,10 @@ class _MarketplaceMerchantDashboardState
   int _activeItems = 0;
   int _soldItems = 0;
   double _totalEarnings = 0;
+  /// Fresh totals from this session. Refunds can lower these; the saved
+  /// cache must not keep the old higher number.
+  double? _freshOrderEarnings;
+  double? _freshEscrowEarnings;
   double _rating = 0.0;
   String _status = 'pending';
 
@@ -2100,24 +2109,27 @@ class _MarketplaceMerchantDashboardState
         return db.compareTo(da);
       });
 
-      final orderEarnings =
-          sold.fold<double>(0, (sum, o) => sum + o.lineTotal.toDouble());
+      final refunds = await _completedRefundAmounts(myFirebaseUid);
       if (!mounted) return;
+      final counted = sold.where((o) => !_orderFullyRefunded(o, refunds)).toList();
+      final orderEarnings = counted.fold<double>(0, (sum, o) {
+        final line = o.lineTotal.toDouble();
+        final refund = _refundForOrder(o, refunds);
+        final left = line - refund;
+        return sum + (left < 0 ? 0 : left);
+      });
 
       setState(() {
-        if (sold.isNotEmpty) {
-          _soldItems = sold.length;
-          _recentSalesOrders = sold.take(25).toList(growable: false);
-        }
-        if (orderEarnings > _totalEarnings) {
-          _totalEarnings = orderEarnings;
-        }
+        _soldItems = counted.length;
+        _recentSalesOrders = counted.take(25).toList(growable: false);
+        _freshOrderEarnings = orderEarnings;
+        _publishFreshEarnings();
       });
       unawaited(_persistEarningsCache(
         sold: _soldItems,
         earnings: _totalEarnings,
       ));
-      unawaited(_stampSoldListings(sold));
+      unawaited(_stampSoldListings(counted));
     } catch (e) {
       debugPrint('Error loading order stats: $e');
     }
@@ -2207,12 +2219,16 @@ class _MarketplaceMerchantDashboardState
   }
 
   Future<void> _applyEscrowEarnings(String uid) async {
-    final escrow = await _earningsFromEscrow(uid);
+    final refunds = await _completedRefundAmounts(uid);
+    final escrow = await _earningsFromEscrow(uid, refunds);
     if (!mounted) return;
-    if (escrow.gross <= 0 && escrow.sold <= 0) return;
+    if (!escrow.ok) return;
     setState(() {
-      if (escrow.gross > _totalEarnings) _totalEarnings = escrow.gross;
-      if (escrow.sold > _soldItems) _soldItems = escrow.sold;
+      _freshEscrowEarnings = escrow.gross;
+      _publishFreshEarnings();
+      if (escrow.sold > _soldItems && _freshOrderEarnings == null) {
+        _soldItems = escrow.sold;
+      }
     });
     unawaited(_persistEarningsCache(
       sold: _soldItems,
@@ -2220,8 +2236,112 @@ class _MarketplaceMerchantDashboardState
     ));
   }
 
-  Future<({int sold, double gross})> _earningsFromEscrow(String uid) async {
-    if (uid.isEmpty) return (sold: 0, gross: 0.0);
+  void _publishFreshEarnings() {
+    final parts = <double>[
+      if (_freshOrderEarnings != null) _freshOrderEarnings!,
+      if (_freshEscrowEarnings != null) _freshEscrowEarnings!,
+    ];
+    if (parts.isEmpty) return;
+    var next = parts.reduce((a, b) => a > b ? a : b);
+    if (next < 0) next = 0;
+    _totalEarnings = next;
+  }
+
+  bool _refundIsDone(String status) {
+    switch (status.trim().toLowerCase()) {
+      case 'success':
+      case 'successful':
+      case 'completed':
+      case 'complete':
+      case 'paid':
+      case 'refunded':
+      case 'approved':
+      case 'processed':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  double _asMoney(dynamic raw) {
+    if (raw is num) return raw.toDouble();
+    return double.tryParse('${raw ?? ''}'.replaceAll(',', '')) ?? 0;
+  }
+
+  /// Completed refunds keyed by order id and order number.
+  Future<Map<String, double>> _completedRefundAmounts(String uid) async {
+    if (uid.isEmpty) return const {};
+    try {
+      final snap = await _firestore
+          .collection('refund_requests')
+          .where('merchantUid', isEqualTo: uid)
+          .limit(300)
+          .get();
+      final out = <String, double>{};
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        final status = (data['status'] ?? '').toString();
+        if (!_refundIsDone(status)) continue;
+        final service = (data['serviceType'] ?? '').toString().trim().toLowerCase();
+        if (service.isNotEmpty &&
+            service != 'marketplace' &&
+            service != 'promotion') {
+          continue;
+        }
+        final amount = _asMoney(data['amount']);
+        if (amount <= 0) continue;
+        final keys = <String>{};
+        for (final key in [data['orderId'], data['orderNumber']]) {
+          final id = (key ?? '').toString().trim();
+          if (id.isEmpty) continue;
+          keys.add(id);
+        }
+        for (final id in keys) {
+          out[id] = (out[id] ?? 0) + amount;
+        }
+      }
+      return out;
+    } catch (e) {
+      debugPrint('Error loading refund amounts: $e');
+      return const {};
+    }
+  }
+
+  double _refundForKeys(Map<String, double> refunds, List<dynamic> keys) {
+    var best = 0.0;
+    for (final key in keys) {
+      final id = (key ?? '').toString().trim();
+      if (id.isEmpty) continue;
+      final amount = refunds[id] ?? 0;
+      if (amount > best) best = amount;
+    }
+    return best;
+  }
+
+  double _refundForOrder(OrderItem order, Map<String, double> refunds) {
+    return _refundForKeys(refunds, [order.id, order.orderNumber]);
+  }
+
+  bool _orderFullyRefunded(OrderItem order, Map<String, double> refunds) {
+    final refund = _refundForOrder(order, refunds);
+    if (refund <= 0) return false;
+    return refund + 0.5 >= order.lineTotal.toDouble();
+  }
+
+  bool _escrowWasRefunded(Map<String, dynamic> data) {
+    final status = (data['status'] ?? '').toString().trim().toLowerCase();
+    if (status == 'refunded' || status == 'cancelled' || status == 'canceled') {
+      return true;
+    }
+    if (data['refundAfterRelease'] == true) return true;
+    return _refundIsDone((data['refundStatus'] ?? '').toString());
+  }
+
+  Future<({int sold, double gross, bool ok})> _earningsFromEscrow(
+    String uid,
+    Map<String, double> refunds,
+  ) async {
+    if (uid.isEmpty) return (sold: 0, gross: 0.0, ok: false);
     try {
       QuerySnapshot<Map<String, dynamic>> snap;
       try {
@@ -2248,29 +2368,30 @@ class _MarketplaceMerchantDashboardState
       double gross = 0;
       for (final doc in snap.docs) {
         final data = doc.data();
-        final status = (data['status'] ?? '').toString().trim().toLowerCase();
-        if (status == 'refunded' || status == 'cancelled') continue;
+        if (_escrowWasRefunded(data)) continue;
         final service = (data['serviceType'] ?? '').toString().trim().toLowerCase();
         if (service.isNotEmpty && service != 'marketplace') continue;
+        final g = _asMoney(data['grossAmount']);
+        final m = _asMoney(data['merchantAmount']);
+        var amount = g > 0 ? g : m;
+        if (amount <= 0) continue;
+        final refund = _refundForKeys(
+          refunds,
+          [
+            doc.id,
+            data['orderId'],
+            data['orderNumber'],
+          ],
+        );
+        if (refund + 0.5 >= amount) continue;
+        amount -= refund < 0 ? 0 : refund;
         sold++;
-        final gRaw = data['grossAmount'];
-        final mRaw = data['merchantAmount'];
-        final g = gRaw is num
-            ? gRaw.toDouble()
-            : double.tryParse('$gRaw') ?? 0;
-        final m = mRaw is num
-            ? mRaw.toDouble()
-            : double.tryParse('$mRaw') ?? 0;
-        if (g > 0) {
-          gross += g;
-        } else if (m > 0) {
-          gross += m;
-        }
+        gross += amount;
       }
-      return (sold: sold, gross: gross);
+      return (sold: sold, gross: gross, ok: true);
     } catch (e) {
       debugPrint('Error loading escrow earnings: $e');
-      return (sold: 0, gross: 0.0);
+      return (sold: 0, gross: 0.0, ok: false);
     }
   }
 
@@ -7370,7 +7491,7 @@ class _ModernItemMiniCard extends StatelessWidget {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            mwk0(item['price']),
+                            mwkBuyer(item['price']),
                             style: TextStyle(
                               fontWeight: FontWeight.w900,
                               color: Colors.green,
@@ -7590,7 +7711,7 @@ class _ItemCard extends StatelessWidget {
                                           ),
                                           const SizedBox(height: 1),
                                           Text(
-                                            mwk0(item['price']),
+                                            mwkBuyer(item['price']),
                                             style: TextStyle(
                                               fontWeight: FontWeight.w900,
                                               color: Colors.green,

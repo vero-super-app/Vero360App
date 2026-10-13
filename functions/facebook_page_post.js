@@ -84,6 +84,37 @@ function isFacebookAuthError(errOrJson) {
   );
 }
 
+/** Same bands as BuyerCommission in the app. Do not store this as the seller price. */
+function buyerFacingTotal(raw) {
+  const price = Number(raw);
+  if (!Number.isFinite(price) || price <= 0) return 0;
+  let rate = 0.03;
+  if (price <= 5000) rate = 0.1;
+  else if (price <= 10000) rate = 0.09;
+  else if (price <= 20000) rate = 0.08;
+  else if (price <= 50000) rate = 0.07;
+  else if (price <= 100000) rate = 0.06;
+  else if (price <= 500000) rate = 0.05;
+  else if (price <= 2000000) rate = 0.04;
+  else if (price <= 10000000) rate = 0.033;
+  const money = (v) => Math.round(v * 100) / 100;
+  const base = money(price);
+  return Math.round(base + money(base * rate));
+}
+
+function buyerPriceLabel(raw) {
+  const total = buyerFacingTotal(raw);
+  if (!total) return '';
+  return ` — MWK ${total.toLocaleString('en-US')}`;
+}
+
+/** Shop price for the public link. vero360.app adds commission when it renders. */
+function rawPriceParam(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  return String(n);
+}
+
 function listingTitle(data) {
   return String(
     data.name || data.title || data.FoodName || data.productName || 'New listing',
@@ -118,7 +149,7 @@ function marketplaceShareUrl(id, data) {
   const params = new URLSearchParams();
   const name = listingTitle(data);
   const loc = String(data.location || '').trim();
-  const price = data.price != null ? String(data.price) : '';
+  const price = rawPriceParam(data.price);
   const merchant = String(
     data.merchantName || data.sellerBusinessName || data.businessName || '',
   ).trim();
@@ -140,7 +171,7 @@ function foodShareUrl(id, data) {
   const merchant = String(
     data.RestrauntName || data.restaurantName || data.merchantName || '',
   ).trim();
-  const price = data.price != null ? String(data.price) : '';
+  const price = rawPriceParam(data.price);
   const img = firstHttpImage(data);
   if (name) params.set('name', name);
   if (merchant) params.set('merchant', merchant);
@@ -154,12 +185,9 @@ function accommodationShareUrl(id, data) {
   const params = new URLSearchParams();
   const name = listingTitle(data);
   const loc = String(data.location || '').trim();
-  const price =
-    data.price != null
-      ? String(data.price)
-      : data.pricePerNight != null
-        ? String(data.pricePerNight)
-        : '';
+  const price = rawPriceParam(
+    data.price != null ? data.price : data.pricePerNight,
+  );
   const img = firstHttpImage(data);
   if (name) params.set('name', name);
   if (loc) params.set('loc', loc);
@@ -597,10 +625,7 @@ async function handleFacebookPost({
       : becameLiveMarketplace(before, after) ||
         needsFacebookRetry(after, isLiveMarketplace);
     link = marketplaceShareUrl(docId, after);
-    const price =
-      after.price != null
-        ? ` — MWK ${Number(after.price).toLocaleString('en-US')}`
-        : '';
+    const price = buyerPriceLabel(after.price);
     // Keep the URL out of the message — Facebook attaches a clickable image card via `link`.
     message = `New on Vero360 Marketplace: ${listingTitle(after)}${price}`;
   } else if (kind === 'food') {
@@ -1010,10 +1035,7 @@ exports.onMarketplacePromotionFacebookPost = onDocumentWritten(
       const link = shareUrlForVertical(vertical, itemId, item);
       const title = listingTitle(item);
       const planLabel = String(after.planId || after.channel || 'boost').trim();
-      const price =
-        item.price != null
-          ? ` — MWK ${Number(item.price).toLocaleString('en-US')}`
-          : '';
+      const price = buyerPriceLabel(item.price);
       const message = `🔥 Promoted on Vero360 (${planLabel}): ${title}${price}\nShop now on Vero360`;
 
       const imageUrl = firstHttpImage(item);
@@ -1077,10 +1099,7 @@ exports.onLatestArrivalFacebookPost = onDocumentWritten(
       if (!claimed) return;
 
       const name = listingTitle(after);
-      const price =
-        after.price != null
-          ? ` — MWK ${Number(after.price).toLocaleString('en-US')}`
-          : '';
+      const price = buyerPriceLabel(after.price);
       const link = 'https://vero360.app/';
       const message = `🆕 Today's arrival on Vero360: ${name}${price}\nOpen the app to shop.`;
       const imageUrl = firstHttpImage(after);
@@ -1145,10 +1164,7 @@ exports.onMerchantPromotionFacebookPost = onDocumentWritten(
       if (!claimed) return;
 
       const name = listingTitle(after);
-      const price =
-        after.price != null
-          ? ` — MWK ${Number(after.price).toLocaleString('en-US')}`
-          : '';
+      const price = buyerPriceLabel(after.price);
       const desc = String(after.description || '').trim();
       const link = 'https://vero360.app/';
       const message = [

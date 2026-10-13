@@ -1,6 +1,9 @@
 import 'dart:io';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
@@ -33,6 +36,7 @@ class _BecomeDriverPageState extends ConsumerState<BecomeDriverPage> {
   final _plate = TextEditingController();
   final _color = TextEditingController();
   final _seats = TextEditingController(text: '4');
+  final _phone = TextEditingController();
 
   DateTime? _dateOfBirth;
 
@@ -60,6 +64,65 @@ class _BecomeDriverPageState extends ConsumerState<BecomeDriverPage> {
     return false;
   }
 
+  /// Real account numbers only. Firebase placeholders are not callable.
+  String _callablePhone(String? raw) {
+    final t = (raw ?? '').trim();
+    if (t.isEmpty) return '';
+    final lower = t.toLowerCase();
+    if (lower.startsWith('+firebase_') || lower.contains('firebase_')) {
+      return '';
+    }
+    return t;
+  }
+
+  String _phoneFromProfile(Map<String, dynamic>? profile) {
+    if (profile == null) return '';
+    final user = profile['user'];
+    if (user is Map) {
+      final fromUser = _callablePhone(user['phone']?.toString());
+      if (fromUser.isNotEmpty) return fromUser;
+    }
+    return _callablePhone(profile['phone']?.toString());
+  }
+
+  Future<void> _prefillPhone(Map<String, dynamic>? profile) async {
+    if (_phone.text.trim().isNotEmpty) return;
+    final fromProfile = _phoneFromProfile(profile);
+    if (fromProfile.isNotEmpty) {
+      _phone.text = fromProfile;
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final fromPrefs = _callablePhone(prefs.getString('phone'));
+    if (fromPrefs.isEmpty || !mounted) return;
+    setState(() => _phone.text = fromPrefs);
+  }
+
+  String _savedPhoneFrom(Map<String, dynamic> profile) {
+    final fromProfile = _phoneFromProfile(profile);
+    if (fromProfile.isNotEmpty) return fromProfile;
+    return _phone.text.trim();
+  }
+
+  Future<void> _rememberContactPhone(String phone) async {
+    final saved = _callablePhone(phone);
+    if (saved.isEmpty) return;
+    _phone.text = saved;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('phone', saved);
+    final uid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    if (uid.isEmpty) return;
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(uid).set(
+        {
+          'phone': saved,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+    } catch (_) {}
+  }
+
   @override
   void initState() {
     super.initState();
@@ -72,6 +135,7 @@ class _BecomeDriverPageState extends ConsumerState<BecomeDriverPage> {
     _plate.dispose();
     _color.dispose();
     _seats.dispose();
+    _phone.dispose();
     super.dispose();
   }
 
@@ -88,12 +152,14 @@ class _BecomeDriverPageState extends ConsumerState<BecomeDriverPage> {
       final profile = await _driverService.getMyDriverProfile(forceRefresh: true);
       ref.invalidate(myDriverProfileProvider);
       _applyLoadedProfile(profile);
+      await _prefillPhone(profile);
     } catch (e) {
       // Empty / missing profile is fine for first apply
       setState(() {
         _profile = null;
         _phase = _OnboardingPhase.driver;
       });
+      await _prefillPhone(null);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -240,6 +306,7 @@ class _BecomeDriverPageState extends ConsumerState<BecomeDriverPage> {
         'licenseImageUrl': licenseUrl,
         'nationalIdImageUrl': nidUrl,
         'dateOfBirth': fleetDateIso(_dateOfBirth!),
+        'phone': _phone.text.trim(),
       };
 
       Map<String, dynamic> profile;
@@ -255,6 +322,7 @@ class _BecomeDriverPageState extends ConsumerState<BecomeDriverPage> {
       } else {
         profile = await _driverService.applyAsDriver(payload);
       }
+      await _rememberContactPhone(_savedPhoneFrom(profile));
       await loadDriverStatusFromPrefs();
 
       if (!mounted) return;
@@ -696,6 +764,28 @@ class _BecomeDriverPageState extends ConsumerState<BecomeDriverPage> {
                   onPicked: (d) => setState(() => _dateOfBirth = d),
                 ),
               ),
+              TextFormField(
+                controller: _phone,
+                decoration: _fieldDecoration('Phone number').copyWith(
+                  helperText:
+                      'We call this number after you are verified to walk you through the app.',
+                  hintText: '0991234567',
+                ),
+                keyboardType: TextInputType.phone,
+                textInputAction: TextInputAction.done,
+                autofillHints: const [AutofillHints.telephoneNumber],
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[0-9+\s\-()]')),
+                ],
+                validator: (value) {
+                  final raw = (value ?? '').trim();
+                  if (raw.isEmpty) return 'Phone number is required';
+                  final digits = raw.replaceAll(RegExp(r'\D'), '');
+                  if (digits.length < 8) return 'Enter a valid phone number';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 10),
               _docTile(
                 label: 'License photo',
                 localPath: _licenseImagePath,

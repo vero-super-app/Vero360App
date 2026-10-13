@@ -102,7 +102,7 @@ class FoodService {
       final snap = await FirebaseFirestore.instance
           .collection('marketplace_items')
           .where('category', isEqualTo: 'food')
-          .limit(80)
+          .limit(400)
           .get();
 
       final out = <FoodModel>[];
@@ -159,7 +159,7 @@ class FoodService {
     try {
       final snap = await FirebaseFirestore.instance
           .collection('food_menu_items')
-          .limit(100)
+          .limit(400)
           .get();
 
       final out = <FoodModel>[];

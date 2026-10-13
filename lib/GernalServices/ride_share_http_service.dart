@@ -20,6 +20,7 @@ class RideShareHttpService {
   late StreamController<Map<String, dynamic>> _driverLocationController;
   late StreamController<Map<String, dynamic>> _rideStatusController;
   late StreamController<Ride> _rideUpdateController;
+  late StreamController<Map<String, dynamic>> _flexibleEventController;
   Future<void>? _initializationFuture;
   bool _globalSocketListenersRegistered = false;
   bool _socketCreated = false;
@@ -165,6 +166,8 @@ class RideShareHttpService {
         StreamController<Map<String, dynamic>>.broadcast();
     _rideStatusController = StreamController<Map<String, dynamic>>.broadcast();
     _rideUpdateController = StreamController<Ride>.broadcast();
+    _flexibleEventController =
+        StreamController<Map<String, dynamic>>.broadcast();
   }
 
   /// Stream getters
@@ -175,6 +178,8 @@ class RideShareHttpService {
   Stream<Map<String, dynamic>> get rideStatusStream =>
       _rideStatusController.stream;
   Stream<Ride> get rideUpdateStream => _rideUpdateController.stream;
+  Stream<Map<String, dynamic>> get flexibleEventStream =>
+      _flexibleEventController.stream;
 
   Future<void> _initializeSocket() async {
     // Always force-refresh: Socket.IO caches the handshake token; a cached
@@ -318,6 +323,18 @@ class RideShareHttpService {
       _rideStatusController.add(Map<String, dynamic>.from(data as Map));
     });
 
+    sock.on('ride:pickup-offer', (data) {
+      if (data is Map) {
+        _flexibleEventController.add(Map<String, dynamic>.from(data));
+      }
+    });
+
+    sock.on('ride:timing', (data) {
+      if (data is Map) {
+        _flexibleEventController.add(Map<String, dynamic>.from(data));
+      }
+    });
+
     sock.on('ride:status:updated', (data) {
       print('[RideShareHttpService] 🎉 Ride status updated received: $data');
       _rideStatusController.add(Map<String, dynamic>.from(data));
@@ -395,6 +412,9 @@ class RideShareHttpService {
     String? pickupAddress,
     String? dropoffAddress,
     String? notes,
+    DateTime? pickupEarliestAt,
+    DateTime? pickupLatestAt,
+    int? maxWaitMinutes,
   }) async {
     try {
       final response = await _withFirebaseAuth(
@@ -410,6 +430,11 @@ class RideShareHttpService {
             'dropoffAddress': dropoffAddress,
             'preferredVehicleClass': vehicleClass,
             'notes': notes,
+            if (pickupEarliestAt != null)
+              'pickupEarliestAt': pickupEarliestAt.toUtc().toIso8601String(),
+            if (pickupLatestAt != null)
+              'pickupLatestAt': pickupLatestAt.toUtc().toIso8601String(),
+            if (maxWaitMinutes != null) 'maxWaitMinutes': maxWaitMinutes,
           }),
         ),
       );
@@ -458,6 +483,103 @@ class RideShareHttpService {
       print('[RideShareHttpService] Error requesting ride');
       rethrow;
     }
+  }
+
+  Future<Ride> updateMaxWait({
+    required int rideId,
+    required int maxWaitMinutes,
+  }) async {
+    final response = await _withFirebaseAuth(
+      (headers) => http.patch(
+        ApiConfig.endpoint('/ride-share/rides/$rideId/wait'),
+        headers: headers,
+        body: jsonEncode({'maxWaitMinutes': maxWaitMinutes}),
+      ),
+    );
+    if (response.statusCode == 200) {
+      return Ride.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    }
+    throw Exception('Failed to update wait: ${response.statusCode}');
+  }
+
+  Future<List<PickupOffer>> listPickupOffers(int rideId) async {
+    final response = await _withFirebaseAuth(
+      (headers) => http.get(
+        ApiConfig.endpoint('/ride-share/rides/$rideId/pickup-offers'),
+        headers: headers,
+      ),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load pickup offers: ${response.statusCode}');
+    }
+    final data = jsonDecode(response.body);
+    if (data is! List) return const [];
+    return data
+        .whereType<Map>()
+        .map((row) => PickupOffer.fromJson(Map<String, dynamic>.from(row)))
+        .toList();
+  }
+
+  Future<void> submitPickupOffer({
+    required int rideId,
+    required int taxiId,
+    required int etaMinutes,
+  }) async {
+    final response = await _withFirebaseAuth(
+      (headers) => http.post(
+        ApiConfig.endpoint('/ride-share/rides/$rideId/pickup-offer'),
+        headers: headers,
+        body: jsonEncode({'taxiId': taxiId, 'etaMinutes': etaMinutes}),
+      ),
+    );
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw Exception('Failed to send pickup time: ${response.body}');
+    }
+  }
+
+  Future<Ride> confirmPickupOffer({
+    required int rideId,
+    required int offerId,
+  }) async {
+    final response = await _withFirebaseAuth(
+      (headers) => http.post(
+        ApiConfig.endpoint('/ride-share/rides/$rideId/confirm-offer'),
+        headers: headers,
+        body: jsonEncode({'offerId': offerId}),
+      ),
+    );
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      return Ride.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    }
+    throw Exception('Failed to confirm pickup: ${response.body}');
+  }
+
+  Future<Ride> updateRideTiming({
+    required int rideId,
+    DateTime? passengerReadyAt,
+    bool clearPassengerReady = false,
+    int? driverDelayMinutes,
+  }) async {
+    final body = <String, dynamic>{};
+    if (clearPassengerReady) {
+      body['passengerReadyAt'] = null;
+    } else if (passengerReadyAt != null) {
+      body['passengerReadyAt'] = passengerReadyAt.toUtc().toIso8601String();
+    }
+    if (driverDelayMinutes != null) {
+      body['driverDelayMinutes'] = driverDelayMinutes;
+    }
+    final response = await _withFirebaseAuth(
+      (headers) => http.patch(
+        ApiConfig.endpoint('/ride-share/rides/$rideId/timing'),
+        headers: headers,
+        body: jsonEncode(body),
+      ),
+    );
+    if (response.statusCode == 200) {
+      return Ride.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    }
+    throw Exception('Failed to update timing: ${response.body}');
   }
 
   /// Get ride details
@@ -1015,6 +1137,11 @@ class RideShareHttpService {
       _rideUpdateController.close();
     } catch (e) {
       print('[RideShareHttpService] Error closing ride update controller');
+    }
+    try {
+      _flexibleEventController.close();
+    } catch (e) {
+      print('[RideShareHttpService] Error closing flexible event controller');
     }
     try {
       disconnect();

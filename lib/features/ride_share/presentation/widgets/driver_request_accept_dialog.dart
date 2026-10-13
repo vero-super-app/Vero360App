@@ -50,15 +50,18 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
     _timerController = AnimationController(
       duration: const Duration(seconds: 30),
       vsync: this,
-    )..forward();
-    _timerController.addStatusListener((status) {
-      if (status == AnimationStatus.completed &&
-          mounted &&
-          !_isAccepting &&
-          !_isRejecting) {
-        _dismissRequest();
-      }
-    });
+    );
+    if (!widget.request.hasPickupWindow) {
+      _timerController.forward();
+      _timerController.addStatusListener((status) {
+        if (status == AnimationStatus.completed &&
+            mounted &&
+            !_isAccepting &&
+            !_isRejecting) {
+          _dismissRequest();
+        }
+      });
+    }
     unawaited(_resolvePickupEta());
   }
 
@@ -88,6 +91,36 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
         _pickupMins = mins;
       });
     } catch (_) {}
+  }
+
+  Future<void> _offerEta(int minutes) async {
+    final taxiId = widget.taxiId ?? widget.request.candidateTaxiId;
+    if (taxiId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Taxi is not ready to send a pickup time')),
+      );
+      return;
+    }
+    setState(() => _isAccepting = true);
+    _timerController.stop();
+    try {
+      await DriverRequestService.submitPickupOffer(
+        rideId: widget.request.id,
+        taxiId: taxiId,
+        etaMinutes: minutes,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Offered a pickup in $minutes min')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isAccepting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not send pickup time: $e')),
+      );
+    }
   }
 
   Future<void> _acceptRequest() async {
@@ -197,7 +230,7 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
         filter: ImageFilter.blur(sigmaX: 2, sigmaY: 2),
         child: DriverRideRequestSheet(
           request: widget.request,
-          timer: _timerController,
+          timer: widget.request.hasPickupWindow ? null : _timerController,
           pickupKm: _pickupKm,
           pickupMins: _pickupMins,
           passengerShort: shortPassengerName(widget.request.passengerName),
@@ -205,6 +238,7 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
           declining: _isRejecting,
           onAccept: _acceptRequest,
           onDecline: _dismissRequest,
+          onOfferEta: _offerEta,
         ),
       ),
     );

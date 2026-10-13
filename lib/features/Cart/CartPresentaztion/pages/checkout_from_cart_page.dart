@@ -10,7 +10,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GeneralPages/address.dart';
@@ -24,7 +23,6 @@ import 'package:vero360_app/features/Restraurants/Models/food_order_number.dart'
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_courier_dispatch.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_my_orders_page.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/restaurant_service.dart';
-import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
@@ -40,8 +38,6 @@ import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/modern_confirm_dialog.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:vero360_app/widgets/vero_spin_reward_prompt.dart';
-import 'package:webview_flutter/webview_flutter.dart';
-
 class CheckoutFromCartPage extends StatefulWidget {
   final List<CartModel> items;
   final bool foodCheckoutMode;
@@ -721,7 +717,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       return;
     }
     if (!canPay) return;
-    await _startPayChanguPayment();
+    await _startPawaPayPayment();
   }
 
   Future<bool> _ensureDefaultAddressIfNeeded() async {
@@ -823,7 +819,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     );
   }
 
-  Future<void> _startPayChanguPayment() async {
+  Future<void> _startPawaPayPayment() async {
     if (_items.isEmpty) {
       ToastHelper.showCustomToast(
         context,
@@ -1677,7 +1673,7 @@ class _DeliveryAddressCard extends StatelessWidget {
   }
 }
 
-// ────────────────────── FOOD CHECKOUT (single item, PayChangu → food_orders) ──────────────────────
+// ────────────────────── FOOD CHECKOUT (single item, PawaPay → food_orders) ──────────────────────
 class FoodCheckoutContext {
   const FoodCheckoutContext({
     required this.merchantId,
@@ -1712,8 +1708,6 @@ class FoodCheckoutContext {
 
 // ────────────────────── IN-APP PAYMENT PAGE ──────────────────────
 class InAppPaymentPage extends StatefulWidget {
-  /// Empty when the customer pays with a PawaPay phone prompt.
-  final String checkoutUrl;
   final String txRef;
   final double totalAmount;
   final BuildContext rootContext;
@@ -1727,11 +1721,11 @@ class InAppPaymentPage extends StatefulWidget {
   final Address? shippingAddress;
   /// Delivery type chosen during checkout (needed for pending orders, etc.).
   final DeliveryType deliveryType;
-  /// When true, on payment success only pop the webview (don't navigate to Orders).
+  /// When true, on payment success only close this page (don't navigate to Orders).
   /// Use for flows where the caller handles post-payment UI.
   final bool popOnlyOnSuccess;
 
-  /// When set, runs after a successful payment (webview popped). Skips the default
+  /// When set, runs after a successful payment. Skips the default
   /// navigation to [OrdersPage]. Use for accommodation: return guest to stays list.
   final void Function(BuildContext rootContext)? onSuccessNavigate;
 
@@ -1747,7 +1741,6 @@ class InAppPaymentPage extends StatefulWidget {
 
   const InAppPaymentPage({
     super.key,
-    this.checkoutUrl = '',
     required this.txRef,
     required this.totalAmount,
     required this.rootContext,
@@ -1768,45 +1761,19 @@ class InAppPaymentPage extends StatefulWidget {
 }
 
 class _InAppPaymentPageState extends State<InAppPaymentPage> {
-  WebViewController? _controller;
   Timer? _pollTimer;
-  bool _isLoading = true;
   bool _resultHandled = false;
-  bool _redirectResolveInFlight = false;
   final order_svc.OrderService _orderService = order_svc.OrderService();
   final TextEditingController _momoPhone = TextEditingController();
   String _momoOperator = PawaPayPayment.airtelOperatorId;
   bool _momoBusy = false;
   bool _momoWaiting = false;
   String _momoMessage = '';
-  bool get _usePawaPay => widget.checkoutUrl.trim().isEmpty;
-
-  static const _paidStatuses = {
-    'successful',
-    'success',
-    'paid',
-    'completed',
-  };
-  static const _failedStatuses = {
-    'failed',
-    'failure',
-    'cancelled',
-    'canceled',
-    'cancel',
-    'abandoned',
-    'expired',
-  };
 
   @override
   void initState() {
     super.initState();
-    if (_usePawaPay) {
-      _isLoading = false;
-      _prefillMomoPhone();
-    } else {
-      _initializeWebView();
-      _startStatusPolling();
-    }
+    _prefillMomoPhone();
   }
 
   Future<void> _prefillMomoPhone() async {
@@ -1869,156 +1836,6 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     }
   }
 
-  void _initializeWebView() {
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(Colors.white)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onNavigationRequest: (NavigationRequest request) {
-            debugPrint('[CheckoutWebView] navigating to ${request.url}');
-            final uri = Uri.tryParse(request.url);
-            if (uri == null) return NavigationDecision.navigate;
-
-            // Deep link vero360://payment-complete
-            final isPaymentCompleteDeepLink =
-                uri.scheme == 'vero360' && uri.host == 'payment-complete';
-            if (isPaymentCompleteDeepLink || _isTerminalPaymentUrl(uri)) {
-              unawaited(_onGatewayRedirect(uri));
-              return NavigationDecision.prevent;
-            }
-
-            return NavigationDecision.navigate;
-          },
-          onProgress: (int progress) =>
-              setState(() => _isLoading = progress < 100),
-          onPageStarted: (String url) =>
-              setState(() => _isLoading = true),
-          onPageFinished: (String url) {
-            setState(() => _isLoading = false);
-            final landed = Uri.tryParse(url);
-            if (landed != null && _isTerminalPaymentUrl(landed)) {
-              unawaited(_onGatewayRedirect(landed));
-            }
-          },
-          onWebResourceError: (_) =>
-              setState(() => _isLoading = false),
-        ),
-      )
-      ..loadRequest(Uri.parse(widget.checkoutUrl));
-  }
-
-  void _startStatusPolling() {
-    _pollTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
-      await _checkPaymentStatus();
-    });
-  }
-
-  /// PayChangu sends a paid customer to [PayChanguConfig.callbackUrl].
-  /// Cancel and failed attempts go to [PayChanguConfig.returnUrl].
-  /// Match the real redirect only. The checkout page URL also carries those
-  /// addresses as query params, and a substring check was marking that as paid.
-  bool _matchesPaymentEndpoint(Uri uri, String configured) {
-    final target = Uri.tryParse(configured);
-    if (target == null || target.host.isEmpty) return false;
-    if (uri.scheme != 'http' && uri.scheme != 'https') return false;
-    if (uri.host.toLowerCase() != target.host.toLowerCase()) return false;
-    String norm(String path) {
-      var p = path.toLowerCase();
-      if (p.length > 1 && p.endsWith('/')) {
-        p = p.substring(0, p.length - 1);
-      }
-      return p;
-    }
-
-    return norm(uri.path) == norm(target.path);
-  }
-
-  bool _isTerminalPaymentUrl(Uri uri) {
-    return _matchesPaymentEndpoint(uri, PayChanguConfig.callbackUrl) ||
-        _matchesPaymentEndpoint(uri, PayChanguConfig.returnUrl);
-  }
-
-  bool _isPaidStatus(String? raw) =>
-      _paidStatuses.contains((raw ?? '').toLowerCase().trim());
-
-  bool _isFailureStatus(String? raw) =>
-      _failedStatuses.contains((raw ?? '').toLowerCase().trim());
-
-  /// Transaction status from a verify payload. Prefer an explicit payment
-  /// status over the envelope `status: success` that only means the lookup worked.
-  String? _statusFromVerifyNode(Map<dynamic, dynamic> node) {
-    final paymentStatus =
-        (node['payment_status'] ?? node['paymentStatus'] ?? '')
-            .toString()
-            .toLowerCase()
-            .trim();
-    final status = (node['status'] ?? '').toString().toLowerCase().trim();
-    if (paymentStatus.isNotEmpty &&
-        _isPaidStatus(status) &&
-        !_isPaidStatus(paymentStatus)) {
-      return paymentStatus;
-    }
-    if (status.isNotEmpty) return status;
-    if (paymentStatus.isNotEmpty) return paymentStatus;
-    final inner = node['data'];
-    if (inner is Map) return _statusFromVerifyNode(inner);
-    return null;
-  }
-
-  Future<String?> _fetchVerifiedPaymentStatus() async {
-    await PayChanguConfig.initialize();
-    final response = await http.get(
-      PayChanguConfig.verifyUri(widget.txRef),
-      headers: {
-        'Accept': 'application/json',
-        'Authorization': PayChanguConfig.authorizationToken,
-      },
-    );
-    if (response.statusCode != 200) return null;
-    final data = json.decode(response.body);
-    debugPrint('[CheckoutWebView] verify response: ${response.body}');
-    if (data is! Map) return null;
-    final dataNode = data['data'] is Map ? data['data'] as Map : data;
-    return _statusFromVerifyNode(dataNode);
-  }
-
-  /// Confirm with PayChangu before creating an order. A return-url visit is a
-  /// cancel unless verify already shows the charge as paid.
-  Future<void> _onGatewayRedirect(Uri uri) async {
-    if (_resultHandled || _redirectResolveInFlight) return;
-    final userLeft = _matchesPaymentEndpoint(uri, PayChanguConfig.returnUrl) ||
-        _isFailureStatus(uri.queryParameters['status']);
-    _redirectResolveInFlight = true;
-    try {
-      final attempts = userLeft ? 1 : 4;
-      for (var i = 0; i < attempts; i++) {
-        if (_resultHandled) return;
-        final status = await _fetchVerifiedPaymentStatus();
-        if (_isPaidStatus(status)) {
-          _handlePaymentSuccess();
-          return;
-        }
-        // A success redirect can arrive while an earlier attempt is still
-        // marked failed. Only a return-url / cancel closes the payment.
-        if (userLeft && _isFailureStatus(status)) {
-          _handlePaymentFailure();
-          return;
-        }
-        if (i < attempts - 1) {
-          await Future.delayed(const Duration(milliseconds: 700));
-        }
-      }
-      if (userLeft && !_resultHandled) {
-        _handlePaymentFailure();
-      }
-    } catch (e) {
-      debugPrint('[CheckoutWebView] redirect verify failed: $e');
-      if (userLeft && !_resultHandled) _handlePaymentFailure();
-    } finally {
-      _redirectResolveInFlight = false;
-    }
-  }
 
   /// Backend orders + Firestore escrow (merchant wallet credited after buyer confirms or 7 days).
   Future<void> _createConfirmedOrdersAndEscrow(List<CartModel> items) async {
@@ -2051,18 +1868,6 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     }
   }
 
-  Future<void> _checkPaymentStatus() async {
-    if (_resultHandled) return;
-    try {
-      final status = await _fetchVerifiedPaymentStatus();
-      // Only a verified paid status completes checkout. A failed mobile-money
-      // attempt stays open so the customer can retry. Cancel lands on return_url.
-      if (_isPaidStatus(status)) {
-        debugPrint('[CheckoutWebView] verify => success (status=$status)');
-        _handlePaymentSuccess();
-      }
-    } catch (_) {}
-  }
 
   Future<void> _createBackendOrders(OrderStatus status) async {
     try {
@@ -2550,30 +2355,104 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   Future<void> _onBackPressed() async {
     final isCartCheckout = widget.cartItemsForMerchantCredit != null &&
         widget.cartItemsForMerchantCredit!.isNotEmpty;
-    if (isCartCheckout) {
-      final goBack = await showDialog<bool>(
+    final goBack = await showDialog<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Cancel payment?'),
-          content: const Text(
-            'You can complete payment later from your cart.',
+        barrierDismissible: true,
+        builder: (ctx) => Dialog(
+          backgroundColor: Colors.white,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Stay'),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFF8A00).withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.payments_rounded,
+                    color: Color(0xFFFF8A00),
+                    size: 30,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'Cancel payment?',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 20,
+                    letterSpacing: -0.3,
+                    color: Color(0xFF16284C),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  isCartCheckout
+                      ? 'You can complete payment later from your cart.'
+                      : 'You can come back and pay when you are ready.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    height: 1.45,
+                    color: Color(0xFF8A5A32),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: FilledButton(
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFFFF8A00),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      textStyle: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 15,
+                      ),
+                    ),
+                    child: const Text('Stay and pay'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  height: 46,
+                  child: TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    style: TextButton.styleFrom(
+                      foregroundColor: const Color(0xFF16284C),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      textStyle: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                    child: Text(
+                      isCartCheckout ? 'Back to checkout' : 'Leave payment',
+                    ),
+                  ),
+                ),
+              ],
             ),
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Back to checkout'),
-            ),
-          ],
+          ),
         ),
       );
-      if (goBack == true && mounted) Navigator.of(context).pop();
-    } else {
-      if (mounted) Navigator.of(context).pop();
-    }
+    if (goBack == true && mounted) Navigator.of(context).pop();
   }
 
   Widget _pawaPayBody() {
@@ -2598,43 +2477,22 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         _onBackPressed();
       },
       child: Scaffold(
-        backgroundColor: _usePawaPay ? const Color(0xFFF6F4F0) : null,
+        backgroundColor: const Color(0xFFFFF8F2),
         appBar: AppBar(
           elevation: 0,
           scrolledUnderElevation: 0,
-          backgroundColor: _usePawaPay
-              ? const Color(0xFFF6F4F0)
-              : const Color(0xFFFF8A00),
-          foregroundColor: _usePawaPay ? const Color(0xFF161513) : Colors.white,
+          backgroundColor: const Color(0xFFFFF8F2),
+          foregroundColor: const Color(0xFF16284C),
           centerTitle: false,
           titleSpacing: 8,
-          title: _usePawaPay
-              ? const Text(
-                  'Pay',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 17,
-                    color: Color(0xFF161513),
-                  ),
-                )
-              : const Row(
-            children: [
-              Icon(Icons.payment_rounded, size: 26),
-              SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Complete Payment',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 18,
-                    letterSpacing: -0.2,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ],
+          title: const Text(
+            'Payment',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 18,
+              letterSpacing: -0.2,
+              color: Color(0xFF16284C),
+            ),
           ),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back_ios_new_rounded),
@@ -2642,32 +2500,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
             tooltip: 'Back to checkout',
           ),
         ),
-        body: _usePawaPay
-            ? _pawaPayBody()
-            : Stack(
-          children: [
-          WebViewWidget(controller: _controller!),
-          if (_isLoading)
-            Container(
-              color: Colors.white,
-              child: const Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    CircularProgressIndicator(
-                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFFF8A00)),
-                    ),
-                    SizedBox(height: 20),
-                    Text(
-                      'Loading payment gateway...',
-                      style: TextStyle(fontSize: 16, color: Colors.grey),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
+        body: _pawaPayBody(),
       ),
     );
   }

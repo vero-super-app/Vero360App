@@ -746,13 +746,13 @@ class _VeroSupportBot {
     ),
     _Faq(
       keys: [
-        'payment', 'pay', 'wallet', 'paychangu', 'refund', 'money', 'escrow', 'paid',
+        'payment', 'pay', 'wallet', 'pawapay', 'refund', 'money', 'escrow', 'paid',
         'malipiro', 'lipira', 'ndalama', 'bwezerani',
       ],
       answerEn:
-          'Payments use PayChangu (card / mobile money).\nMarketplace orders hold funds in escrow until you confirm receipt. Check My Orders for status.',
+          'Payments use Airtel Money or TNM Mpamba through PawaPay.\nMarketplace orders hold funds in escrow until you confirm receipt. Check My Orders for status.',
       answerNy:
-          'Malipiro amagwiritsa ntchito PayChangu (khadi / mobile money).\nMaoda a Marketplace amasunga ndalama mu escrow mpaka mutsimikize kulandira. Onani My Orders.',
+          'Malipiro amagwiritsa ntchito Airtel Money kapena TNM Mpamba kudzera pa PawaPay.\nMaoda a Marketplace amasunga ndalama mu escrow mpaka mutsimikize kulandira. Onani My Orders.',
       actions: [_BotAction.openOrders],
     ),
     _Faq(

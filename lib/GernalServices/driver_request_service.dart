@@ -37,6 +37,9 @@ class DriverRideRequest {
   final double estimatedFare;
   final String? passengerPhone;
   final int? candidateTaxiId;
+  final DateTime? pickupEarliestAt;
+  final DateTime? pickupLatestAt;
+  final int? maxWaitMinutes;
 
   DriverRideRequest({
     required this.id,
@@ -55,6 +58,9 @@ class DriverRideRequest {
     required this.estimatedFare,
     this.passengerPhone,
     this.candidateTaxiId,
+    this.pickupEarliestAt,
+    this.pickupLatestAt,
+    this.maxWaitMinutes,
   });
 
   Map<String, dynamic> toMap() {
@@ -75,6 +81,9 @@ class DriverRideRequest {
       'estimatedFare': estimatedFare,
       'passengerPhone': passengerPhone,
       'candidateTaxiId': candidateTaxiId,
+      'pickupEarliestAt': pickupEarliestAt?.toIso8601String(),
+      'pickupLatestAt': pickupLatestAt?.toIso8601String(),
+      'maxWaitMinutes': maxWaitMinutes,
     };
   }
 
@@ -93,6 +102,15 @@ class DriverRideRequest {
         return DateTime.fromMillisecondsSinceEpoch(value);
       }
       return DateTime.now();
+    }
+
+    DateTime? parseDateOrNull(dynamic value) {
+      if (value == null) return null;
+      if (value is String && value.trim().isEmpty) return null;
+      if (value is String) {
+        return DateTime.tryParse(value);
+      }
+      return null;
     }
 
     // Parse numeric values that might come as strings or numbers
@@ -148,6 +166,9 @@ class DriverRideRequest {
       passengerPhone: map['passengerPhone'],
       candidateTaxiId: parseNullableInt(map['candidateTaxiId']) ??
           parseNullableInt(map['taxiId']),
+      pickupEarliestAt: parseDateOrNull(map['pickupEarliestAt']),
+      pickupLatestAt: parseDateOrNull(map['pickupLatestAt']),
+      maxWaitMinutes: parseNullableInt(map['maxWaitMinutes']),
     );
   }
 
@@ -168,6 +189,9 @@ class DriverRideRequest {
     double? estimatedFare,
     String? passengerPhone,
     int? candidateTaxiId,
+    DateTime? pickupEarliestAt,
+    DateTime? pickupLatestAt,
+    int? maxWaitMinutes,
   }) {
     return DriverRideRequest(
       id: id ?? this.id,
@@ -186,7 +210,32 @@ class DriverRideRequest {
       estimatedFare: estimatedFare ?? this.estimatedFare,
       passengerPhone: passengerPhone ?? this.passengerPhone,
       candidateTaxiId: candidateTaxiId ?? this.candidateTaxiId,
+      pickupEarliestAt: pickupEarliestAt ?? this.pickupEarliestAt,
+      pickupLatestAt: pickupLatestAt ?? this.pickupLatestAt,
+      maxWaitMinutes: maxWaitMinutes ?? this.maxWaitMinutes,
     );
+  }
+
+  bool get hasPickupWindow =>
+      pickupLatestAt != null || (maxWaitMinutes != null && maxWaitMinutes! > 0);
+
+  String? get pickupWindowLabel {
+    final latest = pickupLatestAt?.toLocal();
+    if (latest == null) {
+      if (maxWaitMinutes != null) {
+        return 'Passenger can wait $maxWaitMinutes min';
+      }
+      return null;
+    }
+    final earliest = pickupEarliestAt?.toLocal();
+    String clock(DateTime time) {
+      final h = time.hour.toString().padLeft(2, '0');
+      final m = time.minute.toString().padLeft(2, '0');
+      return '$h:$m';
+    }
+
+    if (earliest == null) return 'Pickup by ${clock(latest)}';
+    return 'Pickup ${clock(earliest)}–${clock(latest)}';
   }
 }
 
@@ -323,6 +372,30 @@ class DriverRequestService {
     } catch (e) {
       print('Error accepting ride request: $e');
       rethrow;
+    }
+  }
+
+  /// Tell the passenger when this driver can arrive. Does not accept the ride.
+  static Future<void> submitPickupOffer({
+    required String rideId,
+    required int taxiId,
+    required int etaMinutes,
+  }) async {
+    final headers = await _authorizedJsonHeaders();
+    final response = await http.post(
+      ApiConfig.endpoint('$_baseUrl/rides/$rideId/pickup-offer'),
+      headers: headers,
+      body: jsonEncode({'taxiId': taxiId, 'etaMinutes': etaMinutes}),
+    );
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      var message = 'Failed to send pickup time';
+      try {
+        final error = jsonDecode(response.body);
+        if (error is Map && error['message'] != null) {
+          message = error['message'].toString();
+        }
+      } catch (_) {}
+      throw Exception(message);
     }
   }
 

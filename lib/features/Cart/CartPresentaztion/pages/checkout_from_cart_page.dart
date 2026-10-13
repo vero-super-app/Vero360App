@@ -2499,10 +2499,6 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     _pollTimer?.cancel();
     final isDigital = widget.digitalProductName != null && widget.digitalProductName!.isNotEmpty;
 
-    // For cart checkout flows, record a pending order when payment was not completed.
-    // This lets the backend know about the intent even if the user abandons payment.
-    unawaited(_createBackendOrders(OrderStatus.pending));
-
     if (isDigital) {
       // Digital purchase: failure message (email not sent from app)
       final message =

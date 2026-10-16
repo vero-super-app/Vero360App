@@ -67,6 +67,10 @@ class LiveCallSession extends ChangeNotifier {
     };
   }
 
+  /// Same relay setup for Reels LIVE broadcasts.
+  static Map<String, dynamic> rtcConfig() => _rtcConfig();
+  static bool keepCandidate(String value) => _keepCandidate(value);
+
   static bool _keepCandidate(String value) {
     final v = value.toLowerCase();
     if (v.contains(' 127.') ||

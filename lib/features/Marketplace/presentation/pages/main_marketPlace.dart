@@ -35,6 +35,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_tim
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
 
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
+import 'package:vero360_app/features/Cart/CartPresentaztion/widgets/cart_header_button.dart';
 import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
@@ -3660,7 +3661,7 @@ class _MarketAppBar extends StatelessWidget {
             ),
             const Spacer(),
             Container(
-              margin: const EdgeInsets.only(right: 16),
+              margin: const EdgeInsets.only(right: 10),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
                 color: _kAmberLight,
@@ -3673,6 +3674,13 @@ class _MarketAppBar extends StatelessWidget {
                 Text('Live', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: _kAmberDark)),
               ]),
             ),
+            CartHeaderButton(
+              size: 38,
+              iconColor: _kAmber,
+              background: _kAmberLight,
+              border: _kAmber.withOpacity(0.3),
+            ),
+            const SizedBox(width: 16),
           ]),
         ),
       ),

@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -42,6 +43,8 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   late int _groupIndex;
   late List<MerchantStoryGroup> _groups;
   static const Duration _autoAdvance = Duration(seconds: 8);
+  static const Duration _maxVideoAdvance = Duration(seconds: 60);
+  final Map<String, Duration> _videoDurations = {};
   DateTime _lastTap = DateTime.fromMillisecondsSinceEpoch(0);
   bool _isPaused = false;
   bool _sendingReply = false;
@@ -331,7 +334,26 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     }).catchError((_) {});
   }
 
+  void _onVideoReady(String storyId, Duration length) {
+    if (!mounted || length <= Duration.zero) return;
+    final capped = length > _maxVideoAdvance ? _maxVideoAdvance : length;
+    if (_videoDurations[storyId] == capped) return;
+    _videoDurations[storyId] = capped;
+    final items = _items;
+    if (_currentIndex >= 0 &&
+        _currentIndex < items.length &&
+        items[_currentIndex].storyId == storyId) {
+      _restartProgress();
+    }
+  }
+
   void _restartProgress() {
+    final items = _items;
+    final storyId = _currentIndex >= 0 && _currentIndex < items.length
+        ? items[_currentIndex].storyId
+        : null;
+    _progressController.duration =
+        (storyId == null ? null : _videoDurations[storyId]) ?? _autoAdvance;
     if (_isPaused) {
       _progressController
         ..stop()
@@ -493,6 +515,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                   key: ValueKey(item.storyId),
                   item: item,
                   active: i == _currentIndex,
+                  onVideoReady: (d) => _onVideoReady(item.storyId, d),
                 );
               },
             ),
@@ -1377,11 +1400,13 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
 class _StoryPage extends StatefulWidget {
   final MerchantStoryItem item;
   final bool active;
+  final ValueChanged<Duration>? onVideoReady;
 
   const _StoryPage({
     super.key,
     required this.item,
     required this.active,
+    this.onVideoReady,
   });
 
   @override
@@ -1393,6 +1418,7 @@ class _StoryPageState extends State<_StoryPage>
   VideoPlayerController? _videoController;
   Uint8List? _inlineBytes;
   bool _videoReady = false;
+  bool _videoFailed = false;
 
   @override
   bool get wantKeepAlive => true;
@@ -1411,18 +1437,55 @@ class _StoryPageState extends State<_StoryPage>
         precacheImage(NetworkImage(url), context);
       });
     }
-    if (widget.item.mediaType == 'video' && url.isNotEmpty) {
-      final controller = VideoPlayerController.networkUrl(Uri.parse(url));
-      _videoController = controller;
-      controller.initialize().then((_) {
-        if (!mounted) return;
-        controller.setLooping(true);
-        if (widget.active) controller.play();
-        setState(() => _videoReady = true);
-      }).catchError((_) {
-        if (mounted) setState(() => _videoReady = false);
-      });
+    if (widget.item.mediaType == 'video') {
+      if (url.isEmpty) {
+        _videoFailed = true;
+      } else {
+        _startVideo(url);
+      }
     }
+  }
+
+  /// Android uses a native view: the default texture path renders black on
+  /// some devices running the Skia renderer (Impeller is off in the manifest).
+  void _startVideo(String url) {
+    final controller = VideoPlayerController.networkUrl(
+      Uri.parse(url),
+      viewType: defaultTargetPlatform == TargetPlatform.android
+          ? VideoViewType.platformView
+          : VideoViewType.textureView,
+    );
+    _videoController = controller;
+    controller.initialize().then((_) {
+      if (!mounted || _videoController != controller) return;
+      controller.setLooping(true);
+      if (widget.active) controller.play();
+      setState(() {
+        _videoReady = true;
+        _videoFailed = false;
+      });
+      widget.onVideoReady?.call(controller.value.duration);
+    }).catchError((Object e) {
+      if (kDebugMode) debugPrint('[StoryViewer] video failed: $e');
+      if (!mounted || _videoController != controller) return;
+      setState(() {
+        _videoReady = false;
+        _videoFailed = true;
+      });
+    });
+  }
+
+  void _retryVideo() {
+    final url = widget.item.mediaUrl.trim();
+    if (url.isEmpty) return;
+    final old = _videoController;
+    _videoController = null;
+    old?.dispose();
+    setState(() {
+      _videoReady = false;
+      _videoFailed = false;
+    });
+    _startVideo(url);
   }
 
   @override
@@ -1430,7 +1493,10 @@ class _StoryPageState extends State<_StoryPage>
     super.didUpdateWidget(oldWidget);
     final controller = _videoController;
     if (controller == null || !controller.value.isInitialized) return;
-    if (widget.active && !controller.value.isPlaying) {
+    if (widget.active && !oldWidget.active) {
+      controller.seekTo(Duration.zero);
+      controller.play();
+    } else if (widget.active && !controller.value.isPlaying) {
       controller.play();
     } else if (!widget.active && controller.value.isPlaying) {
       controller.pause();
@@ -1500,7 +1566,28 @@ class _StoryPageState extends State<_StoryPage>
                   child: VideoPlayer(controller),
                 ),
               ),
-            if (!_videoReady)
+            if (_videoFailed)
+              Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'Unable to play this video',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton(
+                      onPressed: _retryVideo,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: const BorderSide(color: Colors.white70),
+                      ),
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              )
+            else if (!_videoReady)
               const Center(
                 child: CircularProgressIndicator(color: Colors.white),
               ),

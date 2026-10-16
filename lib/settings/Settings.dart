@@ -1668,15 +1668,13 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   /// Shares the app link and short message (share_plus).
+  /// Uses the local store URL so the sheet opens without a network lookup.
   Future<void> _shareApp() async {
     _maybeHaptic();
     try {
-      final check = await AppUpdateChecker.check();
-      final storeUrl = check.storeUrl.trim().isNotEmpty
-          ? check.storeUrl.trim()
-          : (defaultTargetPlatform == TargetPlatform.iOS
-              ? AppUpdateChecker.appStoreSearchUrl()
-              : AppUpdateChecker.playStoreUrl(AppUpdateChecker.playStoreId));
+      final storeUrl = AppUpdateChecker.defaultStoreUrl(
+        isIos: defaultTargetPlatform == TargetPlatform.iOS,
+      );
       final text = _t(
         'Try Vero360 – one app for VeroRide,marketplace, food, transport,accomodation and more. $storeUrl',
         'Yesani Vero360 – pulogalamu imodzi ya msika, chakudya, mayendedwe, ndi zina. $storeUrl',

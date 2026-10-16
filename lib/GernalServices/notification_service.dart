@@ -29,6 +29,7 @@ import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/Home/notifications_page.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
+import 'package:vero360_app/features/Reels/reels_notification_routes.dart';
 import 'package:vero360_app/GernalScreens/vero_team_chat_page.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_my_orders_page.dart';
@@ -1007,6 +1008,12 @@ class NotificationService {
         (data[NotificationStore.kPayloadBadgeRoute] as String?)?.toLowerCase();
 
     switch (type ?? '') {
+      case 'reel_live':
+        unawaited(openLiveFromNotification(navigator, data));
+        return;
+      case 'reel_posted':
+        unawaited(openReelFromNotification(navigator, data));
+        return;
       case 'new_ride':
         final rideId = (data['rideId'] ?? data['id'] ?? '').toString().trim();
         if (rideId.isEmpty) {

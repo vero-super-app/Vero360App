@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:vero360_app/GernalServices/engagement_notification_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/Latest_model.dart';
@@ -30,6 +31,7 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
   final _form = GlobalKey<FormState>();
   final _name = TextEditingController();
   final _price = TextEditingController();
+  final _quantity = TextEditingController();
   bool _submitting = false;
   /// Share to Vero360 Facebook Page after create (default on).
   bool _postToFacebook = true;
@@ -60,6 +62,7 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
     _tabs.dispose();
     _name.dispose();
     _price.dispose();
+    _quantity.dispose();
     super.dispose();
   }
 
@@ -74,6 +77,7 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
     required String name,
     required double price,
     required String imageUrl,
+    required int quantity,
     int? arrivalId,
   }) async {
     try {
@@ -82,6 +86,7 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
         'name': name.trim(),
         'title': name.trim(),
         'price': price,
+        'quantity': quantity,
         'imageUrl': imageUrl.trim(),
         'image': imageUrl.trim(),
         if (arrivalId != null && arrivalId > 0) 'arrivalId': arrivalId,
@@ -173,6 +178,7 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
       );
 
       final priceVal = parseMwkInput(_price.text) ?? 0;
+      final qtyVal = int.tryParse(_quantity.text.trim()) ?? 1;
 
       // ✅ Create latest arrival (NOW hits /vero/latestarrivals)
       final postedName = _name.text.trim();
@@ -183,6 +189,7 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
           name: postedName,
           price: priceVal,
           createdAt: DateTime.now(),
+          quantity: qtyVal,
         ),
       );
 
@@ -199,6 +206,7 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
           name: postedName,
           price: priceVal,
           imageUrl: imageUrl,
+          quantity: qtyVal,
           arrivalId: created.id > 0 ? created.id : null,
         ));
       }
@@ -220,6 +228,7 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
       _form.currentState!.reset();
       _name.clear();
       _price.clear();
+      _quantity.clear();
       _clearPicked();
       _postToFacebook = true;
 
@@ -242,6 +251,9 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
     final nameCtrl = TextEditingController(text: it.name);
     final priceCtrl =
         TextEditingController(text: formatMwkInput(it.price));
+    final qtyCtrl = TextEditingController(
+      text: it.quantity != null ? '${it.quantity}' : '',
+    );
     XFile? picked;
     Uint8List? pickedBytes;
     var saving = false;
@@ -277,10 +289,11 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
               if (saving) return;
               final n = nameCtrl.text.trim();
               final p = parseMwkInput(priceCtrl.text) ?? 0;
-              if (n.isEmpty || p <= 0) {
+              final q = int.tryParse(qtyCtrl.text.trim()) ?? 0;
+              if (n.isEmpty || p <= 0 || q <= 0) {
                 ToastHelper.showCustomToast(
                   context,
-                  'Enter a name and valid price',
+                  'Enter a name, valid price and quantity',
                   isSuccess: false,
                   errorMessage: 'Invalid',
                 );
@@ -292,6 +305,7 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
                 final patch = <String, dynamic>{
                   'name': n,
                   'price': p,
+                  'quantity': q,
                 };
                 if (pickedBytes != null && picked != null) {
                   final filename =
@@ -397,6 +411,17 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
                         ),
                       ),
                     ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: qtyCtrl,
+                      enabled: !saving,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      decoration: _inputDecoration(
+                        label: 'Quantity available',
+                        hint: 'e.g. 5',
+                      ),
+                    ),
                     const SizedBox(height: 16),
                     FilledButton.icon(
                       style: _filledBtnStyle(),
@@ -424,6 +449,7 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
 
     nameCtrl.dispose();
     priceCtrl.dispose();
+    qtyCtrl.dispose();
 
     if (saved == true && mounted) {
       ToastHelper.showCustomToast(
@@ -623,6 +649,21 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
                     return null;
                   },
                 ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _quantity,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: _inputDecoration(
+                    label: 'Quantity available',
+                    hint: 'How many units you have, e.g. 5',
+                  ),
+                  validator: (v) {
+                    final q = int.tryParse((v ?? '').trim());
+                    if (q == null || q <= 0) return 'Enter how many you have';
+                    return null;
+                  },
+                ),
                 const SizedBox(height: 16),
                 SwitchListTile.adaptive(
                   contentPadding: EdgeInsets.zero,
@@ -740,6 +781,18 @@ class _LatestArrivalsCrudPageState extends State<LatestArrivalsCrudPage>
                         style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
                     ),
+                    if (it.quantity != null)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+                        child: Text(
+                          '${it.quantity} available',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(10, 0, 4, 10),
                       child: Row(

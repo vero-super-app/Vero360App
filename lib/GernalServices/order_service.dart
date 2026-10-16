@@ -12,6 +12,7 @@ import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
+import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/config/api_config.dart';
 
 
@@ -521,7 +522,7 @@ class OrderService {
         'ItemName': item.name,
         'ItemImage': item.image,
         'Category': 'other',
-        'Price': item.price.round(),
+        'Price': _chargedUnitPrice(item),
         'Quantity': item.quantity,
         'Description': description,
         'Status': orderStatusToApi(status),
@@ -597,6 +598,18 @@ class OrderService {
     }
 
     return out;
+  }
+
+  /// What the customer is charged for one unit, including the admin commission.
+  int _chargedUnitPrice(CartModel item) {
+    final listed = item.price.toDouble();
+    final type = item.serviceType.toLowerCase();
+    final addsCommission = type == 'marketplace' ||
+        type == 'food' ||
+        type == 'accommodation' ||
+        type == 'stay';
+    if (!addsCommission) return item.price.round();
+    return BuyerCommission.quote(listed).buyerTotal.round();
   }
 
   /// Embeds marketplace SQL id so `OrderItem` can parse `itemSqlId` from Description if API omits ItemId.
@@ -693,6 +706,11 @@ class OrderService {
         byId[o.id] = o;
       }
       for (final o in results[1]) {
+        // A cancelled or unfinished payment must not appear as a merchant sale.
+        if (o.paymentStatus != PaymentStatus.paid &&
+            o.status == OrderStatus.pending) {
+          continue;
+        }
         byId[o.id] = o;
         incomingMerchantOrderIds.add(o.id);
       }

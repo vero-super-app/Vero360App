@@ -1007,8 +1007,8 @@ class AuthService {
 
   // -------------------- Register --------------------
   //
-  // OTP is verified via the Vero API; the account is created in Firebase only
-  // (Auth + Firestore). NestJS /auth/register is not used.
+  // The SMS/email code is checked on the Vero API (`/auth/otp/verify`).
+  // Account creation then posts that ticket to `/auth/register`.
 
   String _registerFirebaseErrorMessage(FirebaseAuthException e) {
     switch (e.code) {
@@ -1053,18 +1053,43 @@ class AuthService {
 
     // Firebase Auth requires an email; phone-only signups use a synthetic address.
     final authEmail = email.trim().isNotEmpty
-        ? email.trim()
+        ? email.trim().toLowerCase()
         : syntheticEmailForPhone(phone);
-    if (authEmail.isEmpty) {
+    final authPhone = phone.trim().isEmpty
+        ? ''
+        : RegistrationVerificationService.formatPhoneE164(phone);
+    if (authEmail.isEmpty && authPhone.isEmpty) {
       _toast(context, 'Email or phone number is required.', ok: false);
       return null;
     }
 
     try {
-      final cred = await _firebaseAuth.createUserWithEmailAndPassword(
-        email: authEmail,
-        password: password,
+      await ApiClient.post(
+        '/auth/register',
+        body: jsonEncode({
+          'name': name.trim(),
+          'password': password,
+          'role': normalizedRole,
+          'verificationTicket': verificationTicket.trim(),
+          'preferredVerification': preferredVerification.trim(),
+          if (authEmail.isNotEmpty) 'email': authEmail,
+          if (authPhone.isNotEmpty) 'phone': authPhone,
+        }),
       );
+
+      UserCredential cred;
+      try {
+        cred = await _firebaseAuth.createUserWithEmailAndPassword(
+          email: authEmail,
+          password: password,
+        );
+      } on FirebaseAuthException catch (e) {
+        if (e.code != 'email-already-in-use' || authEmail.isEmpty) rethrow;
+        cred = await _firebaseAuth.signInWithEmailAndPassword(
+          email: authEmail,
+          password: password,
+        );
+      }
       final user = cred.user;
       if (user == null) {
         _toast(context, 'Sign up failed.', ok: false);
@@ -1117,6 +1142,19 @@ class AuthService {
       if (e.code == 'email-already-in-use') {
         return const {'accountExists': true};
       }
+      return null;
+    } on ApiException catch (e) {
+      if (RegistrationVerificationService.looksLikeAccountExists(e)) {
+        _toast(context, 'Account exists. Please sign in to continue.', ok: false);
+        return const {'accountExists': true};
+      }
+      _toast(
+        context,
+        e.message.trim().isNotEmpty
+            ? e.message
+            : 'Sign up failed. Try again later.',
+        ok: false,
+      );
       return null;
     } catch (_) {
       _toast(context, 'Sign up failed. Try again later.', ok: false);

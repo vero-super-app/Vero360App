@@ -29,6 +29,8 @@ class CartModel {
   final String? listingDocId;
   /// Kitchen prep time in minutes (food). Set by merchant on the dish.
   final int? prepTimeMinutes;
+  /// Backend latest-arrival id; its stock is reduced after a paid order.
+  final int? latestArrivalId;
 
   CartModel({
     required this.userId,
@@ -50,6 +52,7 @@ class CartModel {
     this.location,
     this.prepTimeMinutes,
     this.listingDocId,
+    this.latestArrivalId,
   });
 
   factory CartModel.fromJson(Map<String, dynamic> json) {
@@ -96,6 +99,10 @@ class CartModel {
         return m > 0 ? m : null;
       }(),
       listingDocId: optStr(json['listingDocId'] ?? json['firestoreListingId']),
+      latestArrivalId: () {
+        final id = safeInt(json['latestArrivalId'], def: 0);
+        return id > 0 ? id : null;
+      }(),
     );
   }
 
@@ -131,6 +138,7 @@ class CartModel {
       'prepTimeMinutes': prepTimeMinutes,
     if (listingDocId != null && listingDocId!.trim().isNotEmpty)
       'listingDocId': listingDocId!.trim(),
+    if (latestArrivalId != null) 'latestArrivalId': latestArrivalId,
   };
 
   CartModel copyWith({
@@ -153,6 +161,7 @@ class CartModel {
     String? location,
     int? prepTimeMinutes,
     String? listingDocId,
+    int? latestArrivalId,
   }) {
     return CartModel(
       userId: userId ?? this.userId,
@@ -174,6 +183,7 @@ class CartModel {
       location: location ?? this.location,
       prepTimeMinutes: prepTimeMinutes ?? this.prepTimeMinutes,
       listingDocId: listingDocId ?? this.listingDocId,
+      latestArrivalId: latestArrivalId ?? this.latestArrivalId,
     );
   }
 

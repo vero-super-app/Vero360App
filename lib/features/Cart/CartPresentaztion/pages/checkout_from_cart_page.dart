@@ -18,6 +18,7 @@ import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/MarkeplaceMerchantServices/postlatestArrivalservices.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_order_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_order_number.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_courier_dispatch.dart';
@@ -408,7 +409,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     }
     for (var i = 0; i < _items.length; i++) {
       final it = _items[i];
-      if (it.isFood && it.maxOrderQty > 0 && it.quantity > it.maxOrderQty) {
+      if (it.maxOrderQty > 0 && it.quantity > it.maxOrderQty) {
         _items[i] = it.copyWith(quantity: it.maxOrderQty);
       }
     }
@@ -717,7 +718,44 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
       return;
     }
     if (!canPay) return;
+    if (!await _latestArrivalsStillAvailable()) return;
     await _startPawaPayPayment();
+  }
+
+  /// Re-check latest-arrival stock right before paying (others may have bought).
+  /// Network errors do not block payment; the server check after payment still runs.
+  Future<bool> _latestArrivalsStillAvailable() async {
+    final svc = LatestArrivalsServicess();
+    var ok = true;
+    for (var i = 0; i < _items.length; i++) {
+      final it = _items[i];
+      final id = it.latestArrivalId;
+      if (id == null) continue;
+      int? left;
+      try {
+        left = await svc.fetchAvailable(id);
+      } catch (_) {
+        continue;
+      }
+      if (left == null) continue;
+      if (left != it.availableStock && mounted) {
+        setState(() => _items[i] = it.copyWith(availableStock: left));
+      }
+      if (it.quantity > left) {
+        ok = false;
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            left <= 0
+                ? '${it.name} is sold out'
+                : 'Only $left of ${it.name} left. Lower the quantity.',
+            isSuccess: false,
+            errorMessage: '',
+          );
+        }
+      }
+    }
+    return ok;
   }
 
   Future<bool> _ensureDefaultAddressIfNeeded() async {
@@ -1121,7 +1159,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                                     fontSize: 12.5,
                                   ),
                                 ),
-                                if (it.isFood && it.maxOrderQty < 99999) ...[
+                                if (it.maxOrderQty < 99999) ...[
                                   const SizedBox(height: 4),
                                   Text(
                                     it.maxOrderQty < 1
@@ -1839,6 +1877,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
 
   /// Backend orders + Firestore escrow (merchant wallet credited after buyer confirms or 7 days).
   Future<void> _createConfirmedOrdersAndEscrow(List<CartModel> items) async {
+    unawaited(_recordLatestArrivalPurchases(items));
     try {
       final addressForOrder =
           widget.deliveryType == DeliveryType.pickup ? null : widget.shippingAddress;
@@ -1868,6 +1907,20 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     }
   }
 
+
+  /// Paid latest arrivals: reduce the merchant's posted quantity.
+  Future<void> _recordLatestArrivalPurchases(List<CartModel> items) async {
+    final svc = LatestArrivalsServicess();
+    for (final it in items) {
+      final id = it.latestArrivalId;
+      if (id == null || it.quantity <= 0) continue;
+      try {
+        await svc.recordPurchase(id, it.quantity);
+      } catch (e) {
+        debugPrint('[InAppPaymentPage] Latest arrival stock update failed: $e');
+      }
+    }
+  }
 
   Future<void> _createBackendOrders(OrderStatus status) async {
     try {

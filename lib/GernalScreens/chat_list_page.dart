@@ -861,34 +861,29 @@ class _ChatListPageState extends State<ChatListPage> {
       if (other != null) peers.add(other);
     }
     for (final p in peers) {
-      final local = (p.businessName ?? '').trim().isNotEmpty
-          ? p.businessName!.trim()
-          : p.preferredDisplayName.trim();
-      if (local.isNotEmpty &&
-          !local.contains('@') &&
-          local.toLowerCase() != 'chat' &&
-          !ChatParticipant.isPlaceholderName(local)) {
-        BackendChatService.rememberPeerDisplayName(p, local);
-        _resolvedPeerNames[p.displayLookupKey] = local;
+      final biz = (p.businessName ?? '').trim();
+      if (biz.isNotEmpty &&
+          !biz.contains('@') &&
+          biz.toLowerCase() != 'chat' &&
+          !ChatParticipant.isPlaceholderName(biz)) {
+        BackendChatService.rememberPeerDisplayName(p, biz);
+        _resolvedPeerNames[p.displayLookupKey] = biz;
       }
       final key = p.displayLookupKey;
       final memo = BackendChatService.peekCachedBusinessName(key) ??
           (p.id > 0
               ? BackendChatService.peekCachedBusinessName('i:${p.id}')
-              : null) ??
-          ((p.businessName ?? '').trim().isNotEmpty ? p.businessName!.trim() : null);
+              : null);
       if (memo != null &&
           memo.isNotEmpty &&
           !ChatParticipant.isPlaceholderName(memo)) {
         _resolvedPeerNames[key] = memo;
       }
     }
+    // Anyone without a known business name is checked against merchant profiles.
     final pending = peers.where((p) {
       final have = _resolvedPeerNames[p.displayLookupKey];
-      return have == null || have.isEmpty || p.needsBusinessNameLookup;
-    }).where((p) {
-      final have = _resolvedPeerNames[p.displayLookupKey];
-      return have == null || ChatParticipant.isPlaceholderName(have);
+      return have == null || have.isEmpty || ChatParticipant.isPlaceholderName(have);
     }).toList();
     final sig = peers.map((p) => p.displayLookupKey).join('|');
     if (pending.isEmpty) {

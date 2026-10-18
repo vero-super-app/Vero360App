@@ -274,6 +274,107 @@ service cloud.firestore {
         && resource.data.merchantId == request.auth.uid;
     }
 
+    // Reels: anyone (including guests) can watch. Owners create/delete their own.
+    // Other signed-in users may only bump the engagement counters.
+    // Reels LIVE. viewers/{uid} carries WebRTC signaling between host and viewer.
+    match /lives/{liveId} {
+      allow read: if true;
+      allow create: if isSignedIn()
+        && request.resource.data.hostId == request.auth.uid
+        && request.resource.data.status == 'live';
+      allow update: if isSignedIn() && (
+        resource.data.hostId == request.auth.uid
+        || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount'])
+      );
+      allow delete: if false;
+
+      match /viewers/{uid} {
+        allow read: if isSignedIn() && (
+          request.auth.uid == uid
+          || get(/databases/$(database)/documents/lives/$(liveId)).data.hostId == request.auth.uid
+        );
+        allow create, delete: if isSignedIn() && (
+          request.auth.uid == uid
+          || get(/databases/$(database)/documents/lives/$(liveId)).data.hostId == request.auth.uid
+        );
+        allow update: if isSignedIn() && (
+          (request.auth.uid == uid
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['answer', 'viewerIce', 'session', 'name', 'photo', 'joinedAt']))
+          || (get(/databases/$(database)/documents/lives/$(liveId)).data.hostId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['offer', 'hostIce']))
+        );
+      }
+
+      match /chat/{messageId} {
+        allow read: if true;
+        allow create: if isSignedIn()
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() <= 200;
+        allow delete: if isSignedIn()
+          && get(/databases/$(database)/documents/lives/$(liveId)).data.hostId == request.auth.uid;
+      }
+    }
+
+    match /reels/{reelId} {
+      allow read: if true;
+      allow create: if isSignedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.hidden == false
+        && request.resource.data.reportCount == 0;
+      allow update: if isSignedIn() && (
+        (
+          resource.data.ownerId == request.auth.uid
+          && !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['ownerId', 'hidden', 'reportCount'])
+        )
+        || request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['likeCount', 'commentCount', 'viewCount', 'shareCount', 'reportCount'])
+      );
+      allow delete: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+
+      match /likes/{uid} {
+        allow read: if true;
+        allow create, delete: if isSignedIn() && request.auth.uid == uid;
+      }
+
+      // One share per account (doc id = uid).
+      match /shares/{uid} {
+        allow read: if isSignedIn() && request.auth.uid == uid;
+        allow create: if isSignedIn() && request.auth.uid == uid;
+      }
+
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if isSignedIn()
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() <= 500;
+        // Authors may blank their own comment; anyone may like/dislike or bump replies.
+        allow update: if isSignedIn() && (
+          (
+            resource.data.uid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['deleted', 'text', 'likedBy', 'dislikedBy', 'replyCount'])
+          )
+          || request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['likedBy', 'dislikedBy', 'replyCount'])
+        );
+        allow delete: if isSignedIn() && (
+          resource.data.uid == request.auth.uid
+          || get(/databases/$(database)/documents/reels/$(reelId)).data.ownerId
+            == request.auth.uid
+        );
+      }
+
+      match /reports/{uid} {
+        allow create, update: if isSignedIn() && request.auth.uid == uid;
+        allow read: if false;
+      }
+    }
+
     // Admin → Vero360 Team chat broadcasts (everyone).
     match /vero_team_broadcasts/{broadcastId} {
       allow read: if isSignedIn();

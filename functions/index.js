@@ -2100,3 +2100,78 @@ exports.onMerchantPromotionFacebookPost =
 const activateMarketplacePromotion = require('./activate_marketplace_promotion');
 exports.activateMarketplacePromotion =
   activateMarketplacePromotion.activateMarketplacePromotion;
+
+/** Spotify song search for reels — see ./spotify_search.js */
+exports.spotifySearch = require('./spotify_search').spotifySearch;
+exports.prepareReelDownload = require('./reel_download').prepareReelDownload;
+exports.brandReelOnPost = require('./reel_download').brandReelOnPost;
+
+// ─────────────────────────────────────────────────────────────
+// Reels: tell followers when someone they follow goes LIVE or posts a reel.
+// Followers live at merchant_followers/{ownerId}/followers/{uid}.
+// ─────────────────────────────────────────────────────────────
+
+/** At most one push per owner per kind inside this window. */
+const REEL_PUSH_COOLDOWN_MS = { live: 10 * 60 * 1000, reel: 30 * 60 * 1000 };
+
+async function claimReelPushSlot(ownerId, kind) {
+  const ref = admin.firestore().collection('reel_push_state').doc(ownerId);
+  return admin.firestore().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const last = snap.exists ? snap.get(`${kind}At`) : null;
+    const lastMs = last && typeof last.toMillis === 'function' ? last.toMillis() : 0;
+    if (Date.now() - lastMs < REEL_PUSH_COOLDOWN_MS[kind]) return false;
+    tx.set(ref, { [`${kind}At`]: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    return true;
+  });
+}
+
+async function pushToFollowers(ownerId, title, body, data) {
+  const snap = await admin
+    .firestore()
+    .collection('merchant_followers')
+    .doc(ownerId)
+    .collection('followers')
+    .limit(1000)
+    .get();
+  const uids = snap.docs.map((d) => d.id).filter((uid) => uid && uid !== ownerId);
+  for (let i = 0; i < uids.length; i += 25) {
+    await Promise.all(uids.slice(i, i + 25).map((uid) => sendFcmToUser(uid, title, body, data)));
+  }
+  console.log(`reels push "${data.type}" from ${ownerId} → ${uids.length} followers`);
+}
+
+exports.onReelLiveStarted = onDocumentCreated(
+  { document: 'lives/{liveId}', serviceAccount: FUNCTIONS_SERVICE_ACCOUNT, timeoutSeconds: 120 },
+  async (event) => {
+    const live = event.data && event.data.data();
+    if (!live || live.status !== 'live' || !live.hostId) return;
+    if (!(await claimReelPushSlot(live.hostId, 'live'))) return;
+    const name = String(live.hostName || 'Someone you follow').slice(0, 60);
+    const title = `🔴 ${name} is LIVE now`;
+    const body = String(live.title || 'Tap to join the LIVE before it ends.').slice(0, 120);
+    await pushToFollowers(live.hostId, title, body, {
+      type: 'reel_live',
+      liveId: event.params.liveId,
+      hostId: live.hostId,
+    });
+  },
+);
+
+exports.onReelPosted = onDocumentCreated(
+  { document: 'reels/{reelId}', serviceAccount: FUNCTIONS_SERVICE_ACCOUNT, timeoutSeconds: 120 },
+  async (event) => {
+    const reel = event.data && event.data.data();
+    if (!reel || reel.hidden || !reel.ownerId) return;
+    if (!(await claimReelPushSlot(reel.ownerId, 'reel'))) return;
+    const name = String(reel.ownerName || 'Someone you follow').slice(0, 60);
+    const caption = String(reel.caption || '').trim();
+    const title = `🎬 ${name} posted a new reel`;
+    const body = caption ? caption.slice(0, 120) : 'Tap to watch it now.';
+    await pushToFollowers(reel.ownerId, title, body, {
+      type: 'reel_posted',
+      reelId: event.params.reelId,
+      ownerId: reel.ownerId,
+    });
+  },
+);

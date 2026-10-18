@@ -15,7 +15,8 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_guard.dart';
 
 import '../../Home/homepage.dart';
 import '../Marketplace/presentation/pages/main_marketPlace.dart';
-import '../Cart/CartPresentaztion/pages/cartpage.dart';
+import 'package:vero360_app/features/Reels/reels_nav_icon.dart';
+import 'package:vero360_app/features/Reels/reels_page.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/GernalServices/merchant_identity.dart';
@@ -78,6 +79,8 @@ class _BottomnavbarState extends State<Bottomnavbar>
   bool _pagesReady = false;
 
   final cartService = CartServiceProvider.getInstance();
+  /// Reels only play while their tab is selected (iOS keeps tabs mounted).
+  final ValueNotifier<bool> _reelsVisible = ValueNotifier<bool>(false);
   StreamSubscription<User?>? _authSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _teamUnreadSub;
   int _teamUnread = 0;
@@ -112,18 +115,11 @@ class _BottomnavbarState extends State<Bottomnavbar>
         cartService: cartService,
         onBackToHome: () => setState(() => _selectedIndex = 0),
       ),
+      ReelsPage(key: ValueKey('reels_tab_$uid'), visible: _reelsVisible),
       AuthGuard(
         featureName: 'Messages',
         showChildBehindDialog: true,
         child: ChatListPage(key: ValueKey('chat_list_$uid')),
-      ),
-      AuthGuard(
-        featureName: 'Cart',
-        showChildBehindDialog: true,
-        child: CartPage(
-          key: ValueKey('cart_tab_$uid'),
-          cartService: cartService,
-        ),
       ),
       const AuthGuard(
         featureName: 'Profile',
@@ -138,6 +134,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
     IncomingCallListener.stop();
     _authSub?.cancel();
     _teamUnreadSub?.cancel();
+    _reelsVisible.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -183,7 +180,8 @@ class _BottomnavbarState extends State<Bottomnavbar>
     }
   }
 
-  bool _tabIsProtected(int index) => index >= 2;
+  /// Home, Market and Reels are open to guests; Messages and Profile need sign-in.
+  bool _tabIsProtected(int index) => index >= 3;
 
   Future<void> _initialize() async {
     try {
@@ -246,7 +244,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
       unawaited(UserPresenceService.goOffline());
       _listenTeamUnread();
     }
-    // Guests may use Home + Marketplace. Only kick off Messages/Cart/Profile.
+    // Guests may use Home, Marketplace and Reels. Only kick off Messages/Profile.
     if (!loggedIn && _tabIsProtected(_selectedIndex)) {
       setState(() => _selectedIndex = 0);
     }
@@ -391,18 +389,11 @@ class _BottomnavbarState extends State<Bottomnavbar>
         cartService: cartService,
         onBackToHome: () => setState(() => _selectedIndex = 0),
       ),
+      ReelsPage(key: ValueKey('reels_tab_$_shellUid'), visible: _reelsVisible),
       AuthGuard(
         featureName: 'Messages',
         showChildBehindDialog: true,
         child: ChatListPage(key: ValueKey('chat_list_$_shellUid')),
-      ),
-      AuthGuard(
-        featureName: 'Cart',
-        showChildBehindDialog: true,
-        child: CartPage(
-          key: ValueKey('cart_tab_$_shellUid'),
-          cartService: cartService,
-        ),
       ),
       AuthGuard(
         featureName: _isMerchant ? 'Dashboard' : 'Profile',
@@ -673,7 +664,13 @@ class _BottomnavbarState extends State<Bottomnavbar>
 
   @override
   Widget build(BuildContext context) {
+    final onReels = _selectedIndex == 2;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    if (_reelsVisible.value != onReels) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _reelsVisible.value = _selectedIndex == 2;
+      });
+    }
 
     return Scaffold(
       extendBody: true,                    // body goes under the nav for depth
@@ -687,6 +684,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
             onTap: _onItemTapped,
             isDark: isDark,
             isMerchant: _isMerchant,
+            blur: !onReels,
             messagesBadgeCount: (snap.data ?? 0) + _teamUnread,
           );
         },
@@ -701,14 +699,21 @@ class _BottomnavbarState extends State<Bottomnavbar>
 class VeroNavItemData {
   final IconData icon;
   final String label;
-  const VeroNavItemData({required this.icon, required this.label});
+
+  /// Draws the icon instead of [icon] when Material has no matching glyph.
+  final Widget Function(Color color, double size)? iconBuilder;
+  const VeroNavItemData({required this.icon, required this.label, this.iconBuilder});
 }
 
 List<VeroNavItemData> veroMainNavItems({required bool isMerchant}) => [
       const VeroNavItemData(icon: Icons.home_rounded, label: 'Home'),
       const VeroNavItemData(icon: Icons.store_rounded, label: 'Market'),
+      const VeroNavItemData(
+        icon: Icons.slow_motion_video_rounded,
+        label: 'Reels',
+        iconBuilder: reelsNavIconBuilder,
+      ),
       const VeroNavItemData(icon: Icons.chat_bubble_rounded, label: 'Messages'),
-      const VeroNavItemData(icon: Icons.shopping_bag_rounded, label: 'Cart'),
       VeroNavItemData(
         icon: isMerchant ? Icons.dashboard_rounded : Icons.person_rounded,
         label: isMerchant ? 'Dashboard' : 'Profile',
@@ -772,6 +777,7 @@ class VeroMainNavigationBar extends StatelessWidget {
     required this.isDark,
     required this.isMerchant,
     this.messagesBadgeCount = 0,
+    this.blur = true,
   });
 
   /// Highlighted tab; pass `null` when no tab applies (e.g. standalone Food screen).
@@ -780,6 +786,16 @@ class VeroMainNavigationBar extends StatelessWidget {
   final bool isDark;
   final bool isMerchant;
   final int messagesBadgeCount;
+  /// Turn off over native video (Reels): on Android a backdrop blur above a
+  /// platform view stops the video picture from showing.
+  final bool blur;
+
+  Widget _maybeBlur({required Widget child}) => blur
+      ? BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+          child: child,
+        )
+      : child;
 
   @override
   Widget build(BuildContext context) {
@@ -790,13 +806,12 @@ class VeroMainNavigationBar extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(28),
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+          child: _maybeBlur(
             child: Container(
               height: 70,
               decoration: BoxDecoration(
                 color: isDark
-                    ? Colors.black.withOpacity(0.72)
+                    ? Colors.black.withOpacity(blur ? 0.72 : 0.88)
                     : Colors.white.withOpacity(0.88),
                 borderRadius: BorderRadius.circular(28),
                 border: Border.all(
@@ -827,7 +842,7 @@ class VeroMainNavigationBar extends StatelessWidget {
                         selected:
                             selectedIndex != null && i == selectedIndex,
                         isDark: isDark,
-                        badgeCount: i == 2 ? messagesBadgeCount : 0,
+                        badgeCount: i == 3 ? messagesBadgeCount : 0,
                         onTap: () => onTap(i),
                       ),
                     ),
@@ -982,11 +997,15 @@ class _VeroNavButtonState extends State<_VeroNavButton>
                     children: [
                       Transform.translate(
                         offset: Offset(0, _iconShift.value),
-                        child: Icon(
-                          widget.item.icon,
-                          size: 24,
-                          color: widget.selected ? iconColor : unselIconColor,
-                        ),
+                        child: widget.item.iconBuilder?.call(
+                              widget.selected ? iconColor : unselIconColor,
+                              24,
+                            ) ??
+                            Icon(
+                              widget.item.icon,
+                              size: 24,
+                              color: widget.selected ? iconColor : unselIconColor,
+                            ),
                       ),
                       if (widget.badgeCount > 0)
                         Positioned(

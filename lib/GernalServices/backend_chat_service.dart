@@ -787,13 +787,16 @@ class BackendChatService {
       myName: myName,
     );
     final fromPeer = (other?.profilePicture ?? '').trim();
-    if (_usableAvatarUrl(fromPeer)) {
+    if (_usableAvatarUrl(fromPeer) && !_avatarBelongsToMe(t, fromPeer, myUserId)) {
       if (other != null) rememberPeerAvatar(other, fromPeer);
       return fromPeer;
     }
     if (other != null) {
       final cached = peekCachedAvatar(other);
-      if (_usableAvatarUrl(cached)) return cached!.trim();
+      if (_usableAvatarUrl(cached) &&
+          !_avatarBelongsToMe(t, cached!, myUserId)) {
+        return cached.trim();
+      }
     }
     final threadAvatar = (t.avatarUrl ?? '').trim();
     if (!_usableAvatarUrl(threadAvatar)) return '';
@@ -818,13 +821,32 @@ class BackendChatService {
     return norm(a) == norm(b);
   }
 
+  static final Set<String> _myPhotoUrls = <String>{};
+
+  /// Record a photo URL known to be the signed-in user's own picture.
+  static void rememberMyPhoto(String? url) {
+    final v = (url ?? '').trim();
+    if (_usableAvatarUrl(v)) _myPhotoUrls.add(v);
+  }
+
+  /// True when [url] is the signed-in user's own profile photo.
+  static bool isMyPhoto(String? url) {
+    final v = (url ?? '').trim();
+    if (!_usableAvatarUrl(v)) return false;
+    final mine = FirebaseAuth.instance.currentUser?.photoURL?.trim() ?? '';
+    if (_usableAvatarUrl(mine) && _sameAvatarUrl(v, mine)) return true;
+    for (final m in _myPhotoUrls) {
+      if (_sameAvatarUrl(v, m)) return true;
+    }
+    return false;
+  }
+
   static bool _avatarBelongsToMe(
     BackendChatThread t,
     String url,
     int myUserId,
   ) {
-    final mine = FirebaseAuth.instance.currentUser?.photoURL?.trim() ?? '';
-    if (_usableAvatarUrl(mine) && _sameAvatarUrl(url, mine)) return true;
+    if (isMyPhoto(url)) return true;
     for (final p in t.participants) {
       if (myUserId <= 0 || p.id != myUserId) continue;
       final pic = (p.profilePicture ?? '').trim();
@@ -2684,6 +2706,9 @@ class BackendChatService {
     _avatarMemoLoaded = true;
     try {
       final prefs = await SharedPreferences.getInstance();
+      for (final key in ['profilepicture', 'profilePicture', 'photoUrl']) {
+        rememberMyPhoto(prefs.getString(key));
+      }
       final raw = prefs.getString(_kAvatarPrefs);
       if (raw == null || raw.isEmpty) return;
       final decoded = jsonDecode(raw);
@@ -2700,9 +2725,32 @@ class BackendChatService {
   static void rememberPeerAvatar(ChatParticipant peer, String url) {
     final photo = url.trim();
     if (!_usableAvatarUrl(photo)) return;
+    if (isMyPhoto(photo)) {
+      forgetPeerAvatarIfMine(peer);
+      return;
+    }
     final before = peekCachedAvatar(peer);
     _rememberAvatar(peer, photo);
     if (before != photo) _persistAvatarMemo();
+  }
+
+  /// Drop cached photos for [peer] that are actually the signed-in user's.
+  static void forgetPeerAvatarIfMine(ChatParticipant peer) {
+    final keys = <String>[
+      peer.displayLookupKey,
+      if (peer.id > 0) 'i:${peer.id}',
+      if (peer.email.trim().contains('@')) 'e:${peer.email.trim().toLowerCase()}',
+      if ((peer.firebaseUid ?? '').trim().isNotEmpty) 'u:${peer.firebaseUid!.trim()}',
+    ];
+    var changed = false;
+    for (final key in keys) {
+      final v = _avatarMemo[key.trim()];
+      if (v != null && isMyPhoto(v)) {
+        _avatarMemo.remove(key.trim());
+        changed = true;
+      }
+    }
+    if (changed) _persistAvatarMemo();
   }
 
   static String? peekCachedAvatar(ChatParticipant peer) {
@@ -2714,7 +2762,7 @@ class BackendChatService {
     ];
     for (final key in keys) {
       final v = _avatarMemo[key.trim()];
-      if (_usableAvatarUrl(v)) return v!.trim();
+      if (_usableAvatarUrl(v) && !isMyPhoto(v)) return v!.trim();
     }
     return null;
   }
@@ -2747,12 +2795,15 @@ class BackendChatService {
   static final Map<String, String> _businessNameMemo = {};
   static bool _businessNameMemoLoaded = false;
   static bool _enrichingThreadNames = false;
-  static const _kBusinessNamePrefs = 'chat_peer_business_names_v1';
+  static const _kBusinessNamePrefs = 'chat_peer_business_names_v2';
+  /// Peers already checked this session that have no business profile.
+  static final Set<String> _noBusinessNameKeys = <String>{};
   static const Duration _nameLookupTimeout = Duration(seconds: 2);
 
   static String peerDisplayLookupKey(ChatParticipant p) => p.displayLookupKey;
 
-  /// Keep a name we already know so the inbox does not fall back to "Chat" offline.
+  /// Keep a known business name so the inbox does not fall back offline.
+  /// Only pass a business / store name here, never a personal name.
   static void rememberPeerDisplayName(ChatParticipant peer, String name) {
     final n = name.trim();
     if (n.isEmpty || _isPlaceholderChatName(n) || n.toLowerCase() == 'chat') {
@@ -2901,7 +2952,7 @@ class BackendChatService {
         onResolved?.call(key, known);
         continue;
       }
-      if (!p.needsBusinessNameLookup) continue;
+      if (_noBusinessNameKeys.contains(key)) continue;
       pending.add(p);
     }
 
@@ -2913,7 +2964,10 @@ class BackendChatService {
     await Future.wait(pending.map((p) async {
       final key = p.displayLookupKey;
       final found = await _lookupBusinessNameForPeer(p);
-      if (found == null || found.isEmpty) return;
+      if (found == null || found.isEmpty) {
+        _noBusinessNameKeys.add(key);
+        return;
+      }
       _rememberBusinessName(p, found);
       out[key] = found;
       onResolved?.call(key, found);

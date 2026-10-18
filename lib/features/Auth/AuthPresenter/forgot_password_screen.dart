@@ -130,7 +130,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       );
       return true;
     } on ApiException {
-      return false;
+      rethrow;
     }
   }
 

@@ -86,6 +86,31 @@ class MarketplaceShareNavigation {
     );
   }
 
+  /// Opens a `marketplace_items` listing. Returns false when it no longer exists.
+  static Future<bool> openFirestoreProduct(
+    String docId,
+    CartService cartService,
+  ) async {
+    final nav = appNavKey.currentState;
+    if (nav == null || docId.trim().isEmpty) return false;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('marketplace_items')
+          .doc(docId.trim())
+          .get();
+      final item = doc.exists ? _coreModelFromFirestore(doc) : null;
+      if (item == null) return false;
+      await nav.push(
+        MaterialPageRoute(
+          builder: (_) => DetailsPage(item: item, cartService: cartService),
+        ),
+      );
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static core.MarketplaceDetailModel? _coreModelFromFirestore(
     DocumentSnapshot doc,
   ) {

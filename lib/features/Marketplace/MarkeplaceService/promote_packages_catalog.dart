@@ -25,6 +25,15 @@ class PromotePackagesCatalog extends ChangeNotifier {
       priceMwk: 5000,
       durationHours: 168,
     ),
+    'fb_1d_local': _DefaultPkg(
+      key: 'fb_1d_local',
+      label: 'Facebook ads · 1 day',
+      kind: 'facebook_ads',
+      priceMwk: 3000,
+      durationHours: 24,
+      reachLabel: 'Local · ~500–2k people',
+      subtitle: '24 hours local reach · Vero360 runs the campaign for you',
+    ),
     'fb_3d_local': _DefaultPkg(
       key: 'fb_3d_local',
       label: 'Facebook ads · 3 days',

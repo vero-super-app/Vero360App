@@ -210,6 +210,32 @@ class LatestArrivalsServicess {
     _decode(r, where: 'PUT $url');
   }
 
+  /// Units still available, or null when the post has no quantity set.
+  Future<int?> fetchAvailable(int id) async {
+    final base = await _apiBase();
+    final url = _u('/latestarrivals/$id', base);
+    final r = await http.get(url, headers: const {'Accept': 'application/json'});
+    final body = _decode(r, where: 'GET $url');
+    final map = body is Map && body['data'] is Map ? body['data'] : body;
+    if (map is! Map) return null;
+    final raw = map['quantity'];
+    if (raw == null) return null;
+    return raw is num ? raw.toInt() : int.tryParse(raw.toString());
+  }
+
+  /// Take [quantity] units off after a paid order. Throws when not enough remain.
+  Future<void> recordPurchase(int id, int quantity) async {
+    final base = await _apiBase();
+    final url = _u('/latestarrivals/$id/purchase', base);
+    final t = await _token();
+    final r = await http.post(
+      url,
+      headers: _auth(t, extra: {'Content-Type': 'application/json'}),
+      body: json.encode({'quantity': quantity}),
+    );
+    _decode(r, where: 'POST $url');
+  }
+
   Future<void> delete(int id) async {
     final base = await _apiBase();
     final url = _u('/latestarrivals/$id', base);

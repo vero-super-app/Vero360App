@@ -10,6 +10,8 @@ class LatestArrivalModels {
   final String? sellerUserId;
   final String? serviceProviderId;
   final int? merchantBackendId;
+  /// Units the merchant posted (null = older post without a quantity).
+  final int? quantity;
 
   LatestArrivalModels({
     required this.id,
@@ -22,6 +24,7 @@ class LatestArrivalModels {
     this.sellerUserId,
     this.serviceProviderId,
     this.merchantBackendId,
+    this.quantity,
   });
 
   LatestArrivalModels copyWith({
@@ -35,6 +38,7 @@ class LatestArrivalModels {
     String? sellerUserId,
     String? serviceProviderId,
     int? merchantBackendId,
+    int? quantity,
   }) {
     return LatestArrivalModels(
       id: id ?? this.id,
@@ -47,6 +51,7 @@ class LatestArrivalModels {
       sellerUserId: sellerUserId ?? this.sellerUserId,
       serviceProviderId: serviceProviderId ?? this.serviceProviderId,
       merchantBackendId: merchantBackendId ?? this.merchantBackendId,
+      quantity: quantity ?? this.quantity,
     );
   }
 
@@ -148,8 +153,15 @@ class LatestArrivalModels {
         'merchantUserId',
         'userId',
       ]),
+      quantity: _parseQuantity(j['quantity'] ?? j['stockQuantity']),
     );
   }
+}
+
+int? _parseQuantity(dynamic v) {
+  if (v == null) return null;
+  final n = v is num ? v.toInt() : int.tryParse(v.toString().trim());
+  return n == null || n < 0 ? null : n;
 }
 
 
@@ -159,6 +171,7 @@ class LatestArrivalModel {
   final String name;
   final double price;
   final DateTime? createdAt;
+  final int? quantity;
 
   LatestArrivalModel({
     required this.id,
@@ -166,6 +179,7 @@ class LatestArrivalModel {
     required this.name,
     required this.price,
     this.createdAt,
+    this.quantity,
   });
 
   factory LatestArrivalModel.fromJson(Map<String, dynamic> j) {
@@ -182,6 +196,7 @@ class LatestArrivalModel {
         return double.tryParse(raw) ?? 0;
       }(),
       createdAt: j['createdAt'] != null ? DateTime.tryParse(j['createdAt'].toString()) : null,
+      quantity: _parseQuantity(j['quantity'] ?? j['stockQuantity']),
     );
   }
 
@@ -189,5 +204,6 @@ class LatestArrivalModel {
     'image': image,
     'name': name,
     'price': price,
+    if (quantity != null) 'quantity': quantity,
   };
 }

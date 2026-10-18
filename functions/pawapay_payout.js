@@ -56,22 +56,39 @@ function baseCandidates() {
   return [SANDBOX, LIVE];
 }
 
+// 403 also covers "provider not enabled for this account", so only 401 or an
+// explicit AUTHENTICATION_ERROR means the token itself is wrong.
 function isAuthFailure(status, body) {
-  if (status === 401 || status === 403) return true;
+  if (status === 401) return true;
   const reason = body && body.failureReason;
   const code = reason && typeof reason === 'object' ? String(reason.failureCode || '') : '';
   if (code.toUpperCase() === 'AUTHENTICATION_ERROR') return true;
   return failureMessage(body).toLowerCase().includes('api token');
 }
 
-function failureMessage(body) {
+function rawFailureMessage(body) {
   const reason = body && body.failureReason;
   if (typeof reason === 'string' && reason.trim()) return reason.trim();
   if (reason && typeof reason === 'object') {
     const message = String(reason.failureMessage || reason.failureCode || '').trim();
     if (message) return message;
   }
-  return String((body && (body.message || body.error)) || 'PawaPay rejected the payout');
+  return String((body && (body.message || body.error)) || 'PawaPay rejected the payment');
+}
+
+function failureMessage(body) {
+  const raw = rawFailureMessage(body);
+  const text = raw.toLowerCase();
+  if (text.includes('not been configured') || text.includes('provider_temporarily_unavailable')) {
+    return 'This mobile-money network is not switched on for Vero360 payments yet. Try the other network or try again later.';
+  }
+  if (text.includes('not approve') || text.includes('payment_not_approved')) {
+    return 'The prompt was not approved. Open it on your phone, enter your PIN, then try again.';
+  }
+  if (text.includes('insufficient') || text.includes('enough funds')) {
+    return 'This wallet does not have enough money for this payment.';
+  }
+  return raw;
 }
 
 function moneyAmount(amount) {
@@ -311,7 +328,7 @@ async function pawapayRequest(path, options) {
   console.error('PawaPay auth failed', { length: token.length, attempts });
   throw new HttpsError(
     'failed-precondition',
-    `PawaPay refused the saved secret (${token.length} characters: ${attempts.join(', ')}). Open the Sandbox dashboard, create a new credential, and paste only the value shown once. Do not copy the name from the list.`,
+    'Mobile-money payments are temporarily unavailable. Please try again later.',
   );
 }
 

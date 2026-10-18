@@ -21,6 +21,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace.mod
     as marketplaceModel;
 import 'package:vero360_app/features/Marketplace/presentation/pages/Marketplace_detailsPage.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_followers_page.dart';
+import 'package:vero360_app/features/Reels/user_reels_page.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_reviews_page.dart';
 import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
@@ -1494,6 +1495,16 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         ),
       ),
     );
+  }
+
+  void _openMerchantReels() {
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => UserReelsPage(
+        ownerId: widget.merchantId.trim(),
+        ownerName: _shopDisplayName,
+        ownerPhoto: (_merchantProfileUrl ?? '').trim(),
+      ),
+    ));
   }
 
   Future<void> _toggleFollow() async {
@@ -3371,6 +3382,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             onOpenReviews: _openMerchantReviews,
             onOpenFollowers: _openMerchantFollowers,
             onViewShop: _openShopPictures,
+            onViewReels: _openMerchantReels,
           ),
           _buildRecentReviewsSection(),
           Expanded(
@@ -3831,6 +3843,7 @@ class _MerchantProfileCard extends StatelessWidget {
   final VoidCallback onOpenReviews;
   final VoidCallback onOpenFollowers;
   final VoidCallback onViewShop;
+  final VoidCallback onViewReels;
 
   const _MerchantProfileCard({
     required this.merchantId,
@@ -3851,6 +3864,7 @@ class _MerchantProfileCard extends StatelessWidget {
     required this.onOpenReviews,
     required this.onOpenFollowers,
     required this.onViewShop,
+    required this.onViewReels,
   });
 
   ImageProvider? _profileImageProvider() {
@@ -4150,24 +4164,46 @@ class _MerchantProfileCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: onViewShop,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _kBrandNavy,
-                side: const BorderSide(color: _kBorder),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: onViewShop,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _kBrandNavy,
+                    side: const BorderSide(color: _kBorder),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  icon: const Icon(Icons.storefront_outlined, size: 18),
+                  label: const Text(
+                    'View shop',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
                 ),
               ),
-              icon: const Icon(Icons.storefront_outlined, size: 18),
-              label: const Text(
-                'View shop',
-                style: TextStyle(fontWeight: FontWeight.w800),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: onViewReels,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _kBrandNavy,
+                    side: const BorderSide(color: _kBorder),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  icon: const Icon(Icons.slow_motion_video_rounded, size: 18),
+                  label: const Text(
+                    'Reels',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
               ),
-            ),
+            ],
           ),
           if (!loading) ...[
             const SizedBox(height: 10),

@@ -151,6 +151,7 @@ List<MarketplacePromotePlan> promotePlansFor(PromoteVertical vertical) {
   final catalog = PromotePackagesCatalog.instance;
   final top24 = catalog.package('top_24h');
   final top7 = catalog.package('top_7d');
+  final fb1 = catalog.package('fb_1d_local');
   final fb3 = catalog.package('fb_3d_local');
   final fb7 = catalog.package('fb_7d_wider');
 
@@ -176,6 +177,18 @@ List<MarketplacePromotePlan> promotePlansFor(PromoteVertical vertical) {
         channel: top,
         priceMwk: top7.priceMwk,
         duration: Duration(hours: top7.durationHours),
+      ),
+    if (fb1.active)
+      MarketplacePromotePlan(
+        id: 'fb_1d_local',
+        label: fb1.label.isNotEmpty ? fb1.label : 'Facebook ads · 1 day',
+        subtitle: fb1.subtitle.isNotEmpty
+            ? fb1.subtitle
+            : '24 hours local reach · Vero360 runs the campaign for you',
+        channel: 'facebook_ads',
+        priceMwk: fb1.priceMwk,
+        duration: Duration(hours: fb1.durationHours),
+        reachLabel: fb1.reachLabel,
       ),
     if (fb3.active)
       MarketplacePromotePlan(

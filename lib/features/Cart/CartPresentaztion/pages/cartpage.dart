@@ -222,6 +222,7 @@ class _CartPageState extends State<CartPage> {
           'serviceType': item.serviceType,
           if (item.availableStock != null) 'availableStock': item.availableStock,
           if (item.availableStock != null) 'stockQuantity': item.availableStock,
+          if (item.latestArrivalId != null) 'latestArrivalId': item.latestArrivalId,
           if (item.prepTimeMinutes != null && item.prepTimeMinutes! > 0)
             'prepTimeMinutes': item.prepTimeMinutes,
           'updatedAt': FieldValue.serverTimestamp(),
@@ -280,6 +281,11 @@ class _CartPageState extends State<CartPage> {
               : (data['availableStock'] is num
                   ? (data['availableStock'] as num).toInt()
                   : int.tryParse('${data['availableStock'] ?? data['stockQuantity']}')),
+          latestArrivalId: () {
+            final raw = data['latestArrivalId'];
+            final id = raw is num ? raw.toInt() : int.tryParse('${raw ?? ''}');
+            return (id != null && id > 0) ? id : null;
+          }(),
           restaurantId: (data['restaurantId'] ?? '').toString().trim().isEmpty
               ? null
               : (data['restaurantId'] ?? '').toString().trim(),

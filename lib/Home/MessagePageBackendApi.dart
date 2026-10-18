@@ -202,6 +202,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
     _peerUserId = widget.peerUserId;
     _peerDisplayName = widget.peerName.trim().isEmpty ? 'Chat' : widget.peerName.trim();
     _peerAvatarUrl = (widget.peerAvatarUrl ?? '').trim();
+    if (BackendChatService.isMyPhoto(_peerAvatarUrl)) _peerAvatarUrl = '';
     _resolvingChat = _chatId.isEmpty;
     // Show seller chat chrome immediately (messages may still be loading).
     _bootComplete = _peerDisplayName.isNotEmpty &&
@@ -1024,11 +1025,32 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
 
   String? get _shownPeerAvatar {
     final live = _peerAvatarUrl.trim();
-    if (live.startsWith('http')) return live;
+    if (live.startsWith('http') && !_isMyPhoto(live)) return live;
     final passed = (widget.peerAvatarUrl ?? '').trim();
-    if (passed.startsWith('http')) return passed;
+    if (passed.startsWith('http') && !_isMyPhoto(passed)) return passed;
     return null;
   }
+
+  /// Collect my own photo URLs so they are never shown as the other person.
+  Future<void> _learnMyPhotos() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      for (final key in ['profilepicture', 'profilePicture', 'photoUrl']) {
+        BackendChatService.rememberMyPhoto(prefs.getString(key));
+      }
+    } catch (_) {}
+    final myId = _myUserId;
+    if (myId == null) return;
+    for (final m in _messages) {
+      if (m.isMine(myId)) BackendChatService.rememberMyPhoto(_senderProfileUrl(m));
+    }
+    final thread = BackendChatService.findCachedThreadById(_chatId);
+    for (final p in thread?.participants ?? const <ChatParticipant>[]) {
+      if (p.id == myId) BackendChatService.rememberMyPhoto(p.profilePicture);
+    }
+  }
+
+  bool _isMyPhoto(String url) => BackendChatService.isMyPhoto(url);
 
   String _senderProfileUrl(BackendChatMessage m) {
     final sender = m.sender;
@@ -1072,43 +1094,62 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
   /// Keep the other person's photo on the header and their messages.
   Future<void> _hydratePeerAvatar() async {
     await BackendChatService.ensureAvatarCacheLoaded();
+    await _learnMyPhotos();
     if (!mounted) return;
 
-    String next = _peerAvatarUrl.trim();
-    if (!next.startsWith('http')) {
-      final passed = (widget.peerAvatarUrl ?? '').trim();
-      if (passed.startsWith('http')) next = passed;
-    }
-
-    if (!next.startsWith('http')) {
-      final cached = BackendChatService.cachedPeerLabelForChat(_chatId);
-      final avatar = cached?.avatarUrl.trim() ?? '';
-      if (avatar.startsWith('http')) next = avatar;
-    }
+    bool usable(String url) => url.startsWith('http') && !_isMyPhoto(url);
 
     final myId = _myUserId;
-    if (!next.startsWith('http') && myId != null) {
+    final peerId = _peerUserId ?? widget.peerUserId ?? 0;
+    if (peerId > 0) {
+      BackendChatService.forgetPeerAvatarIfMine(
+        ChatParticipant(id: peerId, name: _peerDisplayName, email: ''),
+      );
+    }
+
+    // The other person's own messages are the most trustworthy source.
+    String next = '';
+    if (myId != null) {
       for (final m in _messages.reversed) {
         if (m.isMine(myId)) continue;
         final photo = _senderProfileUrl(m);
-        if (photo.isNotEmpty) {
+        if (usable(photo)) {
           next = photo;
           break;
         }
       }
     }
 
-    if (!next.startsWith('http') && _chatId.isNotEmpty) {
+    if (!usable(next) && _chatId.isNotEmpty && (myId ?? 0) > 0) {
       final thread = BackendChatService.findCachedThreadById(_chatId);
-      final id = myId ?? 0;
-      if (thread != null && id > 0) {
-        final url = BackendChatService.peerAvatarUrlForThread(thread, id);
-        if (url.startsWith('http')) next = url;
+      if (thread != null) {
+        final url = BackendChatService.peerAvatarUrlForThread(thread, myId!);
+        if (usable(url)) next = url;
       }
     }
 
-    if (!next.startsWith('http')) return;
-    final peerId = _peerUserId ?? widget.peerUserId ?? 0;
+    if (!usable(next)) {
+      final live = _peerAvatarUrl.trim();
+      final passed = (widget.peerAvatarUrl ?? '').trim();
+      if (usable(live)) {
+        next = live;
+      } else if (usable(passed)) {
+        next = passed;
+      }
+    }
+
+    if (!usable(next)) {
+      final cached = BackendChatService.cachedPeerLabelForChat(_chatId);
+      final avatar = cached?.avatarUrl.trim() ?? '';
+      if (usable(avatar)) next = avatar;
+    }
+
+    if (!usable(next)) {
+      if (_peerAvatarUrl.isNotEmpty && _isMyPhoto(_peerAvatarUrl) && mounted) {
+        setState(() => _peerAvatarUrl = '');
+      }
+      return;
+    }
     if (peerId > 0) {
       BackendChatService.rememberPeerAvatar(
         ChatParticipant(id: peerId, name: _peerDisplayName, email: ''),

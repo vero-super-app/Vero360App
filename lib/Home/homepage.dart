@@ -53,6 +53,7 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/GernalServices/help_center_chat_service.dart';
 import 'package:vero360_app/Home/notifications_page.dart';
+import 'package:vero360_app/features/Cart/CartPresentaztion/widgets/cart_header_button.dart';
 import 'package:vero360_app/Home/story_section.dart';
 import 'package:vero360_app/Home/homepage_adverts.dart';
 import 'package:vero360_app/Home/homepage_crawl_ticker.dart';
@@ -909,6 +910,8 @@ class _HeroHeader extends StatelessWidget {
                       const Spacer(),
                       _VeroCoinHeroButton(onTap: onCoinTap),
                       const SizedBox(width: 8),
+                      const CartHeaderButton(),
+                      const SizedBox(width: 8),
                       ListenableBuilder(
                         listenable: NotificationStore.instance,
                         builder: (_, __) {
@@ -1208,6 +1211,12 @@ class _CollapsedBar extends StatelessWidget {
             ),
             const SizedBox(width: 10),
             _VeroCoinHeroButton(onTap: onCoinTap, compact: true),
+            const SizedBox(width: 8),
+            CartHeaderButton(
+              size: 34,
+              background: Colors.white.withOpacity(0.20),
+              border: Colors.white.withOpacity(0.35),
+            ),
             const SizedBox(width: 8),
             GestureDetector(
               onTap: onNotifTap,
@@ -2984,12 +2993,24 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
       merchantId: merchantRef,
       merchantName: it.sellerDisplayName,
       serviceType: 'marketplace',
+      availableStock: it.quantity,
+      latestArrivalId: parsed,
     );
   }
 
   Future<void> _buyNow(LatestArrivalModels it,
       {required int qty, required BuildContext sheetCtx}) async {
     if (qty <= 0) return;
+    final stock = it.quantity;
+    if (stock != null && qty > stock) {
+      ToastHelper.showCustomToast(
+        sheetCtx,
+        stock <= 0 ? 'This item is sold out' : 'Only $stock available',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
     if (FirebaseAuth.instance.currentUser == null) {
       ToastHelper.showCustomToast(sheetCtx, 'Please log in to buy.',
           isSuccess: false, errorMessage: '');
@@ -3475,6 +3496,9 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
   @override
   Widget build(BuildContext context) {
     final it = widget.item;
+    final stock = it.quantity;
+    final maxQty = stock ?? 99;
+    final soldOut = stock != null && stock <= 0;
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: SingleChildScrollView(
@@ -3515,6 +3539,19 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
                           color: Colors.green,
                           fontWeight: FontWeight.w900,
                           fontSize: 16)),
+                  if (stock != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      soldOut ? 'Sold out' : '$stock available',
+                      style: TextStyle(
+                        color: soldOut
+                            ? Colors.red.shade700
+                            : Colors.grey.shade700,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 14),
                   Row(
                     children: [
@@ -3530,8 +3567,9 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
                           style: const TextStyle(
                               fontWeight: FontWeight.w900, fontSize: 16)),
                       IconButton(
-                        onPressed:
-                            qty >= 99 ? null : () => setState(() => qty++),
+                        onPressed: qty >= maxQty
+                            ? null
+                            : () => setState(() => qty++),
                         icon: const Icon(Icons.add_circle_outline),
                       ),
                     ],
@@ -3540,7 +3578,7 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
-                      onPressed: () => widget.onBuyNow(qty),
+                      onPressed: soldOut ? null : () => widget.onBuyNow(qty),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.brandOrange,
                         foregroundColor: Colors.white,

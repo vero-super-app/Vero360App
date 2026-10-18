@@ -22,6 +22,7 @@ import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show ValueNotifier;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
@@ -59,7 +60,15 @@ class CartService {
   static int _cartEpoch = 0;
 
   /// Last known cart for instant UI (shared across CartService instances).
-  static List<CartModel> _memoryCache = <CartModel>[];
+  static List<CartModel> _memoryCacheList = <CartModel>[];
+  static List<CartModel> get _memoryCache => _memoryCacheList;
+  static set _memoryCache(List<CartModel> items) {
+    _memoryCacheList = items;
+    itemCount.value = items.length;
+  }
+
+  /// Number of lines in the cart, for header badges.
+  static final ValueNotifier<int> itemCount = ValueNotifier<int>(0);
 
   /// Owner of [_memoryCache] — discard if account switches on the same device.
   static String? _memoryCacheUid;
@@ -227,6 +236,7 @@ class CartService {
       'pendingSync': pendingSync,
       if (item.availableStock != null) 'availableStock': item.availableStock,
       if (item.availableStock != null) 'stockQuantity': item.availableStock,
+      if (item.latestArrivalId != null) 'latestArrivalId': item.latestArrivalId,
       if (item.restaurantId != null && item.restaurantId!.trim().isNotEmpty)
         'restaurantId': item.restaurantId!.trim(),
       if (item.variant != null && item.variant!.trim().isNotEmpty)
@@ -464,6 +474,9 @@ class CartService {
                   data['stockQuantity'] == null
               ? null
               : safeInt(data['availableStock'] ?? data['stockQuantity']),
+          latestArrivalId: safeInt(data['latestArrivalId']) > 0
+              ? safeInt(data['latestArrivalId'])
+              : null,
           restaurantId: (data['restaurantId'] ?? '').toString().trim().isEmpty
               ? null
               : (data['restaurantId'] ?? '').toString().trim(),

@@ -31,8 +31,10 @@ plugins {
     // ✅ Upgrade AGP to satisfy the AndroidX metadata requirements
     id("com.android.application") version "9.0.1" apply false
 
-    // Keep this for now (your warning is “soon”, not blocking)
-    id("org.jetbrains.kotlin.android") version "2.1.20" apply false
+    // Flutter 3.47+ requires KGP >= 2.2.20 (warns below 2.3.20).
+    // Must be >= 2.2.20 because AGP 9.0.1 drags KGP 2.2.10 onto the plugin
+    // classpath transitively, so anything lower resolves to the unsupported 2.2.10.
+    id("org.jetbrains.kotlin.android") version "2.3.20" apply false
 
 
     // Firebase plugins (keep if you use Firebase)

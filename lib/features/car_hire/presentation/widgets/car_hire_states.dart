@@ -4,6 +4,66 @@ import 'package:vero360_app/features/car_hire/data/car_hire_api.dart';
 import 'package:vero360_app/features/car_rental/utils/car_rental_colors.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 
+/// Compact inline error used under forms and action cards.
+class CarHireInlineError extends StatelessWidget {
+  const CarHireInlineError({
+    super.key,
+    required this.message,
+    this.onRetry,
+    this.retryLabel = 'Try again',
+  });
+
+  final String message;
+  final VoidCallback? onRetry;
+  final String retryLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: CarRentalColors.errorLight,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.error_outline_rounded,
+            size: 16,
+            color: CarRentalColors.error,
+          ),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              UserFacingError.sanitize(message),
+              style: const TextStyle(
+                color: CarRentalColors.error,
+                fontSize: 11.5,
+                height: 1.4,
+              ),
+            ),
+          ),
+          if (onRetry != null)
+            TextButton(
+              onPressed: onRetry,
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                minimumSize: const Size(0, 28),
+                foregroundColor: CarRentalColors.error,
+                textStyle: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              child: Text(retryLabel),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class CarHireLoadingState extends StatelessWidget {
   const CarHireLoadingState({
     super.key,

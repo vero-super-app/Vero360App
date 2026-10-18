@@ -68,6 +68,15 @@ String? _asStringOrNull(dynamic value) {
   return text.isEmpty ? null : text;
 }
 
+/// Returns the first non-null value for a camelCase or snake_case key.
+dynamic _pick(Map<String, dynamic> json, List<String> keys) {
+  for (final key in keys) {
+    final value = json[key];
+    if (value != null) return value;
+  }
+  return null;
+}
+
 bool _asBool(dynamic value, {bool fallback = false}) {
   if (value is bool) return value;
   if (value is num) return value != 0;
@@ -149,6 +158,71 @@ String _humanizeWire(dynamic value) {
         return '${lower.substring(0, 1).toUpperCase()}${lower.substring(1)}';
       })
       .join(' ');
+}
+
+/// Formats server amounts the same way the price breakdown does: MWK uses the
+/// shared currency formatter, other currencies fall back to a plain code.
+String carHireMoney(String currency, double amount) {
+  final code = currency.trim().toUpperCase();
+  if (code.isEmpty || code == 'MWK') {
+    return CarHireFormatters.formatCurrency(amount);
+  }
+  return '$code ${amount.toStringAsFixed(2)}';
+}
+
+List<String> _asChecklist(dynamic value) {
+  if (value is List) {
+    return value
+        .map(_asString)
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+  }
+  if (value is Map) {
+    final items = <String>[];
+    value.forEach((key, item) {
+      final label = _asString(key);
+      if (label.isEmpty) return;
+      if (item is bool) {
+        if (item) items.add(label);
+        return;
+      }
+      if (item is num) {
+        if (item != 0) items.add(label);
+        return;
+      }
+      if (item is List) {
+        items.addAll(item.map(_asString).where((entry) => entry.isNotEmpty));
+        return;
+      }
+      final text = _asString(item).toLowerCase();
+      if (text.isEmpty || text == 'false' || text == 'no' || text == '0') return;
+      items.add(label);
+    });
+    return items;
+  }
+  final single = _asString(value);
+  if (single.isEmpty) return const <String>[];
+  return single
+      .split(',')
+      .map((item) => item.trim())
+      .where((item) => item.isNotEmpty)
+      .toList(growable: false);
+}
+
+List<String> _asMedia(dynamic value) {
+  if (value is List) {
+    return value
+        .map((item) => item is Map ? _asString(item['url'] ?? item['reference']) : _asString(item))
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+  }
+  final single = _asString(value);
+  if (single.isEmpty) return const <String>[];
+  return single
+      .split(',')
+      .map((item) => item.trim())
+      .where((item) => item.isNotEmpty)
+      .toList(growable: false);
 }
 
 // ---------------------------------------------------------------------------
@@ -285,6 +359,153 @@ enum VerificationState {
       this == rejected ||
       this == expired ||
       this == suspended;
+}
+
+enum ExtensionStatus {
+  requested('REQUESTED', 'Requested'),
+  pending('PENDING', 'Pending'),
+  approved('APPROVED', 'Approved'),
+  declined('DECLINED', 'Declined'),
+  cancelled('CANCELLED', 'Cancelled'),
+  expired('EXPIRED', 'Expired'),
+  unknown('UNKNOWN', 'Unknown');
+
+  const ExtensionStatus(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  static ExtensionStatus fromWire(dynamic value) {
+    final normalized = _asString(value).toUpperCase();
+    for (final status in ExtensionStatus.values) {
+      if (status.wire == normalized) return status;
+    }
+    return ExtensionStatus.unknown;
+  }
+
+  bool get isOpen => this == requested || this == pending;
+
+  bool get isDeclined =>
+      this == declined || this == cancelled || this == expired;
+}
+
+enum InspectionType {
+  pickup('PICKUP', 'Pick-up'),
+  returnInspection('RETURN', 'Return'),
+  unknown('UNKNOWN', 'Inspection');
+
+  const InspectionType(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  static InspectionType fromWire(dynamic value) {
+    final normalized = _asString(value).toUpperCase();
+    for (final type in InspectionType.values) {
+      if (type.wire == normalized) return type;
+    }
+    return InspectionType.unknown;
+  }
+}
+
+enum InspectionActorRole {
+  renter('RENTER', 'Renter'),
+  owner('OWNER', 'Vehicle provider'),
+  admin('ADMIN', 'Vero360 support'),
+  unknown('UNKNOWN', 'Unknown');
+
+  const InspectionActorRole(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  static InspectionActorRole fromWire(dynamic value) {
+    final normalized = _asString(value).toUpperCase();
+    switch (normalized) {
+      case 'RENTER':
+      case 'CUSTOMER':
+      case 'USER':
+        return InspectionActorRole.renter;
+      case 'OWNER':
+      case 'PROVIDER':
+      case 'HOST':
+        return InspectionActorRole.owner;
+      case 'ADMIN':
+      case 'SUPPORT':
+        return InspectionActorRole.admin;
+    }
+    return InspectionActorRole.unknown;
+  }
+}
+
+enum InspectionStatus {
+  pending('PENDING', 'Pending'),
+  submitted('SUBMITTED', 'Submitted'),
+  acknowledged('ACKNOWLEDGED', 'Acknowledged'),
+  declined('DECLINED', 'Declined'),
+  disputed('DISPUTED', 'Disputed'),
+  unknown('UNKNOWN', 'Unknown');
+
+  const InspectionStatus(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  static InspectionStatus fromWire(dynamic value) {
+    final normalized = _asString(value).toUpperCase();
+    for (final status in InspectionStatus.values) {
+      if (status.wire == normalized) return status;
+    }
+    return InspectionStatus.unknown;
+  }
+}
+
+enum IncidentType {
+  accident('ACCIDENT', 'Accident'),
+  breakdown('BREAKDOWN', 'Breakdown'),
+  theft('THEFT', 'Theft'),
+  unsafeVehicle('UNSAFE_VEHICLE', 'Unsafe vehicle'),
+  noShow('NO_SHOW', 'Provider no-show'),
+  failedPickup('FAILED_PICKUP', 'Failed pick-up'),
+  ownerUnavailable('OWNER_UNAVAILABLE', 'Provider unavailable'),
+  other('OTHER', 'Other'),
+  unknown('UNKNOWN', 'Unknown');
+
+  const IncidentType(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  static IncidentType fromWire(dynamic value) {
+    final normalized = _asString(value).toUpperCase();
+    for (final type in IncidentType.values) {
+      if (type.wire == normalized) return type;
+    }
+    return IncidentType.unknown;
+  }
+}
+
+enum SupportCaseCategory {
+  booking('BOOKING', 'Booking'),
+  payment('PAYMENT', 'Payment'),
+  damage('DAMAGE', 'Damage'),
+  handover('HANDOVER', 'Handover'),
+  safety('SAFETY', 'Safety'),
+  other('OTHER', 'Other'),
+  unknown('UNKNOWN', 'Unknown');
+
+  const SupportCaseCategory(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  static SupportCaseCategory fromWire(dynamic value) {
+    final normalized = _asString(value).toUpperCase();
+    for (final category in SupportCaseCategory.values) {
+      if (category.wire == normalized) return category;
+    }
+    return SupportCaseCategory.unknown;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1038,6 +1259,482 @@ class PaymentInitiation {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4: extensions, handover inspections, incidents, support, verification
+// ---------------------------------------------------------------------------
+
+class BookingExtension {
+  const BookingExtension({
+    required this.id,
+    this.bookingId,
+    this.requestedEndAt,
+    this.previousEndAt,
+    this.status = ExtensionStatus.unknown,
+    this.additionalAmount = 0,
+    this.currency = 'MWK',
+    this.decisionReason,
+    this.createdAt,
+  });
+
+  final int id;
+  final int? bookingId;
+  final DateTime? requestedEndAt;
+  final DateTime? previousEndAt;
+  final ExtensionStatus status;
+
+  /// Server-quoted amount for the extension. Never calculated on the client.
+  final double additionalAmount;
+  final String currency;
+  final String? decisionReason;
+  final DateTime? createdAt;
+
+  factory BookingExtension.fromJson(dynamic raw) {
+    dynamic payload = raw;
+    if (raw is Map) {
+      final json = _asMap(raw);
+      payload = json['data'] ?? json['extension'] ?? json;
+    }
+    final json = _asMap(payload);
+
+    return BookingExtension(
+      id: _asInt(_pick(json, <String>['id', 'extensionId', 'extension_id'])),
+      bookingId: _asNullableInt(
+        _pick(json, <String>['bookingId', 'booking_id']),
+      ),
+      requestedEndAt: _asDate(
+        _pick(json, <String>[
+          'requestedEndAt',
+          'requested_end_at',
+          'requestedEnd',
+          'requested_end',
+          'newEndAt',
+          'new_end_at',
+        ]),
+      ),
+      previousEndAt: _asDate(
+        _pick(json, <String>[
+          'previousEndAt',
+          'previous_end_at',
+          'previousEnd',
+          'previous_end',
+          'currentEndAt',
+          'current_end_at',
+        ]),
+      ),
+      status: ExtensionStatus.fromWire(json['status']),
+      additionalAmount: _asDouble(
+        _pick(json, <String>[
+          'additionalAmount',
+          'additional_amount',
+          'amount',
+          'quotedAmount',
+          'quoted_amount',
+        ]),
+      ),
+      currency: _asString(json['currency'], fallback: 'MWK'),
+      decisionReason: _asStringOrNull(
+        _pick(json, <String>['decisionReason', 'decision_reason', 'reason']),
+      ),
+      createdAt: _asDate(_pick(json, <String>['createdAt', 'created_at'])),
+    );
+  }
+
+  static List<BookingExtension> listFromJson(dynamic raw) {
+    final list = raw is List
+        ? raw
+        : (raw is Map
+            ? _asList(_asMap(raw)['data'] ?? _asMap(raw)['extensions'])
+            : const <dynamic>[]);
+    return list
+        .whereType<Map>()
+        .map((item) => BookingExtension.fromJson(item))
+        .toList(growable: false);
+  }
+
+  String get requestedEndLabel => requestedEndAt == null
+      ? 'Return date not provided'
+      : CarHireFormatters.formatDateTime(requestedEndAt!);
+
+  String get additionalAmountLabel =>
+      carHireMoney(currency, additionalAmount);
+
+  bool get hasAdditionalAmount => additionalAmount > 0;
+}
+
+class InspectionAcknowledgement {
+  const InspectionAcknowledgement({
+    this.party = '',
+    this.decision = '',
+    this.note,
+    this.createdAt,
+  });
+
+  final String party;
+
+  /// `ACCEPTED` or `DECLINED`.
+  final String decision;
+  final String? note;
+  final DateTime? createdAt;
+
+  factory InspectionAcknowledgement.fromJson(dynamic raw) {
+    final json = _asMap(raw);
+    return InspectionAcknowledgement(
+      party: _asString(
+        _pick(json, <String>['party', 'actorRole', 'actor_role']),
+      ),
+      decision: _asString(
+        _pick(json, <String>['decision', 'status']),
+      ).toUpperCase(),
+      note: _asStringOrNull(
+        _pick(json, <String>['note', 'reason', 'disputeReason', 'dispute_reason']),
+      ),
+      createdAt: _asDate(_pick(json, <String>['createdAt', 'created_at'])),
+    );
+  }
+
+  bool get accepted => decision == 'ACCEPTED';
+
+  String get partyLabel {
+    if (party.trim().isEmpty) return 'Party';
+    final role = InspectionActorRole.fromWire(party);
+    return role == InspectionActorRole.unknown
+        ? _humanizeWire(party)
+        : role.label;
+  }
+
+  String get decisionLabel => accepted ? 'Accepted' : 'Declined';
+
+  String get createdAtLabel =>
+      createdAt == null ? '' : CarHireFormatters.formatDateTime(createdAt!);
+}
+
+class HandoverInspection {
+  const HandoverInspection({
+    required this.id,
+    this.bookingId,
+    this.type = InspectionType.unknown,
+    this.actorRole = InspectionActorRole.unknown,
+    this.odometer,
+    this.fuelLevel,
+    this.condition,
+    this.checklist = const <String>[],
+    this.notes,
+    this.media = const <String>[],
+    this.status = InspectionStatus.unknown,
+    this.acknowledgedAt,
+    this.declinedAt,
+    this.disputeReason,
+    this.createdAt,
+    this.acknowledgements = const <InspectionAcknowledgement>[],
+  });
+
+  final int id;
+  final int? bookingId;
+  final InspectionType type;
+  final InspectionActorRole actorRole;
+  final int? odometer;
+  final double? fuelLevel;
+  final String? condition;
+  final List<String> checklist;
+  final String? notes;
+  final List<String> media;
+  final InspectionStatus status;
+  final DateTime? acknowledgedAt;
+  final DateTime? declinedAt;
+  final String? disputeReason;
+  final DateTime? createdAt;
+  final List<InspectionAcknowledgement> acknowledgements;
+
+  factory HandoverInspection.fromJson(dynamic raw) {
+    dynamic payload = raw;
+    if (raw is Map) {
+      final json = _asMap(raw);
+      payload = json['data'] ?? json['inspection'] ?? json;
+    }
+    final json = _asMap(payload);
+
+    return HandoverInspection(
+      id: _asInt(_pick(json, <String>['id', 'inspectionId', 'inspection_id'])),
+      bookingId: _asNullableInt(
+        _pick(json, <String>['bookingId', 'booking_id']),
+      ),
+      type: InspectionType.fromWire(
+        _pick(json, <String>['type', 'inspectionType', 'inspection_type']),
+      ),
+      actorRole: InspectionActorRole.fromWire(
+        _pick(json, <String>['actorRole', 'actor_role']),
+      ),
+      odometer: _asNullableInt(
+        _pick(json, <String>['odometer', 'mileage', 'odometerReading']),
+      ),
+      fuelLevel: _asNullableDouble(
+        _pick(json, <String>['fuelLevel', 'fuel_level', 'fuel']),
+      ),
+      condition: _asStringOrNull(json['condition']),
+      checklist: _asChecklist(json['checklist']),
+      notes: _asStringOrNull(json['notes']),
+      media: _asMedia(json['media']),
+      status: InspectionStatus.fromWire(
+        _pick(json, <String>['status', 'inspectionStatus', 'inspection_status']),
+      ),
+      acknowledgedAt: _asDate(
+        _pick(json, <String>['acknowledgedAt', 'acknowledged_at']),
+      ),
+      declinedAt: _asDate(_pick(json, <String>['declinedAt', 'declined_at'])),
+      disputeReason: _asStringOrNull(
+        _pick(json, <String>[
+          'disputeReason',
+          'dispute_reason',
+          'declineReason',
+          'decline_reason',
+        ]),
+      ),
+      createdAt: _asDate(_pick(json, <String>['createdAt', 'created_at'])),
+      acknowledgements: _asList(json['acknowledgements'])
+          .whereType<Map>()
+          .map((item) => InspectionAcknowledgement.fromJson(item))
+          .toList(growable: false),
+    );
+  }
+
+  static List<HandoverInspection> listFromJson(dynamic raw) {
+    final list = raw is List
+        ? raw
+        : (raw is Map
+            ? _asList(_asMap(raw)['data'] ?? _asMap(raw)['inspections'])
+            : const <dynamic>[]);
+    return list
+        .whereType<Map>()
+        .map((item) => HandoverInspection.fromJson(item))
+        .toList(growable: false);
+  }
+
+  bool get renterAcknowledged => acknowledgements.any((entry) {
+        final party = entry.party.toUpperCase();
+        return party == 'RENTER' || party == 'CUSTOMER' || party == 'USER';
+      });
+
+  /// The renter may accept or decline a handover recorded by the provider.
+  bool get awaitingRenterDecision =>
+      actorRole == InspectionActorRole.owner &&
+      !renterAcknowledged &&
+      status != InspectionStatus.acknowledged &&
+      status != InspectionStatus.declined;
+
+  bool get isDisputed =>
+      status == InspectionStatus.disputed || disputeReason != null;
+
+  String get typeLabel => type.label;
+
+  String get actorLabel => actorRole.label;
+
+  String get statusLabel => status.label;
+
+  String get conditionLabel {
+    final value = condition?.trim();
+    if (value == null || value.isEmpty) return 'Not recorded';
+    return _humanizeWire(value);
+  }
+
+  String get odometerLabel {
+    final value = odometer;
+    return value == null ? 'Not recorded' : '${formatMwkInput(value)} km';
+  }
+
+  String get fuelLevelLabel {
+    final value = fuelLevel;
+    return value == null ? 'Not recorded' : '${value.toStringAsFixed(0)}%';
+  }
+
+  String get checklistLabel {
+    if (checklist.isEmpty) return 'None recorded';
+    return checklist.map(_humanizeWire).join(', ');
+  }
+
+  String get mediaLabel {
+    if (media.isEmpty) return 'None';
+    return media.join(', ');
+  }
+
+  String get createdAtLabel => createdAt == null
+      ? 'Time not provided'
+      : CarHireFormatters.formatDateTime(createdAt!);
+
+  String get summaryLabel {
+    final buffer = StringBuffer(status.label);
+    if (acknowledgedAt != null) {
+      buffer.write(' · acknowledged');
+    }
+    if (declinedAt != null || isDisputed) {
+      buffer.write(' · disputed');
+    }
+    return buffer.toString();
+  }
+}
+
+class IncidentReport {
+  const IncidentReport({
+    required this.id,
+    this.bookingId,
+    this.type = IncidentType.unknown,
+    this.description = '',
+    this.occurredAt,
+    this.contactPhone,
+    this.status = '',
+    this.createdAt,
+  });
+
+  final int id;
+  final int? bookingId;
+  final IncidentType type;
+  final String description;
+  final DateTime? occurredAt;
+  final String? contactPhone;
+  final String status;
+  final DateTime? createdAt;
+
+  factory IncidentReport.fromJson(dynamic raw) {
+    dynamic payload = raw;
+    if (raw is Map) {
+      final json = _asMap(raw);
+      payload = json['data'] ?? json['incident'] ?? json;
+    }
+    final json = _asMap(payload);
+
+    return IncidentReport(
+      id: _asInt(_pick(json, <String>['id', 'incidentId', 'incident_id'])),
+      bookingId: _asNullableInt(
+        _pick(json, <String>['bookingId', 'booking_id']),
+      ),
+      type: IncidentType.fromWire(
+        _pick(json, <String>['type', 'incidentType', 'incident_type']),
+      ),
+      description: _asString(json['description']),
+      occurredAt: _asDate(
+        _pick(json, <String>['occurredAt', 'occurred_at', 'happenedAt', 'happened_at']),
+      ),
+      contactPhone: _asStringOrNull(
+        _pick(json, <String>['contactPhone', 'contact_phone']),
+      ),
+      status: _asString(json['status']),
+      createdAt: _asDate(_pick(json, <String>['createdAt', 'created_at'])),
+    );
+  }
+
+  static List<IncidentReport> listFromJson(dynamic raw) {
+    final list = raw is List
+        ? raw
+        : (raw is Map
+            ? _asList(_asMap(raw)['data'] ?? _asMap(raw)['incidents'])
+            : const <dynamic>[]);
+    return list
+        .whereType<Map>()
+        .map((item) => IncidentReport.fromJson(item))
+        .toList(growable: false);
+  }
+
+  String get typeLabel => type.label;
+
+  String get statusLabel {
+    final value = _humanizeWire(status);
+    return value.isEmpty ? 'Reported' : value;
+  }
+
+  String get occurredAtLabel => occurredAt == null
+      ? 'Time not provided'
+      : CarHireFormatters.formatDateTime(occurredAt!);
+}
+
+class SupportCase {
+  const SupportCase({
+    required this.id,
+    this.bookingId,
+    this.category = SupportCaseCategory.unknown,
+    this.subject = '',
+    this.message = '',
+    this.status = '',
+    this.createdAt,
+    this.updatedAt,
+  });
+
+  final int id;
+  final int? bookingId;
+  final SupportCaseCategory category;
+  final String subject;
+  final String message;
+  final String status;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+
+  factory SupportCase.fromJson(dynamic raw) {
+    dynamic payload = raw;
+    if (raw is Map) {
+      final json = _asMap(raw);
+      payload = json['data'] ?? json['case'] ?? json['supportCase'] ?? json;
+    }
+    final json = _asMap(payload);
+
+    return SupportCase(
+      id: _asInt(_pick(json, <String>['id', 'caseId', 'case_id'])),
+      bookingId: _asNullableInt(
+        _pick(json, <String>['bookingId', 'booking_id']),
+      ),
+      category: SupportCaseCategory.fromWire(
+        _pick(json, <String>['category', 'type']),
+      ),
+      subject: _asString(json['subject']),
+      message: _asString(_pick(json, <String>['message', 'description'])),
+      status: _asString(json['status']),
+      createdAt: _asDate(_pick(json, <String>['createdAt', 'created_at'])),
+      updatedAt: _asDate(_pick(json, <String>['updatedAt', 'updated_at'])),
+    );
+  }
+
+  static List<SupportCase> listFromJson(dynamic raw) {
+    final list = raw is List
+        ? raw
+        : (raw is Map
+            ? _asList(_asMap(raw)['data'] ?? _asMap(raw)['cases'])
+            : const <dynamic>[]);
+    return list
+        .whereType<Map>()
+        .map((item) => SupportCase.fromJson(item))
+        .toList(growable: false);
+  }
+
+  String get categoryLabel => category.label;
+
+  String get statusLabel {
+    final value = _humanizeWire(status);
+    return value.isEmpty ? 'Submitted' : value;
+  }
+
+  String get createdAtLabel => createdAt == null
+      ? ''
+      : CarHireFormatters.formatDateTime(createdAt!);
+}
+
+/// One row of the `POST /verification/submissions` payload.
+class VerificationEvidence {
+  const VerificationEvidence({
+    required this.requirement,
+    required this.fileReference,
+    this.expiresAt,
+  });
+
+  final String requirement;
+  final String fileReference;
+  final DateTime? expiresAt;
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'requirement': requirement,
+      'fileReference': fileReference,
+      if (expiresAt != null) 'expiresAt': expiresAt!.toUtc().toIso8601String(),
+    };
+  }
+}
+
 class CarHireVerification {
   const CarHireVerification({
     this.status = VerificationState.unknown,
@@ -1069,7 +1766,9 @@ class CarHireVerification {
         _asStringOrNull(json['status']) ?? 'NOT_STARTED',
       ),
       requirements: requirements,
-      nextAction: _asStringOrNull(json['nextAction']),
+      nextAction: _asStringOrNull(
+        _pick(json, <String>['nextAction', 'next_action']),
+      ),
     );
   }
 

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_rental/utils/car_rental_colors.dart';
-import 'package:vero360_app/utils/formatters.dart';
 
 /// Renders the server's quote / booking amounts. It never recalculates totals.
 class CarHirePriceBreakdown extends StatelessWidget {
@@ -83,13 +82,7 @@ class CarHirePriceBreakdown extends StatelessWidget {
     );
   }
 
-  String _money(double amount) {
-    final code = currency.trim().toUpperCase();
-    if (code.isEmpty || code == 'MWK') {
-      return CarHireFormatters.formatCurrency(amount);
-    }
-    return '$code ${amount.toStringAsFixed(2)}';
-  }
+  String _money(double amount) => carHireMoney(currency, amount);
 
   @override
   Widget build(BuildContext context) {

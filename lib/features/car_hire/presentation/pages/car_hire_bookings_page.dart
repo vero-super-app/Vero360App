@@ -38,6 +38,17 @@ class CarHireBookingsPage extends ConsumerWidget {
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
         ),
         actions: [
+          TextButton(
+            onPressed: () => CarHireRoutes.openVerification(context),
+            style: TextButton.styleFrom(
+              foregroundColor: CarRentalColors.brandOrange,
+              textStyle: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            child: const Text('Verification'),
+          ),
           IconButton(
             tooltip: 'Refresh',
             icon: const Icon(Icons.refresh_rounded),

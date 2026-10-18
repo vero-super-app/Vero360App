@@ -159,6 +159,127 @@ class CarHireStatusBadge extends StatelessWidget {
     }
   }
 
+  factory CarHireStatusBadge.verification(VerificationState status) {
+    switch (status) {
+      case VerificationState.notStarted:
+        return CarHireStatusBadge(
+          label: status.label,
+          color: CarRentalColors.warning,
+          icon: Icons.badge_outlined,
+        );
+      case VerificationState.submitted:
+      case VerificationState.underReview:
+        return CarHireStatusBadge(
+          label: status.label,
+          color: CarRentalColors.brandOrange,
+          icon: Icons.hourglass_top_rounded,
+        );
+      case VerificationState.verified:
+        return CarHireStatusBadge(
+          label: status.label,
+          color: CarRentalColors.success,
+          icon: Icons.verified_user_rounded,
+        );
+      case VerificationState.rejected:
+        return CarHireStatusBadge(
+          label: status.label,
+          color: CarRentalColors.error,
+          icon: Icons.error_outline_rounded,
+        );
+      case VerificationState.expired:
+        return CarHireStatusBadge(
+          label: status.label,
+          color: CarRentalColors.grey,
+          icon: Icons.timer_off_outlined,
+        );
+      case VerificationState.suspended:
+        return CarHireStatusBadge(
+          label: status.label,
+          color: CarRentalColors.error,
+          icon: Icons.pause_circle_outline_rounded,
+        );
+      case VerificationState.unknown:
+        return CarHireStatusBadge(
+          label: status.label,
+          color: CarRentalColors.grey,
+          icon: Icons.help_outline_rounded,
+        );
+    }
+  }
+
+  factory CarHireStatusBadge.extension(ExtensionStatus status) {
+    switch (status) {
+      case ExtensionStatus.requested:
+      case ExtensionStatus.pending:
+        return CarHireStatusBadge(
+          label: status.label,
+          color: CarRentalColors.warning,
+          icon: Icons.more_time_rounded,
+        );
+      case ExtensionStatus.approved:
+        return CarHireStatusBadge(
+          label: status.label,
+          color: CarRentalColors.success,
+          icon: Icons.check_circle_outline_rounded,
+        );
+      case ExtensionStatus.declined:
+        return CarHireStatusBadge(
+          label: status.label,
+          color: CarRentalColors.error,
+          icon: Icons.block_rounded,
+        );
+      case ExtensionStatus.cancelled:
+      case ExtensionStatus.expired:
+        return CarHireStatusBadge(
+          label: status.label,
+          color: CarRentalColors.grey,
+          icon: Icons.timer_off_outlined,
+        );
+      case ExtensionStatus.unknown:
+        return CarHireStatusBadge(
+          label: status.label,
+          color: CarRentalColors.grey,
+          icon: Icons.help_outline_rounded,
+        );
+    }
+  }
+
+  factory CarHireStatusBadge.inspection(InspectionStatus status) {
+    switch (status) {
+      case InspectionStatus.pending:
+        return CarHireStatusBadge(
+          label: status.label,
+          color: CarRentalColors.warning,
+          icon: Icons.schedule_rounded,
+        );
+      case InspectionStatus.submitted:
+        return CarHireStatusBadge(
+          label: status.label,
+          color: CarRentalColors.brandOrange,
+          icon: Icons.assignment_turned_in_outlined,
+        );
+      case InspectionStatus.acknowledged:
+        return CarHireStatusBadge(
+          label: status.label,
+          color: CarRentalColors.success,
+          icon: Icons.check_circle_outline_rounded,
+        );
+      case InspectionStatus.declined:
+      case InspectionStatus.disputed:
+        return CarHireStatusBadge(
+          label: status.label,
+          color: CarRentalColors.error,
+          icon: Icons.report_problem_outlined,
+        );
+      case InspectionStatus.unknown:
+        return CarHireStatusBadge(
+          label: status.label,
+          color: CarRentalColors.grey,
+          icon: Icons.help_outline_rounded,
+        );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final foreground = Color.lerp(color, Colors.black, 0.32) ?? color;

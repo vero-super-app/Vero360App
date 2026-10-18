@@ -68,6 +68,10 @@ class CarHireApi {
   static const String _quotesPath = '/car-rental/quotes';
   static const String _bookingsPath = '/car-rental/bookings';
   static const String _verificationPath = '/car-rental/verification/me';
+  static const String _verificationRequirementsPath =
+      '/car-rental/verification/requirements';
+  static const String _verificationSubmissionsPath =
+      '/car-rental/verification/submissions';
 
   // -------------------------------------------------------------------------
   // Public inventory
@@ -353,8 +357,370 @@ class CarHireApi {
   }
 
   // -------------------------------------------------------------------------
+  // Extensions
+  // -------------------------------------------------------------------------
+
+  /// `POST /car-rental/bookings/:id/extensions`
+  Future<BookingExtension> requestExtension(
+    int bookingId, {
+    required DateTime requestedEndAt,
+  }) async {
+    final response = await _send(
+      () => ApiClient.post(
+        '$_bookingsPath/$bookingId/extensions',
+        body: jsonEncode(<String, dynamic>{
+          'requestedEndAt': _iso(requestedEndAt),
+        }),
+        timeout: _timeout,
+      ),
+    );
+    final payload = _mapFrom(
+      _decode(response),
+      const <String>['data', 'extension'],
+    );
+    final extension = BookingExtension.fromJson(payload);
+    if (extension.id <= 0) {
+      throw const CarHireApiException(
+        message: 'We could not confirm the extension request. '
+            'Refresh the booking and try again.',
+        kind: CarHireErrorKind.server,
+      );
+    }
+    return extension;
+  }
+
+  /// `GET /car-rental/bookings/:id/extensions`
+  Future<List<BookingExtension>> getExtensions(int bookingId) async {
+    final response = await _send(
+      () => ApiClient.get(
+        '$_bookingsPath/$bookingId/extensions',
+        timeout: _timeout,
+      ),
+    );
+    final list = _listFrom(
+      _decode(response),
+      const <String>['data', 'extensions'],
+    );
+    return list
+        .whereType<Map>()
+        .map((item) => BookingExtension.fromJson(item))
+        .toList(growable: false);
+  }
+
+  // -------------------------------------------------------------------------
+  // Handover inspections
+  // -------------------------------------------------------------------------
+
+  /// `POST /car-rental/bookings/:id/inspections/pickup|return`
+  Future<HandoverInspection> submitInspection(
+    int bookingId, {
+    required String type,
+    int? odometer,
+    double? fuelLevel,
+    String? condition,
+    List<String>? checklist,
+    String? notes,
+    List<String>? media,
+  }) async {
+    final normalized = type.trim().toLowerCase();
+    if (normalized != 'pickup' && normalized != 'return') {
+      throw const CarHireApiException(
+        message: 'Choose whether this is the pick-up or return inspection.',
+        kind: CarHireErrorKind.validation,
+      );
+    }
+
+    final body = <String, dynamic>{};
+    if (odometer != null) body['odometer'] = odometer;
+    if (fuelLevel != null) body['fuelLevel'] = fuelLevel;
+    if (condition != null && condition.trim().isNotEmpty) {
+      body['condition'] = condition.trim();
+    }
+    if (checklist != null && checklist.isNotEmpty) {
+      body['checklist'] = checklist;
+    }
+    if (notes != null && notes.trim().isNotEmpty) {
+      body['notes'] = notes.trim();
+    }
+    if (media != null && media.isNotEmpty) {
+      body['media'] = media;
+    }
+
+    final response = await _send(
+      () => ApiClient.post(
+        '$_bookingsPath/$bookingId/inspections/$normalized',
+        body: jsonEncode(body),
+        timeout: _timeout,
+      ),
+    );
+    final payload = _mapFrom(
+      _decode(response),
+      const <String>['data', 'inspection'],
+    );
+    final inspection = HandoverInspection.fromJson(payload);
+    if (inspection.id <= 0) {
+      throw const CarHireApiException(
+        message: 'We could not confirm the inspection. '
+            'Refresh the booking and try again.',
+        kind: CarHireErrorKind.server,
+      );
+    }
+    return inspection;
+  }
+
+  /// `GET /car-rental/bookings/:id/inspections`
+  Future<List<HandoverInspection>> getInspections(int bookingId) async {
+    final response = await _send(
+      () => ApiClient.get(
+        '$_bookingsPath/$bookingId/inspections',
+        timeout: _timeout,
+      ),
+    );
+    final list = _listFrom(
+      _decode(response),
+      const <String>['data', 'inspections'],
+    );
+    return list
+        .whereType<Map>()
+        .map((item) => HandoverInspection.fromJson(item))
+        .toList(growable: false);
+  }
+
+  /// `POST /car-rental/bookings/:id/inspections/:inspectionId/acknowledge`
+  Future<HandoverInspection> acknowledgeInspection(
+    int bookingId, {
+    required int inspectionId,
+    required String decision,
+    String? note,
+  }) async {
+    final normalized = decision.trim().toUpperCase();
+    if (normalized != 'ACCEPTED' && normalized != 'DECLINED') {
+      throw const CarHireApiException(
+        message: 'Choose whether to accept or decline the inspection.',
+        kind: CarHireErrorKind.validation,
+      );
+    }
+
+    final body = <String, dynamic>{'decision': normalized};
+    if (note != null && note.trim().isNotEmpty) {
+      body['note'] = note.trim();
+    }
+
+    final response = await _send(
+      () => ApiClient.post(
+        '$_bookingsPath/$bookingId/inspections/$inspectionId/acknowledge',
+        body: jsonEncode(body),
+        timeout: _timeout,
+      ),
+    );
+    final decoded = _decode(response);
+    final payload = _mapFrom(
+      decoded,
+      const <String>['data', 'inspection'],
+    );
+    if (payload['id'] != null) {
+      return HandoverInspection.fromJson(payload);
+    }
+
+    // Some acknowledgements return an empty body. Refresh rather than
+    // inventing a local status.
+    final inspections = await getInspections(bookingId);
+    for (final inspection in inspections) {
+      if (inspection.id == inspectionId) return inspection;
+    }
+    throw const CarHireApiException(
+      message: 'The decision was sent, but we could not reload the '
+          'inspection. Refresh the booking.',
+      kind: CarHireErrorKind.server,
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Incidents + support cases
+  // -------------------------------------------------------------------------
+
+  /// `POST /car-rental/bookings/:id/incidents`
+  Future<IncidentReport> reportIncident(
+    int bookingId, {
+    required String type,
+    required String description,
+    DateTime? occurredAt,
+    String? contactPhone,
+  }) async {
+    final body = <String, dynamic>{
+      'type': type.trim().toUpperCase(),
+      'description': description.trim(),
+    };
+    if (occurredAt != null) body['occurredAt'] = _iso(occurredAt);
+    final phone = contactPhone?.trim();
+    if (phone != null && phone.isNotEmpty) body['contactPhone'] = phone;
+
+    final response = await _send(
+      () => ApiClient.post(
+        '$_bookingsPath/$bookingId/incidents',
+        body: jsonEncode(body),
+        timeout: _timeout,
+      ),
+    );
+    final payload = _mapFrom(
+      _decode(response),
+      const <String>['data', 'incident'],
+    );
+    final incident = IncidentReport.fromJson(payload);
+    if (incident.id <= 0) {
+      throw const CarHireApiException(
+        message: 'We could not confirm the incident report. '
+            'Please try again.',
+        kind: CarHireErrorKind.server,
+      );
+    }
+    return incident;
+  }
+
+  /// `GET /car-rental/bookings/:id/incidents`
+  Future<List<IncidentReport>> getIncidents(int bookingId) async {
+    final response = await _send(
+      () => ApiClient.get(
+        '$_bookingsPath/$bookingId/incidents',
+        timeout: _timeout,
+      ),
+    );
+    final list = _listFrom(
+      _decode(response),
+      const <String>['data', 'incidents'],
+    );
+    return list
+        .whereType<Map>()
+        .map((item) => IncidentReport.fromJson(item))
+        .toList(growable: false);
+  }
+
+  /// `POST /car-rental/bookings/:id/support-cases`
+  Future<SupportCase> openSupportCase(
+    int bookingId, {
+    required String category,
+    required String subject,
+    required String message,
+  }) async {
+    final response = await _send(
+      () => ApiClient.post(
+        '$_bookingsPath/$bookingId/support-cases',
+        body: jsonEncode(<String, dynamic>{
+          'category': category.trim().toUpperCase(),
+          'subject': subject.trim(),
+          'message': message.trim(),
+        }),
+        timeout: _timeout,
+      ),
+    );
+    final payload = _mapFrom(
+      _decode(response),
+      const <String>['data', 'case', 'supportCase'],
+    );
+    final supportCase = SupportCase.fromJson(payload);
+    if (supportCase.id <= 0) {
+      throw const CarHireApiException(
+        message: 'We could not open the support case. Please try again.',
+        kind: CarHireErrorKind.server,
+      );
+    }
+    return supportCase;
+  }
+
+  /// `GET /car-rental/bookings/:id/support-cases`
+  Future<List<SupportCase>> getSupportCases(int bookingId) async {
+    final response = await _send(
+      () => ApiClient.get(
+        '$_bookingsPath/$bookingId/support-cases',
+        timeout: _timeout,
+      ),
+    );
+    final list = _listFrom(
+      _decode(response),
+      const <String>['data', 'cases'],
+    );
+    return list
+        .whereType<Map>()
+        .map((item) => SupportCase.fromJson(item))
+        .toList(growable: false);
+  }
+
+  // -------------------------------------------------------------------------
+  // Verification submissions
+  // -------------------------------------------------------------------------
+
+  /// `GET /car-rental/verification/requirements`
+  Future<CarHireVerification> getVerificationRequirements() async {
+    final response = await _send(
+      () => ApiClient.get(_verificationRequirementsPath, timeout: _timeout),
+    );
+    final decoded = _decode(response);
+    if (decoded is! Map) return const CarHireVerification();
+    return CarHireVerification.fromJson(
+      _unwrapMap(
+        decoded,
+        const <String>['data', 'verification'],
+      ),
+    );
+  }
+
+  /// `POST /car-rental/verification/submissions`
+  Future<CarHireVerification> submitVerification(
+    List<VerificationEvidence> evidence,
+  ) async {
+    final usable = evidence
+        .where((item) => item.fileReference.trim().isNotEmpty)
+        .toList(growable: false);
+    if (usable.isEmpty) {
+      throw const CarHireApiException(
+        message: 'Enter at least one document reference before submitting.',
+        kind: CarHireErrorKind.validation,
+      );
+    }
+
+    final response = await _send(
+      () => ApiClient.post(
+        _verificationSubmissionsPath,
+        body: jsonEncode(<String, dynamic>{
+          'evidence': usable.map((item) => item.toJson()).toList(),
+        }),
+        timeout: _timeout,
+      ),
+    );
+
+    final decoded = _decode(response);
+    if (decoded is Map) {
+      final payload = _unwrapMap(
+        decoded,
+        const <String>['data', 'verification'],
+      );
+      if (payload['status'] != null || payload['requirements'] != null) {
+        return CarHireVerification.fromJson(payload);
+      }
+    }
+    // The submission endpoint is not required to return the full view.
+    return getVerificationRequirements();
+  }
+
+  // -------------------------------------------------------------------------
   // Helpers
   // -------------------------------------------------------------------------
+
+  static List<dynamic> _listFrom(dynamic decoded, List<String> keys) {
+    if (decoded is List) return decoded;
+    if (decoded is Map) {
+      for (final key in keys) {
+        final value = decoded[key];
+        if (value is List) return value;
+      }
+    }
+    return const <dynamic>[];
+  }
+
+  static Map<String, dynamic> _mapFrom(dynamic decoded, List<String> keys) {
+    if (decoded is! Map) return const <String, dynamic>{};
+    return _unwrapMap(decoded, keys);
+  }
 
   static String _iso(DateTime value) => value.toUtc().toIso8601String();
 

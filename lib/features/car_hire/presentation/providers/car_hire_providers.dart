@@ -356,3 +356,285 @@ final verificationProvider = FutureProvider<CarHireVerification>((ref) async {
   final api = ref.watch(carHireApiProvider);
   return api.getVerificationStatus();
 });
+
+// ---------------------------------------------------------------------------
+// Phase 4: extensions, inspections, incidents, support, verification
+// ---------------------------------------------------------------------------
+
+final bookingExtensionsProvider =
+    FutureProvider.family<List<BookingExtension>, int>((ref, bookingId) async {
+  return ref.watch(carHireApiProvider).getExtensions(bookingId);
+});
+
+final bookingInspectionsProvider =
+    FutureProvider.family<List<HandoverInspection>, int>(
+  (ref, bookingId) async {
+    return ref.watch(carHireApiProvider).getInspections(bookingId);
+  },
+);
+
+final bookingIncidentsProvider =
+    FutureProvider.family<List<IncidentReport>, int>((ref, bookingId) async {
+  return ref.watch(carHireApiProvider).getIncidents(bookingId);
+});
+
+final bookingSupportCasesProvider =
+    FutureProvider.family<List<SupportCase>, int>((ref, bookingId) async {
+  return ref.watch(carHireApiProvider).getSupportCases(bookingId);
+});
+
+final verificationRequirementsProvider =
+    FutureProvider<CarHireVerification>((ref) async {
+  return ref.watch(carHireApiProvider).getVerificationRequirements();
+});
+
+/// Shared shape for the Phase 4 write actions.
+class CarHireMutationState {
+  const CarHireMutationState({
+    this.submitting = false,
+    this.error,
+    this.succeeded = false,
+  });
+
+  final bool submitting;
+  final CarHireApiException? error;
+  final bool succeeded;
+
+  bool get hasError => error != null;
+}
+
+CarHireApiException _unexpected(Object error) {
+  if (error is CarHireApiException) return error;
+  return CarHireApiException(message: UserFacingError.from(error));
+}
+
+class CarHireExtensionController extends Notifier<CarHireMutationState> {
+  @override
+  CarHireMutationState build() => const CarHireMutationState();
+
+  Future<BookingExtension?> request({
+    required int bookingId,
+    required DateTime requestedEndAt,
+  }) async {
+    if (state.submitting) return null;
+
+    state = const CarHireMutationState(submitting: true);
+    try {
+      final extension = await ref.read(carHireApiProvider).requestExtension(
+            bookingId,
+            requestedEndAt: requestedEndAt,
+          );
+      state = const CarHireMutationState(succeeded: true);
+      ref.invalidate(bookingExtensionsProvider(bookingId));
+      ref.invalidate(carHireBookingDetailProvider(bookingId));
+      ref.invalidate(myCarHireBookingsProvider);
+      return extension;
+    } catch (error) {
+      state = CarHireMutationState(error: _unexpected(error));
+      return null;
+    }
+  }
+}
+
+final extensionRequestProvider =
+    NotifierProvider<CarHireExtensionController, CarHireMutationState>(
+  CarHireExtensionController.new,
+);
+
+class CarHireInspectionSubmitController
+    extends Notifier<CarHireMutationState> {
+  @override
+  CarHireMutationState build() => const CarHireMutationState();
+
+  Future<HandoverInspection?> submit({
+    required int bookingId,
+    required InspectionType type,
+    int? odometer,
+    double? fuelLevel,
+    String? condition,
+    List<String>? checklist,
+    String? notes,
+    List<String>? media,
+  }) async {
+    if (state.submitting) return null;
+    if (type == InspectionType.unknown) {
+      state = const CarHireMutationState(
+        error: CarHireApiException(
+          message: 'Choose whether this is the pick-up or return inspection.',
+          kind: CarHireErrorKind.validation,
+        ),
+      );
+      return null;
+    }
+
+    state = const CarHireMutationState(submitting: true);
+    try {
+      final inspection = await ref.read(carHireApiProvider).submitInspection(
+            bookingId,
+            type: type == InspectionType.pickup ? 'pickup' : 'return',
+            odometer: odometer,
+            fuelLevel: fuelLevel,
+            condition: condition,
+            checklist: checklist,
+            notes: notes,
+            media: media,
+          );
+      state = const CarHireMutationState(succeeded: true);
+      ref.invalidate(bookingInspectionsProvider(bookingId));
+      ref.invalidate(carHireBookingDetailProvider(bookingId));
+      return inspection;
+    } catch (error) {
+      state = CarHireMutationState(error: _unexpected(error));
+      return null;
+    }
+  }
+}
+
+final inspectionSubmitProvider =
+    NotifierProvider<CarHireInspectionSubmitController, CarHireMutationState>(
+  CarHireInspectionSubmitController.new,
+);
+
+class CarHireInspectionAcknowledgeController
+    extends Notifier<CarHireMutationState> {
+  @override
+  CarHireMutationState build() => const CarHireMutationState();
+
+  Future<HandoverInspection?> acknowledge({
+    required int bookingId,
+    required int inspectionId,
+    required bool accept,
+    String? note,
+  }) async {
+    if (state.submitting) return null;
+
+    state = const CarHireMutationState(submitting: true);
+    try {
+      final inspection =
+          await ref.read(carHireApiProvider).acknowledgeInspection(
+                bookingId,
+                inspectionId: inspectionId,
+                decision: accept ? 'ACCEPTED' : 'DECLINED',
+                note: note,
+              );
+      state = const CarHireMutationState(succeeded: true);
+      ref.invalidate(bookingInspectionsProvider(bookingId));
+      ref.invalidate(carHireBookingDetailProvider(bookingId));
+      return inspection;
+    } catch (error) {
+      state = CarHireMutationState(error: _unexpected(error));
+      return null;
+    }
+  }
+}
+
+final inspectionAcknowledgeProvider =
+    NotifierProvider<CarHireInspectionAcknowledgeController,
+        CarHireMutationState>(
+  CarHireInspectionAcknowledgeController.new,
+);
+
+class CarHireIncidentController extends Notifier<CarHireMutationState> {
+  @override
+  CarHireMutationState build() => const CarHireMutationState();
+
+  Future<IncidentReport?> report({
+    required int bookingId,
+    required IncidentType type,
+    required String description,
+    DateTime? occurredAt,
+    String? contactPhone,
+  }) async {
+    if (state.submitting) return null;
+
+    state = const CarHireMutationState(submitting: true);
+    try {
+      final incident = await ref.read(carHireApiProvider).reportIncident(
+            bookingId,
+            type: type.wire,
+            description: description,
+            occurredAt: occurredAt,
+            contactPhone: contactPhone,
+          );
+      state = const CarHireMutationState(succeeded: true);
+      ref.invalidate(bookingIncidentsProvider(bookingId));
+      ref.invalidate(carHireBookingDetailProvider(bookingId));
+      ref.invalidate(myCarHireBookingsProvider);
+      return incident;
+    } catch (error) {
+      state = CarHireMutationState(error: _unexpected(error));
+      return null;
+    }
+  }
+}
+
+final incidentReportProvider =
+    NotifierProvider<CarHireIncidentController, CarHireMutationState>(
+  CarHireIncidentController.new,
+);
+
+class CarHireSupportCaseController extends Notifier<CarHireMutationState> {
+  @override
+  CarHireMutationState build() => const CarHireMutationState();
+
+  Future<SupportCase?> open({
+    required int bookingId,
+    required SupportCaseCategory category,
+    required String subject,
+    required String message,
+  }) async {
+    if (state.submitting) return null;
+
+    state = const CarHireMutationState(submitting: true);
+    try {
+      final supportCase = await ref.read(carHireApiProvider).openSupportCase(
+            bookingId,
+            category: category.wire,
+            subject: subject,
+            message: message,
+          );
+      state = const CarHireMutationState(succeeded: true);
+      ref.invalidate(bookingSupportCasesProvider(bookingId));
+      return supportCase;
+    } catch (error) {
+      state = CarHireMutationState(error: _unexpected(error));
+      return null;
+    }
+  }
+}
+
+final supportCaseProvider =
+    NotifierProvider<CarHireSupportCaseController, CarHireMutationState>(
+  CarHireSupportCaseController.new,
+);
+
+class CarHireVerificationSubmitController
+    extends Notifier<CarHireMutationState> {
+  @override
+  CarHireMutationState build() => const CarHireMutationState();
+
+  Future<CarHireVerification?> submit(
+    List<VerificationEvidence> evidence,
+  ) async {
+    if (state.submitting) return null;
+
+    state = const CarHireMutationState(submitting: true);
+    try {
+      final verification =
+          await ref.read(carHireApiProvider).submitVerification(evidence);
+      state = const CarHireMutationState(succeeded: true);
+      ref.invalidate(verificationRequirementsProvider);
+      ref.invalidate(verificationProvider);
+      return verification;
+    } catch (error) {
+      state = CarHireMutationState(error: _unexpected(error));
+      return null;
+    }
+  }
+}
+
+final verificationSubmitProvider =
+    NotifierProvider<CarHireVerificationSubmitController,
+        CarHireMutationState>(
+  CarHireVerificationSubmitController.new,
+);

@@ -1,0 +1,1079 @@
+import 'package:vero360_app/utils/formatters.dart';
+
+// ---------------------------------------------------------------------------
+// Tolerant JSON helpers.
+//
+// Postgres decimal / bigint columns are serialized as strings by the backend
+// (e.g. "45000.00"). Never call `.toDouble()` / `.toInt()` on raw JSON values.
+// ---------------------------------------------------------------------------
+
+double _asDouble(dynamic value, {double fallback = 0}) {
+  if (value is num) {
+    final parsed = value.toDouble();
+    return parsed.isFinite ? parsed : fallback;
+  }
+  if (value is String) {
+    final cleaned = value.trim().replaceAll(',', '').replaceAll(' ', '');
+    if (cleaned.isEmpty) return fallback;
+    final parsed = double.tryParse(cleaned);
+    return parsed != null && parsed.isFinite ? parsed : fallback;
+  }
+  return fallback;
+}
+
+double? _asNullableDouble(dynamic value) {
+  if (value == null) return null;
+  if (value is String && value.trim().isEmpty) return null;
+  final parsed = _asDouble(value, fallback: double.nan);
+  return parsed.isFinite ? parsed : null;
+}
+
+int _asInt(dynamic value, {int fallback = 0}) {
+  if (value is int) return value;
+  if (value is num) return value.isFinite ? value.round() : fallback;
+  if (value is String) {
+    final cleaned = value.trim();
+    if (cleaned.isEmpty) return fallback;
+    final direct = int.tryParse(cleaned);
+    if (direct != null) return direct;
+    final parsed = double.tryParse(cleaned.replaceAll(',', ''));
+    if (parsed != null && parsed.isFinite) return parsed.round();
+  }
+  return fallback;
+}
+
+int? _asNullableInt(dynamic value) {
+  if (value == null) return null;
+  if (value is String && value.trim().isEmpty) return null;
+  if (value is int) return value;
+  if (value is num) return value.isFinite ? value.round() : null;
+  if (value is String) {
+    final cleaned = value.trim();
+    final direct = int.tryParse(cleaned);
+    if (direct != null) return direct;
+    final parsed = double.tryParse(cleaned.replaceAll(',', ''));
+    if (parsed != null && parsed.isFinite) return parsed.round();
+  }
+  return null;
+}
+
+String _asString(dynamic value, {String fallback = ''}) {
+  if (value == null) return fallback;
+  final text = value.toString().trim();
+  return text.isEmpty ? fallback : text;
+}
+
+String? _asStringOrNull(dynamic value) {
+  final text = _asString(value);
+  return text.isEmpty ? null : text;
+}
+
+bool _asBool(dynamic value, {bool fallback = false}) {
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  if (value is String) {
+    switch (value.trim().toLowerCase()) {
+      case 'true':
+      case '1':
+      case 'yes':
+      case 'y':
+        return true;
+      case 'false':
+      case '0':
+      case 'no':
+      case 'n':
+        return false;
+    }
+  }
+  return fallback;
+}
+
+DateTime? _asDate(dynamic value) {
+  if (value is DateTime) return value;
+  if (value is int) {
+    final millis = value.abs() < 100000000000 ? value * 1000 : value;
+    return DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true).toLocal();
+  }
+  if (value is String) {
+    final text = value.trim();
+    if (text.isEmpty) return null;
+    final parsed = DateTime.tryParse(text);
+    if (parsed != null) return parsed.toLocal();
+    final epoch = int.tryParse(text);
+    if (epoch != null) {
+      final millis = epoch.abs() < 100000000000 ? epoch * 1000 : epoch;
+      return DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true).toLocal();
+    }
+  }
+  return null;
+}
+
+Map<String, dynamic> _asMap(dynamic value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) {
+    return value.map((key, item) => MapEntry(key.toString(), item));
+  }
+  return const <String, dynamic>{};
+}
+
+List<dynamic> _asList(dynamic value) {
+  if (value is List) return value;
+  return const <dynamic>[];
+}
+
+const Set<String> _wireAcronyms = <String>{
+  'SUV',
+  'MPV',
+  'AWD',
+  'RWD',
+  'FWD',
+  '4X4',
+  'GPS',
+  'AC',
+};
+
+/// Turns wire values such as `AUTOMATIC` / `NOT_REQUIRED` into
+/// `Automatic` / `Not required` for display.
+String _humanizeWire(dynamic value) {
+  final raw = _asString(value);
+  if (raw.isEmpty) return '';
+  if (_wireAcronyms.contains(raw.toUpperCase())) return raw.toUpperCase();
+  return raw
+      .split(RegExp(r'[_\s]+'))
+      .where((part) => part.isNotEmpty)
+      .map((part) {
+        if (_wireAcronyms.contains(part.toUpperCase())) {
+          return part.toUpperCase();
+        }
+        final lower = part.toLowerCase();
+        return '${lower.substring(0, 1).toUpperCase()}${lower.substring(1)}';
+      })
+      .join(' ');
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum BookingStatus {
+  pending('PENDING', 'Pending'),
+  confirmed('CONFIRMED', 'Confirmed'),
+  active('ACTIVE', 'Active'),
+  completed('COMPLETED', 'Completed'),
+  cancelled('CANCELLED', 'Cancelled'),
+  expired('EXPIRED', 'Expired'),
+  rejected('REJECTED', 'Rejected'),
+  incidentReported('INCIDENT_REPORTED', 'Incident reported'),
+  unknown('UNKNOWN', 'Unknown');
+
+  const BookingStatus(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  static BookingStatus fromWire(dynamic value) {
+    final normalized = _asString(value).toUpperCase();
+    for (final status in BookingStatus.values) {
+      if (status.wire == normalized) return status;
+    }
+    return BookingStatus.unknown;
+  }
+
+  bool get isTerminal =>
+      this == cancelled ||
+      this == completed ||
+      this == expired ||
+      this == rejected;
+
+  bool get isOpen =>
+      this == pending || this == confirmed || this == active;
+}
+
+enum PaymentStatus {
+  notRequired('NOT_REQUIRED', 'Not required'),
+  notStarted('NOT_STARTED', 'Not started'),
+  pending('PENDING', 'Pending confirmation'),
+  succeeded('SUCCEEDED', 'Paid'),
+  failed('FAILED', 'Failed'),
+  refunded('REFUNDED', 'Refunded'),
+  unknown('UNKNOWN', 'Unknown');
+
+  const PaymentStatus(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  static PaymentStatus fromWire(dynamic value) {
+    final normalized = _asString(value).toUpperCase();
+    for (final status in PaymentStatus.values) {
+      if (status.wire == normalized) return status;
+    }
+    return PaymentStatus.unknown;
+  }
+
+  bool get isSettled => this == succeeded || this == notRequired;
+}
+
+enum ListingStatus {
+  draft('DRAFT', 'Draft'),
+  pendingReview('PENDING_REVIEW', 'Pending review'),
+  published('PUBLISHED', 'Published'),
+  suspended('SUSPENDED', 'Suspended'),
+  retired('RETIRED', 'Retired'),
+  unknown('UNKNOWN', 'Unknown');
+
+  const ListingStatus(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  static ListingStatus fromWire(dynamic value) {
+    final normalized = _asString(value).toUpperCase();
+    for (final status in ListingStatus.values) {
+      if (status.wire == normalized) return status;
+    }
+    return ListingStatus.unknown;
+  }
+}
+
+enum QuoteStatus {
+  active('ACTIVE', 'Active'),
+  consumed('CONSUMED', 'Used'),
+  expired('EXPIRED', 'Expired'),
+  unknown('UNKNOWN', 'Unknown');
+
+  const QuoteStatus(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  static QuoteStatus fromWire(dynamic value) {
+    final normalized = _asString(value).toUpperCase();
+    for (final status in QuoteStatus.values) {
+      if (status.wire == normalized) return status;
+    }
+    return QuoteStatus.unknown;
+  }
+}
+
+enum VerificationState {
+  notStarted('NOT_STARTED', 'Not started'),
+  submitted('SUBMITTED', 'Submitted'),
+  underReview('UNDER_REVIEW', 'Under review'),
+  verified('VERIFIED', 'Verified'),
+  rejected('REJECTED', 'Rejected'),
+  expired('EXPIRED', 'Expired'),
+  suspended('SUSPENDED', 'Suspended'),
+  unknown('UNKNOWN', 'Unknown');
+
+  const VerificationState(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  static VerificationState fromWire(dynamic value) {
+    final normalized = _asString(value).toUpperCase();
+    for (final state in VerificationState.values) {
+      if (state.wire == normalized) return state;
+    }
+    return VerificationState.unknown;
+  }
+
+  bool get needsAttention =>
+      this == submitted ||
+      this == underReview ||
+      this == rejected ||
+      this == expired ||
+      this == suspended;
+}
+
+// ---------------------------------------------------------------------------
+// Public vehicle listing (`CarPublicView`)
+// ---------------------------------------------------------------------------
+
+class CarListing {
+  const CarListing({
+    required this.id,
+    required this.make,
+    required this.model,
+    this.year,
+    this.color,
+    this.dailyRate = 0,
+    this.currency = 'MWK',
+    this.isAvailable = true,
+    this.imageUrl,
+    this.images = const <String>[],
+    this.description,
+    this.seats,
+    this.transmission,
+    this.fuelType,
+    this.bodyType,
+    this.pickupArea,
+    this.latitude,
+    this.longitude,
+    this.rating = 0,
+    this.reviews = 0,
+    this.listingStatus = ListingStatus.published,
+    this.availableForDates,
+    this.depositAmount = 0,
+    this.minRentalDays = 1,
+    this.maxRentalDays,
+  });
+
+  final int id;
+  final String make;
+  final String model;
+  final int? year;
+  final String? color;
+  final double dailyRate;
+  final String currency;
+  final bool isAvailable;
+  final String? imageUrl;
+
+  /// Public gallery. Never contains private registration data.
+  final List<String> images;
+  final String? description;
+  final int? seats;
+  final String? transmission;
+  final String? fuelType;
+  final String? bodyType;
+  final String? pickupArea;
+  final double? latitude;
+  final double? longitude;
+  final double rating;
+  final int reviews;
+  final ListingStatus listingStatus;
+  final bool? availableForDates;
+  final double depositAmount;
+  final int minRentalDays;
+  final int? maxRentalDays;
+
+  factory CarListing.fromJson(dynamic raw) {
+    final json = _asMap(raw);
+    final images = _asList(json['images'])
+        .map((item) => _asString(item))
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+    final imageUrl = _asStringOrNull(json['imageUrl']);
+    final minDaysRaw = _asInt(json['minRentalDays'], fallback: 1);
+
+    return CarListing(
+      id: _asInt(json['id']),
+      // The backend uses `make`; legacy payloads used `brand`.
+      make: _asString(json['make'] ?? json['brand']),
+      model: _asString(json['model']),
+      year: _asNullableInt(json['year']),
+      color: _asStringOrNull(json['color']),
+      dailyRate: _asDouble(
+        json['dailyRate'] ?? json['pricePerDay'] ?? json['price'],
+      ),
+      currency: _asString(json['currency'], fallback: 'MWK'),
+      isAvailable: _asBool(json['isAvailable'], fallback: true),
+      imageUrl: imageUrl,
+      images: images,
+      description: _asStringOrNull(json['description']),
+      seats: _asNullableInt(json['seats']),
+      transmission: _asStringOrNull(json['transmission']),
+      fuelType: _asStringOrNull(json['fuelType']),
+      bodyType: _asStringOrNull(json['bodyType']),
+      pickupArea: _asStringOrNull(json['pickupArea']),
+      latitude: _asNullableDouble(json['latitude']),
+      longitude: _asNullableDouble(json['longitude']),
+      rating: _asDouble(json['rating']),
+      reviews: _asInt(json['reviews'] ?? json['reviewCount']),
+      listingStatus: ListingStatus.fromWire(
+        _asStringOrNull(json['listingStatus']) ?? 'PUBLISHED',
+      ),
+      availableForDates: json.containsKey('availableForDates') &&
+              json['availableForDates'] != null
+          ? _asBool(json['availableForDates'])
+          : null,
+      depositAmount: _asDouble(json['depositAmount']),
+      minRentalDays: minDaysRaw <= 0 ? 1 : minDaysRaw,
+      maxRentalDays: _asNullableInt(json['maxRentalDays']),
+    );
+  }
+
+  static List<CarListing> listFromJson(dynamic raw) {
+    final list = raw is List ? raw : _asList(_asMap(raw)['data']);
+    return list
+        .whereType<Map>()
+        .map((item) => CarListing.fromJson(item))
+        .toList(growable: false);
+  }
+
+  /// `images[]` first, then the single `imageUrl` fallback.
+  List<String> get galleryImages {
+    if (images.isNotEmpty) return images;
+    final single = imageUrl?.trim();
+    if (single != null && single.isNotEmpty) return <String>[single];
+    return const <String>[];
+  }
+
+  String? get primaryImage =>
+      galleryImages.isEmpty ? null : galleryImages.first;
+
+  String get title {
+    final parts = <String>[
+      if (make.trim().isNotEmpty) make.trim(),
+      if (model.trim().isNotEmpty) model.trim(),
+    ];
+    if (parts.isNotEmpty) return parts.join(' ');
+    return id > 0 ? 'Vehicle #$id' : 'Vehicle';
+  }
+
+  String get subtitle {
+    final parts = <String>[
+      if (year != null) '$year',
+      if (bodyLabel.isNotEmpty) bodyLabel,
+      if (color != null && color!.trim().isNotEmpty) _humanizeWire(color),
+    ];
+    return parts.join(' · ');
+  }
+
+  String get pricePerDayLabel =>
+      '${CarHireFormatters.formatCurrency(dailyRate)} / day';
+
+  String get seatsLabel =>
+      seats == null ? 'Seats not specified' : '$seats seats';
+
+  String get transmissionLabel {
+    final label = _humanizeWire(transmission);
+    return label.isEmpty ? 'Transmission not specified' : label;
+  }
+
+  String get fuelLabel {
+    final label = _humanizeWire(fuelType);
+    return label.isEmpty ? 'Fuel not specified' : label;
+  }
+
+  String get bodyLabel => _humanizeWire(bodyType);
+
+  String get pickupAreaLabel {
+    final area = pickupArea?.trim();
+    return area == null || area.isEmpty ? 'Pickup area not specified' : area;
+  }
+
+  String get availabilityLabel {
+    if (!isAvailable) return 'Currently unavailable';
+    if (availableForDates == false) return 'Not available for these dates';
+    return 'Available';
+  }
+
+  bool get isPublished => listingStatus == ListingStatus.published;
+
+  bool get isBookable =>
+      isAvailable && isPublished && availableForDates != false;
+
+  String get rentalWindowLabel {
+    if (maxRentalDays == null) {
+      return 'Minimum $minRentalDays day${minRentalDays == 1 ? '' : 's'}';
+    }
+    return 'Minimum $minRentalDays day${minRentalDays == 1 ? '' : 's'} · '
+        'Maximum $maxRentalDays day${maxRentalDays == 1 ? '' : 's'}';
+  }
+
+  CarListing copyWith({
+    bool? isAvailable,
+    bool? availableForDates,
+    ListingStatus? listingStatus,
+  }) {
+    return CarListing(
+      id: id,
+      make: make,
+      model: model,
+      year: year,
+      color: color,
+      dailyRate: dailyRate,
+      currency: currency,
+      isAvailable: isAvailable ?? this.isAvailable,
+      imageUrl: imageUrl,
+      images: images,
+      description: description,
+      seats: seats,
+      transmission: transmission,
+      fuelType: fuelType,
+      bodyType: bodyType,
+      pickupArea: pickupArea,
+      latitude: latitude,
+      longitude: longitude,
+      rating: rating,
+      reviews: reviews,
+      listingStatus: listingStatus ?? this.listingStatus,
+      availableForDates: availableForDates ?? this.availableForDates,
+      depositAmount: depositAmount,
+      minRentalDays: minRentalDays,
+      maxRentalDays: maxRentalDays,
+    );
+  }
+}
+
+/// Public search response: `{ "data": [...], "meta": {...} }`.
+class CarHireSearchResult {
+  const CarHireSearchResult({
+    this.data = const <CarListing>[],
+    this.page = 1,
+    this.limit = 20,
+    this.total = 0,
+    this.hasMore = false,
+  });
+
+  final List<CarListing> data;
+  final int page;
+  final int limit;
+  final int total;
+  final bool hasMore;
+
+  factory CarHireSearchResult.fromJson(dynamic raw) {
+    final json = raw is Map ? _asMap(raw) : const <String, dynamic>{};
+    final listRaw = raw is List
+        ? raw
+        : (json['data'] ?? json['cars'] ?? json['items']);
+    final meta = _asMap(json['meta']);
+    final data = _asList(listRaw)
+        .whereType<Map>()
+        .map((item) => CarListing.fromJson(item))
+        .toList(growable: false);
+
+    return CarHireSearchResult(
+      data: data,
+      page: _asInt(meta['page'] ?? json['page'], fallback: 1),
+      limit: _asInt(meta['limit'] ?? json['limit'], fallback: 20),
+      total: _asInt(
+        meta['total'] ?? json['total'],
+        fallback: data.length,
+      ),
+      hasMore: _asBool(meta['hasMore'] ?? json['hasMore'], fallback: false),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Quote
+// ---------------------------------------------------------------------------
+
+class QuoteLineItem {
+  const QuoteLineItem({
+    required this.code,
+    required this.label,
+    this.amount = 0,
+  });
+
+  final String code;
+  final String label;
+  final double amount;
+
+  factory QuoteLineItem.fromJson(dynamic raw) {
+    final json = _asMap(raw);
+    return QuoteLineItem(
+      code: _asString(json['code']),
+      label: _asString(json['label'], fallback: _humanizeWire(json['code'])),
+      amount: _asDouble(json['amount']),
+    );
+  }
+
+  static List<QuoteLineItem> listFromJson(dynamic raw) {
+    return _asList(raw)
+        .whereType<Map>()
+        .map((item) => QuoteLineItem.fromJson(item))
+        .toList(growable: false);
+  }
+}
+
+class QuoteDeposit {
+  const QuoteDeposit({this.amount = 0, this.collectionMode = 'none'});
+
+  final double amount;
+  final String collectionMode;
+
+  factory QuoteDeposit.fromJson(dynamic raw) {
+    if (raw is num || raw is String) {
+      return QuoteDeposit(amount: _asDouble(raw));
+    }
+    final json = _asMap(raw);
+    return QuoteDeposit(
+      amount: _asDouble(json['amount']),
+      collectionMode: _asString(json['collectionMode'], fallback: 'none'),
+    );
+  }
+
+  bool get hasDeposit => amount > 0;
+
+  String get collectionModeLabel {
+    final mode = _humanizeWire(collectionMode);
+    return mode.isEmpty ? 'Not specified' : mode;
+  }
+}
+
+class RentalQuote {
+  const RentalQuote({
+    required this.quoteId,
+    required this.carId,
+    this.currency = 'MWK',
+    this.startAt,
+    this.endAt,
+    this.expiresAt,
+    this.days = 0,
+    this.dailyRate = 0,
+    this.lineItems = const <QuoteLineItem>[],
+    this.subtotal = 0,
+    this.surcharges = 0,
+    this.discounts = 0,
+    this.insurance = 0,
+    this.deposit = const QuoteDeposit(),
+    this.totalDueNow = 0,
+    this.totalDueLater = 0,
+    this.total = 0,
+    this.status = QuoteStatus.active,
+  });
+
+  final String quoteId;
+  final int carId;
+  final String currency;
+  final DateTime? startAt;
+  final DateTime? endAt;
+  final DateTime? expiresAt;
+  final int days;
+  final double dailyRate;
+  final List<QuoteLineItem> lineItems;
+  final double subtotal;
+  final double surcharges;
+  final double discounts;
+  final double insurance;
+  final QuoteDeposit deposit;
+  final double totalDueNow;
+  final double totalDueLater;
+  final double total;
+  final QuoteStatus status;
+
+  factory RentalQuote.fromJson(dynamic raw) {
+    dynamic payload = raw;
+    if (raw is Map) {
+      final json = _asMap(raw);
+      payload = json['data'] ?? json['quote'] ?? json;
+    }
+    final json = _asMap(payload);
+    final expiresAt = _asDate(json['expiresAt']);
+    final status = QuoteStatus.fromWire(
+      _asStringOrNull(json['status']) ?? 'ACTIVE',
+    );
+
+    return RentalQuote(
+      quoteId: _asString(json['quoteId'] ?? json['id']),
+      carId: _asInt(json['carId']),
+      currency: _asString(json['currency'], fallback: 'MWK'),
+      startAt: _asDate(json['startAt'] ?? json['startDate']),
+      endAt: _asDate(json['endAt'] ?? json['endDate']),
+      expiresAt: expiresAt,
+      days: _asInt(json['days']),
+      dailyRate: _asDouble(json['dailyRate']),
+      lineItems: QuoteLineItem.listFromJson(json['lineItems']),
+      subtotal: _asDouble(json['subtotal']),
+      surcharges: _asDouble(json['surcharges']),
+      discounts: _asDouble(json['discounts']),
+      insurance: _asDouble(json['insurance']),
+      deposit: QuoteDeposit.fromJson(json['deposit']),
+      totalDueNow: _asDouble(json['totalDueNow']),
+      totalDueLater: _asDouble(json['totalDueLater']),
+      total: _asDouble(
+        json['total'] ?? json['totalDueNow'] ?? json['subtotal'],
+      ),
+      status: status,
+    );
+  }
+
+  bool get isLocallyExpired {
+    final expires = expiresAt;
+    if (expires == null) return false;
+    return !DateTime.now().isBefore(expires);
+  }
+
+  bool get isExpired => status == QuoteStatus.expired || isLocallyExpired;
+
+  bool get isActive => status == QuoteStatus.active && !isExpired;
+
+  Duration? get remaining {
+    final expires = expiresAt;
+    if (expires == null) return null;
+    return expires.difference(DateTime.now());
+  }
+
+  String get dailyRateLabel =>
+      '${CarHireFormatters.formatCurrency(dailyRate)} / day';
+
+  String get totalLabel => CarHireFormatters.formatCurrency(total);
+
+  String get expiryLabel {
+    final expires = expiresAt;
+    if (expires == null) return 'Expiry not provided';
+    return CarHireFormatters.formatDateTime(expires);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Booking
+// ---------------------------------------------------------------------------
+
+class CarHireBooking {
+  const CarHireBooking({
+    required this.id,
+    this.bookingNumber,
+    this.carId,
+    this.userId,
+    this.startAt,
+    this.endAt,
+    this.bookingStatus = BookingStatus.unknown,
+    this.paymentStatus = PaymentStatus.unknown,
+    this.currency = 'MWK',
+    this.quoteId,
+    this.baseCost = 0,
+    this.distanceCost = 0,
+    this.surcharges = 0,
+    this.discounts = 0,
+    this.insurance = 0,
+    this.total = 0,
+    this.renterNotes,
+    this.driverName,
+    this.holdExpiresAt,
+    this.cancellationReason,
+    this.cancelledAt,
+    this.createdAt,
+    this.updatedAt,
+    this.nextAction,
+    this.paymentReference,
+    this.car,
+    this.priceBreakdown = const <QuoteLineItem>[],
+  });
+
+  final int id;
+  final String? bookingNumber;
+  final int? carId;
+  final int? userId;
+  final DateTime? startAt;
+  final DateTime? endAt;
+  final BookingStatus bookingStatus;
+  final PaymentStatus paymentStatus;
+  final String currency;
+  final String? quoteId;
+  final double baseCost;
+  final double distanceCost;
+  final double surcharges;
+  final double discounts;
+  final double insurance;
+
+  /// Server-authoritative total. Never calculated on the client.
+  final double total;
+  final String? renterNotes;
+  final String? driverName;
+  final DateTime? holdExpiresAt;
+  final String? cancellationReason;
+  final DateTime? cancelledAt;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+  final String? nextAction;
+  final String? paymentReference;
+  final CarListing? car;
+  final List<QuoteLineItem> priceBreakdown;
+
+  factory CarHireBooking.fromJson(dynamic raw) {
+    dynamic payload = raw;
+    if (raw is Map) {
+      final json = _asMap(raw);
+      payload = json['data'] ?? json['booking'] ?? json;
+    }
+    final json = _asMap(payload);
+    final carRaw = json['car'] ?? json['vehicle'];
+    final breakdownRaw = json['priceBreakdown'];
+
+    return CarHireBooking(
+      id: _asInt(json['id']),
+      bookingNumber: _asStringOrNull(json['bookingNumber']),
+      carId: _asNullableInt(json['carId']),
+      userId: _asNullableInt(json['userId']),
+      startAt: _asDate(json['startAt'] ?? json['startDate']),
+      endAt: _asDate(json['endAt'] ?? json['endDate']),
+      bookingStatus: BookingStatus.fromWire(
+        json['bookingStatus'] ?? json['status'],
+      ),
+      paymentStatus: PaymentStatus.fromWire(
+        _asStringOrNull(json['paymentStatus']) ?? 'NOT_STARTED',
+      ),
+      currency: _asString(json['currency'], fallback: 'MWK'),
+      quoteId: _asStringOrNull(json['quoteId']),
+      baseCost: _asDouble(json['baseCost']),
+      distanceCost: _asDouble(json['distanceCost']),
+      surcharges: _asDouble(json['surcharges']),
+      discounts: _asDouble(json['discounts']),
+      insurance: _asDouble(json['insurance']),
+      // Booking responses carry `total` and the legacy `totalCost`.
+      total: _asDouble(
+        json['total'] ?? json['totalCost'] ?? json['grandTotal'],
+      ),
+      renterNotes: _asStringOrNull(json['renterNotes'] ?? json['notes']),
+      driverName: _asStringOrNull(json['driverName']),
+      holdExpiresAt: _asDate(json['holdExpiresAt']),
+      cancellationReason: _asStringOrNull(json['cancellationReason']),
+      cancelledAt: _asDate(json['cancelledAt']),
+      createdAt: _asDate(json['createdAt']),
+      updatedAt: _asDate(json['updatedAt']),
+      nextAction: _asStringOrNull(json['nextAction']),
+      paymentReference: _asStringOrNull(json['paymentReference']),
+      car: carRaw is Map ? CarListing.fromJson(carRaw) : null,
+      priceBreakdown: breakdownRaw is List
+          ? QuoteLineItem.listFromJson(breakdownRaw)
+          : QuoteLineItem.listFromJson(_asMap(breakdownRaw)['lineItems']),
+    );
+  }
+
+  String get bookingNumberLabel {
+    final number = bookingNumber?.trim();
+    if (number != null && number.isNotEmpty) return number;
+    return id > 0 ? 'Booking #$id' : 'Booking';
+  }
+
+  String get totalLabel => CarHireFormatters.formatCurrency(total);
+
+  String get dateRangeLabel {
+    final start = startAt;
+    final end = endAt;
+    if (start == null && end == null) return 'Dates not confirmed';
+    if (start == null) return 'Return ${CarHireFormatters.formatDateTime(end!)}';
+    if (end == null) return 'Pick-up ${CarHireFormatters.formatDateTime(start)}';
+    return '${CarHireFormatters.formatDateTime(start)} → '
+        '${CarHireFormatters.formatDateTime(end)}';
+  }
+
+  String get paymentLabel {
+    switch (paymentStatus) {
+      case PaymentStatus.succeeded:
+        return 'Payment received';
+      case PaymentStatus.notRequired:
+        return 'No payment required';
+      case PaymentStatus.pending:
+        return 'Payment pending confirmation';
+      case PaymentStatus.failed:
+        return 'Payment failed';
+      case PaymentStatus.refunded:
+        return 'Payment refunded';
+      case PaymentStatus.notStarted:
+        return 'Payment not started';
+      case PaymentStatus.unknown:
+        return 'Payment status unavailable';
+    }
+  }
+
+  bool get paymentSucceeded => paymentStatus == PaymentStatus.succeeded;
+
+  bool get isHoldExpired {
+    final hold = holdExpiresAt;
+    if (hold == null) return false;
+    return !DateTime.now().isBefore(hold);
+  }
+
+  bool get canCancel =>
+      bookingStatus == BookingStatus.pending ||
+      bookingStatus == BookingStatus.confirmed;
+
+  bool get canPay {
+    if (bookingStatus != BookingStatus.pending &&
+        bookingStatus != BookingStatus.confirmed) {
+      return false;
+    }
+    if (paymentStatus == PaymentStatus.succeeded ||
+        paymentStatus == PaymentStatus.refunded ||
+        paymentStatus == PaymentStatus.notRequired) {
+      return false;
+    }
+    // The server-derived hint tells us when payment is no longer the next step.
+    final action = _normalizedNextAction;
+    if (action == 'PICKUP_DUE' || action == 'OWNER_REVIEW') return false;
+    return true;
+  }
+
+  String? get _normalizedNextAction => nextAction
+      ?.trim()
+      .toUpperCase()
+      .replaceAll('-', '_')
+      .replaceAll(' ', '_');
+
+  String? get nextActionLabel {
+    switch (_normalizedNextAction) {
+      case 'PAYMENT_REQUIRED':
+        return 'Payment is required to confirm this booking.';
+      case 'PAYMENT_PROCESSING':
+        return 'Your payment is being confirmed. Refresh in a moment.';
+      case 'OWNER_REVIEW':
+        return 'Waiting for the vehicle provider to confirm.';
+      case 'PICKUP_DUE':
+        return 'Your pick-up is due. Bring your booking number and licence.';
+      case 'RETURN_DUE':
+        return 'Your return is due. Please return the vehicle on time.';
+      default:
+        return null;
+    }
+  }
+
+  String get holdExpiryLabel {
+    final hold = holdExpiresAt;
+    if (hold == null) return 'Hold expiry not provided';
+    return isHoldExpired
+        ? 'Hold expired ${CarHireFormatters.formatDateTime(hold)}'
+        : 'Hold expires ${CarHireFormatters.formatDateTime(hold)}';
+  }
+
+  CarHireBooking copyWith({
+    BookingStatus? bookingStatus,
+    PaymentStatus? paymentStatus,
+    String? nextAction,
+    String? cancellationReason,
+    DateTime? cancelledAt,
+    DateTime? holdExpiresAt,
+    String? paymentReference,
+    CarListing? car,
+  }) {
+    return CarHireBooking(
+      id: id,
+      bookingNumber: bookingNumber,
+      carId: carId,
+      userId: userId,
+      startAt: startAt,
+      endAt: endAt,
+      bookingStatus: bookingStatus ?? this.bookingStatus,
+      paymentStatus: paymentStatus ?? this.paymentStatus,
+      currency: currency,
+      quoteId: quoteId,
+      baseCost: baseCost,
+      distanceCost: distanceCost,
+      surcharges: surcharges,
+      discounts: discounts,
+      insurance: insurance,
+      total: total,
+      renterNotes: renterNotes,
+      driverName: driverName,
+      holdExpiresAt: holdExpiresAt ?? this.holdExpiresAt,
+      cancellationReason: cancellationReason ?? this.cancellationReason,
+      cancelledAt: cancelledAt ?? this.cancelledAt,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+      nextAction: nextAction ?? this.nextAction,
+      paymentReference: paymentReference ?? this.paymentReference,
+      car: car ?? this.car,
+      priceBreakdown: priceBreakdown,
+    );
+  }
+}
+
+/// Booking list envelope: `{ "data": [...], "meta": {...} }`.
+class BookingPage {
+  const BookingPage({
+    this.data = const <CarHireBooking>[],
+    this.page = 1,
+    this.limit = 20,
+    this.total = 0,
+    this.hasMore = false,
+  });
+
+  final List<CarHireBooking> data;
+  final int page;
+  final int limit;
+  final int total;
+  final bool hasMore;
+
+  factory BookingPage.fromJson(dynamic raw) {
+    final json = raw is Map ? _asMap(raw) : const <String, dynamic>{};
+    final listRaw = raw is List
+        ? raw
+        : (json['data'] ?? json['bookings'] ?? json['items']);
+    final meta = _asMap(json['meta']);
+    final data = _asList(listRaw)
+        .whereType<Map>()
+        .map((item) => CarHireBooking.fromJson(item))
+        .toList(growable: false);
+
+    return BookingPage(
+      data: data,
+      page: _asInt(meta['page'] ?? json['page'], fallback: 1),
+      limit: _asInt(meta['limit'] ?? json['limit'], fallback: 20),
+      total: _asInt(meta['total'] ?? json['total'], fallback: data.length),
+      hasMore: _asBool(meta['hasMore'] ?? json['hasMore'], fallback: false),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Payment initiation + verification
+// ---------------------------------------------------------------------------
+
+class PaymentInitiation {
+  const PaymentInitiation({
+    this.paymentId,
+    this.txRef,
+    this.checkoutUrl,
+    this.status,
+    this.booking,
+  });
+
+  final int? paymentId;
+  final String? txRef;
+  final String? checkoutUrl;
+  final String? status;
+  final CarHireBooking? booking;
+
+  factory PaymentInitiation.fromJson(dynamic raw) {
+    dynamic payload = raw;
+    if (raw is Map) {
+      final json = _asMap(raw);
+      payload = json['data'] ?? json['payment'] ?? json;
+    }
+    final json = _asMap(payload);
+    final bookingRaw = json['booking'];
+
+    return PaymentInitiation(
+      paymentId: _asNullableInt(json['paymentId']),
+      txRef: _asStringOrNull(json['txRef']),
+      checkoutUrl: _asStringOrNull(json['checkoutUrl']),
+      status: _asStringOrNull(json['status']),
+      booking: bookingRaw is Map ? CarHireBooking.fromJson(bookingRaw) : null,
+    );
+  }
+}
+
+class CarHireVerification {
+  const CarHireVerification({
+    this.status = VerificationState.unknown,
+    this.requirements = const <String>[],
+    this.nextAction,
+  });
+
+  final VerificationState status;
+  final List<String> requirements;
+  final String? nextAction;
+
+  factory CarHireVerification.fromJson(dynamic raw) {
+    final json = raw is Map ? _asMap(raw) : const <String, dynamic>{};
+    final requirements = _asList(json['requirements'])
+        .map((item) {
+          if (item is Map) {
+            final map = _asMap(item);
+            return _asString(
+              map['label'] ?? map['name'] ?? map['code'] ?? map['type'],
+            );
+          }
+          return _asString(item);
+        })
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+
+    return CarHireVerification(
+      status: VerificationState.fromWire(
+        _asStringOrNull(json['status']) ?? 'NOT_STARTED',
+      ),
+      requirements: requirements,
+      nextAction: _asStringOrNull(json['nextAction']),
+    );
+  }
+
+  bool get needsAttention => status.needsAttention;
+
+  String get statusLabel => status.label;
+}

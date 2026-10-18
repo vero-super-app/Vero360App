@@ -16,6 +16,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:vero360_app/Quickservices/social.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
+import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_browse_page.dart';
+import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/bike_ride_share_map_screen.dart';
 import 'package:vero360_app/features/ride_share/ride_share_entry_resolver.dart';
 
@@ -122,6 +124,7 @@ const List<Mini> kQuickServices = [
   Mini('jobs',             'Jobs',      Icons.business_center_rounded),
   Mini('tenders',          'Tenders',   Icons.description_rounded),
   Mini('accommodation',    'Stay',      Icons.hotel_rounded),
+  Mini('car_hire',         'Car Hire',  Icons.directions_car_rounded),
   Mini('customer_service', 'Support',   Icons.support_agent_rounded),
 ];
 
@@ -138,6 +141,7 @@ const Map<String, String> kQuickServiceGuideNotes = {
   'jobs':             'Discover job opportunities near you.',
   'tenders':          'Browse Malawi procurement notices and RFQs.',
   'accommodation':    'Find hotels and places to stay.',
+  'car_hire':         'Rent a car for your trip dates.',
   'customer_service': 'Chat with Vero Assist in English or Chichewa.',
 };
 
@@ -553,6 +557,12 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       _openDigitalServices(initialCategory: 'gift_cards');
       return;
     }
+    // Car hire has its own renter journey. Keep this branch ahead of the
+    // ride-share resolver so Vero Ride behaviour is untouched.
+    if (key == 'car_hire') {
+      CarHireRoutes.openBrowse(context);
+      return;
+    }
     if (RideShareEntryResolver.isRideShareServiceKey(key)) {
       _openRideShareEntry();
       return;
@@ -610,8 +620,10 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
         unawaited(NotificationStore.instance.markBadgeRouteAsRead('support'));
         page = const CustomerServicePage();
         break;
-      case 'taxi':
       case 'car_hire':
+        page = const CarHireBrowsePage();
+        break;
+      case 'taxi':
       case 'ride':
       case 'ride_share':
         page = RideShareEntryResolver.buildLandingPage(

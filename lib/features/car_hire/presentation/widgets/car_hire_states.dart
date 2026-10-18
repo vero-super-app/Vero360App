@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:vero360_app/features/car_hire/data/car_hire_api.dart';
-import 'package:vero360_app/features/car_rental/utils/car_rental_colors.dart';
+import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 
 /// Compact inline error used under forms and action cards.
@@ -20,10 +20,10 @@ class CarHireInlineError extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
       decoration: BoxDecoration(
-        color: CarRentalColors.errorLight,
-        borderRadius: BorderRadius.circular(10),
+        color: CarHirePalette.errorSoft,
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -31,16 +31,17 @@ class CarHireInlineError extends StatelessWidget {
           const Icon(
             Icons.error_outline_rounded,
             size: 16,
-            color: CarRentalColors.error,
+            color: CarHirePalette.error,
           ),
-          const SizedBox(width: 7),
+          const SizedBox(width: 8),
           Expanded(
             child: Text(
               UserFacingError.sanitize(message),
               style: const TextStyle(
-                color: CarRentalColors.error,
+                color: CarHirePalette.error,
                 fontSize: 11.5,
-                height: 1.4,
+                height: 1.45,
+                fontWeight: FontWeight.w500,
               ),
             ),
           ),
@@ -48,9 +49,9 @@ class CarHireInlineError extends StatelessWidget {
             TextButton(
               onPressed: onRetry,
               style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-                minimumSize: const Size(0, 28),
-                foregroundColor: CarRentalColors.error,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: const Size(0, 30),
+                foregroundColor: CarHirePalette.error,
                 textStyle: const TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w800,
@@ -63,6 +64,109 @@ class CarHireInlineError extends StatelessWidget {
     );
   }
 }
+
+/// A quiet informational strip for the journey-wide guarantees.
+class CarHireInfoBanner extends StatelessWidget {
+  const CarHireInfoBanner({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.message,
+    this.tone = CarHireInfoTone.neutral,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final CarHireInfoTone tone;
+
+  @override
+  Widget build(BuildContext context) {
+    late final Color background;
+    late final Color foreground;
+    switch (tone) {
+      case CarHireInfoTone.neutral:
+        background = CarHirePalette.surface;
+        foreground = CarHirePalette.onSurface;
+        break;
+      case CarHireInfoTone.accent:
+        background = CarHirePalette.accentPale;
+        foreground = CarHirePalette.onAccentSoft;
+        break;
+      case CarHireInfoTone.success:
+        background = CarHirePalette.successSoft;
+        foreground = CarHirePalette.success;
+        break;
+      case CarHireInfoTone.warning:
+        background = CarHirePalette.warningSoft;
+        foreground = CarHirePalette.warning;
+        break;
+      case CarHireInfoTone.error:
+        background = CarHirePalette.errorSoft;
+        foreground = CarHirePalette.error;
+        break;
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: tone == CarHireInfoTone.neutral
+              ? CarHirePalette.hairline
+              : foreground.withValues(alpha: 0.16),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: foreground.withValues(alpha: 0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, size: 18, color: foreground),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: tone == CarHireInfoTone.neutral
+                        ? CarHirePalette.onSurface
+                        : foreground,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    height: 1.3,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  message,
+                  style: TextStyle(
+                    color: tone == CarHireInfoTone.neutral
+                        ? CarHirePalette.onSurfaceVariant
+                        : foreground.withValues(alpha: 0.9),
+                    fontSize: 11.5,
+                    height: 1.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+enum CarHireInfoTone { neutral, accent, success, warning, error }
 
 class CarHireLoadingState extends StatelessWidget {
   const CarHireLoadingState({
@@ -87,17 +191,14 @@ class CarHireLoadingState extends StatelessWidget {
               height: 30,
               child: CircularProgressIndicator(
                 strokeWidth: 2.6,
-                color: CarRentalColors.brandOrange,
+                color: CarHirePalette.accent,
               ),
             ),
             const SizedBox(height: 16),
             Text(
               message,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: CarRentalColors.body,
-                fontSize: 13.5,
-              ),
+              style: CarHireType.bodySmall.copyWith(fontSize: 12.5),
             ),
           ],
         ),
@@ -133,47 +234,36 @@ class CarHireEmptyState extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 64,
-              height: 64,
-              decoration: const BoxDecoration(
-                color: CarRentalColors.brandOrangePale,
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: CarHirePalette.surfaceLow,
                 shape: BoxShape.circle,
+                border: Border.all(color: CarHirePalette.hairline),
               ),
-              child: Icon(icon, size: 30, color: CarRentalColors.brandOrange),
+              child: Icon(icon, size: 32, color: CarHirePalette.onSurface),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 18),
             Text(
               title,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: CarRentalColors.title,
-                fontSize: 16,
-                fontWeight: FontWeight.w800,
-              ),
+              style: CarHireType.title,
             ),
             const SizedBox(height: 6),
             Text(
               message,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: CarRentalColors.body,
-                fontSize: 13,
-                height: 1.45,
-              ),
+              style: CarHireType.bodySmall.copyWith(height: 1.55),
             ),
             if (actionLabel != null && onAction != null) ...[
-              const SizedBox(height: 18),
-              OutlinedButton(
-                onPressed: onAction,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: CarRentalColors.brandOrange,
-                  side: const BorderSide(color: CarRentalColors.brandOrange),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 12,
-                  ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: 220,
+                child: FilledButton(
+                  onPressed: onAction,
+                  style: carHirePrimaryButton(),
+                  child: Text(actionLabel!),
                 ),
-                child: Text(actionLabel!),
               ),
             ],
           ],
@@ -227,62 +317,50 @@ class CarHireErrorState extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 64,
-              height: 64,
-              decoration: const BoxDecoration(
-                color: CarRentalColors.errorLight,
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: CarHirePalette.errorSoft,
                 shape: BoxShape.circle,
+                border: Border.all(
+                  color: CarHirePalette.error.withValues(alpha: 0.18),
+                ),
               ),
               child: const Icon(
                 Icons.error_outline_rounded,
-                size: 30,
-                color: CarRentalColors.error,
+                size: 32,
+                color: CarHirePalette.error,
               ),
             ),
-            const SizedBox(height: 16),
-            const Text(
+            const SizedBox(height: 18),
+            Text(
               'Something went wrong',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                color: CarRentalColors.title,
-                fontSize: 16,
-                fontWeight: FontWeight.w800,
-              ),
+              style: CarHireType.title,
             ),
             const SizedBox(height: 6),
             Text(
               _resolvedMessage,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: CarRentalColors.body,
-                fontSize: 13,
-                height: 1.45,
-              ),
+              style: CarHireType.bodySmall.copyWith(height: 1.55),
             ),
             if (requiresLogin) ...[
               const SizedBox(height: 10),
-              const Text(
+              Text(
                 'You can keep browsing vehicles without signing in.',
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: CarRentalColors.grey,
-                  fontSize: 12,
-                ),
+                style: CarHireType.labelSmall,
               ),
             ],
             if (onRetry != null) ...[
-              const SizedBox(height: 18),
-              FilledButton.icon(
-                onPressed: onRetry,
-                icon: const Icon(Icons.refresh_rounded, size: 18),
-                label: Text(retryLabel),
-                style: FilledButton.styleFrom(
-                  backgroundColor: CarRentalColors.brandOrange,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 12,
-                  ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: 220,
+                child: FilledButton.icon(
+                  onPressed: onRetry,
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  label: Text(retryLabel),
+                  style: carHirePrimaryButton(),
                 ),
               ),
             ],

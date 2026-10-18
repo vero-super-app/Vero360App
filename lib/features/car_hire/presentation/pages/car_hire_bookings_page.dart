@@ -3,16 +3,39 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
+import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_status_badge.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
-import 'package:vero360_app/features/car_rental/utils/car_rental_colors.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
-class CarHireBookingsPage extends ConsumerWidget {
+enum _BookingScope { all, upcoming, past }
+
+extension on _BookingScope {
+  String get label {
+    switch (this) {
+      case _BookingScope.all:
+        return 'All';
+      case _BookingScope.upcoming:
+        return 'Upcoming';
+      case _BookingScope.past:
+        return 'Past';
+    }
+  }
+}
+
+class CarHireBookingsPage extends ConsumerStatefulWidget {
   const CarHireBookingsPage({super.key});
 
-  Future<void> _refresh(WidgetRef ref) async {
+  @override
+  ConsumerState<CarHireBookingsPage> createState() =>
+      _CarHireBookingsPageState();
+}
+
+class _CarHireBookingsPageState extends ConsumerState<CarHireBookingsPage> {
+  _BookingScope _scope = _BookingScope.all;
+
+  Future<void> _refresh() async {
     ref.invalidate(myCarHireBookingsProvider);
     try {
       await ref.read(myCarHireBookingsProvider.future);
@@ -21,44 +44,42 @@ class CarHireBookingsPage extends ConsumerWidget {
     }
   }
 
+  List<CarHireBooking> _visible(List<CarHireBooking> bookings) {
+    switch (_scope) {
+      case _BookingScope.all:
+        return bookings;
+      case _BookingScope.upcoming:
+        return bookings
+            .where((booking) => booking.bookingStatus.isOpen)
+            .toList(growable: false);
+      case _BookingScope.past:
+        return bookings
+            .where((booking) => !booking.bookingStatus.isOpen)
+            .toList(growable: false);
+    }
+  }
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final bookings = ref.watch(myCarHireBookingsProvider);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFFFFBF6),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        foregroundColor: CarRentalColors.title,
-        elevation: 0.4,
-        scrolledUnderElevation: 0.4,
-        title: const Text(
-          'My car hire bookings',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-        ),
+      backgroundColor: CarHirePalette.background,
+      appBar: carHireAppBar(
+        title: 'My bookings',
         actions: [
-          TextButton(
-            onPressed: () => CarHireRoutes.openVerification(context),
-            style: TextButton.styleFrom(
-              foregroundColor: CarRentalColors.brandOrange,
-              textStyle: const TextStyle(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            child: const Text('Verification'),
+          CarHireIconButton(
+            icon: Icons.verified_user_outlined,
+            tooltip: 'Driver verification',
+            onTap: () => CarHireRoutes.openVerification(context),
           ),
-          IconButton(
-            tooltip: 'Refresh',
-            icon: const Icon(Icons.refresh_rounded),
-            onPressed: () => _refresh(ref),
-          ),
+          const SizedBox(width: 16),
         ],
       ),
       body: RefreshIndicator(
-        color: CarRentalColors.brandOrange,
-        onRefresh: () => _refresh(ref),
+        color: CarHirePalette.accent,
+        backgroundColor: CarHirePalette.surface,
+        onRefresh: _refresh,
         child: bookings.when(
           loading: () => ListView(
             physics: const AlwaysScrollableScrollPhysics(),
@@ -73,7 +94,7 @@ class CarHireBookingsPage extends ConsumerWidget {
               const SizedBox(height: 60),
               CarHireErrorState(
                 error: error,
-                onRetry: () => _refresh(ref),
+                onRetry: _refresh,
               ),
             ],
           ),
@@ -96,28 +117,145 @@ class CarHireBookingsPage extends ConsumerWidget {
               );
             }
 
-            return ListView.builder(
+            final visible = _visible(items);
+
+            return ListView(
               physics: const AlwaysScrollableScrollPhysics(),
               padding: EdgeInsets.fromLTRB(
                 16,
-                14,
+                8,
                 16,
                 24 + MediaQuery.paddingOf(context).bottom,
               ),
-              itemCount: items.length,
-              itemBuilder: (context, index) {
-                final booking = items[index];
-                return _BookingListCard(
-                  booking: booking,
-                  onTap: () => CarHireRoutes.openBookingDetail(
-                    context,
-                    bookingId: booking.id,
-                    initialBooking: booking,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Your trips',
+                        style: CarHireType.titleLarge,
+                      ),
+                    ),
+                    CarHirePill(
+                      label: '${items.length} total',
+                      background: CarHirePalette.accentPale,
+                      foreground: CarHirePalette.onAccentSoft,
+                      fontSize: 10.5,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 5,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Track payment, handover inspections and extensions for '
+                  'every rental.',
+                  style: CarHireType.bodySmall,
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  height: 38,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _BookingScope.values.length,
+                    separatorBuilder: (_, _) => const SizedBox(width: 8),
+                    itemBuilder: (context, index) {
+                      final scope = _BookingScope.values[index];
+                      final selected = scope == _scope;
+                      return _ScopeChip(
+                        label: scope.label,
+                        selected: selected,
+                        onTap: () => setState(() => _scope = scope),
+                      );
+                    },
                   ),
-                );
-              },
+                ),
+                const SizedBox(height: 14),
+                if (visible.isEmpty)
+                  CarHireSurface(
+                    padding: const EdgeInsets.all(22),
+                    child: Column(
+                      children: [
+                        const Icon(
+                          Icons.luggage_outlined,
+                          size: 28,
+                          color: CarHirePalette.muted,
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          'Nothing in ${_scope.label.toLowerCase()} trips',
+                          style: CarHireType.subtitle,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Switch the filter to see your other bookings.',
+                          textAlign: TextAlign.center,
+                          style: CarHireType.bodySmall,
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  for (final booking in visible)
+                    _BookingListCard(
+                      booking: booking,
+                      onTap: () => CarHireRoutes.openBookingDetail(
+                        context,
+                        bookingId: booking.id,
+                        initialBooking: booking,
+                      ),
+                    ),
+              ],
             );
           },
+        ),
+      ),
+    );
+  }
+}
+
+class _ScopeChip extends StatelessWidget {
+  const _ScopeChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(99),
+        child: AnimatedContainer(
+          duration: CarHireShape.fast,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+          decoration: BoxDecoration(
+            color: selected ? CarHirePalette.primary : CarHirePalette.surface,
+            borderRadius: BorderRadius.circular(99),
+            border: Border.all(
+              color: selected
+                  ? CarHirePalette.primary
+                  : CarHirePalette.hairline,
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: selected
+                  ? Colors.white
+                  : CarHirePalette.onSurfaceVariant,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
         ),
       ),
     );
@@ -135,129 +273,134 @@ class _BookingListCard extends StatelessWidget {
     final car = booking.car;
     final image = car?.primaryImage;
 
-    return Container(
+    return CarHireSurface(
       margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFEDE7DF)),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(16),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+      padding: EdgeInsets.zero,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: SizedBox(
-                        width: 72,
-                        height: 64,
-                        child: image == null || image.isEmpty
-                            ? Container(
-                                color: CarRentalColors.chip,
-                                alignment: Alignment.center,
-                                child: const Icon(
-                                  Icons.directions_car_filled_rounded,
-                                  color: CarRentalColors.grey,
-                                ),
-                              )
-                            : ResilientCachedNetworkImage(
-                                url: image,
-                                fit: BoxFit.cover,
-                                width: 72,
-                                height: 64,
-                                memCacheWidth: 220,
-                              ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  booking.bookingNumberLabel,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: CarRentalColors.body,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              Flexible(
-                                child: CarHireStatusBadge.booking(
-                                  booking.bookingStatus,
-                                ),
-                              ),
-                            ],
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: SizedBox(
+                    width: 84,
+                    height: 76,
+                    child: image == null || image.isEmpty
+                        ? Container(
+                            color: CarHirePalette.surfaceLow,
+                            alignment: Alignment.center,
+                            child: const Icon(
+                              Icons.directions_car_filled_rounded,
+                              color: CarHirePalette.outlineVariant,
+                            ),
+                          )
+                        : ResilientCachedNetworkImage(
+                            url: image,
+                            fit: BoxFit.cover,
+                            width: 84,
+                            height: 76,
+                            memCacheWidth: 260,
                           ),
-                          const SizedBox(height: 3),
-                          Text(
-                            car?.title ?? 'Vehicle',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: CarRentalColors.title,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              booking.bookingNumberLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: CarHireType.labelSmall,
                             ),
                           ),
-                          const SizedBox(height: 3),
-                          Text(
-                            booking.dateRangeLabel,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: CarRentalColors.body,
-                              fontSize: 11.5,
-                              height: 1.35,
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: CarHireStatusBadge.booking(
+                              booking.bookingStatus,
                             ),
                           ),
                         ],
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                const Divider(height: 1),
-                const SizedBox(height: 9),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        booking.totalLabel,
-                        style: const TextStyle(
-                          color: CarRentalColors.title,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w900,
-                        ),
+                      const SizedBox(height: 4),
+                      Text(
+                        car?.title ?? 'Vehicle',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: CarHireType.subtitle,
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: CarHireStatusBadge.payment(
-                        booking.paymentStatus,
+                      const SizedBox(height: 5),
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.event_outlined,
+                            size: 13,
+                            color: CarHirePalette.muted,
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              booking.dateRangeLabel,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: CarHireType.labelSmall.copyWith(
+                                fontSize: 10.5,
+                                height: 1.35,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),
-          ),
+            const SizedBox(height: 12),
+            const Divider(height: 1, color: CarHirePalette.hairline),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Total', style: CarHireType.labelSmall),
+                      const SizedBox(height: 1),
+                      Text(
+                        booking.totalLabel,
+                        style: CarHireType.priceSmall,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: CarHireStatusBadge.payment(
+                      booking.paymentStatus,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  size: 19,
+                  color: CarHirePalette.muted,
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
+import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_status_badge.dart';
 import 'package:vero360_app/features/car_rental/utils/car_rental_colors.dart';
@@ -103,23 +104,16 @@ class _CarHireVerificationPageState
     final mutation = ref.watch(verificationSubmitProvider);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFFFFBF6),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        foregroundColor: CarRentalColors.title,
-        elevation: 0.4,
-        scrolledUnderElevation: 0.4,
-        title: const Text(
-          'Driver verification',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-        ),
+      backgroundColor: CarHirePalette.background,
+      appBar: carHireAppBar(
+        title: 'Driver verification',
         actions: [
-          IconButton(
+          CarHireIconButton(
+            icon: Icons.refresh_rounded,
             tooltip: 'Refresh',
-            icon: const Icon(Icons.refresh_rounded),
-            onPressed: _refresh,
+            onTap: _refresh,
           ),
+          const SizedBox(width: 16),
         ],
       ),
       body: async.when(
@@ -346,16 +340,10 @@ class _CarHireVerificationPageState
               controller: _controllerFor(requirement),
               textInputAction: TextInputAction.next,
               onChanged: (_) => setState(() {}),
-              decoration: InputDecoration(
-                labelText: requirement,
-                hintText: 'Document reference / upload ID',
-                helperText: 'Provided by Vero360 support',
-                filled: true,
-                fillColor: CarRentalColors.greyLight,
-                isDense: true,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
+              decoration: carHireInputDecoration(
+                label: requirement,
+                hint: 'Document reference / upload ID',
+                helper: 'Provided by Vero360 support',
               ),
             ),
             const SizedBox(height: 12),
@@ -377,18 +365,7 @@ class _CarHireVerificationPageState
                   ? 'Submitting references…'
                   : 'Submit for review',
             ),
-            style: FilledButton.styleFrom(
-              backgroundColor: CarRentalColors.brandOrange,
-              foregroundColor: Colors.white,
-              disabledBackgroundColor:
-                  CarRentalColors.brandOrange.withValues(alpha: 0.4),
-              disabledForegroundColor: Colors.white,
-              minimumSize: const Size.fromHeight(46),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              textStyle: const TextStyle(fontWeight: FontWeight.w800),
-            ),
+            style: carHirePrimaryButton(),
           ),
           if (!_hasAnyReference(requirements))
             const Padding(
@@ -443,13 +420,8 @@ class _Panel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFEDE7DF)),
-      ),
+    return CarHireSurface(
+      padding: const EdgeInsets.all(16),
       child: child,
     );
   }

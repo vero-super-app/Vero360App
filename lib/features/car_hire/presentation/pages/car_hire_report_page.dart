@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/features/car_hire/data/car_hire_api.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
+import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_rental/utils/car_rental_colors.dart';
 import 'package:vero360_app/utils/formatters.dart';
@@ -154,22 +155,16 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
     final supportState = ref.watch(supportCaseProvider);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFFFFBF6),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        foregroundColor: CarRentalColors.title,
-        elevation: 0.4,
-        scrolledUnderElevation: 0.4,
-        title: const Text(
-          'Report an issue',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-        ),
+      backgroundColor: CarHirePalette.background,
+      appBar: carHireAppBar(
+        title: 'Report an issue',
         bottom: TabBar(
           controller: _tabController,
-          labelColor: CarRentalColors.brandOrange,
-          unselectedLabelColor: CarRentalColors.body,
-          indicatorColor: CarRentalColors.brandOrange,
+          labelColor: CarHirePalette.accent,
+          unselectedLabelColor: CarHirePalette.muted,
+          indicatorColor: CarHirePalette.accent,
+          indicatorSize: TabBarIndicatorSize.label,
+          dividerColor: Colors.transparent,
           labelStyle: const TextStyle(
             fontSize: 12.5,
             fontWeight: FontWeight.w800,
@@ -337,7 +332,7 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
                       decoration: BoxDecoration(
                         color: CarRentalColors.greyLight,
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: const Color(0xFFEDE7DF)),
+                        border: Border.all(color: CarHirePalette.hairline),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -481,18 +476,7 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
                 label: Text(
                   state.submitting ? 'Sending…' : 'Send to support',
                 ),
-                style: FilledButton.styleFrom(
-                  backgroundColor: CarRentalColors.brandOrange,
-                  foregroundColor: Colors.white,
-                  disabledBackgroundColor:
-                      CarRentalColors.brandOrange.withValues(alpha: 0.4),
-                  disabledForegroundColor: Colors.white,
-                  minimumSize: const Size.fromHeight(46),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  textStyle: const TextStyle(fontWeight: FontWeight.w800),
-                ),
+                style: carHirePrimaryButton(),
               ),
             ],
           ),
@@ -536,7 +520,7 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
                       decoration: BoxDecoration(
                         color: CarRentalColors.greyLight,
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: const Color(0xFFEDE7DF)),
+                        border: Border.all(color: CarHirePalette.hairline),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -615,10 +599,19 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
       hintText: hint,
       alignLabelWithHint: alignLabelWithHint,
       filled: true,
-      fillColor: CarRentalColors.greyLight,
+      fillColor: CarHirePalette.surfaceLow,
       isDense: true,
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: CarHirePalette.hairline),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: CarHirePalette.hairline),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: CarHirePalette.accent, width: 1.5),
       ),
     );
   }
@@ -631,13 +624,8 @@ class _Panel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFEDE7DF)),
-      ),
+    return CarHireSurface(
+      padding: const EdgeInsets.all(16),
       child: child,
     );
   }
@@ -650,14 +638,7 @@ class _SectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: const TextStyle(
-        color: CarRentalColors.title,
-        fontSize: 14.5,
-        fontWeight: FontWeight.w800,
-      ),
-    );
+    return Text(text, style: CarHireType.title);
   }
 }
 

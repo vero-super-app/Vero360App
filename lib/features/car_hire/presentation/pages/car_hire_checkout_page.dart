@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:vero360_app/features/car_hire/data/car_hire_api.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
+import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_price_breakdown.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_status_badge.dart';
@@ -244,30 +245,27 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
     final booking = submission.booking;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFFFFBF6),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        foregroundColor: CarRentalColors.title,
-        elevation: 0.4,
-        scrolledUnderElevation: 0.4,
-        title: Text(
-          booking == null ? 'Checkout' : 'Your booking',
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-        ),
+      backgroundColor: CarHirePalette.background,
+      appBar: carHireAppBar(
+        title: booking == null ? 'Checkout' : 'Your booking',
         actions: [
           if (booking != null)
-            IconButton(
+            CarHireIconButton(
+              icon: Icons.refresh_rounded,
               tooltip: 'Refresh booking status',
-              icon: _refreshingStatus
+              onTap: _refreshingStatus ? () {} : _refreshBookingStatus,
+              child: _refreshingStatus
                   ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: CarHirePalette.accent,
+                      ),
                     )
-                  : const Icon(Icons.refresh_rounded),
-              onPressed: _refreshingStatus ? null : _refreshBookingStatus,
+                  : null,
             ),
+          const SizedBox(width: 16),
         ],
       ),
       body: SafeArea(
@@ -681,15 +679,9 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
           TextField(
             controller: _phoneController,
             keyboardType: TextInputType.phone,
-            decoration: InputDecoration(
-              labelText: 'Mobile money number (optional)',
-              hintText: '+265…',
-              filled: true,
-              fillColor: CarRentalColors.greyLight,
-              isDense: true,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+            decoration: carHireInputDecoration(
+              label: 'Mobile money number (optional)',
+              hint: '+265…',
             ),
           ),
           const SizedBox(height: 12),
@@ -708,15 +700,7 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
             label: Text(
               _paymentLaunching ? 'Opening payment…' : 'Pay now',
             ),
-            style: FilledButton.styleFrom(
-              backgroundColor: CarRentalColors.brandOrange,
-              foregroundColor: Colors.white,
-              minimumSize: const Size.fromHeight(46),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              textStyle: const TextStyle(fontWeight: FontWeight.w800),
-            ),
+            style: carHirePrimaryButton(),
           ),
           const SizedBox(height: 8),
           OutlinedButton.icon(
@@ -771,14 +755,8 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
           TextField(
             controller: _driverController,
             textCapitalization: TextCapitalization.words,
-            decoration: InputDecoration(
-              labelText: 'Driver name (optional)',
-              filled: true,
-              fillColor: CarRentalColors.greyLight,
-              isDense: true,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+            decoration: carHireInputDecoration(
+              label: 'Driver name (optional)',
             ),
           ),
           const SizedBox(height: 10),
@@ -786,15 +764,10 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
             controller: _notesController,
             maxLines: 3,
             textCapitalization: TextCapitalization.sentences,
-            decoration: InputDecoration(
-              labelText: 'Notes for the provider (optional)',
-              hintText: 'For example: call on arrival',
+            decoration: carHireInputDecoration(
+              label: 'Notes for the provider (optional)',
+              hint: 'For example: call on arrival',
               alignLabelWithHint: true,
-              filled: true,
-              fillColor: CarRentalColors.greyLight,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
             ),
           ),
         ],
@@ -867,17 +840,10 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
     return SafeArea(
       top: false,
       child: Container(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          border: const Border(top: BorderSide(color: Color(0xFFEDE7DF))),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
-              blurRadius: 14,
-              offset: const Offset(0, -4),
-            ),
-          ],
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        decoration: const BoxDecoration(
+          color: CarHirePalette.surface,
+          border: Border(top: BorderSide(color: CarHirePalette.hairline)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -911,20 +877,7 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
               width: double.infinity,
               child: FilledButton(
                 onPressed: canSubmit ? _submitBooking : null,
-                style: FilledButton.styleFrom(
-                  backgroundColor: CarRentalColors.brandOrange,
-                  foregroundColor: Colors.white,
-                  disabledBackgroundColor:
-                      CarRentalColors.brandOrange.withValues(alpha: 0.4),
-                  disabledForegroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  textStyle: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
+                style: carHirePrimaryButton(),
                 child: submission.submitting
                     ? const Row(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -1067,13 +1020,8 @@ class _Panel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFEDE7DF)),
-      ),
+    return CarHireSurface(
+      padding: const EdgeInsets.all(16),
       child: child,
     );
   }

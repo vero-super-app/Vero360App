@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:vero360_app/features/car_hire/data/car_hire_api.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
+import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_price_breakdown.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_status_badge.dart';
@@ -385,29 +386,26 @@ class _CarHireBookingDetailPageState
     final extensionState = ref.watch(extensionRequestProvider);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFFFFBF6),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        foregroundColor: CarRentalColors.title,
-        elevation: 0.4,
-        scrolledUnderElevation: 0.4,
-        title: const Text(
-          'Booking details',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-        ),
+      backgroundColor: CarHirePalette.background,
+      appBar: carHireAppBar(
+        title: 'Booking details',
         actions: [
-          IconButton(
+          CarHireIconButton(
+            icon: Icons.refresh_rounded,
             tooltip: 'Refresh',
-            icon: _refreshing
+            onTap: _refreshing ? () {} : _refresh,
+            child: _refreshing
                 ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: CarHirePalette.accent,
+                    ),
                   )
-                : const Icon(Icons.refresh_rounded),
-            onPressed: _refreshing ? null : _refresh,
+                : null,
           ),
+          const SizedBox(width: 16),
         ],
       ),
       body: booking == null
@@ -489,11 +487,7 @@ class _CarHireBookingDetailPageState
                   children: [
                     Text(
                       booking.bookingNumberLabel,
-                      style: const TextStyle(
-                        color: CarRentalColors.title,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                      ),
+                      style: CarHireType.titleLarge,
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -985,7 +979,7 @@ class _CarHireBookingDetailPageState
                 decoration: BoxDecoration(
                   color: CarRentalColors.greyLight,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFEDE7DF)),
+                  border: Border.all(color: CarHirePalette.hairline),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1083,18 +1077,7 @@ class _CarHireBookingDetailPageState
                     ? 'Sending request…'
                     : 'Request extension',
               ),
-              style: FilledButton.styleFrom(
-                backgroundColor: CarRentalColors.brandOrange,
-                foregroundColor: Colors.white,
-                disabledBackgroundColor:
-                    CarRentalColors.brandOrange.withValues(alpha: 0.4),
-                disabledForegroundColor: Colors.white,
-                minimumSize: const Size.fromHeight(44),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                textStyle: const TextStyle(fontWeight: FontWeight.w800),
-              ),
+              style: carHirePrimaryButton(),
             ),
         ],
       ),
@@ -1218,15 +1201,7 @@ class _CarHireBookingDetailPageState
               label: Text(
                 _paymentLaunching ? 'Opening payment…' : 'Complete payment',
               ),
-              style: FilledButton.styleFrom(
-                backgroundColor: CarRentalColors.brandOrange,
-                foregroundColor: Colors.white,
-                minimumSize: const Size.fromHeight(46),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                textStyle: const TextStyle(fontWeight: FontWeight.w800),
-              ),
+              style: carHirePrimaryButton(),
             ),
           ],
           const SizedBox(height: 8),
@@ -1465,13 +1440,8 @@ class _Panel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFEDE7DF)),
-      ),
+    return CarHireSurface(
+      padding: const EdgeInsets.all(16),
       child: child,
     );
   }
@@ -1484,14 +1454,7 @@ class _SectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: const TextStyle(
-        color: CarRentalColors.title,
-        fontSize: 14.5,
-        fontWeight: FontWeight.w800,
-      ),
-    );
+    return Text(text, style: CarHireType.title);
   }
 }
 

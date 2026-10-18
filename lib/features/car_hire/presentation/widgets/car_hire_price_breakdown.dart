@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
-import 'package:vero360_app/features/car_rental/utils/car_rental_colors.dart';
+import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 
 /// Renders the server's quote / booking amounts. It never recalculates totals.
 class CarHirePriceBreakdown extends StatelessWidget {
@@ -99,7 +99,7 @@ class CarHirePriceBreakdown extends StatelessWidget {
     }
 
     if (showSubtotal && subtotal > 0) {
-      rows.add(const Divider(height: 20));
+      rows.add(const _Hairline());
       rows.add(_row('Subtotal', _money(subtotal), muted: true));
     }
 
@@ -114,7 +114,7 @@ class CarHirePriceBreakdown extends StatelessWidget {
         _row(
           'Discounts',
           '- ${_money(discounts)}',
-          color: CarRentalColors.success,
+          color: CarHirePalette.success,
         ),
       );
     }
@@ -130,7 +130,7 @@ class CarHirePriceBreakdown extends StatelessWidget {
     }
 
     if (showDueNow && totalDueNow > 0) {
-      rows.add(const Divider(height: 20));
+      rows.add(const _Hairline());
       rows.add(_row('Due now', _money(totalDueNow), muted: true));
     }
     if (totalDueLater > 0) {
@@ -141,12 +141,12 @@ class CarHirePriceBreakdown extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ...rows,
-        const Divider(height: 22),
+        const SizedBox(height: 12),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
           decoration: BoxDecoration(
-            color: CarRentalColors.brandOrangePale,
-            borderRadius: BorderRadius.circular(12),
+            color: CarHirePalette.primary,
+            borderRadius: BorderRadius.circular(16),
           ),
           child: Row(
             children: [
@@ -154,18 +154,19 @@ class CarHirePriceBreakdown extends StatelessWidget {
                 child: Text(
                   'Total',
                   style: TextStyle(
-                    color: CarRentalColors.title,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
               Text(
                 _money(total),
                 style: const TextStyle(
-                  color: CarRentalColors.brandOrange,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
+                  color: CarHirePalette.accent,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.3,
                 ),
               ),
             ],
@@ -182,7 +183,7 @@ class CarHirePriceBreakdown extends StatelessWidget {
     Color? color,
   }) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 4.5),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -190,7 +191,9 @@ class CarHirePriceBreakdown extends StatelessWidget {
             child: Text(
               label,
               style: TextStyle(
-                color: muted ? CarRentalColors.body : CarRentalColors.title,
+                color: muted
+                    ? CarHirePalette.onSurfaceVariant
+                    : CarHirePalette.onSurface,
                 fontSize: 12.5,
                 height: 1.35,
                 fontWeight: muted ? FontWeight.w500 : FontWeight.w600,
@@ -202,13 +205,28 @@ class CarHirePriceBreakdown extends StatelessWidget {
             value,
             style: TextStyle(
               color: color ??
-                  (muted ? CarRentalColors.body : CarRentalColors.title),
+                  (muted
+                      ? CarHirePalette.onSurfaceVariant
+                      : CarHirePalette.onSurface),
               fontSize: 12.5,
               fontWeight: FontWeight.w700,
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _Hairline extends StatelessWidget {
+  const _Hairline();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 1,
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      color: CarHirePalette.hairline,
     );
   }
 }

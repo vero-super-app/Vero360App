@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/features/car_hire/data/car_hire_api.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
+import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_status_badge.dart';
 import 'package:vero360_app/features/car_rental/utils/car_rental_colors.dart';
@@ -189,23 +190,16 @@ class _CarHireInspectionPageState
     final acknowledgeState = ref.watch(inspectionAcknowledgeProvider);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFFFFBF6),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        foregroundColor: CarRentalColors.title,
-        elevation: 0.4,
-        scrolledUnderElevation: 0.4,
-        title: Text(
-          _isPickup ? 'Pick-up inspection' : 'Return inspection',
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-        ),
+      backgroundColor: CarHirePalette.background,
+      appBar: carHireAppBar(
+        title: _isPickup ? 'Pick-up inspection' : 'Return inspection',
         actions: [
-          IconButton(
+          CarHireIconButton(
+            icon: Icons.refresh_rounded,
             tooltip: 'Refresh',
-            icon: const Icon(Icons.refresh_rounded),
-            onPressed: _refresh,
+            onTap: _refresh,
           ),
+          const SizedBox(width: 16),
         ],
       ),
       body: RefreshIndicator(
@@ -375,7 +369,7 @@ class _CarHireInspectionPageState
                 side: BorderSide(
                   color: selected
                       ? CarRentalColors.brandOrange
-                      : const Color(0xFFEDE7DF),
+                      : CarHirePalette.hairline,
                 ),
                 onSelected: (value) {
                   setState(() {
@@ -433,18 +427,7 @@ class _CarHireInspectionPageState
                   ? 'Submitting inspection…'
                   : 'Submit ${_isPickup ? 'pick-up' : 'return'} inspection',
             ),
-            style: FilledButton.styleFrom(
-              backgroundColor: CarRentalColors.brandOrange,
-              foregroundColor: Colors.white,
-              disabledBackgroundColor:
-                  CarRentalColors.brandOrange.withValues(alpha: 0.4),
-              disabledForegroundColor: Colors.white,
-              minimumSize: const Size.fromHeight(46),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              textStyle: const TextStyle(fontWeight: FontWeight.w800),
-            ),
+            style: carHirePrimaryButton(),
           ),
         ],
       ),
@@ -524,7 +507,7 @@ class _CarHireInspectionPageState
       decoration: BoxDecoration(
         color: CarRentalColors.greyLight,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFEDE7DF)),
+        border: Border.all(color: CarHirePalette.hairline),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -645,10 +628,19 @@ class _CarHireInspectionPageState
       helperMaxLines: 2,
       alignLabelWithHint: alignLabelWithHint,
       filled: true,
-      fillColor: CarRentalColors.greyLight,
+      fillColor: CarHirePalette.surfaceLow,
       isDense: true,
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: CarHirePalette.hairline),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: CarHirePalette.hairline),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: CarHirePalette.accent, width: 1.5),
       ),
     );
   }
@@ -733,13 +725,8 @@ class _Panel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFEDE7DF)),
-      ),
+    return CarHireSurface(
+      padding: const EdgeInsets.all(16),
       child: child,
     );
   }
@@ -752,14 +739,7 @@ class _SectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: const TextStyle(
-        color: CarRentalColors.title,
-        fontSize: 14.5,
-        fontWeight: FontWeight.w800,
-      ),
-    );
+    return Text(text, style: CarHireType.title);
   }
 }
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
+import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_rental/utils/car_rental_colors.dart';
 
 /// A status pill that always pairs colour with text and an icon, so status is
@@ -282,22 +283,22 @@ class CarHireStatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final foreground = Color.lerp(color, Colors.black, 0.32) ?? color;
+    final foreground = Color.lerp(color, Colors.black, 0.28) ?? color;
 
     return Semantics(
       label: '$label status',
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
         decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: color.withValues(alpha: 0.34)),
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(CarHireShape.pillRadius),
+          border: Border.all(color: color.withValues(alpha: 0.26)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 14, color: foreground),
-            const SizedBox(width: 5),
+            Icon(icon, size: 12.5, color: foreground),
+            const SizedBox(width: 4),
             Flexible(
               child: Text(
                 label,
@@ -305,9 +306,10 @@ class CarHireStatusBadge extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: foreground,
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w700,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w800,
                   height: 1.2,
+                  letterSpacing: 0.1,
                 ),
               ),
             ),

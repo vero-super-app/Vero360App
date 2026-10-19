@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:vero360_app/features/Reels/reel_model.dart';
+import 'package:vero360_app/features/Reels/reel_video_cache.dart';
 import 'package:vero360_app/utils/display_name_sync.dart';
 
 class ReelIdentity {
@@ -31,7 +32,10 @@ class ReelPage {
   final DocumentSnapshot<Map<String, dynamic>>? cursor;
   final bool hasMore;
 
-  const ReelPage(this.reels, this.cursor, this.hasMore);
+  /// Served from the on-device Firestore cache (offline or cache-only read).
+  final bool fromCache;
+
+  const ReelPage(this.reels, this.cursor, this.hasMore, {this.fromCache = false});
 }
 
 class ReelService {
@@ -125,15 +129,22 @@ class ReelService {
       !hidden.contains(r.id);
 
   /// Newest reels, re-ordered by engagement and whether you follow the poster.
+  /// [cacheOnly] reads what's already on the device, for an instant first screen.
   Future<ReelPage> fetchForYou({
     DocumentSnapshot<Map<String, dynamic>>? after,
+    bool cacheOnly = false,
   }) async {
     Query<Map<String, dynamic>> q =
         _reels.orderBy('createdAt', descending: true).limit(_pageSize);
     if (after != null) q = q.startAfterDocument(after);
-    final snap = await q.get();
-    final hidden = await hiddenByMe();
-    final following = await followingIds();
+    final results = await Future.wait<Object>([
+      q.get(cacheOnly ? const GetOptions(source: Source.cache) : null),
+      hiddenByMe(),
+      cacheOnly ? Future.value(_followingCache ?? <String>{}) : followingIds(),
+    ]);
+    final snap = results[0] as QuerySnapshot<Map<String, dynamic>>;
+    final hidden = results[1] as Set<String>;
+    final following = results[2] as Set<String>;
     final reels =
         snap.docs.map(Reel.fromDoc).where((r) => _visible(r, hidden)).toList();
     final now = DateTime.now();
@@ -155,6 +166,7 @@ class ReelService {
       reels,
       snap.docs.isEmpty ? after : snap.docs.last,
       snap.docs.length == _pageSize,
+      fromCache: snap.metadata.isFromCache,
     );
   }
 
@@ -287,8 +299,8 @@ class ReelService {
         _ => 'video/mp4',
       };
 
-  /// Uploads [filePath] and creates the reel. [onProgress] gets 0.0–1.0.
-  Future<void> postReel({
+  /// Uploads [filePath] and creates the reel; returns its id. [onProgress] gets 0.0–1.0.
+  Future<String> postReel({
     required String filePath,
     required String caption,
     required Duration duration,
@@ -326,8 +338,10 @@ class ReelService {
       await sub.cancel();
     }
     final url = await ref.getDownloadURL();
+    // The poster already has the file: seed the cache so it plays instantly.
+    unawaited(ReelVideoCache.instance.adopt(url, file));
 
-    await _reels.add({
+    final doc = await _reels.add({
       'ownerId': me.uid,
       'ownerName': me.name,
       'ownerPhoto': me.photo,
@@ -346,6 +360,7 @@ class ReelService {
       'hidden': false,
       'createdAt': FieldValue.serverTimestamp(),
     });
+    return doc.id;
   }
 
   Future<void> deleteReel(Reel reel) async {

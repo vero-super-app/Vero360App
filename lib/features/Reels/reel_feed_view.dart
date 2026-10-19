@@ -16,6 +16,7 @@ import 'package:vero360_app/features/Reels/reel_download_manager.dart';
 import 'package:vero360_app/features/Reels/reel_model.dart';
 import 'package:vero360_app/features/Reels/reel_music_picker.dart';
 import 'package:vero360_app/features/Reels/reel_service.dart';
+import 'package:vero360_app/features/Reels/reel_video_cache.dart';
 import 'package:vero360_app/features/Reels/user_reels_page.dart';
 import 'package:vero360_app/utils/app_update_checker.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
@@ -61,6 +62,23 @@ class _ReelFeedViewState extends State<ReelFeedView>
     _index = widget.initialIndex.clamp(0, widget.reels.isEmpty ? 0 : widget.reels.length - 1);
     _controller = PageController(initialPage: _index);
     WidgetsBinding.instance.addObserver(this);
+    _prefetchAround(_index);
+  }
+
+  /// Downloads the next reels while this one plays, like TikTok, and drops
+  /// downloads for reels that were scrolled past.
+  void _prefetchAround(int i) {
+    final reels = widget.reels;
+    if (reels.isEmpty) return;
+    final cache = ReelVideoCache.instance;
+    final near = <String>[];
+    for (var j = i - 1; j <= i + 2; j++) {
+      if (j >= 0 && j < reels.length) near.add(reels[j].videoUrl);
+    }
+    cache.keepOnly(near);
+    for (var j = i; j <= i + 2 && j < reels.length; j++) {
+      cache.prefetch(reels[j].videoUrl, priority: j == i);
+    }
   }
 
   @override
@@ -85,6 +103,12 @@ class _ReelFeedViewState extends State<ReelFeedView>
     if (widget.reels.isNotEmpty && _index >= widget.reels.length) {
       _index = widget.reels.length - 1;
     }
+    if (widget.reels.length != oldWidget.reels.length ||
+        (widget.reels.isNotEmpty &&
+            oldWidget.reels.isNotEmpty &&
+            widget.reels.first.id != oldWidget.reels.first.id)) {
+      _prefetchAround(_index);
+    }
   }
 
   Future<T?> _pushCovered<T>(Route<T> route) async {
@@ -108,6 +132,7 @@ class _ReelFeedViewState extends State<ReelFeedView>
       itemCount: reels.length,
       onPageChanged: (i) {
         setState(() => _index = i);
+        _prefetchAround(i);
         if (i >= reels.length - 3) widget.onNearEnd?.call();
       },
       itemBuilder: (context, i) {
@@ -153,6 +178,12 @@ class _ReelTileState extends State<_ReelTile> {
   VideoPlayerController? _video;
   bool _ready = false;
   bool _failed = false;
+  bool _initializing = false;
+  int _retries = 0;
+  Duration? _resumeAt;
+  Timer? _watchdog;
+  Duration _lastPosition = Duration.zero;
+  int _stuckTicks = 0;
   bool _userPaused = false;
   bool _liked = false;
   bool _shared = false;
@@ -197,42 +228,132 @@ class _ReelTileState extends State<_ReelTile> {
 
   /// Android plays through a native view: the texture path renders black on
   /// Skia (Impeller is off in the manifest).
-  void _initVideo() {
-    if (_video != null || _reel.videoUrl.isEmpty) return;
-    final controller = VideoPlayerController.networkUrl(
-      Uri.parse(_reel.videoUrl),
-      viewType: defaultTargetPlatform == TargetPlatform.android
-          ? VideoViewType.platformView
-          : VideoViewType.textureView,
-    );
+  /// Plays from the disk cache when the reel was seen or prefetched before
+  /// (instant, works offline); otherwise streams and caches in the background.
+  Future<void> _initVideo() async {
+    if (_video != null || _initializing || _reel.videoUrl.isEmpty) return;
+    _initializing = true;
+    final cache = ReelVideoCache.instance;
+    final file = cache.cachedSync(_reel.videoUrl) ?? await cache.cached(_reel.videoUrl);
+    _initializing = false;
+    if (!mounted || !widget.load || _video != null) return;
+    final viewType = defaultTargetPlatform == TargetPlatform.android
+        ? VideoViewType.platformView
+        : VideoViewType.textureView;
+    final controller = file != null
+        ? VideoPlayerController.file(file, viewType: viewType)
+        : VideoPlayerController.networkUrl(Uri.parse(_reel.videoUrl), viewType: viewType);
+    if (file == null) cache.prefetch(_reel.videoUrl, priority: widget.playing);
     _video = controller;
     _failed = false;
-    controller.initialize().then((_) async {
+    controller.addListener(_onVideoValue);
+    try {
+      await controller.initialize();
       if (!mounted || _video != controller) return;
-      controller.setLooping(true);
+      await controller.setLooping(true);
+      final resume = _resumeAt;
+      _resumeAt = null;
+      if (resume != null && resume > Duration.zero) await controller.seekTo(resume);
       if (!widget.playing) {
         // Decode the first frame so the reel is on screen the moment it's swiped to.
         await controller.setVolume(0);
         await controller.play();
-        await controller.pause();
-        await controller.seekTo(Duration.zero);
+        if (!widget.playing) {
+          await controller.pause();
+          if (resume == null) await controller.seekTo(Duration.zero);
+        }
         await controller.setVolume(1);
         if (!mounted || _video != controller) return;
       }
+      _retries = 0;
       setState(() => _ready = true);
       _syncPlayback();
-    }).catchError((Object e) {
+    } catch (e) {
       if (kDebugMode) debugPrint('[Reels] video failed: $e');
       if (!mounted || _video != controller) return;
+      unawaited(_recover());
+    }
+  }
+
+  void _onVideoValue() {
+    final v = _video;
+    if (v != null && v.value.hasError) unawaited(_recover());
+  }
+
+  bool _recovering = false;
+
+  /// Rebuilds the player after a network drop or decoder error, resuming
+  /// where it stopped. Prefers the cached copy if it finished meanwhile.
+  Future<void> _recover() async {
+    if (_recovering || !mounted) return;
+    if (_retries >= 3) {
       setState(() => _failed = true);
+      return;
+    }
+    _recovering = true;
+    _retries++;
+    final pos = _video?.value.position ?? Duration.zero;
+    _releaseVideo();
+    if (mounted) setState(() {});
+    await Future<void>.delayed(Duration(milliseconds: 600 * _retries));
+    _recovering = false;
+    if (!mounted || !widget.load) return;
+    _resumeAt = pos;
+    await _initVideo();
+  }
+
+  /// Videos sometimes stop on their own (buffer underrun, audio focus,
+  /// platform view hiccup). While this reel should be playing, nudge it.
+  void _startWatchdog() {
+    _watchdog ??= Timer.periodic(const Duration(seconds: 1), (_) {
+      final v = _video;
+      if (!mounted || v == null || !v.value.isInitialized) return;
+      if (!widget.playing || _userPaused) {
+        _stuckTicks = 0;
+        return;
+      }
+      final value = v.value;
+      if (!value.isPlaying) {
+        v.play();
+        _stuckTicks = 0;
+        return;
+      }
+      if (value.position == _lastPosition && !value.isBuffering) {
+        _stuckTicks++;
+      } else if (value.isBuffering) {
+        // Long stall on a stream: switch to the cached copy once it's there.
+        if (ReelVideoCache.instance.isCached(_reel.videoUrl) && _stuckTicks++ > 3) {
+          _stuckTicks = 0;
+          _retries = 0;
+          unawaited(_recover());
+        }
+      } else {
+        _stuckTicks = 0;
+      }
+      _lastPosition = value.position;
+      if (_stuckTicks >= 5) {
+        _stuckTicks = 0;
+        unawaited(_recover());
+      }
     });
+  }
+
+  void _stopWatchdog() {
+    _watchdog?.cancel();
+    _watchdog = null;
+    _stuckTicks = 0;
   }
 
   /// Tap always acts on the player directly, even if auto-play was held back.
   void _onTapVideo() {
     final v = _video;
     if (v == null || !v.value.isInitialized) {
-      if (_failed) return;
+      if (_failed) {
+        _retries = 0;
+        setState(() => _failed = false);
+        _initVideo();
+        return;
+      }
       if (v == null) _initVideo();
       return;
     }
@@ -252,13 +373,20 @@ class _ReelTileState extends State<_ReelTile> {
 
   void _releaseVideo() {
     _viewTimer?.cancel();
+    _stopWatchdog();
     final v = _video;
     _video = null;
     _ready = false;
+    v?.removeListener(_onVideoValue);
     v?.dispose();
   }
 
   void _syncPlayback() {
+    if (widget.playing) {
+      _startWatchdog();
+    } else {
+      _stopWatchdog();
+    }
     final v = _video;
     if (v == null || !v.value.isInitialized) return;
     final shouldPlay = widget.playing && !_userPaused;
@@ -283,7 +411,14 @@ class _ReelTileState extends State<_ReelTile> {
     }
     if (widget.playing && !oldWidget.playing) {
       _userPaused = false;
-      _video?.seekTo(Duration.zero);
+      if (_failed) {
+        _retries = 0;
+        _failed = false;
+        _releaseVideo();
+        _initVideo();
+      } else {
+        _video?.seekTo(Duration.zero);
+      }
     }
     _syncPlayback();
   }
@@ -724,12 +859,18 @@ class _ReelTileState extends State<_ReelTile> {
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('Unable to play this reel',
-              style: TextStyle(color: Colors.white)),
+          const Icon(Icons.wifi_off_rounded, color: Colors.white70, size: 36),
+          const SizedBox(height: 10),
+          const Text('Could not load this reel',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          const Text('Check your connection',
+              style: TextStyle(color: Colors.white70, fontSize: 12.5)),
           const SizedBox(height: 12),
           OutlinedButton(
             onPressed: () {
               _releaseVideo();
+              _retries = 0;
               setState(() => _failed = false);
               _initVideo();
             },

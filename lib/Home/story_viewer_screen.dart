@@ -15,6 +15,7 @@ import 'package:vero360_app/Home/merchant_story_model.dart';
 import 'package:vero360_app/Home/story_service.dart';
 import 'package:vero360_app/Home/story_ring_widget.dart';
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
+import 'package:vero360_app/features/Reels/reel_video_cache.dart';
 import 'package:vero360_app/utils/profile_open_helper.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
@@ -112,6 +113,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
       });
     _restartProgress();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _prefetchUpcoming();
       _recordViewForCurrentSlide();
       _hydrateOwnerBusinessNames();
       _warmReplyChat();
@@ -335,10 +337,16 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   }
 
   void _onVideoReady(String storyId, Duration length) {
-    if (!mounted || length <= Duration.zero) return;
-    final capped = length > _maxVideoAdvance ? _maxVideoAdvance : length;
-    if (_videoDurations[storyId] == capped) return;
-    _videoDurations[storyId] = capped;
+    if (!mounted) return;
+    final wasReady = _readyVideos.contains(storyId);
+    _readyVideos.add(storyId);
+    if (length > Duration.zero) {
+      final capped = length > _maxVideoAdvance ? _maxVideoAdvance : length;
+      if (_videoDurations[storyId] == capped && wasReady) return;
+      _videoDurations[storyId] = capped;
+    } else if (wasReady) {
+      return;
+    }
     final items = _items;
     if (_currentIndex >= 0 &&
         _currentIndex < items.length &&
@@ -347,14 +355,39 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     }
   }
 
+  /// Video stories that have loaded; the progress bar waits for these so a
+  /// slow network doesn't skip a story before it is seen.
+  final Set<String> _readyVideos = <String>{};
+
+  /// Downloads the next two stories and the next person's first story.
+  void _prefetchUpcoming() {
+    final cache = ReelVideoCache.stories;
+    final items = _items;
+    for (var j = _currentIndex + 1; j <= _currentIndex + 2 && j < items.length; j++) {
+      final it = items[j];
+      if (it.mediaType == 'video') cache.prefetch(it.mediaUrl.trim());
+    }
+    if (_groupIndex + 1 < _groups.length) {
+      final next = _groups[_groupIndex + 1].items;
+      if (next.isNotEmpty && next.first.mediaType == 'video') {
+        cache.prefetch(next.first.mediaUrl.trim());
+      }
+    }
+  }
+
   void _restartProgress() {
     final items = _items;
-    final storyId = _currentIndex >= 0 && _currentIndex < items.length
-        ? items[_currentIndex].storyId
+    final current = _currentIndex >= 0 && _currentIndex < items.length
+        ? items[_currentIndex]
         : null;
+    final storyId = current?.storyId;
     _progressController.duration =
         (storyId == null ? null : _videoDurations[storyId]) ?? _autoAdvance;
-    if (_isPaused) {
+    final waitingForVideo = current != null &&
+        current.mediaType == 'video' &&
+        current.mediaUrl.trim().isNotEmpty &&
+        !_readyVideos.contains(current.storyId);
+    if (_isPaused || waitingForVideo) {
       _progressController
         ..stop()
         ..reset();
@@ -366,13 +399,52 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
       ..forward();
   }
 
+  /// Timer finished. Video stories advance when the clip actually ends
+  /// (see [_onVideoEnded]); this is only a fallback if that event never comes.
   void _onAutoAdvance() {
     if (!mounted) return;
+    final items = _items;
+    final current = _currentIndex >= 0 && _currentIndex < items.length
+        ? items[_currentIndex]
+        : null;
+    final isVideo = current != null &&
+        current.mediaType == 'video' &&
+        current.mediaUrl.trim().isNotEmpty &&
+        _readyVideos.contains(current.storyId);
+    final cappedLong = current != null &&
+        (_videoDurations[current.storyId] ?? Duration.zero) >= _maxVideoAdvance;
+    if (isVideo && !cappedLong) {
+      final id = current.storyId;
+      _endFallback?.cancel();
+      _endFallback = Timer(const Duration(milliseconds: 1200), () {
+        if (mounted && _items.isNotEmpty && _currentStoryId == id) _advance();
+      });
+      return;
+    }
+    _advance();
+  }
+
+  Timer? _endFallback;
+
+  String? get _currentStoryId {
+    final items = _items;
+    if (_currentIndex < 0 || _currentIndex >= items.length) return null;
+    return items[_currentIndex].storyId;
+  }
+
+  void _onVideoEnded(String storyId) {
+    if (!mounted || _isPaused || _replyFocused || _sendingReply) return;
+    if (_currentStoryId != storyId) return;
+    _advance();
+  }
+
+  /// Instant cut to the next story (no slide): sliding over a native video
+  /// view flashes black on Android.
+  void _advance() {
+    if (!mounted) return;
+    _endFallback?.cancel();
     if (_currentIndex < _items.length - 1) {
-      _pageController.nextPage(
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeInOut,
-      );
+      _pageController.jumpToPage(_currentIndex + 1);
     } else {
       _goNextStoryGroupOrClose();
     }
@@ -394,6 +466,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
       _pageController.jumpToPage(0);
       _restartProgress();
       _warmReplyChat();
+      _prefetchUpcoming();
     } else {
       Navigator.of(context).pop();
     }
@@ -446,6 +519,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
 
   @override
   void dispose() {
+    _endFallback?.cancel();
     _likeSub?.cancel();
     _replyFocus.removeListener(_onReplyFocusChanged);
     _replyFocus.dispose();
@@ -481,20 +555,11 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
           final w = MediaQuery.of(context).size.width;
           if (details.globalPosition.dx < w * 0.25) {
             if (_currentIndex > 0) {
-              _pageController.previousPage(
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeInOut,
-              );
+              _endFallback?.cancel();
+              _pageController.jumpToPage(_currentIndex - 1);
             }
           } else if (details.globalPosition.dx > w * 0.75) {
-            if (_currentIndex < items.length - 1) {
-              _pageController.nextPage(
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeInOut,
-              );
-            } else {
-              _goNextStoryGroupOrClose();
-            }
+            _advance();
           }
         },
         child: Stack(
@@ -503,11 +568,15 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
             PageView.builder(
               controller: _pageController,
               physics: const NeverScrollableScrollPhysics(),
+              // Builds the next story so its video is ready before the tap.
+              allowImplicitScrolling: true,
               itemCount: items.length,
               onPageChanged: (i) {
+                _endFallback?.cancel();
                 setState(() => _currentIndex = i);
                 _restartProgress();
                 _recordViewForCurrentSlide();
+                _prefetchUpcoming();
               },
               itemBuilder: (context, i) {
                 final item = items[i];
@@ -516,6 +585,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                   item: item,
                   active: i == _currentIndex,
                   onVideoReady: (d) => _onVideoReady(item.storyId, d),
+                  onVideoEnded: () => _onVideoEnded(item.storyId),
                 );
               },
             ),
@@ -1401,12 +1471,14 @@ class _StoryPage extends StatefulWidget {
   final MerchantStoryItem item;
   final bool active;
   final ValueChanged<Duration>? onVideoReady;
+  final VoidCallback? onVideoEnded;
 
   const _StoryPage({
     super.key,
     required this.item,
     required this.active,
     this.onVideoReady,
+    this.onVideoEnded,
   });
 
   @override
@@ -1448,31 +1520,66 @@ class _StoryPageState extends State<_StoryPage>
 
   /// Android uses a native view: the default texture path renders black on
   /// some devices running the Skia renderer (Impeller is off in the manifest).
-  void _startVideo(String url) {
-    final controller = VideoPlayerController.networkUrl(
-      Uri.parse(url),
-      viewType: defaultTargetPlatform == TargetPlatform.android
-          ? VideoViewType.platformView
-          : VideoViewType.textureView,
-    );
+  /// Plays the cached copy when the story was prefetched or seen before
+  /// (instant, offline); otherwise streams while caching in the background.
+  Future<void> _startVideo(String url) async {
+    final cache = ReelVideoCache.stories;
+    final file = cache.cachedSync(url) ?? await cache.cached(url);
+    if (!mounted || _videoController != null) return;
+    final viewType = defaultTargetPlatform == TargetPlatform.android
+        ? VideoViewType.platformView
+        : VideoViewType.textureView;
+    final controller = file != null
+        ? VideoPlayerController.file(file, viewType: viewType)
+        : VideoPlayerController.networkUrl(Uri.parse(url), viewType: viewType);
+    if (file == null) cache.prefetch(url, priority: widget.active);
     _videoController = controller;
-    controller.initialize().then((_) {
+    try {
+      await controller.initialize();
       if (!mounted || _videoController != controller) return;
-      controller.setLooping(true);
-      if (widget.active) controller.play();
+      // No looping: the clip stops on its last frame and the viewer cuts to
+      // the next story, instead of flashing the start again.
+      await controller.setLooping(false);
+      controller.addListener(() => _watchEnd(controller));
+      if (widget.active) await controller.play();
+      if (!mounted || _videoController != controller) return;
       setState(() {
         _videoReady = true;
         _videoFailed = false;
       });
       widget.onVideoReady?.call(controller.value.duration);
-    }).catchError((Object e) {
+    } catch (e) {
       if (kDebugMode) debugPrint('[StoryViewer] video failed: $e');
       if (!mounted || _videoController != controller) return;
+      if (!_autoRetried) {
+        // One silent retry: the cached copy may have finished meanwhile.
+        _autoRetried = true;
+        _videoController = null;
+        unawaited(controller.dispose());
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        if (mounted) unawaited(_startVideo(url));
+        return;
+      }
       setState(() {
         _videoReady = false;
         _videoFailed = true;
       });
-    });
+      // Let the progress bar run so a broken video doesn't freeze the viewer.
+      widget.onVideoReady?.call(Duration.zero);
+    }
+  }
+
+  bool _autoRetried = false;
+  bool _ended = false;
+
+  void _watchEnd(VideoPlayerController controller) {
+    if (_videoController != controller || !widget.active || _ended) return;
+    final v = controller.value;
+    if (!v.isInitialized || v.duration <= Duration.zero) return;
+    if (v.position >= v.duration - const Duration(milliseconds: 150) && !v.isPlaying) {
+      _ended = true;
+      widget.onVideoEnded?.call();
+    }
   }
 
   void _retryVideo() {
@@ -1481,6 +1588,7 @@ class _StoryPageState extends State<_StoryPage>
     final old = _videoController;
     _videoController = null;
     old?.dispose();
+    _autoRetried = false;
     setState(() {
       _videoReady = false;
       _videoFailed = false;
@@ -1494,9 +1602,10 @@ class _StoryPageState extends State<_StoryPage>
     final controller = _videoController;
     if (controller == null || !controller.value.isInitialized) return;
     if (widget.active && !oldWidget.active) {
+      _ended = false;
       controller.seekTo(Duration.zero);
       controller.play();
-    } else if (widget.active && !controller.value.isPlaying) {
+    } else if (widget.active && !controller.value.isPlaying && !_ended) {
       controller.play();
     } else if (!widget.active && controller.value.isPlaying) {
       controller.pause();

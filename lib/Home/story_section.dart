@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -7,6 +9,7 @@ import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/Home/story_ring_widget.dart';
 import 'package:vero360_app/Home/story_service.dart';
 import 'package:vero360_app/utils/display_name_sync.dart';
+import 'package:vero360_app/features/Reels/reel_video_cache.dart';
 
 class StorySection extends StatefulWidget {
   const StorySection({super.key});
@@ -145,6 +148,30 @@ class _StorySectionState extends State<StorySection> {
     }).catchError((_) {});
   }
 
+  String? _prefetchedKey;
+
+  /// Downloads the opening video of the first few unwatched rings so tapping
+  /// a story plays instantly instead of showing a black screen.
+  void _prefetchFirstVideos(List<MerchantStoryGroup> groups) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final urls = <String>[];
+    for (final g in groups) {
+      if (urls.length >= 3) break;
+      if (g.merchantId == uid || !g.hasUnviewed || g.items.isEmpty) continue;
+      final first = g.items.first;
+      final url = first.mediaUrl.trim();
+      if (first.mediaType == 'video' && url.isNotEmpty) urls.add(url);
+    }
+    final key = urls.join('|');
+    if (key.isEmpty || key == _prefetchedKey) return;
+    _prefetchedKey = key;
+    unawaited(ReelVideoCache.stories.init().then((_) {
+      for (final u in urls) {
+        ReelVideoCache.stories.prefetch(u);
+      }
+    }));
+  }
+
   Future<void> _openPostStory() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null || uid.isEmpty) {
@@ -187,6 +214,7 @@ class _StorySectionState extends State<StorySection> {
         final groups = snapshot.data ?? _lastGroups;
         if (groups != null) {
           _lastGroups = groups;
+          _prefetchFirstVideos(groups);
         }
 
         if (groups == null) {

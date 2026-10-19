@@ -188,7 +188,7 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
                   color: CarHirePalette.accent,
                   backgroundColor: CarHirePalette.accentPale,
                 ),
-              _CarHireGallery(car: car, available: available),
+              _CarHireGallery(car: car),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 18, 16, 12),
                 child: Column(
@@ -198,47 +198,41 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
                       CarHireInfoBanner(
                         icon: Icons.cloud_off_rounded,
                         title: 'Showing saved details',
-                        message:
-                            'We could not refresh this vehicle. The details '
-                            'below were already loaded.',
+                        message: 'Pull down to try again.',
                         tone: CarHireInfoTone.warning,
                       ),
                       const SizedBox(height: 14),
                     ],
                     _titleBlock(car, available),
                     const SizedBox(height: 16),
+                    _specRow(car),
+                    const SizedBox(height: 16),
                     _datesCard(car),
-                    const SizedBox(height: 20),
-                    const _SectionLabel('Vehicle details'),
-                    const SizedBox(height: 10),
-                    _specGrid(car),
                     if (car.description?.trim().isNotEmpty == true) ...[
                       const SizedBox(height: 20),
                       const _SectionLabel('About this car'),
-                      const SizedBox(height: 8),
-                      CarHireSurface(
-                        padding: const EdgeInsets.all(16),
-                        child: Text(
-                          car.description!.trim(),
-                          style: CarHireType.body,
-                        ),
+                      const SizedBox(height: 6),
+                      Text(
+                        car.description!.trim(),
+                        style: CarHireType.body,
                       ),
                     ],
-                    const SizedBox(height: 20),
-                    const _SectionLabel('What is included'),
-                    const SizedBox(height: 10),
-                    const _IncludedList(),
                     const SizedBox(height: 16),
-                    CarHireInfoBanner(
-                      icon: Icons.info_outline_rounded,
-                      title: 'Final price is confirmed at checkout',
-                      message:
-                          'Your final total, fees and deposit are calculated '
-                          'by Vero360 for your exact dates and shown before '
-                          'you submit a booking.',
-                      tone: CarHireInfoTone.accent,
+                    Center(
+                      child: TextButton(
+                        onPressed: () => CarHireRoutes.openTerms(context),
+                        style: TextButton.styleFrom(
+                          foregroundColor: CarHirePalette.muted,
+                          textStyle: const TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            decoration: TextDecoration.underline,
+                          ),
+                        ),
+                        child: const Text('Rental terms & protections'),
+                      ),
                     ),
-                    const SizedBox(height: 28),
+                    const SizedBox(height: 12),
                   ],
                 ),
               ),
@@ -251,17 +245,7 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
   }
 
   PreferredSizeWidget _appBar() {
-    return carHireAppBar(
-      title: 'Vehicle details',
-      actions: [
-        CarHireIconButton(
-          icon: Icons.refresh_rounded,
-          tooltip: 'Refresh',
-          onTap: _refresh,
-        ),
-        const SizedBox(width: 16),
-      ],
-    );
+    return carHireAppBar(title: 'Vehicle details');
   }
 
   Widget _titleBlock(CarListing car, bool available) {
@@ -306,34 +290,17 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
           ],
         ),
         const SizedBox(height: 12),
-        Wrap(
-          spacing: 7,
-          runSpacing: 7,
-          children: [
-            CarHirePill(
-              label: available ? 'Available for your dates' : 'Unavailable',
-              icon: available
-                  ? Icons.check_circle_outline_rounded
-                  : Icons.do_not_disturb_on_outlined,
-              background: available
-                  ? CarHirePalette.successSoft
-                  : CarHirePalette.errorSoft,
-              foreground: available
-                  ? CarHirePalette.success
-                  : CarHirePalette.error,
-              fontSize: 10.5,
-            ),
-            const CarHirePill(
-              label: 'Verified provider',
-              icon: Icons.verified_user_outlined,
-              fontSize: 10.5,
-            ),
-            const CarHirePill(
-              label: 'Secure payment',
-              icon: Icons.lock_outline_rounded,
-              fontSize: 10.5,
-            ),
-          ],
+        CarHirePill(
+          label: available ? 'Available for your dates' : 'Unavailable',
+          icon: available
+              ? Icons.check_circle_outline_rounded
+              : Icons.do_not_disturb_on_outlined,
+          background: available
+              ? CarHirePalette.successSoft
+              : CarHirePalette.errorSoft,
+          foreground:
+              available ? CarHirePalette.success : CarHirePalette.error,
+          fontSize: 10.5,
         ),
       ],
     );
@@ -387,68 +354,49 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
                 fontSize: 11.5,
               ),
             ),
+          ] else if (car.minRentalDays > 1 || car.maxRentalDays != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              car.rentalWindowLabel,
+              style: CarHireType.labelSmall,
+            ),
           ],
-          const SizedBox(height: 10),
-          Text(
-            car.rentalWindowLabel,
-            style: CarHireType.labelSmall,
-          ),
         ],
       ),
     );
   }
 
-  Widget _specGrid(CarListing car) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = (constraints.maxWidth - 10) / 2;
-        return Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            SizedBox(
-              width: width,
-              child: _SpecTile(
-                icon: Icons.airline_seat_recline_normal_rounded,
-                label: 'Seats',
-                value: car.seats == null ? 'Not specified' : '${car.seats}',
-              ),
+  Widget _specRow(CarListing car) {
+    return CarHireSurface(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+      child: Row(
+        children: [
+          Expanded(
+            child: _SpecTile(
+              icon: Icons.airline_seat_recline_normal_rounded,
+              value: car.seats == null ? '—' : '${car.seats} seats',
             ),
-            SizedBox(
-              width: width,
-              child: _SpecTile(
-                icon: Icons.settings_input_component_rounded,
-                label: 'Transmission',
-                value: car.transmissionLabel,
-              ),
+          ),
+          Expanded(
+            child: _SpecTile(
+              icon: Icons.settings_input_component_rounded,
+              value: car.transmission == null ? '—' : car.transmissionLabel,
             ),
-            SizedBox(
-              width: width,
-              child: _SpecTile(
-                icon: Icons.local_gas_station_rounded,
-                label: 'Fuel',
-                value: car.fuelLabel,
-              ),
+          ),
+          Expanded(
+            child: _SpecTile(
+              icon: Icons.local_gas_station_rounded,
+              value: car.fuelType == null ? '—' : car.fuelLabel,
             ),
-            SizedBox(
-              width: width,
-              child: _SpecTile(
-                icon: Icons.directions_car_rounded,
-                label: 'Body type',
-                value: car.bodyLabel.isEmpty ? 'Not specified' : car.bodyLabel,
-              ),
+          ),
+          Expanded(
+            child: _SpecTile(
+              icon: Icons.directions_car_rounded,
+              value: car.bodyLabel.isEmpty ? '—' : car.bodyLabel,
             ),
-            SizedBox(
-              width: double.infinity,
-              child: _SpecTile(
-                icon: Icons.place_outlined,
-                label: 'Pick-up area',
-                value: car.pickupAreaLabel,
-              ),
-            ),
-          ],
-        );
-      },
+          ),
+        ],
+      ),
     );
   }
 
@@ -536,10 +484,9 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
 }
 
 class _CarHireGallery extends StatefulWidget {
-  const _CarHireGallery({required this.car, required this.available});
+  const _CarHireGallery({required this.car});
 
   final CarListing car;
-  final bool available;
 
   @override
   State<_CarHireGallery> createState() => _CarHireGalleryState();
@@ -547,11 +494,6 @@ class _CarHireGallery extends StatefulWidget {
 
 class _CarHireGalleryState extends State<_CarHireGallery> {
   int _index = 0;
-
-  bool get _isElectric {
-    final fuel = (widget.car.fuelType ?? '').toUpperCase();
-    return fuel.contains('ELECTRIC') || fuel.contains('EV');
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -603,29 +545,6 @@ class _CarHireGalleryState extends State<_CarHireGallery> {
                   ),
                 ),
               ),
-            ),
-          ),
-          Positioned(
-            left: 16,
-            top: 14,
-            child: CarHirePill(
-              label: _isElectric
-                  ? 'EV · Instant book'
-                  : widget.available
-                      ? 'Instant book'
-                      : 'Unavailable',
-              icon: _isElectric
-                  ? Icons.bolt_rounded
-                  : widget.available
-                      ? Icons.flash_on_rounded
-                      : Icons.do_not_disturb_on_rounded,
-              background: widget.available
-                  ? CarHirePalette.primary
-                  : Colors.white.withValues(alpha: 0.95),
-              foreground: widget.available
-                  ? Colors.white
-                  : CarHirePalette.error,
-              fontSize: 10.5,
             ),
           ),
           if (images.length > 1) ...[
@@ -746,55 +665,30 @@ class _DateTile extends StatelessWidget {
 }
 
 class _SpecTile extends StatelessWidget {
-  const _SpecTile({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
+  const _SpecTile({required this.icon, required this.value});
 
   final IconData icon;
-  final String label;
   final String value;
 
   @override
   Widget build(BuildContext context) {
-    return CarHireSurface(
-      padding: const EdgeInsets.all(13),
-      radius: 16,
-      child: Row(
-        children: [
-          Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(
-              color: CarHirePalette.surfaceLow,
-              borderRadius: BorderRadius.circular(11),
-            ),
-            child: Icon(icon, size: 17, color: CarHirePalette.onSurface),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 20, color: CarHirePalette.onSurfaceVariant),
+        const SizedBox(height: 6),
+        Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: CarHirePalette.onSurface,
+            fontSize: 11.5,
+            fontWeight: FontWeight.w600,
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: CarHireType.labelSmall),
-                const SizedBox(height: 2),
-                Text(
-                  value,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: CarHirePalette.onSurface,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
-                    height: 1.3,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -807,85 +701,5 @@ class _SectionLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Text(text, style: CarHireType.title);
-  }
-}
-
-class _IncludedList extends StatelessWidget {
-  const _IncludedList();
-
-  static const _items = <(IconData, String, String)>[
-    (
-      Icons.verified_user_outlined,
-      'Verified vehicle provider',
-      'Every listing is reviewed and linked to a verified Vero360 provider.'
-    ),
-    (
-      Icons.shield_outlined,
-      'Damage protection guidance',
-      'Record a handover inspection in the app at pick-up and return.'
-    ),
-    (
-      Icons.support_agent_rounded,
-      '24/7 support',
-      'Report an incident or open a support case from the booking screen.'
-    ),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return CarHireSurface(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          for (var index = 0; index < _items.length; index++) ...[
-            if (index > 0)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Divider(height: 1, color: CarHirePalette.hairline),
-              ),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: const BoxDecoration(
-                    color: CarHirePalette.accentPale,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    _items[index].$1,
-                    size: 17,
-                    color: CarHirePalette.onAccentSoft,
-                  ),
-                ),
-                const SizedBox(width: 11),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _items[index].$2,
-                        style: const TextStyle(
-                          color: CarHirePalette.onSurface,
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w800,
-                          height: 1.3,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        _items[index].$3,
-                        style: CarHireType.bodySmall.copyWith(fontSize: 11.5),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ],
-      ),
-    );
   }
 }

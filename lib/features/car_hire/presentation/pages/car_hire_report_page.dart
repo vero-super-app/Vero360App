@@ -209,8 +209,8 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
               const _SectionTitle('Report an incident'),
               const SizedBox(height: 4),
               Text(
-                'Use this for accidents, breakdowns, theft, safety problems '
-                'or a provider who did not show up.${_bookingReference()}',
+                'Accidents, breakdowns, theft, safety or a no-show.'
+                '${_bookingReference()}',
                 style: const TextStyle(
                   color: CarRentalColors.body,
                   fontSize: 11.5,
@@ -243,8 +243,7 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
                 textCapitalization: TextCapitalization.sentences,
                 decoration: _decoration(
                   'What happened?',
-                  hint: 'Where, when and what you observed. '
-                      'At least 5 characters.',
+                  hint: 'Where, when and what happened',
                   alignLabelWithHint: true,
                 ),
               ),
@@ -408,9 +407,7 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
               const _SectionTitle('Open a support case'),
               const SizedBox(height: 4),
               Text(
-                'Tell Vero360 support what you need. For handover or damage '
-                'disputes, include dates and inspection references.'
-                '${_bookingReference()}',
+                'Tell us what you need.${_bookingReference()}',
                 style: const TextStyle(
                   color: CarRentalColors.body,
                   fontSize: 11.5,
@@ -586,7 +583,7 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
   String _bookingReference() {
     final number = widget.bookingNumber?.trim();
     if (number == null || number.isEmpty) return '';
-    return ' This will be attached to $number.';
+    return ' Linked to $number.';
   }
 
   InputDecoration _decoration(

@@ -9,6 +9,7 @@ import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_detail
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_inspection_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_report_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_verification_page.dart';
+import 'package:vero360_app/settings/Settings.dart' show PolicyPage;
 
 /// Navigation helpers for the additive car-hire renter journey.
 class CarHireRoutes {
@@ -85,6 +86,17 @@ class CarHireRoutes {
         builder: (_) => const CarHireVerificationPage(),
       ),
     );
+  }
+
+  /// Opens Terms & Privacy with the car hire section first. Resolves to
+  /// `true` when the user taps "Agree & Continue".
+  static Future<bool> openTerms(BuildContext context) async {
+    final agreed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => const PolicyPage(focusCarHire: true),
+      ),
+    );
+    return agreed == true;
   }
 
   static Future<void> openInspection(

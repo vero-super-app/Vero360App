@@ -190,19 +190,12 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
       ref.read(bookingSubmissionProvider.notifier).updateBooking(fresh);
       if (!mounted) return;
 
-      if (fresh.paymentSucceeded) {
-        ToastHelper.showToast(
-          context,
-          'Payment confirmed by Vero360. Booking status: '
-          '${fresh.bookingStatus.label}.',
-        );
-      } else {
-        ToastHelper.showToast(
-          context,
-          'We have not received payment confirmation yet. '
-          'Your payment status is still "${fresh.paymentLabel}".',
-        );
-      }
+      ToastHelper.showToast(
+        context,
+        fresh.paymentSucceeded
+            ? 'Payment confirmed.'
+            : 'Payment not confirmed yet. Check again in a moment.',
+      );
     } on CarHireApiException catch (error) {
       if (!mounted) return;
       setState(() => _paymentError = error.message);
@@ -290,21 +283,9 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
             if (booking == null) ...[
               const SizedBox(height: 14),
               _detailsCard(),
-              const SizedBox(height: 14),
-              _termsCard(),
+              const SizedBox(height: 6),
+              _termsRow(),
             ],
-            const SizedBox(height: 8),
-            const Text(
-              'Vero360 never treats a browser redirect as proof of payment. '
-              'Your booking is updated from the server after the payment '
-              'provider confirms it.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: CarRentalColors.grey,
-                fontSize: 10.5,
-                height: 1.4,
-              ),
-            ),
           ],
         ),
       ),
@@ -434,7 +415,7 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
           const SizedBox(height: 4),
           Text(
             '${quote.days} day${quote.days == 1 ? '' : 's'} at '
-            '${quote.dailyRateLabel}. Expires ${quote.expiryLabel}.',
+            '${quote.dailyRateLabel}',
             style: const TextStyle(
               color: CarRentalColors.body,
               fontSize: 11.5,
@@ -462,9 +443,7 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
                   SizedBox(width: 7),
                   Expanded(
                     child: Text(
-                      'This quote has expired and can no longer be booked. '
-                      'Get a fresh quote to continue with current pricing and '
-                      'availability.',
+                      'This quote has expired. Get a new one to continue.',
                       style: TextStyle(
                         color: CarRentalColors.error,
                         fontSize: 11.5,
@@ -484,33 +463,41 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
           ],
           if (verification != null && verification.needsAttention) ...[
             const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(11),
-              decoration: BoxDecoration(
-                color: CarRentalColors.warningLight,
+            Material(
+              color: CarRentalColors.warningLight,
+              borderRadius: BorderRadius.circular(10),
+              child: InkWell(
+                onTap: () => CarHireRoutes.openVerification(context),
                 borderRadius: BorderRadius.circular(10),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(
-                    Icons.verified_user_outlined,
-                    size: 16,
-                    color: CarRentalColors.greyDark,
-                  ),
-                  const SizedBox(width: 7),
-                  Expanded(
-                    child: Text(
-                      'Driver verification: ${verification.statusLabel}.'
-                      '${verification.nextAction == null ? '' : ' ${verification.nextAction}'}',
-                      style: const TextStyle(
+                child: Padding(
+                  padding: const EdgeInsets.all(11),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.verified_user_outlined,
+                        size: 16,
                         color: CarRentalColors.greyDark,
-                        fontSize: 11.5,
-                        height: 1.4,
                       ),
-                    ),
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: Text(
+                          'Driver verification: ${verification.statusLabel}',
+                          style: const TextStyle(
+                            color: CarRentalColors.greyDark,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700,
+                            height: 1.4,
+                          ),
+                        ),
+                      ),
+                      const Icon(
+                        Icons.chevron_right_rounded,
+                        size: 18,
+                        color: CarRentalColors.greyDark,
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           ],
@@ -636,8 +623,7 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    'The payment provider confirmed this payment with '
-                    'Vero360. Booking status: ${booking.bookingStatus.label}.',
+                    'Booking status: ${booking.bookingStatus.label}',
                     style: const TextStyle(
                       color: CarRentalColors.body,
                       fontSize: 12,
@@ -665,11 +651,9 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
             ),
           ),
           const SizedBox(height: 4),
-          Text(
-            'Status: ${booking.paymentLabel}. Pay with PayChangu to complete '
-            'your booking. Payment is confirmed by Vero360, not by returning '
-            'to the app.',
-            style: const TextStyle(
+          const Text(
+            'Pay with PayChangu to confirm your booking.',
+            style: TextStyle(
               color: CarRentalColors.body,
               fontSize: 12,
               height: 1.45,
@@ -712,7 +696,7 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.refresh_rounded, size: 18),
-            label: const Text('I have paid — refresh status'),
+            label: const Text("I've paid · Check status"),
             style: OutlinedButton.styleFrom(
               minimumSize: const Size.fromHeight(44),
             ),
@@ -739,92 +723,91 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
   }
 
   Widget _detailsCard() {
-    return _Panel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text(
-            'Driver details',
+    return CarHireSurface(
+      padding: EdgeInsets.zero,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+          childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          iconColor: CarRentalColors.title,
+          collapsedIconColor: CarRentalColors.grey,
+          title: const Text(
+            'Add driver or note',
             style: TextStyle(
               color: CarRentalColors.title,
-              fontSize: 15,
-              fontWeight: FontWeight.w800,
+              fontSize: 13.5,
+              fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _driverController,
-            textCapitalization: TextCapitalization.words,
-            decoration: carHireInputDecoration(
-              label: 'Driver name (optional)',
-            ),
+          subtitle: const Text(
+            'Optional',
+            style: TextStyle(color: CarRentalColors.grey, fontSize: 11.5),
           ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _notesController,
-            maxLines: 3,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: carHireInputDecoration(
-              label: 'Notes for the provider (optional)',
-              hint: 'For example: call on arrival',
-              alignLabelWithHint: true,
+          children: [
+            TextField(
+              controller: _driverController,
+              textCapitalization: TextCapitalization.words,
+              decoration: carHireInputDecoration(label: 'Driver name'),
             ),
-          ),
-        ],
+            const SizedBox(height: 10),
+            TextField(
+              controller: _notesController,
+              maxLines: 3,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: carHireInputDecoration(
+                label: 'Note for the provider',
+                hint: 'For example: call on arrival',
+                alignLabelWithHint: true,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _termsCard() {
-    return _Panel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text(
-            'Rental and cancellation terms',
-            style: TextStyle(
-              color: CarRentalColors.title,
-              fontSize: 14,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 7),
-          const Text(
-            'By submitting, you request this vehicle for the selected dates. '
-            'A pending booking holds the dates until the hold expiry shown on '
-            'the booking; if payment is not completed, the hold may expire. '
-            'The deposit shown above (if any) is collected according to the '
-            "vehicle's terms. Cancelling a pending booking releases the hold; "
-            'confirmed bookings may be subject to the provider\'s cancellation '
-            'policy. Payment is only treated as successful after Vero360 '
-            'verifies it with the payment provider.',
-            style: TextStyle(
-              color: CarRentalColors.body,
-              fontSize: 11.5,
-              height: 1.5,
-            ),
-          ),
-          const SizedBox(height: 6),
-          CheckboxListTile(
-            value: _termsAccepted,
-            onChanged: (value) {
-              setState(() => _termsAccepted = value ?? false);
-            },
-            contentPadding: EdgeInsets.zero,
-            dense: true,
-            controlAffinity: ListTileControlAffinity.leading,
-            activeColor: CarRentalColors.brandOrange,
-            title: const Text(
-              'I have read and accept the rental and cancellation terms.',
-              style: TextStyle(
-                color: CarRentalColors.title,
-                fontSize: 12,
-                height: 1.35,
+  Future<void> _openTerms() async {
+    final agreed = await CarHireRoutes.openTerms(context);
+    if (agreed && mounted) setState(() => _termsAccepted = true);
+  }
+
+  Widget _termsRow() {
+    return Row(
+      children: [
+        Checkbox(
+          value: _termsAccepted,
+          activeColor: CarRentalColors.brandOrange,
+          visualDensity: VisualDensity.compact,
+          onChanged: (value) {
+            setState(() => _termsAccepted = value ?? false);
+          },
+        ),
+        Expanded(
+          child: Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              const Text(
+                'I accept the ',
+                style: TextStyle(color: CarRentalColors.title, fontSize: 12.5),
               ),
-            ),
+              GestureDetector(
+                onTap: _openTerms,
+                child: const Text(
+                  'rental & cancellation terms',
+                  style: TextStyle(
+                    color: CarRentalColors.brandOrange,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    decoration: TextDecoration.underline,
+                    decorationColor: CarRentalColors.brandOrange,
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 

@@ -239,20 +239,6 @@ class _CarHireInspectionPageState
               fontWeight: FontWeight.w800,
             ),
           ),
-          const SizedBox(height: 5),
-          Text(
-            _isPickup
-                ? 'Note the odometer, fuel level and condition before you '
-                    'drive away. The provider can also record an inspection '
-                    'that you accept or decline below.'
-                : 'Note the odometer, fuel level and condition when you hand '
-                    'the vehicle back. Both parties can see this record.',
-            style: const TextStyle(
-              color: CarRentalColors.body,
-              fontSize: 12,
-              height: 1.5,
-            ),
-          ),
           if (booking != null) ...[
             const SizedBox(height: 8),
             Text(
@@ -399,10 +385,8 @@ class _CarHireInspectionPageState
             controller: _mediaController,
             textCapitalization: TextCapitalization.none,
             decoration: _decoration(
-              label: 'Media references (optional)',
+              label: 'Photo references (optional)',
               hint: 'photo-123, photo-456',
-              helper: 'Comma-separated references or upload IDs for photos. '
-                  'Files are stored by Vero360 support.',
             ),
           ),
           if (_formError != null) ...[
@@ -443,16 +427,6 @@ class _CarHireInspectionPageState
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const _SectionTitle('Inspection history'),
-          const SizedBox(height: 4),
-          const Text(
-            'Both the renter and the vehicle provider can record an '
-            'inspection. Accept or decline one recorded by the other party.',
-            style: TextStyle(
-              color: CarRentalColors.body,
-              fontSize: 11.5,
-              height: 1.45,
-            ),
-          ),
           const SizedBox(height: 10),
           inspections.when(
             loading: () => const Padding(

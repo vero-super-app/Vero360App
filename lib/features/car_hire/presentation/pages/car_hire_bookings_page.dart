@@ -107,9 +107,7 @@ class _CarHireBookingsPageState extends ConsumerState<CarHireBookingsPage> {
                   CarHireEmptyState(
                     icon: Icons.receipt_long_outlined,
                     title: 'No car hire bookings yet',
-                    message:
-                        'When you book a car, your booking and payment status '
-                        'will appear here.',
+                    message: 'Your car hire bookings will appear here.',
                     actionLabel: 'Browse cars',
                     onAction: () => CarHireRoutes.openBrowse(context),
                   ),
@@ -128,33 +126,6 @@ class _CarHireBookingsPageState extends ConsumerState<CarHireBookingsPage> {
                 24 + MediaQuery.paddingOf(context).bottom,
               ),
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Your trips',
-                        style: CarHireType.titleLarge,
-                      ),
-                    ),
-                    CarHirePill(
-                      label: '${items.length} total',
-                      background: CarHirePalette.accentPale,
-                      foreground: CarHirePalette.onAccentSoft,
-                      fontSize: 10.5,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 9,
-                        vertical: 5,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Track payment, handover inspections and extensions for '
-                  'every rental.',
-                  style: CarHireType.bodySmall,
-                ),
-                const SizedBox(height: 14),
                 SizedBox(
                   height: 38,
                   child: ListView.separated(
@@ -187,12 +158,6 @@ class _CarHireBookingsPageState extends ConsumerState<CarHireBookingsPage> {
                         Text(
                           'Nothing in ${_scope.label.toLowerCase()} trips',
                           style: CarHireType.subtitle,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Switch the filter to see your other bookings.',
-                          textAlign: TextAlign.center,
-                          style: CarHireType.bodySmall,
                         ),
                       ],
                     ),

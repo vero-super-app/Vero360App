@@ -47,7 +47,9 @@ class CarHireListingCard extends StatelessWidget {
 
     return Semantics(
       button: true,
-      label: '${car.title}, ${car.pricePerDayLabel}'
+      label: '${car.title}, '
+          '${car.provider == null ? '' : '${car.providerLabel}, '}'
+          '${car.pricePerDayLabel}'
           '${_available ? '' : ', unavailable'}',
       child: Padding(
         padding: margin,
@@ -91,6 +93,18 @@ class CarHireListingCard extends StatelessWidget {
                     ],
                   ],
                 ),
+                if (car.provider != null) ...[
+                  const SizedBox(height: 1),
+                  Text(
+                    car.provider!.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: CarHireType.bodySmall.copyWith(
+                      color: CarHirePalette.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 2),
                 Text(
                   [car.pickupAreaLabel, if (spec.isNotEmpty) spec].join(' · '),

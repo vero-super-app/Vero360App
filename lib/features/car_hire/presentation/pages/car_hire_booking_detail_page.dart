@@ -624,6 +624,19 @@ class _CarHireBookingDetailPageState
                           ),
                         ),
                       ],
+                      if (car.provider != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          car.providerLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: CarRentalColors.body,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 3),
                       Text(
                         car.pickupAreaLabel,

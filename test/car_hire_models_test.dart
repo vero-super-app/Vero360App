@@ -120,6 +120,30 @@ void main() {
       expect(car.make, 'Toyota');
       expect(car.title, 'Toyota Vitz');
     });
+
+    test('parses the providing company', () {
+      final car = CarListing.fromJson(<String, dynamic>{
+        'id': 3,
+        'make': 'Toyota',
+        'model': 'Hilux',
+        'operator': {
+          'id': 'op-1',
+          'name': 'Lilongwe Car Rentals',
+          'type': 'BUSINESS',
+          'logoUrl': null,
+        },
+      });
+
+      expect(car.provider?.name, 'Lilongwe Car Rentals');
+      expect(car.provider?.isBusiness, isTrue);
+      expect(car.providerLabel, 'Provided by Lilongwe Car Rentals');
+    });
+
+    test('has no provider when the backend omits it', () {
+      final car = CarListing.fromJson(<String, dynamic>{'id': 4, 'operator': null});
+      expect(car.provider, isNull);
+      expect(car.providerLabel, isEmpty);
+    });
   });
 
   group('RentalQuote.fromJson', () {

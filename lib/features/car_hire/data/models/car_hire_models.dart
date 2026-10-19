@@ -512,6 +512,37 @@ enum SupportCaseCategory {
 // Public vehicle listing (`CarPublicView`)
 // ---------------------------------------------------------------------------
 
+/// The company or individual host that provides a listing.
+class CarHireProvider {
+  const CarHireProvider({
+    required this.id,
+    required this.name,
+    this.type = '',
+    this.logoUrl,
+  });
+
+  final String id;
+  final String name;
+  final String type;
+  final String? logoUrl;
+
+  bool get isBusiness => type.toUpperCase() == 'BUSINESS';
+
+  static CarHireProvider? fromJson(dynamic raw) {
+    if (raw is! Map) return null;
+    final json = _asMap(raw);
+    final id = _asString(json['id']);
+    final name = _asString(json['name'] ?? json['displayName']).trim();
+    if (id.isEmpty || name.isEmpty) return null;
+    return CarHireProvider(
+      id: id,
+      name: name,
+      type: _asString(json['type']),
+      logoUrl: _asStringOrNull(json['logoUrl']),
+    );
+  }
+}
+
 class CarListing {
   const CarListing({
     required this.id,
@@ -539,6 +570,7 @@ class CarListing {
     this.depositAmount = 0,
     this.minRentalDays = 1,
     this.maxRentalDays,
+    this.provider,
   });
 
   final int id;
@@ -568,6 +600,11 @@ class CarListing {
   final double depositAmount;
   final int minRentalDays;
   final int? maxRentalDays;
+  final CarHireProvider? provider;
+
+  /// "Provided by …" line, empty when the backend did not send a provider.
+  String get providerLabel =>
+      provider == null ? '' : 'Provided by ${provider!.name}';
 
   factory CarListing.fromJson(dynamic raw) {
     final json = _asMap(raw);
@@ -612,6 +649,7 @@ class CarListing {
       depositAmount: _asDouble(json['depositAmount']),
       minRentalDays: minDaysRaw <= 0 ? 1 : minDaysRaw,
       maxRentalDays: _asNullableInt(json['maxRentalDays']),
+      provider: CarHireProvider.fromJson(json['operator']),
     );
   }
 
@@ -725,6 +763,7 @@ class CarListing {
       depositAmount: depositAmount,
       minRentalDays: minRentalDays,
       maxRentalDays: maxRentalDays,
+      provider: provider,
     );
   }
 }

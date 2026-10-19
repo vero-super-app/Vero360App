@@ -289,6 +289,10 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
             ),
           ],
         ),
+        if (car.provider != null) ...[
+          const SizedBox(height: 10),
+          _ProviderRow(provider: car.provider!),
+        ],
         const SizedBox(height: 12),
         CarHirePill(
           label: available ? 'Available for your dates' : 'Unavailable',
@@ -686,6 +690,67 @@ class _SpecTile extends StatelessWidget {
             color: CarHirePalette.onSurface,
             fontSize: 11.5,
             fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProviderRow extends StatelessWidget {
+  const _ProviderRow({required this.provider});
+
+  final CarHireProvider provider;
+
+  @override
+  Widget build(BuildContext context) {
+    final logo = provider.logoUrl?.trim();
+    final initial = provider.name.isEmpty ? '?' : provider.name[0].toUpperCase();
+    return Row(
+      children: [
+        ClipOval(
+          child: SizedBox(
+            width: 28,
+            height: 28,
+            child: logo != null && logo.isNotEmpty
+                ? ResilientCachedNetworkImage(
+                    url: logo,
+                    fit: BoxFit.cover,
+                    height: 28,
+                    memCacheWidth: 96,
+                  )
+                : Container(
+                    color: CarHirePalette.surfaceLow,
+                    alignment: Alignment.center,
+                    child: Text(
+                      initial,
+                      style: const TextStyle(
+                        color: CarHirePalette.onSurface,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text.rich(
+            TextSpan(
+              children: [
+                const TextSpan(text: 'Provided by '),
+                TextSpan(
+                  text: provider.name,
+                  style: const TextStyle(
+                    color: CarHirePalette.onSurface,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: CarHireType.bodySmall.copyWith(fontSize: 12.5),
           ),
         ),
       ],

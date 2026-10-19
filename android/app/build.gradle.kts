@@ -84,9 +84,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    // kotlinOptions/jvmTarget was removed-by-error in KGP 2.3; use compilerOptions.
 
     buildFeatures {
         buildConfig = true
@@ -148,6 +146,12 @@ android {
 
 flutter {
     source = "../.."
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }
 
 // Play Console: libdatastore_shared_counter.so from DataStore 1.2.0 crashes on 16 KB devices.

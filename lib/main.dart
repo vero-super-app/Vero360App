@@ -34,6 +34,7 @@ import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 
 import 'package:vero360_app/features/Accomodation/AccomodationModel/accommodation_share_link.dart';
+import 'package:vero360_app/features/car_hire/utils/car_hire_deep_link.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_share_link.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/food_share_navigation.dart';
@@ -872,6 +873,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       );
       return;
     }
+    if (isCarHireDeepLinkUri(uri)) {
+      openCarHireDeepLink(uri, navKey);
+      return;
+    }
     if (isAccommodationShareUri(uri)) {
       _openAccommodationFromShare(uri);
       return;
@@ -898,6 +903,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   bool _isContentShareDeepLink(Uri uri) =>
       isAccommodationShareUri(uri) ||
+      isCarHireDeepLinkUri(uri) ||
       isFoodShareUri(uri) ||
       isMarketplaceProductShareUri(uri) ||
       isMarketplaceShopShareUri(uri);

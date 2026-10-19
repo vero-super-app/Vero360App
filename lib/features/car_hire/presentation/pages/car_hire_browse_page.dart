@@ -11,15 +11,13 @@ import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_stat
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 
 /// Vehicle categories shown as the horizontal chip rail.
-enum _VehicleCategory { all, electric, suv, luxury, budget, sevenSeater }
+enum _VehicleCategory { all, suv, luxury, budget, sevenSeater }
 
 extension on _VehicleCategory {
   String get label {
     switch (this) {
       case _VehicleCategory.all:
         return 'All cars';
-      case _VehicleCategory.electric:
-        return 'Electric (EV)';
       case _VehicleCategory.suv:
         return 'SUVs';
       case _VehicleCategory.luxury:
@@ -35,8 +33,6 @@ extension on _VehicleCategory {
     switch (this) {
       case _VehicleCategory.all:
         return Icons.directions_car_rounded;
-      case _VehicleCategory.electric:
-        return Icons.bolt_rounded;
       case _VehicleCategory.suv:
         return Icons.airport_shuttle_rounded;
       case _VehicleCategory.luxury:
@@ -310,11 +306,6 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
   List<CarListing> _visibleCars(List<CarListing> cars) {
     final median = _medianRate(cars);
 
-    bool isElectric(CarListing car) {
-      final fuel = (car.fuelType ?? '').toUpperCase();
-      return fuel.contains('ELECTRIC') || fuel == 'EV' || fuel.contains('BEV');
-    }
-
     bool isSuv(CarListing car) {
       final body = (car.bodyType ?? '').toUpperCase();
       return body.contains('SUV') ||
@@ -327,8 +318,6 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
       switch (_category) {
         case _VehicleCategory.all:
           return true;
-        case _VehicleCategory.electric:
-          return isElectric(car);
         case _VehicleCategory.suv:
           return isSuv(car);
         case _VehicleCategory.luxury:

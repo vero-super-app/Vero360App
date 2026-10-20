@@ -6,10 +6,11 @@ import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_co
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_company_widgets.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
+import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 import 'package:vero360_app/utils/formatters.dart';
 
 /// Every unit in the company fleet: plates, service due dates and quick
-/// blocks. Pricing, photos and adding cars stay on the web workspace.
+/// blocks. Tapping a unit opens its workspace for rates and documents.
 class CarHireCompanyFleetPage extends ConsumerWidget {
   const CarHireCompanyFleetPage({super.key});
 
@@ -20,6 +21,22 @@ class CarHireCompanyFleetPage extends ConsumerWidget {
     return Scaffold(
       backgroundColor: CarHirePalette.background,
       appBar: carHireAppBar(title: 'Fleet'),
+      floatingActionButton: access.value?.canManageFleet == true
+          ? FloatingActionButton.extended(
+              backgroundColor: CarHirePalette.accent,
+              foregroundColor: Colors.white,
+              elevation: 2,
+              onPressed: () => CarHireRoutes.openCompanyAddVehicle(
+                context,
+                access: access.value!,
+              ),
+              icon: const Icon(Icons.add_rounded, size: 20),
+              label: const Text(
+                'Add car',
+                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+              ),
+            )
+          : null,
       body: access.when(
         loading: () => const CarHireLoadingState(message: 'Loading fleet…'),
         error: (error, _) => CarHireErrorState(
@@ -43,9 +60,9 @@ class _FleetView extends ConsumerWidget {
     final busy = ref.watch(companyActionProvider).submitting;
 
     Future<void> toggle(FleetUnit unit, bool inService) async {
-      final ok = await ref.read(companyActionProvider.notifier).run(
-            (api) => api.setUnitInService(unit.id, inService),
-          );
+      final ok = await ref
+          .read(companyActionProvider.notifier)
+          .run((api) => api.setUnitInService(unit.id, inService));
       if (!context.mounted) return;
       if (ok) {
         showCompanySnack(
@@ -79,19 +96,38 @@ class _FleetView extends ConsumerWidget {
         ),
         data: (units) {
           if (units.isEmpty) {
+            final canManage = access.canManageFleet;
             return ListView(
-              children: const [
+              children: [
                 CarHireEmptyState(
                   title: 'No cars yet',
-                  message: 'Add cars and plates from the web workspace.',
+                  message: canManage
+                      ? 'Add your first vehicle — plate, specs and photos take '
+                            'about two minutes.'
+                      : 'Cars added by the company owner will appear here.',
                 ),
+                if (canManage)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: FilledButton.icon(
+                      onPressed: () => CarHireRoutes.openCompanyAddVehicle(
+                        context,
+                        access: access,
+                      ),
+                      style: carHirePrimaryButton(),
+                      icon: const Icon(Icons.add_rounded, size: 18),
+                      label: const Text('Add a vehicle'),
+                    ),
+                  ),
               ],
             );
           }
 
           final listings = <String, List<FleetUnit>>{};
           for (final unit in units) {
-            listings.putIfAbsent(unit.listingKey, () => <FleetUnit>[]).add(unit);
+            listings
+                .putIfAbsent(unit.listingKey, () => <FleetUnit>[])
+                .add(unit);
           }
           final outOfService = units.where((u) => !u.car.isAvailable).length;
           final dueSoon = units.where((u) => u.serviceDueSoon).length;
@@ -106,7 +142,8 @@ class _FleetView extends ConsumerWidget {
                   child: CarHireInfoBanner(
                     icon: Icons.visibility_outlined,
                     title: 'View only',
-                    message: 'Ask the company owner for the fleet permission '
+                    message:
+                        'Ask the company owner for the fleet permission '
                         'to take cars out of service or block dates.',
                   ),
                 ),
@@ -154,6 +191,11 @@ class _FleetView extends ConsumerWidget {
                           onToggle: (value) => toggle(unit, value),
                           onBlock: () =>
                               showCompanyBlockSheet(context, unit: unit),
+                          onOpen: () => CarHireRoutes.openCompanyUnit(
+                            context,
+                            unit: unit,
+                            access: access,
+                          ),
                         ),
                     ],
                   ),
@@ -206,6 +248,7 @@ class _FleetUnitRow extends StatelessWidget {
     required this.busy,
     required this.onToggle,
     required this.onBlock,
+    required this.onOpen,
   });
 
   final FleetUnit unit;
@@ -213,6 +256,7 @@ class _FleetUnitRow extends StatelessWidget {
   final bool busy;
   final ValueChanged<bool> onToggle;
   final VoidCallback onBlock;
+  final VoidCallback onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -222,38 +266,45 @@ class _FleetUnitRow extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  unit.plateLabel,
-                  style: CarHireType.label.copyWith(
-                    color: CarHirePalette.onSurface,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Wrap(
-                  spacing: 6,
+            child: InkWell(
+              onTap: onOpen,
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      inService ? 'In service' : 'Out of service',
-                      style: CarHireType.labelSmall.copyWith(
-                        color: inService
-                            ? CarHirePalette.success
-                            : CarHirePalette.error,
+                      unit.plateLabel,
+                      style: CarHireType.label.copyWith(
+                        color: CarHirePalette.onSurface,
                       ),
                     ),
-                    if (unit.serviceDueSoon)
-                      Text(
-                        'Service due '
-                        '${CarHireFormatters.formatDate(unit.nextServiceDueAt!)}',
-                        style: CarHireType.labelSmall.copyWith(
-                          color: CarHirePalette.warning,
+                    const SizedBox(height: 2),
+                    Wrap(
+                      spacing: 6,
+                      children: [
+                        Text(
+                          inService ? 'In service' : 'Out of service',
+                          style: CarHireType.labelSmall.copyWith(
+                            color: inService
+                                ? CarHirePalette.success
+                                : CarHirePalette.error,
+                          ),
                         ),
-                      ),
+                        if (unit.serviceDueSoon)
+                          Text(
+                            'Service due '
+                            '${CarHireFormatters.formatDate(unit.nextServiceDueAt!)}',
+                            style: CarHireType.labelSmall.copyWith(
+                              color: CarHirePalette.warning,
+                            ),
+                          ),
+                      ],
+                    ),
                   ],
                 ),
-              ],
+              ),
             ),
           ),
           if (canManage) ...[

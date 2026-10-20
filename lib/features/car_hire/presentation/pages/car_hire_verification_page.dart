@@ -25,10 +25,7 @@ class _CarHireVerificationPageState
       <String, TextEditingController>{};
 
   TextEditingController _controllerFor(String requirement) {
-    return _controllers.putIfAbsent(
-      requirement,
-      () => TextEditingController(),
-    );
+    return _controllers.putIfAbsent(requirement, () => TextEditingController());
   }
 
   @override
@@ -70,8 +67,9 @@ class _CarHireVerificationPageState
     }
     if (evidence.isEmpty) return;
 
-    final result =
-        await ref.read(verificationSubmitProvider.notifier).submit(evidence);
+    final result = await ref
+        .read(verificationSubmitProvider.notifier)
+        .submit(evidence);
     if (!mounted) return;
 
     if (result != null) {
@@ -121,10 +119,7 @@ class _CarHireVerificationPageState
         loading: () => const CarHireLoadingState(
           message: 'Loading verification requirements…',
         ),
-        error: (error, _) => CarHireErrorState(
-          error: error,
-          onRetry: _refresh,
-        ),
+        error: (error, _) => CarHireErrorState(error: error, onRetry: _refresh),
         data: (verification) => RefreshIndicator(
           color: CarRentalColors.brandOrange,
           onRefresh: _refresh,
@@ -332,9 +327,6 @@ class _Panel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CarHireSurface(
-      padding: const EdgeInsets.all(16),
-      child: child,
-    );
+    return CarHireSurface(padding: const EdgeInsets.all(16), child: child);
   }
 }

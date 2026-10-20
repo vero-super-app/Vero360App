@@ -33,8 +33,7 @@ class CarHireInspectionPage extends ConsumerStatefulWidget {
       _CarHireInspectionPageState();
 }
 
-class _CarHireInspectionPageState
-    extends ConsumerState<CarHireInspectionPage> {
+class _CarHireInspectionPageState extends ConsumerState<CarHireInspectionPage> {
   static const List<String> _conditions = <String>[
     'EXCELLENT',
     'GOOD',
@@ -84,8 +83,7 @@ class _CarHireInspectionPageState
     setState(() => _formError = null);
 
     final odometerText = _odometerController.text.trim();
-    final odometer =
-        odometerText.isEmpty ? null : int.tryParse(odometerText);
+    final odometer = odometerText.isEmpty ? null : int.tryParse(odometerText);
     if (odometerText.isNotEmpty && odometer == null) {
       setState(() {
         _formError = 'Enter the odometer reading as a whole number of km.';
@@ -99,7 +97,9 @@ class _CarHireInspectionPageState
         .where((item) => item.isNotEmpty)
         .toList(growable: false);
 
-    final result = await ref.read(inspectionSubmitProvider.notifier).submit(
+    final result = await ref
+        .read(inspectionSubmitProvider.notifier)
+        .submit(
           bookingId: widget.bookingId,
           type: widget.type,
           odometer: odometer,
@@ -153,13 +153,14 @@ class _CarHireInspectionPageState
       if (note == null || !mounted) return;
     }
 
-    final result =
-        await ref.read(inspectionAcknowledgeProvider.notifier).acknowledge(
-              bookingId: widget.bookingId,
-              inspectionId: inspection.id,
-              accept: accept,
-              note: note,
-            );
+    final result = await ref
+        .read(inspectionAcknowledgeProvider.notifier)
+        .acknowledge(
+          bookingId: widget.bookingId,
+          inspectionId: inspection.id,
+          accept: accept,
+          note: note,
+        );
     if (!mounted) return;
 
     if (result != null) {
@@ -187,9 +188,7 @@ class _CarHireInspectionPageState
 
   @override
   Widget build(BuildContext context) {
-    final inspections = ref.watch(
-      bookingInspectionsProvider(widget.bookingId),
-    );
+    final inspections = ref.watch(bookingInspectionsProvider(widget.bookingId));
     final submitState = ref.watch(inspectionSubmitProvider);
     final acknowledgeState = ref.watch(inspectionAcknowledgeProvider);
 
@@ -236,7 +235,9 @@ class _CarHireInspectionPageState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            _isPickup ? 'Record the vehicle at pick-up' : 'Record the vehicle at return',
+            _isPickup
+                ? 'Record the vehicle at pick-up'
+                : 'Record the vehicle at return',
             style: const TextStyle(
               color: CarRentalColors.title,
               fontSize: 15,
@@ -342,36 +343,38 @@ class _CarHireInspectionPageState
           Wrap(
             spacing: 8,
             runSpacing: 4,
-            children: _checklistOptions.map((item) {
-              final selected = _checklist.contains(item);
-              return FilterChip(
-                label: Text(_humanize(item)),
-                selected: selected,
-                selectedColor: CarRentalColors.brandOrangePale,
-                checkmarkColor: CarRentalColors.brandOrange,
-                labelStyle: TextStyle(
-                  color: selected
-                      ? CarRentalColors.title
-                      : CarRentalColors.body,
-                  fontSize: 11.5,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                ),
-                side: BorderSide(
-                  color: selected
-                      ? CarRentalColors.brandOrange
-                      : CarHirePalette.hairline,
-                ),
-                onSelected: (value) {
-                  setState(() {
-                    if (value) {
-                      _checklist.add(item);
-                    } else {
-                      _checklist.remove(item);
-                    }
-                  });
-                },
-              );
-            }).toList(growable: false),
+            children: _checklistOptions
+                .map((item) {
+                  final selected = _checklist.contains(item);
+                  return FilterChip(
+                    label: Text(_humanize(item)),
+                    selected: selected,
+                    selectedColor: CarRentalColors.brandOrangePale,
+                    checkmarkColor: CarRentalColors.brandOrange,
+                    labelStyle: TextStyle(
+                      color: selected
+                          ? CarRentalColors.title
+                          : CarRentalColors.body,
+                      fontSize: 11.5,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    ),
+                    side: BorderSide(
+                      color: selected
+                          ? CarRentalColors.brandOrange
+                          : CarHirePalette.hairline,
+                    ),
+                    onSelected: (value) {
+                      setState(() {
+                        if (value) {
+                          _checklist.add(item);
+                        } else {
+                          _checklist.remove(item);
+                        }
+                      });
+                    },
+                  );
+                })
+                .toList(growable: false),
           ),
           const SizedBox(height: 12),
           TextField(
@@ -456,10 +459,7 @@ class _CarHireInspectionPageState
               if (items.isEmpty) {
                 return const Text(
                   'No inspections recorded for this booking yet.',
-                  style: TextStyle(
-                    color: CarRentalColors.body,
-                    fontSize: 12,
-                  ),
+                  style: TextStyle(color: CarRentalColors.body, fontSize: 12),
                 );
               }
               return Column(
@@ -504,9 +504,7 @@ class _CarHireInspectionPageState
                 ),
               ),
               const SizedBox(width: 6),
-              Flexible(
-                child: CarHireStatusBadge.inspection(inspection.status),
-              ),
+              Flexible(child: CarHireStatusBadge.inspection(inspection.status)),
             ],
           ),
           const SizedBox(height: 6),
@@ -688,7 +686,8 @@ class _DeclineInspectionDialogState extends State<_DeclineInspectionDialog> {
             backgroundColor: CarRentalColors.error,
             foregroundColor: Colors.white,
           ),
-          onPressed: () => Navigator.of(context).pop(_noteController.text.trim()),
+          onPressed: () =>
+              Navigator.of(context).pop(_noteController.text.trim()),
           child: const Text('Decline'),
         ),
       ],
@@ -703,10 +702,7 @@ class _Panel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CarHireSurface(
-      padding: const EdgeInsets.all(16),
-      child: child,
-    );
+    return CarHireSurface(padding: const EdgeInsets.all(16), child: child);
   }
 }
 
@@ -738,10 +734,7 @@ class _InfoRow extends StatelessWidget {
             width: 72,
             child: Text(
               label,
-              style: const TextStyle(
-                color: CarRentalColors.grey,
-                fontSize: 11,
-              ),
+              style: const TextStyle(color: CarRentalColors.grey, fontSize: 11),
             ),
           ),
           Expanded(

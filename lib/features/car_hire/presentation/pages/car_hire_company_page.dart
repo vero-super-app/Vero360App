@@ -49,7 +49,8 @@ class CarHireCompanyPage extends ConsumerWidget {
             body: const CarHireEmptyState(
               icon: Icons.business_outlined,
               title: 'No active company',
-              message: 'Company mode is for staff of an approved car hire '
+              message:
+                  'Company mode is for staff of an approved car hire '
                   'company. Ask the company owner to invite your Vero360 email.',
             ),
           );
@@ -103,7 +104,8 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
   @override
   Widget build(BuildContext context) {
     final fleetAsync = ref.watch(companyFleetProvider);
-    final bookings = ref.watch(companyBookingsProvider('ACTIVE')).value ??
+    final bookings =
+        ref.watch(companyBookingsProvider('ACTIVE')).value ??
         const <CarHireBooking>[];
     final boardAsync = widget.access.canViewBookings
         ? ref.watch(companyDispatchProvider(companyDateKey(DateTime.now())))
@@ -231,24 +233,26 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
 
   List<FleetUnit> _visibleUnits(_FleetSnapshot snapshot) {
     final query = _query.trim().toLowerCase();
-    return snapshot.units.where((unit) {
-      final booking = snapshot.activeByUnit[unit.id];
-      final matchesFilter = switch (_filter) {
-        _UnitFilter.all => true,
-        _UnitFilter.onRoad => booking != null,
-        _UnitFilter.ready => booking == null && unit.car.isAvailable,
-        _UnitFilter.prep => !unit.car.isAvailable,
-      };
-      if (!matchesFilter) return false;
-      if (query.isEmpty) return true;
-      final haystack = [
-        unit.car.title,
-        unit.plateLabel,
-        unit.car.branchName ?? '',
-        booking?.renterName ?? '',
-      ].join(' ').toLowerCase();
-      return haystack.contains(query);
-    }).toList(growable: false);
+    return snapshot.units
+        .where((unit) {
+          final booking = snapshot.activeByUnit[unit.id];
+          final matchesFilter = switch (_filter) {
+            _UnitFilter.all => true,
+            _UnitFilter.onRoad => booking != null,
+            _UnitFilter.ready => booking == null && unit.car.isAvailable,
+            _UnitFilter.prep => !unit.car.isAvailable,
+          };
+          if (!matchesFilter) return false;
+          if (query.isEmpty) return true;
+          final haystack = [
+            unit.car.title,
+            unit.plateLabel,
+            unit.car.branchName ?? '',
+            booking?.renterName ?? '',
+          ].join(' ').toLowerCase();
+          return haystack.contains(query);
+        })
+        .toList(growable: false);
   }
 
   List<Widget> _carSection(
@@ -268,14 +272,26 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
     }
     if (!fleet.hasValue) {
       return const [
-        _QuietCard(icon: Icons.directions_car_outlined, message: 'Loading cars…'),
+        _QuietCard(
+          icon: Icons.directions_car_outlined,
+          message: 'Loading cars…',
+        ),
       ];
     }
     if (snapshot.units.isEmpty) {
-      return const [
+      return [
         _QuietCard(
           icon: Icons.directions_car_outlined,
-          message: 'No cars yet · add them from the web workspace.',
+          message: widget.access.canManageFleet
+              ? 'No cars yet · add your first vehicle.'
+              : 'No cars in this fleet yet.',
+          actionLabel: widget.access.canManageFleet ? 'Add car' : null,
+          onAction: widget.access.canManageFleet
+              ? () => CarHireRoutes.openCompanyAddVehicle(
+                  context,
+                  access: widget.access,
+                )
+              : null,
         ),
       ];
     }
@@ -293,12 +309,15 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
           unit: unit,
           booking: snapshot.activeByUnit[unit.id],
           canManage: widget.access.canManageFleet,
-          onOpenBooking: (booking) => CarHireRoutes.openCompanyBooking(
-            context,
-            bookingId: booking.id,
-          ),
+          onOpenBooking: (booking) =>
+              CarHireRoutes.openCompanyBooking(context, bookingId: booking.id),
           onBlock: () => showCompanyBlockSheet(context, unit: unit),
           onOpenFleet: () => CarHireRoutes.openCompanyFleet(context),
+          onOpenUnit: () => CarHireRoutes.openCompanyUnit(
+            context,
+            unit: unit,
+            access: widget.access,
+          ),
         ),
       if (remaining > 0)
         Padding(
@@ -311,7 +330,10 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
             ),
             child: Text(
               'Show all ${visible.length} cars',
-              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+              style: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ),
@@ -322,7 +344,8 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
 Map<int, CarHireBooking> _activeByUnit(List<CarHireBooking> bookings) {
   final map = <int, CarHireBooking>{};
   for (final booking in bookings) {
-    final onRoad = booking.bookingStatus == BookingStatus.active ||
+    final onRoad =
+        booking.bookingStatus == BookingStatus.active ||
         booking.bookingStatus == BookingStatus.incidentReported;
     if (!onRoad) continue;
     final unitId = booking.assignedCarId ?? booking.carId;
@@ -342,9 +365,9 @@ class _FleetSnapshot {
 
   int get onRoad => activeByUnit.length;
 
-  int get prep =>
-      units.where((u) => !u.car.isAvailable && !activeByUnit.containsKey(u.id))
-          .length;
+  int get prep => units
+      .where((u) => !u.car.isAvailable && !activeByUnit.containsKey(u.id))
+      .length;
 
   int get ready {
     final value = total - onRoad - prep;
@@ -420,6 +443,30 @@ class _CompanyStrip extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
+        if (access.canManageFleet) ...[
+          CarHireIconButton(
+            icon: Icons.add_rounded,
+            tooltip: 'Add car',
+            size: 38,
+            iconSize: 20,
+            background: CarHirePalette.accent,
+            foreground: Colors.white,
+            onTap: () async {
+              final created = await CarHireRoutes.openCompanyAddVehicle(
+                context,
+                access: access,
+              );
+              if (created != null && context.mounted) {
+                CarHireRoutes.openCompanyUnit(
+                  context,
+                  unit: created,
+                  access: access,
+                );
+              }
+            },
+          ),
+          const SizedBox(width: 8),
+        ],
         CarHireIconButton(
           icon: Icons.directions_car_filled_outlined,
           tooltip: 'Fleet',
@@ -830,7 +877,8 @@ class _Operation {
   final Color foreground;
 
   String get subtitle {
-    final car = booking.car?.title ??
+    final car =
+        booking.car?.title ??
         booking.assignedPlate ??
         'Car #${booking.assignedCarId ?? booking.carId ?? '—'}';
     return [
@@ -950,7 +998,10 @@ class _QuietRow extends StatelessWidget {
               ),
               child: Text(
                 actionLabel!,
-                style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700),
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
         ],
@@ -997,11 +1048,11 @@ enum _UnitFilter {
   prep;
 
   String labelFor(_FleetSnapshot snapshot) => switch (this) {
-        _UnitFilter.all => 'All (${snapshot.total})',
-        _UnitFilter.onRoad => 'On road (${snapshot.onRoad})',
-        _UnitFilter.ready => 'Ready (${snapshot.ready})',
-        _UnitFilter.prep => 'In prep (${snapshot.prep})',
-      };
+    _UnitFilter.all => 'All (${snapshot.total})',
+    _UnitFilter.onRoad => 'On road (${snapshot.onRoad})',
+    _UnitFilter.ready => 'Ready (${snapshot.ready})',
+    _UnitFilter.prep => 'In prep (${snapshot.prep})',
+  };
 }
 
 class _FilterPill extends StatelessWidget {
@@ -1051,6 +1102,7 @@ class _CarCard extends StatelessWidget {
     required this.onOpenBooking,
     required this.onBlock,
     required this.onOpenFleet,
+    required this.onOpenUnit,
   });
 
   final FleetUnit unit;
@@ -1059,6 +1111,7 @@ class _CarCard extends StatelessWidget {
   final ValueChanged<CarHireBooking> onOpenBooking;
   final VoidCallback onBlock;
   final VoidCallback onOpenFleet;
+  final VoidCallback onOpenUnit;
 
   bool get _onRoad => booking != null;
   bool get _inPrep => !unit.car.isAvailable && !_onRoad;
@@ -1107,19 +1160,19 @@ class _CarCard extends StatelessWidget {
     final primaryLabel = _onRoad
         ? 'Open booking'
         : canManage
-            ? 'Block dates'
-            : 'View unit';
+        ? 'Block dates'
+        : 'View unit';
     final primaryIcon = _onRoad
         ? Icons.receipt_long_outlined
         : canManage
-            ? Icons.event_busy_outlined
-            : Icons.tune_rounded;
+        ? Icons.event_busy_outlined
+        : Icons.tune_rounded;
 
     VoidCallback primaryAction = _onRoad
         ? () => onOpenBooking(booking!)
         : canManage
-            ? onBlock
-            : onOpenFleet;
+        ? onBlock
+        : onOpenFleet;
 
     return CarHireSurface(
       margin: const EdgeInsets.only(bottom: 10),
@@ -1128,105 +1181,106 @@ class _CarCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: SizedBox(
-                  width: 76,
-                  height: 60,
-                  child: _thumbnail(),
+          GestureDetector(
+            onTap: onOpenUnit,
+            behavior: HitTestBehavior.opaque,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: SizedBox(width: 76, height: 60, child: _thumbnail()),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            unit.car.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: CarHireType.title.copyWith(fontSize: 13.5),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: CarHirePalette.surfaceContainer,
-                            borderRadius: BorderRadius.circular(5),
-                          ),
-                          child: Text(
-                            _plate,
-                            style: const TextStyle(
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0.4,
-                              color: CarHirePalette.onSurface,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (_meta.isNotEmpty) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        _meta,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: CarHireType.bodySmall.copyWith(fontSize: 11),
-                      ),
-                    ],
-                    const SizedBox(height: 5),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: _toneSoft,
-                        borderRadius:
-                            BorderRadius.circular(CarHireShape.pillRadius),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
                         children: [
-                          Container(
-                            width: 5,
-                            height: 5,
-                            decoration: BoxDecoration(
-                              color: _tone,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 5),
-                          Flexible(
+                          Expanded(
                             child: Text(
-                              _statusLabel,
+                              unit.car.title,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                                color: _tone,
+                              style: CarHireType.title.copyWith(fontSize: 13.5),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: CarHirePalette.surfaceContainer,
+                              borderRadius: BorderRadius.circular(5),
+                            ),
+                            child: Text(
+                              _plate,
+                              style: const TextStyle(
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.4,
+                                color: CarHirePalette.onSurface,
                               ),
                             ),
                           ),
                         ],
                       ),
-                    ),
-                  ],
+                      if (_meta.isNotEmpty) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          _meta,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: CarHireType.bodySmall.copyWith(fontSize: 11),
+                        ),
+                      ],
+                      const SizedBox(height: 5),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _toneSoft,
+                          borderRadius: BorderRadius.circular(
+                            CarHireShape.pillRadius,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 5,
+                              height: 5,
+                              decoration: BoxDecoration(
+                                color: _tone,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 5),
+                            Flexible(
+                              child: Text(
+                                _statusLabel,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: _tone,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           if (_onRoad) ...[
             const SizedBox(height: 8),
@@ -1285,7 +1339,8 @@ class _CarCard extends StatelessWidget {
     if (end == null) return 'soon';
     final now = DateTime.now();
     final local = end.toLocal();
-    final sameDay = local.year == now.year &&
+    final sameDay =
+        local.year == now.year &&
         local.month == now.month &&
         local.day == now.day;
     final time = CarHireFormatters.formatTime(local);

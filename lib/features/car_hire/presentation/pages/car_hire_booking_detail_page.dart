@@ -85,8 +85,12 @@ class _CarHireBookingDetailPageState
   }
 
   Future<void> _refreshStatus() async {
-    final current = _localBooking ??
-        ref.read(carHireBookingDetailProvider(widget.bookingId)).asData?.value ??
+    final current =
+        _localBooking ??
+        ref
+            .read(carHireBookingDetailProvider(widget.bookingId))
+            .asData
+            ?.value ??
         widget.initialBooking;
     if (current == null) return;
 
@@ -96,8 +100,7 @@ class _CarHireBookingDetailPageState
     });
 
     try {
-      final fresh =
-          await ref.read(carHireApiProvider).getBooking(current.id);
+      final fresh = await ref.read(carHireApiProvider).getBooking(current.id);
       if (!mounted) return;
       setState(() => _localBooking = fresh);
       ref.invalidate(myCarHireBookingsProvider);
@@ -155,8 +158,9 @@ class _CarHireBookingDetailPageState
     });
 
     try {
-      final updated =
-          await ref.read(carHireApiProvider).cancelBooking(booking.id);
+      final updated = await ref
+          .read(carHireApiProvider)
+          .cancelBooking(booking.id);
       if (!mounted) return;
       setState(() => _localBooking = updated);
       ref.invalidate(myCarHireBookingsProvider);
@@ -186,10 +190,9 @@ class _CarHireBookingDetailPageState
     });
 
     try {
-      final initiation = await ref.read(carHireApiProvider).initiatePayment(
-            booking.id,
-            phoneNumber: phone,
-          );
+      final initiation = await ref
+          .read(carHireApiProvider)
+          .initiatePayment(booking.id, phoneNumber: phone);
       if (initiation.booking != null && mounted) {
         setState(() => _localBooking = initiation.booking);
       }
@@ -198,7 +201,8 @@ class _CarHireBookingDetailPageState
       if (rawUrl == null || rawUrl.isEmpty) {
         if (!mounted) return;
         setState(() {
-          _actionError = 'The payment provider did not return a checkout link. '
+          _actionError =
+              'The payment provider did not return a checkout link. '
               'Please try again.';
         });
         return;
@@ -323,7 +327,7 @@ class _CarHireBookingDetailPageState
         context,
         extension.hasAdditionalAmount
             ? 'Extension requested. Additional amount quoted: '
-                '${extension.additionalAmountLabel}.'
+                  '${extension.additionalAmountLabel}.'
             : 'Extension requested. No additional amount was quoted.',
       );
       return;
@@ -360,8 +364,10 @@ class _CarHireBookingDetailPageState
         latest = inspection;
         continue;
       }
-      final current = inspection.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-      final previous = latest.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final current =
+          inspection.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final previous =
+          latest.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
       if (current.isAfter(previous)) latest = inspection;
     }
     return latest;
@@ -370,12 +376,10 @@ class _CarHireBookingDetailPageState
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(carHireBookingDetailProvider(widget.bookingId));
-    final booking = _localBooking ??
-        async.asData?.value ??
-        widget.initialBooking;
+    final booking =
+        _localBooking ?? async.asData?.value ?? widget.initialBooking;
     final extensions = ref.watch(bookingExtensionsProvider(widget.bookingId));
-    final inspections =
-        ref.watch(bookingInspectionsProvider(widget.bookingId));
+    final inspections = ref.watch(bookingInspectionsProvider(widget.bookingId));
     final extensionState = ref.watch(extensionRequestProvider);
 
     return Scaffold(
@@ -406,10 +410,8 @@ class _CarHireBookingDetailPageState
               loading: () => const CarHireLoadingState(
                 message: 'Loading booking details…',
               ),
-              error: (error, _) => CarHireErrorState(
-                error: error,
-                onRetry: _refresh,
-              ),
+              error: (error, _) =>
+                  CarHireErrorState(error: error, onRetry: _refresh),
               data: (_) => CarHireErrorState(
                 message: 'We could not find this booking.',
                 onRetry: _refresh,
@@ -468,10 +470,7 @@ class _CarHireBookingDetailPageState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            booking.bookingNumberLabel,
-            style: CarHireType.labelSmall,
-          ),
+          Text(booking.bookingNumberLabel, style: CarHireType.labelSmall),
           const SizedBox(height: 2),
           Text(
             booking.car?.title ?? 'Vehicle rental',
@@ -688,15 +687,20 @@ class _CarHireBookingDetailPageState
     AsyncValue<List<HandoverInspection>> inspections,
   ) {
     final pickup = _latestInspection(inspections, InspectionType.pickup);
-    final returnInspection =
-        _latestInspection(inspections, InspectionType.returnInspection);
+    final returnInspection = _latestInspection(
+      inspections,
+      InspectionType.returnInspection,
+    );
     final canPickup = _canRecordInspection(booking, InspectionType.pickup);
-    final canReturn = _canRecordInspection(booking, InspectionType.returnInspection);
+    final canReturn = _canRecordInspection(
+      booking,
+      InspectionType.returnInspection,
+    );
     final items = inspections.asData?.value ?? const <HandoverInspection>[];
-    final awaitingDecision =
-        items.where((inspection) => inspection.awaitingRenterDecision).length;
-    final disputed =
-        items.where((inspection) => inspection.isDisputed).length;
+    final awaitingDecision = items
+        .where((inspection) => inspection.awaitingRenterDecision)
+        .length;
+    final disputed = items.where((inspection) => inspection.isDisputed).length;
 
     return _Panel(
       child: Column(
@@ -721,9 +725,8 @@ class _CarHireBookingDetailPageState
               message: inspections.error is CarHireApiException
                   ? (inspections.error as CarHireApiException).message
                   : UserFacingError.from(inspections.error!),
-              onRetry: () => ref.invalidate(
-                bookingInspectionsProvider(widget.bookingId),
-              ),
+              onRetry: () =>
+                  ref.invalidate(bookingInspectionsProvider(widget.bookingId)),
             ),
           ],
           if (awaitingDecision > 0) ...[
@@ -796,11 +799,11 @@ class _CarHireBookingDetailPageState
                 child: OutlinedButton.icon(
                   onPressed: canPickup
                       ? () => CarHireRoutes.openInspection(
-                            context,
-                            bookingId: booking.id,
-                            type: InspectionType.pickup,
-                            booking: booking,
-                          )
+                          context,
+                          bookingId: booking.id,
+                          type: InspectionType.pickup,
+                          booking: booking,
+                        )
                       : null,
                   icon: const Icon(Icons.login_rounded, size: 17),
                   label: const Text('Pick-up'),
@@ -814,11 +817,11 @@ class _CarHireBookingDetailPageState
                 child: OutlinedButton.icon(
                   onPressed: canReturn
                       ? () => CarHireRoutes.openInspection(
-                            context,
-                            bookingId: booking.id,
-                            type: InspectionType.returnInspection,
-                            booking: booking,
-                          )
+                          context,
+                          bookingId: booking.id,
+                          type: InspectionType.returnInspection,
+                          booking: booking,
+                        )
                       : null,
                   icon: const Icon(Icons.logout_rounded, size: 17),
                   label: const Text('Return'),
@@ -853,10 +856,7 @@ class _CarHireBookingDetailPageState
           width: 62,
           child: Text(
             label,
-            style: const TextStyle(
-              color: CarRentalColors.grey,
-              fontSize: 11.5,
-            ),
+            style: const TextStyle(color: CarRentalColors.grey, fontSize: 11.5),
           ),
         ),
         Expanded(
@@ -876,9 +876,7 @@ class _CarHireBookingDetailPageState
         ),
         if (inspection != null) ...[
           const SizedBox(width: 8),
-          Flexible(
-            child: CarHireStatusBadge.inspection(inspection.status),
-          ),
+          Flexible(child: CarHireStatusBadge.inspection(inspection.status)),
         ],
       ],
     );
@@ -908,9 +906,8 @@ class _CarHireBookingDetailPageState
               message: extensions.error is CarHireApiException
                   ? (extensions.error as CarHireApiException).message
                   : UserFacingError.from(extensions.error!),
-              onRetry: () => ref.invalidate(
-                bookingExtensionsProvider(widget.bookingId),
-              ),
+              onRetry: () =>
+                  ref.invalidate(bookingExtensionsProvider(widget.bookingId)),
             )
           else if (items.isEmpty)
             const SizedBox.shrink()
@@ -943,9 +940,7 @@ class _CarHireBookingDetailPageState
                         ),
                         const SizedBox(width: 6),
                         Flexible(
-                          child: CarHireStatusBadge.extension(
-                            extension.status,
-                          ),
+                          child: CarHireStatusBadge.extension(extension.status),
                         ),
                       ],
                     ),
@@ -953,7 +948,7 @@ class _CarHireBookingDetailPageState
                     Text(
                       extension.hasAdditionalAmount
                           ? 'Additional amount quoted: '
-                              '${extension.additionalAmountLabel}'
+                                '${extension.additionalAmountLabel}'
                           : 'No additional amount was quoted.',
                       style: const TextStyle(
                         color: CarRentalColors.body,
@@ -1097,8 +1092,8 @@ class _CarHireBookingDetailPageState
   }
 
   Widget _manageCard(CarHireBooking booking) {
-    final canCancel = booking.canCancel &&
-        booking.bookingStatus != BookingStatus.cancelled;
+    final canCancel =
+        booking.canCancel && booking.bookingStatus != BookingStatus.cancelled;
 
     return CarHireSurface(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1212,8 +1207,7 @@ class _PaymentPhoneDialogState extends State<_PaymentPhoneDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: () =>
-              Navigator.of(context).pop(_controller.text.trim()),
+          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
           child: const Text('Continue'),
         ),
       ],
@@ -1228,10 +1222,7 @@ class _Panel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CarHireSurface(
-      padding: const EdgeInsets.all(16),
-      child: child,
-    );
+    return CarHireSurface(padding: const EdgeInsets.all(16), child: child);
   }
 }
 

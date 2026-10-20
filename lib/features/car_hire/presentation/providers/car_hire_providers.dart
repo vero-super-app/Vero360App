@@ -16,11 +16,7 @@ final carHireApiProvider = Provider<CarHireApi>((ref) => CarHireApi());
 // ---------------------------------------------------------------------------
 
 class CarHireSearchQuery {
-  const CarHireSearchQuery({
-    this.pickupArea = '',
-    this.startAt,
-    this.endAt,
-  });
+  const CarHireSearchQuery({this.pickupArea = '', this.startAt, this.endAt});
 
   final String pickupArea;
   final DateTime? startAt;
@@ -62,8 +58,12 @@ class CarHireSearchNotifier extends Notifier<CarHireSearchQuery> {
   @override
   CarHireSearchQuery build() {
     final now = DateTime.now();
-    final start = DateTime(now.year, now.month, now.day, 9)
-        .add(const Duration(days: 1));
+    final start = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      9,
+    ).add(const Duration(days: 1));
     final end = DateTime(start.year, start.month, start.day + 3, 17);
     return CarHireSearchQuery(startAt: start, endAt: end);
   }
@@ -97,8 +97,8 @@ class CarHireSearchNotifier extends Notifier<CarHireSearchQuery> {
 
 final carHireSearchProvider =
     NotifierProvider<CarHireSearchNotifier, CarHireSearchQuery>(
-  CarHireSearchNotifier.new,
-);
+      CarHireSearchNotifier.new,
+    );
 
 // ---------------------------------------------------------------------------
 // Browse filters
@@ -132,13 +132,13 @@ class CarHireFilters {
 
   /// Filters chosen in the filter sheet (text search is counted separately).
   int get activeCount => [
-        company != null,
-        transmission != null,
-        fuelType != null,
-        minSeats != null,
-        maxRate != null,
-        instantOnly,
-      ].where((active) => active).length;
+    company != null,
+    transmission != null,
+    fuelType != null,
+    minSeats != null,
+    maxRate != null,
+    instantOnly,
+  ].where((active) => active).length;
 
   bool get isEmpty => activeCount == 0 && text.trim().isEmpty;
 
@@ -176,14 +176,14 @@ class CarHireFilters {
 
   @override
   int get hashCode => Object.hash(
-        company?.id,
-        transmission,
-        fuelType,
-        minSeats,
-        maxRate,
-        instantOnly,
-        text,
-      );
+    company?.id,
+    transmission,
+    fuelType,
+    minSeats,
+    maxRate,
+    instantOnly,
+    text,
+  );
 }
 
 class CarHireFiltersNotifier extends Notifier<CarHireFilters> {
@@ -208,13 +208,14 @@ class CarHireFiltersNotifier extends Notifier<CarHireFilters> {
 
 final carHireFiltersProvider =
     NotifierProvider<CarHireFiltersNotifier, CarHireFilters>(
-  CarHireFiltersNotifier.new,
-);
+      CarHireFiltersNotifier.new,
+    );
 
 /// Companies with cars on offer. Empty when the list cannot be loaded, so the
 /// browse page simply hides the company rail.
-final carHireCompaniesProvider =
-    FutureProvider<List<CarHireCompanyOption>>((ref) async {
+final carHireCompaniesProvider = FutureProvider<List<CarHireCompanyOption>>((
+  ref,
+) async {
   try {
     return await ref.watch(carHireApiProvider).getPublicCompanies();
   } catch (_) {
@@ -262,24 +263,28 @@ final carHireResultsProvider = FutureProvider<CarHireSearchResult>((ref) async {
 // Detail + bookings
 // ---------------------------------------------------------------------------
 
-final carHireDetailProvider =
-    FutureProvider.family<CarListing, int>((ref, carId) async {
+final carHireDetailProvider = FutureProvider.family<CarListing, int>((
+  ref,
+  carId,
+) async {
   final api = ref.watch(carHireApiProvider);
   return api.getCar(carId);
 });
 
-final myCarHireBookingsProvider =
-    FutureProvider<List<CarHireBooking>>((ref) async {
+final myCarHireBookingsProvider = FutureProvider<List<CarHireBooking>>((
+  ref,
+) async {
   final api = ref.watch(carHireApiProvider);
   final page = await api.getMyBookings();
   return page.data;
 });
 
-final carHireBookingDetailProvider =
-    FutureProvider.family<CarHireBooking, int>((ref, bookingId) async {
-  final api = ref.watch(carHireApiProvider);
-  return api.getBooking(bookingId);
-});
+final carHireBookingDetailProvider = FutureProvider.family<CarHireBooking, int>(
+  (ref, bookingId) async {
+    final api = ref.watch(carHireApiProvider);
+    return api.getBooking(bookingId);
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Quote controller
@@ -343,7 +348,9 @@ class CarHireQuoteController extends Notifier<CarHireQuoteState> {
     state = CarHireQuoteState(loading: true, request: request);
 
     try {
-      final quote = await ref.read(carHireApiProvider).createQuote(
+      final quote = await ref
+          .read(carHireApiProvider)
+          .createQuote(
             carId: request.carId,
             startAt: request.startAt,
             endAt: request.endAt,
@@ -379,8 +386,8 @@ class CarHireQuoteController extends Notifier<CarHireQuoteState> {
 
 final quoteControllerProvider =
     NotifierProvider<CarHireQuoteController, CarHireQuoteState>(
-  CarHireQuoteController.new,
-);
+      CarHireQuoteController.new,
+    );
 
 // ---------------------------------------------------------------------------
 // Booking submission controller
@@ -427,7 +434,9 @@ class CarHireBookingSubmissionController
     );
 
     try {
-      final booking = await ref.read(carHireApiProvider).createBooking(
+      final booking = await ref
+          .read(carHireApiProvider)
+          .createBooking(
             quoteId: quoteId,
             carId: carId,
             startDate: startDate,
@@ -443,10 +452,7 @@ class CarHireBookingSubmissionController
       ref.invalidate(myCarHireBookingsProvider);
       return booking;
     } on CarHireApiException catch (error) {
-      state = CarHireBookingSubmissionState(
-        error: error,
-        idempotencyKey: key,
-      );
+      state = CarHireBookingSubmissionState(error: error, idempotencyKey: key);
       return null;
     } catch (error) {
       state = CarHireBookingSubmissionState(
@@ -473,10 +479,10 @@ class CarHireBookingSubmissionController
 }
 
 final bookingSubmissionProvider =
-    NotifierProvider<CarHireBookingSubmissionController,
-        CarHireBookingSubmissionState>(
-  CarHireBookingSubmissionController.new,
-);
+    NotifierProvider<
+      CarHireBookingSubmissionController,
+      CarHireBookingSubmissionState
+    >(CarHireBookingSubmissionController.new);
 
 // ---------------------------------------------------------------------------
 // Verification
@@ -493,28 +499,30 @@ final verificationProvider = FutureProvider<CarHireVerification>((ref) async {
 
 final bookingExtensionsProvider =
     FutureProvider.family<List<BookingExtension>, int>((ref, bookingId) async {
-  return ref.watch(carHireApiProvider).getExtensions(bookingId);
-});
+      return ref.watch(carHireApiProvider).getExtensions(bookingId);
+    });
 
 final bookingInspectionsProvider =
-    FutureProvider.family<List<HandoverInspection>, int>(
-  (ref, bookingId) async {
-    return ref.watch(carHireApiProvider).getInspections(bookingId);
-  },
-);
+    FutureProvider.family<List<HandoverInspection>, int>((
+      ref,
+      bookingId,
+    ) async {
+      return ref.watch(carHireApiProvider).getInspections(bookingId);
+    });
 
 final bookingIncidentsProvider =
     FutureProvider.family<List<IncidentReport>, int>((ref, bookingId) async {
-  return ref.watch(carHireApiProvider).getIncidents(bookingId);
-});
+      return ref.watch(carHireApiProvider).getIncidents(bookingId);
+    });
 
 final bookingSupportCasesProvider =
     FutureProvider.family<List<SupportCase>, int>((ref, bookingId) async {
-  return ref.watch(carHireApiProvider).getSupportCases(bookingId);
-});
+      return ref.watch(carHireApiProvider).getSupportCases(bookingId);
+    });
 
-final verificationRequirementsProvider =
-    FutureProvider<CarHireVerification>((ref) async {
+final verificationRequirementsProvider = FutureProvider<CarHireVerification>((
+  ref,
+) async {
   return ref.watch(carHireApiProvider).getVerificationRequirements();
 });
 
@@ -550,10 +558,9 @@ class CarHireExtensionController extends Notifier<CarHireMutationState> {
 
     state = const CarHireMutationState(submitting: true);
     try {
-      final extension = await ref.read(carHireApiProvider).requestExtension(
-            bookingId,
-            requestedEndAt: requestedEndAt,
-          );
+      final extension = await ref
+          .read(carHireApiProvider)
+          .requestExtension(bookingId, requestedEndAt: requestedEndAt);
       state = const CarHireMutationState(succeeded: true);
       ref.invalidate(bookingExtensionsProvider(bookingId));
       ref.invalidate(carHireBookingDetailProvider(bookingId));
@@ -568,11 +575,10 @@ class CarHireExtensionController extends Notifier<CarHireMutationState> {
 
 final extensionRequestProvider =
     NotifierProvider<CarHireExtensionController, CarHireMutationState>(
-  CarHireExtensionController.new,
-);
+      CarHireExtensionController.new,
+    );
 
-class CarHireInspectionSubmitController
-    extends Notifier<CarHireMutationState> {
+class CarHireInspectionSubmitController extends Notifier<CarHireMutationState> {
   @override
   CarHireMutationState build() => const CarHireMutationState();
 
@@ -599,7 +605,9 @@ class CarHireInspectionSubmitController
 
     state = const CarHireMutationState(submitting: true);
     try {
-      final inspection = await ref.read(carHireApiProvider).submitInspection(
+      final inspection = await ref
+          .read(carHireApiProvider)
+          .submitInspection(
             bookingId,
             type: type == InspectionType.pickup ? 'pickup' : 'return',
             odometer: odometer,
@@ -622,8 +630,8 @@ class CarHireInspectionSubmitController
 
 final inspectionSubmitProvider =
     NotifierProvider<CarHireInspectionSubmitController, CarHireMutationState>(
-  CarHireInspectionSubmitController.new,
-);
+      CarHireInspectionSubmitController.new,
+    );
 
 class CarHireInspectionAcknowledgeController
     extends Notifier<CarHireMutationState> {
@@ -640,13 +648,14 @@ class CarHireInspectionAcknowledgeController
 
     state = const CarHireMutationState(submitting: true);
     try {
-      final inspection =
-          await ref.read(carHireApiProvider).acknowledgeInspection(
-                bookingId,
-                inspectionId: inspectionId,
-                decision: accept ? 'ACCEPTED' : 'DECLINED',
-                note: note,
-              );
+      final inspection = await ref
+          .read(carHireApiProvider)
+          .acknowledgeInspection(
+            bookingId,
+            inspectionId: inspectionId,
+            decision: accept ? 'ACCEPTED' : 'DECLINED',
+            note: note,
+          );
       state = const CarHireMutationState(succeeded: true);
       ref.invalidate(bookingInspectionsProvider(bookingId));
       ref.invalidate(carHireBookingDetailProvider(bookingId));
@@ -659,10 +668,10 @@ class CarHireInspectionAcknowledgeController
 }
 
 final inspectionAcknowledgeProvider =
-    NotifierProvider<CarHireInspectionAcknowledgeController,
-        CarHireMutationState>(
-  CarHireInspectionAcknowledgeController.new,
-);
+    NotifierProvider<
+      CarHireInspectionAcknowledgeController,
+      CarHireMutationState
+    >(CarHireInspectionAcknowledgeController.new);
 
 class CarHireIncidentController extends Notifier<CarHireMutationState> {
   @override
@@ -679,7 +688,9 @@ class CarHireIncidentController extends Notifier<CarHireMutationState> {
 
     state = const CarHireMutationState(submitting: true);
     try {
-      final incident = await ref.read(carHireApiProvider).reportIncident(
+      final incident = await ref
+          .read(carHireApiProvider)
+          .reportIncident(
             bookingId,
             type: type.wire,
             description: description,
@@ -700,8 +711,8 @@ class CarHireIncidentController extends Notifier<CarHireMutationState> {
 
 final incidentReportProvider =
     NotifierProvider<CarHireIncidentController, CarHireMutationState>(
-  CarHireIncidentController.new,
-);
+      CarHireIncidentController.new,
+    );
 
 class CarHireSupportCaseController extends Notifier<CarHireMutationState> {
   @override
@@ -717,7 +728,9 @@ class CarHireSupportCaseController extends Notifier<CarHireMutationState> {
 
     state = const CarHireMutationState(submitting: true);
     try {
-      final supportCase = await ref.read(carHireApiProvider).openSupportCase(
+      final supportCase = await ref
+          .read(carHireApiProvider)
+          .openSupportCase(
             bookingId,
             category: category.wire,
             subject: subject,
@@ -735,8 +748,8 @@ class CarHireSupportCaseController extends Notifier<CarHireMutationState> {
 
 final supportCaseProvider =
     NotifierProvider<CarHireSupportCaseController, CarHireMutationState>(
-  CarHireSupportCaseController.new,
-);
+      CarHireSupportCaseController.new,
+    );
 
 class CarHireVerificationSubmitController
     extends Notifier<CarHireMutationState> {
@@ -750,8 +763,9 @@ class CarHireVerificationSubmitController
 
     state = const CarHireMutationState(submitting: true);
     try {
-      final verification =
-          await ref.read(carHireApiProvider).submitVerification(evidence);
+      final verification = await ref
+          .read(carHireApiProvider)
+          .submitVerification(evidence);
       state = const CarHireMutationState(succeeded: true);
       ref.invalidate(verificationRequirementsProvider);
       ref.invalidate(verificationProvider);
@@ -764,7 +778,6 @@ class CarHireVerificationSubmitController
 }
 
 final verificationSubmitProvider =
-    NotifierProvider<CarHireVerificationSubmitController,
-        CarHireMutationState>(
-  CarHireVerificationSubmitController.new,
-);
+    NotifierProvider<CarHireVerificationSubmitController, CarHireMutationState>(
+      CarHireVerificationSubmitController.new,
+    );

@@ -7,10 +7,12 @@ import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_bookin
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_bookings_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_browse_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_checkout_page.dart';
+import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_company_add_vehicle_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_company_booking_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_company_bookings_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_company_fleet_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_company_page.dart';
+import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_company_unit_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_detail_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_inspection_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_report_page.dart';
@@ -24,15 +26,15 @@ class CarHireRoutes {
   /// Car hire entry: company home for a live car hire account, otherwise the
   /// renter marketplace.
   static Future<void> openHome(BuildContext context) {
-    return Navigator.of(context).push(
-      CupertinoPageRoute<void>(builder: (_) => const CarHireHomePage()),
-    );
+    return Navigator.of(
+      context,
+    ).push(CupertinoPageRoute<void>(builder: (_) => const CarHireHomePage()));
   }
 
   static Future<void> openBrowse(BuildContext context) {
-    return Navigator.of(context).push(
-      CupertinoPageRoute<void>(builder: (_) => const CarHireBrowsePage()),
-    );
+    return Navigator.of(
+      context,
+    ).push(CupertinoPageRoute<void>(builder: (_) => const CarHireBrowsePage()));
   }
 
   static Future<void> openApply(
@@ -80,11 +82,8 @@ class CarHireRoutes {
   }) {
     return Navigator.of(context).push(
       CupertinoPageRoute<void>(
-        builder: (_) => CarHireCheckoutPage(
-          car: car,
-          startAt: startAt,
-          endAt: endAt,
-        ),
+        builder: (_) =>
+            CarHireCheckoutPage(car: car, startAt: startAt, endAt: endAt),
       ),
     );
   }
@@ -115,9 +114,7 @@ class CarHireRoutes {
 
   static Future<void> openVerification(BuildContext context) {
     return Navigator.of(context).push(
-      CupertinoPageRoute<void>(
-        builder: (_) => const CarHireVerificationPage(),
-      ),
+      CupertinoPageRoute<void>(builder: (_) => const CarHireVerificationPage()),
     );
   }
 
@@ -168,6 +165,31 @@ class CarHireRoutes {
   static Future<void> openCompanyFleet(BuildContext context) {
     return Navigator.of(context).push(
       CupertinoPageRoute<void>(builder: (_) => const CarHireCompanyFleetPage()),
+    );
+  }
+
+  /// The single-vehicle workspace: status, live rental, rates and documents.
+  static Future<void> openCompanyUnit(
+    BuildContext context, {
+    required FleetUnit unit,
+    required CompanyAccess access,
+  }) {
+    return Navigator.of(context).push(
+      CupertinoPageRoute<void>(
+        builder: (_) => CarHireCompanyUnitPage(unit: unit, access: access),
+      ),
+    );
+  }
+
+  /// Add-vehicle flow. Resolves to the created unit, or null when cancelled.
+  static Future<FleetUnit?> openCompanyAddVehicle(
+    BuildContext context, {
+    required CompanyAccess access,
+  }) {
+    return Navigator.of(context).push<FleetUnit>(
+      CupertinoPageRoute<FleetUnit>(
+        builder: (_) => CarHireCompanyAddVehiclePage(access: access),
+      ),
     );
   }
 

@@ -45,18 +45,20 @@ final companyAccessProvider = FutureProvider<CompanyAccess>((ref) async {
 });
 
 /// Dispatch board for one local day (`YYYY-MM-DD`).
-final companyDispatchProvider =
-    FutureProvider.family<DispatchBoard, String>((ref, date) async {
+final companyDispatchProvider = FutureProvider.family<DispatchBoard, String>((
+  ref,
+  date,
+) async {
   return ref.watch(carHireApiProvider).getDispatchBoard(date: date);
 });
 
 /// Company bookings, optionally filtered by status (empty string = all).
 final companyBookingsProvider =
     FutureProvider.family<List<CarHireBooking>, String>((ref, status) async {
-  return ref
-      .watch(carHireApiProvider)
-      .getCompanyBookings(status: status.isEmpty ? null : status);
-});
+      return ref
+          .watch(carHireApiProvider)
+          .getCompanyBookings(status: status.isEmpty ? null : status);
+    });
 
 final companyFleetProvider = FutureProvider<List<FleetUnit>>((ref) async {
   return ref.watch(carHireApiProvider).getCompanyFleet();
@@ -65,16 +67,58 @@ final companyFleetProvider = FutureProvider<List<FleetUnit>>((ref) async {
 /// Company performance for the last 30 days; null when not permitted.
 final companyAnalyticsProvider = FutureProvider<CompanyAnalytics?>((ref) async {
   final now = DateTime.now();
-  return ref.watch(carHireApiProvider).getCompanyAnalytics(
+  return ref
+      .watch(carHireApiProvider)
+      .getCompanyAnalytics(
         from: now.subtract(const Duration(days: 30)),
         to: now,
       );
 });
 
+/// Branches a company car can be collected from.
+final companyBranchesProvider =
+    FutureProvider.family<List<CompanyBranch>, String>((ref, operatorId) async {
+      return ref.watch(carHireApiProvider).getCompanyBranches(operatorId);
+    });
+
+/// Compliance state for one vehicle, refreshed after a document is added.
+final companyComplianceProvider = FutureProvider.family<CarCompliance, int>((
+  ref,
+  carId,
+) async {
+  return ref.watch(carHireApiProvider).getCarCompliance(carId);
+});
+
+/// Maintenance, cleaning and safety blocks on one vehicle.
+final companyMaintenanceBlocksProvider =
+    FutureProvider.family<List<MaintenanceBlock>, int>((ref, carId) async {
+      return ref.watch(carHireApiProvider).getMaintenanceBlocks(carId);
+    });
+
+/// The live rental for a unit, if any, from the company's active bookings.
+final unitActiveBookingProvider = FutureProvider.family<CarHireBooking?, int>((
+  ref,
+  carId,
+) async {
+  final bookings = await ref
+      .watch(carHireApiProvider)
+      .getCompanyBookings(status: 'ACTIVE');
+  for (final booking in bookings) {
+    final unitId = booking.assignedCarId ?? booking.carId;
+    if (unitId != carId) continue;
+    if (booking.bookingStatus != BookingStatus.active &&
+        booking.bookingStatus != BookingStatus.incidentReported) {
+      continue;
+    }
+    return booking;
+  }
+  return null;
+});
+
 final bookingUnitOptionsProvider =
     FutureProvider.family<List<BookingUnitOption>, int>((ref, bookingId) async {
-  return ref.watch(carHireApiProvider).getBookingUnitOptions(bookingId);
-});
+      return ref.watch(carHireApiProvider).getBookingUnitOptions(bookingId);
+    });
 
 String companyDateKey(DateTime value) {
   String pad(int part) => part.toString().padLeft(2, '0');
@@ -98,6 +142,10 @@ class CompanyActionController extends Notifier<CarHireMutationState> {
       ref.invalidate(companyDispatchProvider);
       ref.invalidate(companyBookingsProvider);
       ref.invalidate(companyFleetProvider);
+      ref.invalidate(companyAnalyticsProvider);
+      ref.invalidate(companyComplianceProvider);
+      ref.invalidate(companyMaintenanceBlocksProvider);
+      ref.invalidate(unitActiveBookingProvider);
       if (bookingId != null) {
         ref.invalidate(carHireBookingDetailProvider(bookingId));
         ref.invalidate(bookingUnitOptionsProvider(bookingId));
@@ -119,5 +167,5 @@ class CompanyActionController extends Notifier<CarHireMutationState> {
 
 final companyActionProvider =
     NotifierProvider<CompanyActionController, CarHireMutationState>(
-  CompanyActionController.new,
-);
+      CompanyActionController.new,
+    );

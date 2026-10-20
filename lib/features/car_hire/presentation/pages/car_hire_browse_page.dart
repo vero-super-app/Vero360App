@@ -101,8 +101,9 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
     super.initState();
     final query = ref.read(carHireSearchProvider);
     _pickupController = TextEditingController(text: query.pickupArea);
-    _searchController =
-        TextEditingController(text: ref.read(carHireFiltersProvider).text);
+    _searchController = TextEditingController(
+      text: ref.read(carHireFiltersProvider).text,
+    );
   }
 
   @override
@@ -161,7 +162,8 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
       builder: (_) => _FilterSheet(
         initial: ref.read(carHireFiltersProvider),
         companies:
-            ref.read(carHireCompaniesProvider).value ?? const <CarHireCompanyOption>[],
+            ref.read(carHireCompaniesProvider).value ??
+            const <CarHireCompanyOption>[],
         formatMoney: (value) => 'MWK ${_money.format(value)}',
       ),
     );
@@ -188,9 +190,9 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
-            colorScheme: Theme.of(context).colorScheme.copyWith(
-                  primary: CarHirePalette.accent,
-                ),
+            colorScheme: Theme.of(
+              context,
+            ).colorScheme.copyWith(primary: CarHirePalette.accent),
           ),
           child: child ?? const SizedBox.shrink(),
         );
@@ -205,9 +207,9 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
-            colorScheme: Theme.of(context).colorScheme.copyWith(
-                  primary: CarHirePalette.accent,
-                ),
+            colorScheme: Theme.of(
+              context,
+            ).colorScheme.copyWith(primary: CarHirePalette.accent),
           ),
           child: child ?? const SizedBox.shrink(),
         );
@@ -226,7 +228,8 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
 
   Future<void> _pickStart() async {
     final query = ref.read(carHireSearchProvider);
-    final initial = query.startAt ?? DateTime.now().add(const Duration(days: 1));
+    final initial =
+        query.startAt ?? DateTime.now().add(const Duration(days: 1));
     final picked = await _pickDateTime(initial);
     if (picked == null || !mounted) return;
 
@@ -257,7 +260,9 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
   void _onSearch({bool closeSheet = false}) {
     final query = ref.read(carHireSearchProvider);
     if (!query.isDateRangeValid) {
-      _snack('Choose a pick-up and return time, with the return after pick-up.');
+      _snack(
+        'Choose a pick-up and return time, with the return after pick-up.',
+      );
       return;
     }
     ref
@@ -339,10 +344,7 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-        ),
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
       );
   }
 
@@ -361,11 +363,12 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
   }
 
   double _medianRate(List<CarListing> cars) {
-    final rates = cars
-        .map((car) => car.dailyRate)
-        .where((rate) => rate > 0)
-        .toList(growable: false)
-      ..sort();
+    final rates =
+        cars
+            .map((car) => car.dailyRate)
+            .where((rate) => rate > 0)
+            .toList(growable: false)
+          ..sort();
     if (rates.isEmpty) return 0;
     final middle = rates.length ~/ 2;
     if (rates.length.isOdd) return rates[middle];
@@ -383,20 +386,22 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
           body.contains('PICKUP');
     }
 
-    final filtered = cars.where((car) {
-      switch (_category) {
-        case _VehicleCategory.all:
-          return true;
-        case _VehicleCategory.suv:
-          return isSuv(car);
-        case _VehicleCategory.luxury:
-          return median > 0 && car.dailyRate >= median * 1.3;
-        case _VehicleCategory.budget:
-          return median > 0 && car.dailyRate <= median * 0.75;
-        case _VehicleCategory.sevenSeater:
-          return (car.seats ?? 0) >= 7;
-      }
-    }).toList(growable: false);
+    final filtered = cars
+        .where((car) {
+          switch (_category) {
+            case _VehicleCategory.all:
+              return true;
+            case _VehicleCategory.suv:
+              return isSuv(car);
+            case _VehicleCategory.luxury:
+              return median > 0 && car.dailyRate >= median * 1.3;
+            case _VehicleCategory.budget:
+              return median > 0 && car.dailyRate <= median * 0.75;
+            case _VehicleCategory.sevenSeater:
+              return (car.seats ?? 0) >= 7;
+          }
+        })
+        .toList(growable: false);
 
     final sorted = List<CarListing>.of(filtered);
     switch (_sort) {
@@ -486,11 +491,12 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
     final query = ref.watch(carHireSearchProvider);
     final results = ref.watch(carHireResultsProvider);
     final filters = ref.watch(carHireFiltersProvider);
-    final companies = ref.watch(carHireCompaniesProvider).value ??
+    final companies =
+        ref.watch(carHireCompaniesProvider).value ??
         const <CarHireCompanyOption>[];
     final hasCompany =
         (ref.watch(carHireAccountProvider).value?.isActive ?? false) ||
-            (ref.watch(companyAccessProvider).value?.hasCompany ?? false);
+        (ref.watch(companyAccessProvider).value?.hasCompany ?? false);
 
     return Scaffold(
       backgroundColor: CarHirePalette.background,
@@ -547,9 +553,7 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
       padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
       decoration: const BoxDecoration(
         color: CarHirePalette.surfaceLow,
-        border: Border(
-          bottom: BorderSide(color: CarHirePalette.hairline),
-        ),
+        border: Border(bottom: BorderSide(color: CarHirePalette.hairline)),
       ),
       child: Material(
         color: Colors.transparent,
@@ -614,8 +618,10 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
                 ),
                 const SizedBox(width: 8),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 9,
+                  ),
                   decoration: BoxDecoration(
                     color: CarHirePalette.surface,
                     borderRadius: BorderRadius.circular(99),
@@ -678,7 +684,9 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
                       onChanged: _onSearchTextChanged,
                       onSubmitted: (value) {
                         _searchDebounce?.cancel();
-                        ref.read(carHireFiltersProvider.notifier).setText(value);
+                        ref
+                            .read(carHireFiltersProvider.notifier)
+                            .setText(value);
                       },
                       textInputAction: TextInputAction.search,
                       style: const TextStyle(
@@ -807,37 +815,37 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
       if (filters.transmission != null)
         _RemovableChip(
           label: _titleCase(filters.transmission!),
-          onRemove: () => ref.read(carHireFiltersProvider.notifier).set(
-                filters.copyWith(transmission: () => null),
-              ),
+          onRemove: () => ref
+              .read(carHireFiltersProvider.notifier)
+              .set(filters.copyWith(transmission: () => null)),
         ),
       if (filters.fuelType != null)
         _RemovableChip(
           label: _titleCase(filters.fuelType!),
-          onRemove: () => ref.read(carHireFiltersProvider.notifier).set(
-                filters.copyWith(fuelType: () => null),
-              ),
+          onRemove: () => ref
+              .read(carHireFiltersProvider.notifier)
+              .set(filters.copyWith(fuelType: () => null)),
         ),
       if (filters.minSeats != null)
         _RemovableChip(
           label: '${filters.minSeats}+ seats',
-          onRemove: () => ref.read(carHireFiltersProvider.notifier).set(
-                filters.copyWith(minSeats: () => null),
-              ),
+          onRemove: () => ref
+              .read(carHireFiltersProvider.notifier)
+              .set(filters.copyWith(minSeats: () => null)),
         ),
       if (filters.maxRate != null)
         _RemovableChip(
           label: 'Up to MWK ${_money.format(filters.maxRate)}/day',
-          onRemove: () => ref.read(carHireFiltersProvider.notifier).set(
-                filters.copyWith(maxRate: () => null),
-              ),
+          onRemove: () => ref
+              .read(carHireFiltersProvider.notifier)
+              .set(filters.copyWith(maxRate: () => null)),
         ),
       if (filters.instantOnly)
         _RemovableChip(
           label: 'Instant confirmation',
-          onRemove: () => ref.read(carHireFiltersProvider.notifier).set(
-                filters.copyWith(instantOnly: false),
-              ),
+          onRemove: () => ref
+              .read(carHireFiltersProvider.notifier)
+              .set(filters.copyWith(instantOnly: false)),
         ),
     ];
     if (chips.isEmpty) return const SizedBox.shrink();
@@ -910,10 +918,7 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.only(top: 20),
-            child: CarHireErrorState(
-              error: error,
-              onRetry: _refresh,
-            ),
+            child: CarHireErrorState(error: error, onRetry: _refresh),
           ),
         ),
       ],
@@ -932,10 +937,10 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
                   title: 'No cars match your filters',
                   message: filters.company != null
                       ? '${filters.company!.name} has no cars matching these '
-                          'dates and filters. Try other dates or clear the '
-                          'filters.'
+                            'dates and filters. Try other dates or clear the '
+                            'filters.'
                       : 'Nothing matches these dates and filters. Loosen a '
-                          'filter or clear them all.',
+                            'filter or clear them all.',
                   actionLabel: 'Clear filters',
                   onAction: _clearAllFilters,
                 ),
@@ -954,10 +959,10 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
                   title: 'No cars available',
                   message: query.pickupArea.trim().isEmpty
                       ? 'No vehicles match these dates. Try a different '
-                          'pick-up or return time.'
+                            'pick-up or return time.'
                       : 'No vehicles match these dates in '
-                          '"${query.pickupArea}". Try different dates or clear '
-                          'the pick-up area.',
+                            '"${query.pickupArea}". Try different dates or clear '
+                            'the pick-up area.',
                   actionLabel: query.pickupArea.trim().isEmpty
                       ? null
                       : 'Clear area & retry',
@@ -1059,9 +1064,8 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
                       ),
                       const SizedBox(height: 12),
                       TextButton(
-                        onPressed: () => setState(
-                          () => _category = _VehicleCategory.all,
-                        ),
+                        onPressed: () =>
+                            setState(() => _category = _VehicleCategory.all),
                         style: TextButton.styleFrom(
                           foregroundColor: CarHirePalette.accent,
                           textStyle: const TextStyle(
@@ -1111,7 +1115,6 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
       },
     );
   }
-
 }
 
 // -------------------------------------------------------------------------
@@ -1326,9 +1329,8 @@ class _FilterSheetState extends State<_FilterSheet> {
                   child: Text('Filters', style: CarHireType.titleLarge),
                 ),
                 TextButton(
-                  onPressed: () => setState(
-                    () => _draft = CarHireFilters(text: draft.text),
-                  ),
+                  onPressed: () =>
+                      setState(() => _draft = CarHireFilters(text: draft.text)),
                   style: TextButton.styleFrom(
                     foregroundColor: CarHirePalette.accent,
                     textStyle: const TextStyle(fontWeight: FontWeight.w800),
@@ -1356,7 +1358,8 @@ class _FilterSheetState extends State<_FilterSheet> {
                           company.name,
                           draft.company?.id == company.id,
                           () => setState(
-                            () => _draft = draft.copyWith(company: () => company),
+                            () =>
+                                _draft = draft.copyWith(company: () => company),
                           ),
                         ),
                     ]),
@@ -1371,8 +1374,9 @@ class _FilterSheetState extends State<_FilterSheet> {
                         _titleCase(value),
                         draft.transmission == value,
                         () => setState(
-                          () => _draft =
-                              draft.copyWith(transmission: () => value),
+                          () => _draft = draft.copyWith(
+                            transmission: () => value,
+                          ),
                         ),
                       ),
                   ]),
@@ -1497,9 +1501,7 @@ class _CategoryChip extends StatelessWidget {
             color: selected ? CarHirePalette.accent : CarHirePalette.surface,
             borderRadius: BorderRadius.circular(99),
             border: Border.all(
-              color: selected
-                  ? CarHirePalette.accent
-                  : CarHirePalette.hairline,
+              color: selected ? CarHirePalette.accent : CarHirePalette.hairline,
             ),
             boxShadow: selected ? CarHireShape.cardShadow : null,
           ),

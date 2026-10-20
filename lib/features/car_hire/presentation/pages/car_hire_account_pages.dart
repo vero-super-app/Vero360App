@@ -58,7 +58,8 @@ class CarHireAccountBanner extends ConsumerWidget {
           child: const CarHireInfoBanner(
             icon: Icons.add_business_outlined,
             title: 'Rent out your cars on Vero360',
-            message: 'Car hire companies and individual owners can list '
+            message:
+                'Car hire companies and individual owners can list '
                 'cars and manage every booking from one account.',
             tone: CarHireInfoTone.accent,
           ),
@@ -119,14 +120,17 @@ class _StatusCopy {
 }
 
 _StatusCopy? _statusCopy(CarHireAccount account) {
-  final name = account.companyName.isEmpty ? 'Your company' : account.companyName;
+  final name = account.companyName.isEmpty
+      ? 'Your company'
+      : account.companyName;
   switch (account.state) {
     case CarHireAccountState.inReview:
       return _StatusCopy(
         icon: Icons.hourglass_top_rounded,
         title: 'Application under review',
         short: '$name is being reviewed by Vero360. Tap for details.',
-        long: 'Vero360 is checking $name. Once approved, opening Car hire '
+        long:
+            'Vero360 is checking $name. Once approved, opening Car hire '
             'takes you straight to your company home to add cars and manage '
             'bookings.',
         tone: CarHireInfoTone.accent,
@@ -136,7 +140,8 @@ _StatusCopy? _statusCopy(CarHireAccount account) {
         icon: Icons.edit_note_rounded,
         title: 'Vero360 needs more information',
         short: 'Update your details to continue the review.',
-        long: 'Vero360 needs a few changes before approving $name. Update '
+        long:
+            'Vero360 needs a few changes before approving $name. Update '
             'your details and the application goes back into review.',
         tone: CarHireInfoTone.warning,
       );
@@ -145,7 +150,8 @@ _StatusCopy? _statusCopy(CarHireAccount account) {
         icon: Icons.block_rounded,
         title: 'Application not approved',
         short: 'See why and apply again.',
-        long: '$name was not approved. Read the note below, fix what is '
+        long:
+            '$name was not approved. Read the note below, fix what is '
             'needed and apply again.',
         tone: CarHireInfoTone.error,
       );
@@ -154,7 +160,8 @@ _StatusCopy? _statusCopy(CarHireAccount account) {
         icon: Icons.pause_circle_outline_rounded,
         title: '$name is suspended',
         short: 'Your cars are hidden from renters. Tap for details.',
-        long: 'Your cars are hidden from renters and new bookings are '
+        long:
+            'Your cars are hidden from renters and new bookings are '
             'paused. Contact Vero360 support to restore $name.',
         tone: CarHireInfoTone.error,
       );
@@ -185,7 +192,8 @@ class CarHireAccountStatusPage extends ConsumerWidget {
             return CarHireEmptyState(
               icon: Icons.verified_rounded,
               title: '${account.companyName} is live',
-              message: 'Your company is approved. Open your company home to '
+              message:
+                  'Your company is approved. Open your company home to '
                   'manage cars and bookings.',
               actionLabel: 'Open company home',
               onAction: () => CarHireRoutes.openCompany(context),
@@ -455,7 +463,9 @@ class _CarHireApplyPageState extends ConsumerState<CarHireApplyPage> {
               textCapitalization: TextCapitalization.words,
               decoration: carHireInputDecoration(
                 label: _business ? 'Company name' : 'Your name',
-                hint: _business ? 'e.g. Lilongwe Car Rentals' : 'e.g. John Banda',
+                hint: _business
+                    ? 'e.g. Lilongwe Car Rentals'
+                    : 'e.g. John Banda',
               ),
               validator: (value) => (value ?? '').trim().length < 2
                   ? 'Enter a name renters will recognise'

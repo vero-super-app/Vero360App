@@ -33,7 +33,8 @@ class CarHireCompanyBookingPage extends ConsumerWidget {
         loading: () => const CarHireLoadingState(message: 'Loading booking…'),
         error: (error, _) => CarHireErrorState(
           error: error,
-          onRetry: () => ref.invalidate(carHireBookingDetailProvider(bookingId)),
+          onRetry: () =>
+              ref.invalidate(carHireBookingDetailProvider(bookingId)),
         ),
         data: (booking) => RefreshIndicator(
           color: CarHirePalette.accent,
@@ -55,7 +56,8 @@ class CarHireCompanyBookingPage extends ConsumerWidget {
                 const CarHireInfoBanner(
                   icon: Icons.visibility_outlined,
                   title: 'View only',
-                  message: 'Ask the company owner for the manage bookings '
+                  message:
+                      'Ask the company owner for the manage bookings '
                       'permission to accept, hand over or close rentals.',
                 ),
               _Extensions(booking: booking, canManage: canManage),
@@ -80,8 +82,10 @@ class _Summary extends StatelessWidget {
       if (booking.assignedPlate != null)
         (
           'Unit',
-          [booking.assignedPlate!, if (booking.assignedColor != null) booking.assignedColor!]
-              .join(' · '),
+          [
+            booking.assignedPlate!,
+            if (booking.assignedColor != null) booking.assignedColor!,
+          ].join(' · '),
         ),
       ('Dates', booking.dateRangeLabel),
       ('Renter', booking.renterName ?? 'Not shared'),
@@ -166,7 +170,7 @@ Future<bool> _runAction(
     ok
         ? success
         : ref.read(companyActionProvider).error?.message ??
-            'That did not work. Please try again.',
+              'That did not work. Please try again.',
     error: !ok,
   );
   return ok;
@@ -254,26 +258,22 @@ class _Actions extends ConsumerWidget {
               : 'Booking confirmed.',
         ),
       );
-      secondary(
-        'Decline',
-        () async {
-          final reason = await _askText(
-            context,
-            title: 'Decline this booking?',
-            label: 'Reason for the renter (optional)',
-            confirm: 'Decline',
-          );
-          if (reason == null || !context.mounted) return;
-          await _runAction(
-            context,
-            ref,
-            (api) => api.rejectBooking(id, reason: reason),
-            bookingId: id,
-            success: 'Booking declined.',
-          );
-        },
-        color: CarHirePalette.error,
-      );
+      secondary('Decline', () async {
+        final reason = await _askText(
+          context,
+          title: 'Decline this booking?',
+          label: 'Reason for the renter (optional)',
+          confirm: 'Decline',
+        );
+        if (reason == null || !context.mounted) return;
+        await _runAction(
+          context,
+          ref,
+          (api) => api.rejectBooking(id, reason: reason),
+          bookingId: id,
+          success: 'Booking declined.',
+        );
+      }, color: CarHirePalette.error);
     } else if (status == BookingStatus.confirmed) {
       primary(
         'Record pickup inspection',
@@ -319,8 +319,8 @@ class _Actions extends ConsumerWidget {
       );
     }
 
-    final canSwap = status == BookingStatus.pending ||
-        status == BookingStatus.confirmed;
+    final canSwap =
+        status == BookingStatus.pending || status == BookingStatus.confirmed;
     if (canSwap) {
       secondary(
         booking.assignedPlate == null ? 'Assign unit' : 'Change unit',
@@ -342,10 +342,7 @@ class _Actions extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           for (final button in buttons)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: button,
-            ),
+            Padding(padding: const EdgeInsets.only(bottom: 8), child: button),
         ],
       ),
     );
@@ -407,9 +404,11 @@ class _UnitSheet extends ConsumerWidget {
                         final ok = await _runAction(
                           context,
                           ref,
-                          (api) => api.assignBookingUnit(booking.id, unit.carId),
+                          (api) =>
+                              api.assignBookingUnit(booking.id, unit.carId),
                           bookingId: booking.id,
-                          success: 'Unit changed to ${unit.licensePlate ?? unit.label}.',
+                          success:
+                              'Unit changed to ${unit.licensePlate ?? unit.label}.',
                         );
                         if (ok && context.mounted) Navigator.of(context).pop();
                       },
@@ -486,7 +485,9 @@ class _Extensions extends ConsumerWidget {
                                     label: 'Reason (optional)',
                                     confirm: 'Decline',
                                   );
-                                  if (reason == null || !context.mounted) return;
+                                  if (reason == null || !context.mounted) {
+                                    return;
+                                  }
                                   await _runAction(
                                     context,
                                     ref,
@@ -512,16 +513,16 @@ class _Extensions extends ConsumerWidget {
                           onPressed: busy
                               ? null
                               : () => _runAction(
-                                    context,
-                                    ref,
-                                    (api) => api.decideExtension(
-                                      booking.id,
-                                      extension.id,
-                                      approve: true,
-                                    ),
-                                    bookingId: booking.id,
-                                    success: 'Extension approved.',
+                                  context,
+                                  ref,
+                                  (api) => api.decideExtension(
+                                    booking.id,
+                                    extension.id,
+                                    approve: true,
                                   ),
+                                  bookingId: booking.id,
+                                  success: 'Extension approved.',
+                                ),
                           style: carHirePrimaryButton(),
                           child: const Text('Approve'),
                         ),
@@ -645,7 +646,10 @@ class _Incidents extends ConsumerWidget {
                 Row(
                   children: [
                     Expanded(
-                      child: Text(incident.typeLabel, style: CarHireType.subtitle),
+                      child: Text(
+                        incident.typeLabel,
+                        style: CarHireType.subtitle,
+                      ),
                     ),
                     Text(incident.statusLabel, style: CarHireType.labelSmall),
                   ],
@@ -656,7 +660,9 @@ class _Incidents extends ConsumerWidget {
                 if (canManage && _isOpen(incident)) ...[
                   const SizedBox(height: 8),
                   OutlinedButton(
-                    onPressed: busy ? null : () => _resolve(context, ref, incident),
+                    onPressed: busy
+                        ? null
+                        : () => _resolve(context, ref, incident),
                     style: carHireGhostButton(),
                     child: const Text('Resolve'),
                   ),

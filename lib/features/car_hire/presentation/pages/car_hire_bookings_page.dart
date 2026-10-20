@@ -92,10 +92,7 @@ class _CarHireBookingsPageState extends ConsumerState<CarHireBookingsPage> {
             physics: const AlwaysScrollableScrollPhysics(),
             children: [
               const SizedBox(height: 60),
-              CarHireErrorState(
-                error: error,
-                onRetry: _refresh,
-              ),
+              CarHireErrorState(error: error, onRetry: _refresh),
             ],
           ),
           data: (items) {
@@ -214,9 +211,7 @@ class _ScopeChip extends StatelessWidget {
           child: Text(
             label,
             style: TextStyle(
-              color: selected
-                  ? Colors.white
-                  : CarHirePalette.onSurfaceVariant,
+              color: selected ? Colors.white : CarHirePalette.onSurfaceVariant,
               fontSize: 11.5,
               fontWeight: FontWeight.w800,
             ),
@@ -341,10 +336,7 @@ class _BookingListCard extends StatelessWidget {
                     children: [
                       Text('Total', style: CarHireType.labelSmall),
                       const SizedBox(height: 1),
-                      Text(
-                        booking.totalLabel,
-                        style: CarHireType.priceSmall,
-                      ),
+                      Text(booking.totalLabel, style: CarHireType.priceSmall),
                     ],
                   ),
                 ),
@@ -352,9 +344,7 @@ class _BookingListCard extends StatelessWidget {
                 Flexible(
                   child: Align(
                     alignment: Alignment.centerRight,
-                    child: CarHireStatusBadge.payment(
-                      booking.paymentStatus,
-                    ),
+                    child: CarHireStatusBadge.payment(booking.paymentStatus),
                   ),
                 ),
                 const SizedBox(width: 4),

@@ -47,7 +47,8 @@ class CarHireListingCard extends StatelessWidget {
 
     return Semantics(
       button: true,
-      label: '${car.title}, '
+      label:
+          '${car.title}, '
           '${car.provider == null ? '' : '${car.providerLabel}, '}'
           '${car.pricePerDayLabel}'
           '${_available ? '' : ', unavailable'}'
@@ -128,7 +129,8 @@ class CarHireListingCard extends StatelessWidget {
                       const TextSpan(text: ' / day'),
                       if (estimate > 0)
                         TextSpan(
-                          text: '  ·  '
+                          text:
+                              '  ·  '
                               '${CarHireFormatters.formatCurrency(estimate)} total',
                         ),
                     ],

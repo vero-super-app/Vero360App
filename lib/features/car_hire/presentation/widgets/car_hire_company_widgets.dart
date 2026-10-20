@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 
 import 'package:vero360_app/features/car_hire/data/models/car_hire_company_models.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
@@ -8,7 +9,18 @@ import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_status_badge.dart';
 import 'package:vero360_app/utils/formatters.dart';
 
-void showCompanySnack(BuildContext context, String message, {bool error = false}) {
+/// Compact money label for dense company cards: "MWK 85,000" not "MWK
+/// 85,000.00". Currency comes from the listing so it stays truthful.
+String companyMoney(double amount, {String currency = 'MWK'}) {
+  final code = currency.trim().isEmpty ? 'MWK' : currency.trim().toUpperCase();
+  return '$code ${NumberFormat.decimalPattern().format(amount)}';
+}
+
+void showCompanySnack(
+  BuildContext context,
+  String message, {
+  bool error = false,
+}) {
   ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()
     ..showSnackBar(
@@ -59,10 +71,7 @@ class CompanyBookingTile extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  booking.bookingNumberLabel,
-                  style: CarHireType.labelSmall,
-                ),
+                Text(booking.bookingNumberLabel, style: CarHireType.labelSmall),
                 const SizedBox(height: 3),
                 Text(
                   title,
@@ -146,7 +155,10 @@ class _BlockDatesSheetState extends ConsumerState<_BlockDatesSheet> {
     super.initState();
     final today = DateTime.now();
     final start = DateTime(today.year, today.month, today.day);
-    _range = DateTimeRange(start: start, end: start.add(const Duration(days: 1)));
+    _range = DateTimeRange(
+      start: start,
+      end: start.add(const Duration(days: 1)),
+    );
   }
 
   @override
@@ -168,7 +180,9 @@ class _BlockDatesSheetState extends ConsumerState<_BlockDatesSheet> {
 
   Future<void> _save() async {
     final endExclusive = _range.end.add(const Duration(days: 1));
-    final ok = await ref.read(companyActionProvider.notifier).run(
+    final ok = await ref
+        .read(companyActionProvider.notifier)
+        .run(
           (api) => api.addMaintenanceBlock(
             widget.unit.id,
             startAt: _range.start,
@@ -205,7 +219,10 @@ class _BlockDatesSheetState extends ConsumerState<_BlockDatesSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('Block ${widget.unit.plateLabel}', style: CarHireType.titleLarge),
+          Text(
+            'Block ${widget.unit.plateLabel}',
+            style: CarHireType.titleLarge,
+          ),
           const SizedBox(height: 4),
           const Text(
             'The car cannot be booked on these days.',
@@ -229,8 +246,9 @@ class _BlockDatesSheetState extends ConsumerState<_BlockDatesSheet> {
                 ChoiceChip(
                   label: Text(label),
                   selected: _category == value,
-                  onSelected:
-                      busy ? null : (_) => setState(() => _category = value),
+                  onSelected: busy
+                      ? null
+                      : (_) => setState(() => _category = value),
                   selectedColor: CarHirePalette.accentSoft,
                 ),
             ],
@@ -277,10 +295,7 @@ class CompanyGroupHeader extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text(
-                title,
-                style: CarHireType.title.copyWith(color: tone),
-              ),
+              Text(title, style: CarHireType.title.copyWith(color: tone)),
               const SizedBox(width: 8),
               Text('$count', style: CarHireType.labelSmall),
             ],

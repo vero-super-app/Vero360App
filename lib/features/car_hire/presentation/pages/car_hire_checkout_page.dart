@@ -80,7 +80,9 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
   Future<void> _loadQuote() async {
     // A fresh checkout must not inherit a booking from a previous journey.
     ref.read(bookingSubmissionProvider.notifier).reset();
-    await ref.read(quoteControllerProvider.notifier).requestQuote(
+    await ref
+        .read(quoteControllerProvider.notifier)
+        .requestQuote(
           carId: widget.car.id,
           startAt: widget.startAt,
           endAt: widget.endAt,
@@ -92,7 +94,9 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
     if (quote == null || quote.isExpired) return;
 
     FocusScope.of(context).unfocus();
-    final booking = await ref.read(bookingSubmissionProvider.notifier).submit(
+    final booking = await ref
+        .read(bookingSubmissionProvider.notifier)
+        .submit(
           quoteId: quote.quoteId,
           renterNotes: _notesController.text,
           driverName: _driverController.text,
@@ -120,10 +124,9 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
     });
 
     try {
-      final initiation = await ref.read(carHireApiProvider).initiatePayment(
-            booking.id,
-            phoneNumber: _phoneController.text,
-          );
+      final initiation = await ref
+          .read(carHireApiProvider)
+          .initiatePayment(booking.id, phoneNumber: _phoneController.text);
       if (initiation.booking != null && mounted) {
         ref
             .read(bookingSubmissionProvider.notifier)
@@ -331,10 +334,7 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
           children: [
             const Text(
               'No quote yet.',
-              style: TextStyle(
-                color: CarRentalColors.body,
-                fontSize: 13,
-              ),
+              style: TextStyle(color: CarRentalColors.body, fontSize: 13),
             ),
             const SizedBox(height: 8),
             OutlinedButton(
@@ -368,29 +368,26 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
                 ),
               ),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                 decoration: BoxDecoration(
                   color: expired
                       ? CarRentalColors.errorLight
                       : expiringSoon
-                          ? CarRentalColors.warningLight
-                          : CarRentalColors.successLight,
+                      ? CarRentalColors.warningLight
+                      : CarRentalColors.successLight,
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      expired
-                          ? Icons.timer_off_rounded
-                          : Icons.timer_outlined,
+                      expired ? Icons.timer_off_rounded : Icons.timer_outlined,
                       size: 13,
                       color: expired
                           ? CarRentalColors.error
                           : expiringSoon
-                              ? CarRentalColors.greyDark
-                              : CarRentalColors.success,
+                          ? CarRentalColors.greyDark
+                          : CarRentalColors.success,
                     ),
                     const SizedBox(width: 4),
                     Text(
@@ -401,8 +398,8 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
                         color: expired
                             ? CarRentalColors.error
                             : expiringSoon
-                                ? CarRentalColors.greyDark
-                                : CarRentalColors.success,
+                            ? CarRentalColors.greyDark
+                            : CarRentalColors.success,
                         fontSize: 10.5,
                         fontWeight: FontWeight.w800,
                       ),
@@ -604,10 +601,7 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(
-              Icons.verified_rounded,
-              color: CarRentalColors.success,
-            ),
+            const Icon(Icons.verified_rounded, color: CarRentalColors.success),
             const SizedBox(width: 9),
             Expanded(
               child: Column(
@@ -681,9 +675,7 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
                     ),
                   )
                 : const Icon(Icons.payments_rounded, size: 18),
-            label: Text(
-              _paymentLaunching ? 'Opening payment…' : 'Pay now',
-            ),
+            label: Text(_paymentLaunching ? 'Opening payment…' : 'Pay now'),
             style: carHirePrimaryButton(),
           ),
           const SizedBox(height: 8),
@@ -711,10 +703,7 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
               booking.bookingStatus.isTerminal
                   ? 'This booking can no longer be paid.'
                   : 'No payment is currently due for this booking.',
-              style: const TextStyle(
-                color: CarRentalColors.grey,
-                fontSize: 11,
-              ),
+              style: const TextStyle(color: CarRentalColors.grey, fontSize: 11),
             ),
           ],
         ],
@@ -814,7 +803,8 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
   Widget _submitBar(CarHireQuoteState quoteState) {
     final submission = ref.watch(bookingSubmissionProvider);
     final quote = quoteState.quote;
-    final canSubmit = quote != null &&
+    final canSubmit =
+        quote != null &&
         !quote.isExpired &&
         _termsAccepted &&
         !submission.submitting &&
@@ -836,10 +826,7 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
                 const Expanded(
                   child: Text(
                     'Total due now',
-                    style: TextStyle(
-                      color: CarRentalColors.body,
-                      fontSize: 12,
-                    ),
+                    style: TextStyle(color: CarRentalColors.body, fontSize: 12),
                   ),
                 ),
                 Text(
@@ -896,10 +883,7 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
                 padding: EdgeInsets.only(top: 6),
                 child: Text(
                   'Accept the rental terms to continue.',
-                  style: TextStyle(
-                    color: CarRentalColors.grey,
-                    fontSize: 10.5,
-                  ),
+                  style: TextStyle(color: CarRentalColors.grey, fontSize: 10.5),
                 ),
               ),
           ],
@@ -1003,10 +987,7 @@ class _Panel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CarHireSurface(
-      padding: const EdgeInsets.all(16),
-      child: child,
-    );
+    return CarHireSurface(padding: const EdgeInsets.all(16), child: child);
   }
 }
 

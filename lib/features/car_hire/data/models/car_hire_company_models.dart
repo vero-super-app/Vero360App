@@ -28,6 +28,12 @@ int _int(dynamic value) {
   return int.tryParse(_str(value)) ?? 0;
 }
 
+double? _doubleOrNull(dynamic value) {
+  if (value == null) return null;
+  if (value is num) return value.toDouble();
+  return double.tryParse(_str(value));
+}
+
 /// Permissions a company member can hold (mirrors the backend).
 class CompanyPermission {
   CompanyPermission._();
@@ -88,10 +94,9 @@ class CompanyMembership {
           companyStatus: _str(row['status']).toUpperCase(),
           role: _str(membership['role']).toUpperCase(),
           status: _str(membership['status']).toUpperCase(),
-          permissions: _list(membership['permissions'])
-              .map(_str)
-              .where((item) => item.isNotEmpty)
-              .toList(growable: false),
+          permissions: _list(
+            membership['permissions'],
+          ).map(_str).where((item) => item.isNotEmpty).toList(growable: false),
           instantBook: row['instantBook'] != false,
         ),
       );
@@ -191,16 +196,14 @@ class CarHireAccount {
       companyName: _str(company['displayName']),
       companyType: _str(company['type']).toUpperCase(),
       contactPhone: _strOrNull(company['contactPhone']),
-      serviceAreas: _list(company['serviceAreas'])
-          .map(_str)
-          .where((area) => area.isNotEmpty)
-          .toList(growable: false),
+      serviceAreas: _list(
+        company['serviceAreas'],
+      ).map(_str).where((area) => area.isNotEmpty).toList(growable: false),
       logoUrl: _strOrNull(company['logoUrl']),
       reviewerNote: _strOrNull(company['reviewerNote']),
-      capabilities: _list(json['capabilities'])
-          .map(_str)
-          .where((item) => item.isNotEmpty)
-          .toSet(),
+      capabilities: _list(
+        json['capabilities'],
+      ).map(_str).where((item) => item.isNotEmpty).toSet(),
     );
   }
 }
@@ -213,6 +216,10 @@ class FleetUnit {
     this.unitLabel,
     this.listingGroupId,
     this.nextServiceDueAt,
+    this.operatorId,
+    this.locationId,
+    this.tracker,
+    this.updatedAt,
   });
 
   final CarListing car;
@@ -220,6 +227,17 @@ class FleetUnit {
   final String? unitLabel;
   final String? listingGroupId;
   final DateTime? nextServiceDueAt;
+
+  /// Company that owns the unit, used for branch and team lookups.
+  final String? operatorId;
+
+  /// Branch the car is collected from; null when not set.
+  final String? locationId;
+
+  /// Paired GPS device, when the unit has one.
+  final FleetTracker? tracker;
+
+  final DateTime? updatedAt;
 
   int get id => car.id;
 
@@ -230,6 +248,15 @@ class FleetUnit {
     final label = unitLabel?.trim();
     final base = plate == null || plate.isEmpty ? 'No plate' : plate;
     return label == null || label.isEmpty ? base : '$base · $label';
+  }
+
+  /// Registration only, for compact badges.
+  String get plate {
+    final value = licensePlate?.trim();
+    if (value != null && value.isNotEmpty) return value.toUpperCase();
+    final label = unitLabel?.trim();
+    if (label != null && label.isNotEmpty) return label;
+    return 'No plate';
   }
 
   bool get serviceDueSoon {
@@ -245,6 +272,7 @@ class FleetUnit {
       final car = CarListing.fromJson(row);
       if (car.id <= 0) continue;
       final service = _str(row['nextServiceDueAt']);
+      final trackers = _list(row['trackers']);
       out.add(
         FleetUnit(
           car: car,
@@ -254,12 +282,184 @@ class FleetUnit {
           nextServiceDueAt: service.length >= 10
               ? DateTime.tryParse(service.substring(0, 10))
               : null,
+          operatorId: _strOrNull(row['operatorId']),
+          locationId: _strOrNull(row['locationId']),
+          tracker: trackers.isEmpty
+              ? null
+              : FleetTracker.fromJson(trackers.first),
+          updatedAt: DateTime.tryParse(_str(row['updatedAt'])),
         ),
       );
     }
     return out;
   }
 }
+
+/// GPS device paired with a unit. Coordinates are the tracker's last fix.
+class FleetTracker {
+  const FleetTracker({
+    this.deviceId = '',
+    this.latitude,
+    this.longitude,
+    this.speed,
+    this.lastUpdate,
+  });
+
+  final String deviceId;
+  final double? latitude;
+  final double? longitude;
+  final double? speed;
+  final DateTime? lastUpdate;
+
+  bool get hasFix => latitude != null && longitude != null;
+
+  String get deviceLabel => deviceId.trim().isEmpty ? 'Tracker' : deviceId;
+
+  factory FleetTracker.fromJson(dynamic raw) {
+    final json = _map(raw);
+    final id = _str(json['deviceId']).isEmpty
+        ? _str(json['traccarDeviceId'])
+        : _str(json['deviceId']);
+    return FleetTracker(
+      deviceId: id,
+      latitude: _doubleOrNull(json['lastLatitude']),
+      longitude: _doubleOrNull(json['lastLongitude']),
+      speed: _doubleOrNull(json['lastSpeed']),
+      lastUpdate: DateTime.tryParse(_str(json['lastUpdate'])),
+    );
+  }
+}
+
+/// A company branch cars can be collected from.
+class CompanyBranch {
+  const CompanyBranch({
+    required this.id,
+    required this.name,
+    this.address,
+    this.isActive = true,
+  });
+
+  final String id;
+  final String name;
+  final String? address;
+  final bool isActive;
+
+  String get label {
+    final value = address?.trim();
+    return value == null || value.isEmpty ? name : '$name · $value';
+  }
+
+  static List<CompanyBranch> listFromJson(dynamic raw) {
+    final out = <CompanyBranch>[];
+    for (final item in _list(raw)) {
+      final row = _map(item);
+      final id = _str(row['id']);
+      final name = _str(row['name']);
+      if (id.isEmpty || name.isEmpty) continue;
+      out.add(
+        CompanyBranch(
+          id: id,
+          name: name,
+          address: _strOrNull(row['address']),
+          isActive: row['isActive'] != false,
+        ),
+      );
+    }
+    return out;
+  }
+}
+
+/// A maintenance, cleaning or safety block on one unit.
+class MaintenanceBlock {
+  const MaintenanceBlock({
+    required this.id,
+    required this.startAt,
+    required this.endAt,
+    this.category = 'MAINTENANCE',
+    this.reason,
+    this.status = 'ACTIVE',
+  });
+
+  final String id;
+  final DateTime startAt;
+  final DateTime endAt;
+  final String category;
+  final String? reason;
+  final String status;
+
+  bool get isActive => status.toUpperCase() == 'ACTIVE';
+
+  String get categoryLabel => switch (category.toUpperCase()) {
+    'CLEANING' => 'Cleaning',
+    'SAFETY' => 'Safety',
+    _ => 'Maintenance',
+  };
+
+  static List<MaintenanceBlock> listFromJson(dynamic raw) {
+    final out = <MaintenanceBlock>[];
+    for (final item in _list(raw)) {
+      final row = _map(item);
+      final id = _str(row['id']);
+      final start = DateTime.tryParse(_str(row['startAt']));
+      final end = DateTime.tryParse(_str(row['endAt']));
+      if (id.isEmpty || start == null || end == null) continue;
+      out.add(
+        MaintenanceBlock(
+          id: id,
+          startAt: start,
+          endAt: end,
+          category: _str(row['category']),
+          reason: _strOrNull(row['reason']),
+          status: _str(row['status']),
+        ),
+      );
+    }
+    return out;
+  }
+}
+
+/// Owner-facing compliance state for one vehicle.
+class CarCompliance {
+  const CarCompliance({
+    this.compliant = false,
+    this.missing = const <String>[],
+    this.expired = const <String>[],
+  });
+
+  final bool compliant;
+
+  /// Required document types with no approved record.
+  final List<String> missing;
+
+  /// Required document types whose approved record lapsed.
+  final List<String> expired;
+
+  bool get needsAttention => !compliant;
+
+  int get issueCount => missing.length + expired.length;
+
+  static CarCompliance fromJson(dynamic raw) {
+    final json = _map(raw);
+    List<String> types(dynamic value) => _list(
+      value,
+    ).map(_str).where((item) => item.isNotEmpty).toList(growable: false);
+    return CarCompliance(
+      compliant: json['compliant'] == true || json['documentsApproved'] == true,
+      missing: types(json['missing']),
+      expired: types(json['expired']),
+    );
+  }
+}
+
+/// Human label for a vehicle document type.
+String vehicleDocumentLabel(String type) => switch (type.toUpperCase()) {
+  'REGISTRATION' => 'Registration',
+  'INSURANCE' => 'Insurance',
+  'ROADWORTHINESS' => 'Roadworthiness',
+  'OWNERSHIP_AUTHORIZATION' => 'Ownership authorisation',
+  'PERMIT' => 'Permit',
+  _ => type,
+};
 
 /// A unit of the booked listing that the company could assign.
 class BookingUnitOption {
@@ -284,11 +484,7 @@ class BookingUnitOption {
   bool get selectable => current || (inService && freeForBooking);
 
   String get label {
-    final parts = <String>[
-      licensePlate ?? 'Car #$carId',
-      ?color,
-      ?unitLabel,
-    ];
+    final parts = <String>[licensePlate ?? 'Car #$carId', ?color, ?unitLabel];
     return parts.join(' · ');
   }
 

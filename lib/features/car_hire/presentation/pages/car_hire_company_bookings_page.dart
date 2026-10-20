@@ -30,7 +30,8 @@ class CarHireCompanyBookingsPage extends ConsumerWidget {
             return const CarHireEmptyState(
               icon: Icons.lock_outline_rounded,
               title: 'No booking access',
-              message: 'Your membership does not include bookings. '
+              message:
+                  'Your membership does not include bookings. '
                   'Ask the company owner for the bookings permission.',
             );
           }
@@ -93,9 +94,8 @@ class _BookingsViewState extends ConsumerState<_BookingsView> {
             onRefresh: () =>
                 ref.refresh(companyBookingsProvider(_status).future),
             child: bookings.when(
-              loading: () => const CarHireLoadingState(
-                message: 'Loading bookings…',
-              ),
+              loading: () =>
+                  const CarHireLoadingState(message: 'Loading bookings…'),
               error: (error, _) => ListView(
                 children: [
                   CarHireErrorState(

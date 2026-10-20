@@ -185,12 +185,7 @@ class CarHirePriceBreakdown extends StatelessWidget {
     );
   }
 
-  Widget _row(
-    String label,
-    String value, {
-    bool muted = false,
-    Color? color,
-  }) {
+  Widget _row(String label, String value, {bool muted = false, Color? color}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4.5),
       child: Row(
@@ -213,7 +208,8 @@ class CarHirePriceBreakdown extends StatelessWidget {
           Text(
             value,
             style: TextStyle(
-              color: color ??
+              color:
+                  color ??
                   (muted
                       ? CarHirePalette.onSurfaceVariant
                       : CarHirePalette.onSurface),

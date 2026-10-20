@@ -35,11 +35,15 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
   void initState() {
     super.initState();
     final now = DateTime.now();
-    _startAt = widget.initialStartAt ??
-        DateTime(now.year, now.month, now.day, 9)
-            .add(const Duration(days: 1));
-    final fallbackEnd =
-        DateTime(_startAt.year, _startAt.month, _startAt.day + 3, 17);
+    _startAt =
+        widget.initialStartAt ??
+        DateTime(now.year, now.month, now.day, 9).add(const Duration(days: 1));
+    final fallbackEnd = DateTime(
+      _startAt.year,
+      _startAt.month,
+      _startAt.day + 3,
+      17,
+    );
     _endAt = widget.initialEndAt ?? fallbackEnd;
     if (!_endAt.isAfter(_startAt)) {
       _endAt = DateTime(_startAt.year, _startAt.month, _startAt.day + 1, 17);
@@ -69,9 +73,9 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
-            colorScheme: Theme.of(context).colorScheme.copyWith(
-                  primary: CarHirePalette.accent,
-                ),
+            colorScheme: Theme.of(
+              context,
+            ).colorScheme.copyWith(primary: CarHirePalette.accent),
           ),
           child: child ?? const SizedBox.shrink(),
         );
@@ -86,9 +90,9 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
-            colorScheme: Theme.of(context).colorScheme.copyWith(
-                  primary: CarHirePalette.accent,
-                ),
+            colorScheme: Theme.of(
+              context,
+            ).colorScheme.copyWith(primary: CarHirePalette.accent),
           ),
           child: child ?? const SizedBox.shrink(),
         );
@@ -152,13 +156,10 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
         backgroundColor: CarHirePalette.background,
         appBar: _appBar(),
         body: async.when(
-          loading: () => const CarHireLoadingState(
-            message: 'Loading vehicle details…',
-          ),
-          error: (error, _) => CarHireErrorState(
-            error: error,
-            onRetry: _refresh,
-          ),
+          loading: () =>
+              const CarHireLoadingState(message: 'Loading vehicle details…'),
+          error: (error, _) =>
+              CarHireErrorState(error: error, onRetry: _refresh),
           data: (_) => CarHireErrorState(
             message: 'This vehicle is no longer available.',
             onRetry: _refresh,
@@ -212,10 +213,7 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
                       const SizedBox(height: 20),
                       const _SectionLabel('About this car'),
                       const SizedBox(height: 6),
-                      Text(
-                        car.description!.trim(),
-                        style: CarHireType.body,
-                      ),
+                      Text(car.description!.trim(), style: CarHireType.body),
                     ],
                     const SizedBox(height: 16),
                     Center(
@@ -255,12 +253,7 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: Text(
-                car.title,
-                style: CarHireType.headline,
-              ),
-            ),
+            Expanded(child: Text(car.title, style: CarHireType.headline)),
             if (car.rating > 0 || car.reviews > 0) ...[
               const SizedBox(width: 10),
               CarHireRatingPill(rating: car.rating, reviews: car.reviews),
@@ -302,8 +295,7 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
           background: available
               ? CarHirePalette.successSoft
               : CarHirePalette.errorSoft,
-          foreground:
-              available ? CarHirePalette.success : CarHirePalette.error,
+          foreground: available ? CarHirePalette.success : CarHirePalette.error,
           fontSize: 10.5,
         ),
       ],
@@ -360,18 +352,13 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
             ),
           ] else if (car.minRentalDays > 1 || car.maxRentalDays != null) ...[
             const SizedBox(height: 10),
-            Text(
-              car.rentalWindowLabel,
-              style: CarHireType.labelSmall,
-            ),
+            Text(car.rentalWindowLabel, style: CarHireType.labelSmall),
           ],
           const SizedBox(height: 10),
           Row(
             children: [
               Icon(
-                car.instantBook
-                    ? Icons.bolt_rounded
-                    : Icons.schedule_rounded,
+                car.instantBook ? Icons.bolt_rounded : Icons.schedule_rounded,
                 size: 14,
                 color: CarHirePalette.muted,
               ),
@@ -484,16 +471,14 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
                 child: FilledButton(
                   onPressed: canContinue
                       ? () => CarHireRoutes.openCheckout(
-                            context,
-                            car: car,
-                            startAt: _startAt,
-                            endAt: _endAt,
-                          )
+                          context,
+                          car: car,
+                          startAt: _startAt,
+                          endAt: _endAt,
+                        )
                       : null,
                   style: carHirePrimaryButton().copyWith(
-                    minimumSize: WidgetStateProperty.all(
-                      const Size(148, 48),
-                    ),
+                    minimumSize: WidgetStateProperty.all(const Size(148, 48)),
                   ),
                   child: Text(car.isBookable ? 'Continue' : 'Unavailable'),
                 ),
@@ -575,8 +560,10 @@ class _CarHireGalleryState extends State<_CarHireGallery> {
               right: 16,
               top: 14,
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.black.withValues(alpha: 0.45),
                   borderRadius: BorderRadius.circular(99),
@@ -724,7 +711,9 @@ class _ProviderRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final logo = provider.logoUrl?.trim();
-    final initial = provider.name.isEmpty ? '?' : provider.name[0].toUpperCase();
+    final initial = provider.name.isEmpty
+        ? '?'
+        : provider.name[0].toUpperCase();
     return Row(
       children: [
         ClipOval(

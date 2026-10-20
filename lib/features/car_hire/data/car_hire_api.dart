@@ -1,12 +1,17 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
+import 'package:mime/mime.dart';
 import 'package:uuid/uuid.dart';
 
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_company_models.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
+import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 
 // ---------------------------------------------------------------------------
@@ -45,15 +50,13 @@ class CarHireApiException implements Exception {
 
   bool get requiresLogin => statusCode == 401;
 
-  bool get isNotFound =>
-      statusCode == 404 || kind == CarHireErrorKind.notFound;
+  bool get isNotFound => statusCode == 404 || kind == CarHireErrorKind.notFound;
 
   /// A 410 from the quote/booking flow means the offer expired.
   bool get isQuoteExpired => statusCode == 410;
 
   /// A 409 from quote/booking creation means an availability conflict.
-  bool get isConflict =>
-      statusCode == 409 || kind == CarHireErrorKind.conflict;
+  bool get isConflict => statusCode == 409 || kind == CarHireErrorKind.conflict;
 
   @override
   String toString() => message;
@@ -158,10 +161,7 @@ class CarHireApi {
         kind: CarHireErrorKind.server,
       );
     }
-    final payload = _unwrapMap(
-      decoded,
-      const <String>['data', 'car'],
-    );
+    final payload = _unwrapMap(decoded, const <String>['data', 'car']);
     if (payload.isEmpty) {
       throw const CarHireApiException(
         message: 'We could not load this vehicle. Please try again.',
@@ -195,7 +195,8 @@ class CarHireApi {
     final decoded = _decode(response);
     if (decoded is! Map) {
       throw const CarHireApiException(
-        message: 'We could not prepare a price for these dates. '
+        message:
+            'We could not prepare a price for these dates. '
             'Please try again.',
         kind: CarHireErrorKind.server,
       );
@@ -277,10 +278,7 @@ class CarHireApi {
     } on CarHireApiException catch (error) {
       if (error.statusCode != 404) rethrow;
       final response = await _send(
-        () => ApiClient.get(
-          '$_bookingsPath/my-bookings',
-          timeout: _timeout,
-        ),
+        () => ApiClient.get('$_bookingsPath/my-bookings', timeout: _timeout),
       );
       return BookingPage.fromJson(_decode(response));
     }
@@ -298,10 +296,7 @@ class CarHireApi {
         kind: CarHireErrorKind.server,
       );
     }
-    final payload = _unwrapMap(
-      decoded,
-      const <String>['data', 'booking'],
-    );
+    final payload = _unwrapMap(decoded, const <String>['data', 'booking']);
     if (payload.isEmpty) {
       throw const CarHireApiException(
         message: 'We could not load this booking. Please try again.',
@@ -322,10 +317,7 @@ class CarHireApi {
     );
     final decoded = _decode(response);
     if (decoded is Map) {
-      final payload = _unwrapMap(
-        decoded,
-        const <String>['data', 'booking'],
-      );
+      final payload = _unwrapMap(decoded, const <String>['data', 'booking']);
       if (payload.isNotEmpty && payload['id'] != null) {
         return CarHireBooking.fromJson(payload);
       }
@@ -376,10 +368,7 @@ class CarHireApi {
     if (decoded is! Map) {
       return const CarHireVerification();
     }
-    final payload = _unwrapMap(
-      decoded,
-      const <String>['data', 'verification'],
-    );
+    final payload = _unwrapMap(decoded, const <String>['data', 'verification']);
     return CarHireVerification.fromJson(payload);
   }
 
@@ -401,14 +390,15 @@ class CarHireApi {
         timeout: _timeout,
       ),
     );
-    final payload = _mapFrom(
-      _decode(response),
-      const <String>['data', 'extension'],
-    );
+    final payload = _mapFrom(_decode(response), const <String>[
+      'data',
+      'extension',
+    ]);
     final extension = BookingExtension.fromJson(payload);
     if (extension.id.isEmpty) {
       throw const CarHireApiException(
-        message: 'We could not confirm the extension request. '
+        message:
+            'We could not confirm the extension request. '
             'Refresh the booking and try again.',
         kind: CarHireErrorKind.server,
       );
@@ -424,10 +414,10 @@ class CarHireApi {
         timeout: _timeout,
       ),
     );
-    final list = _listFrom(
-      _decode(response),
-      const <String>['data', 'extensions'],
-    );
+    final list = _listFrom(_decode(response), const <String>[
+      'data',
+      'extensions',
+    ]);
     return list
         .whereType<Map>()
         .map((item) => BookingExtension.fromJson(item))
@@ -480,14 +470,15 @@ class CarHireApi {
         timeout: _timeout,
       ),
     );
-    final payload = _mapFrom(
-      _decode(response),
-      const <String>['data', 'inspection'],
-    );
+    final payload = _mapFrom(_decode(response), const <String>[
+      'data',
+      'inspection',
+    ]);
     final inspection = HandoverInspection.fromJson(payload);
     if (inspection.id.isEmpty) {
       throw const CarHireApiException(
-        message: 'We could not confirm the inspection. '
+        message:
+            'We could not confirm the inspection. '
             'Refresh the booking and try again.',
         kind: CarHireErrorKind.server,
       );
@@ -503,10 +494,10 @@ class CarHireApi {
         timeout: _timeout,
       ),
     );
-    final list = _listFrom(
-      _decode(response),
-      const <String>['data', 'inspections'],
-    );
+    final list = _listFrom(_decode(response), const <String>[
+      'data',
+      'inspections',
+    ]);
     return list
         .whereType<Map>()
         .map((item) => HandoverInspection.fromJson(item))
@@ -541,10 +532,7 @@ class CarHireApi {
       ),
     );
     final decoded = _decode(response);
-    final payload = _mapFrom(
-      decoded,
-      const <String>['data', 'inspection'],
-    );
+    final payload = _mapFrom(decoded, const <String>['data', 'inspection']);
     if (payload['id'] != null) {
       return HandoverInspection.fromJson(payload);
     }
@@ -556,7 +544,8 @@ class CarHireApi {
       if (inspection.id == inspectionId) return inspection;
     }
     throw const CarHireApiException(
-      message: 'The decision was sent, but we could not reload the '
+      message:
+          'The decision was sent, but we could not reload the '
           'inspection. Refresh the booking.',
       kind: CarHireErrorKind.server,
     );
@@ -589,14 +578,15 @@ class CarHireApi {
         timeout: _timeout,
       ),
     );
-    final payload = _mapFrom(
-      _decode(response),
-      const <String>['data', 'incident'],
-    );
+    final payload = _mapFrom(_decode(response), const <String>[
+      'data',
+      'incident',
+    ]);
     final incident = IncidentReport.fromJson(payload);
     if (incident.id.isEmpty) {
       throw const CarHireApiException(
-        message: 'We could not confirm the incident report. '
+        message:
+            'We could not confirm the incident report. '
             'Please try again.',
         kind: CarHireErrorKind.server,
       );
@@ -612,10 +602,10 @@ class CarHireApi {
         timeout: _timeout,
       ),
     );
-    final list = _listFrom(
-      _decode(response),
-      const <String>['data', 'incidents'],
-    );
+    final list = _listFrom(_decode(response), const <String>[
+      'data',
+      'incidents',
+    ]);
     return list
         .whereType<Map>()
         .map((item) => IncidentReport.fromJson(item))
@@ -640,10 +630,11 @@ class CarHireApi {
         timeout: _timeout,
       ),
     );
-    final payload = _mapFrom(
-      _decode(response),
-      const <String>['data', 'case', 'supportCase'],
-    );
+    final payload = _mapFrom(_decode(response), const <String>[
+      'data',
+      'case',
+      'supportCase',
+    ]);
     final supportCase = SupportCase.fromJson(payload);
     if (supportCase.id.isEmpty) {
       throw const CarHireApiException(
@@ -662,10 +653,7 @@ class CarHireApi {
         timeout: _timeout,
       ),
     );
-    final list = _listFrom(
-      _decode(response),
-      const <String>['data', 'cases'],
-    );
+    final list = _listFrom(_decode(response), const <String>['data', 'cases']);
     return list
         .whereType<Map>()
         .map((item) => SupportCase.fromJson(item))
@@ -684,10 +672,7 @@ class CarHireApi {
     final decoded = _decode(response);
     if (decoded is! Map) return const CarHireVerification();
     return CarHireVerification.fromJson(
-      _unwrapMap(
-        decoded,
-        const <String>['data', 'verification'],
-      ),
+      _unwrapMap(decoded, const <String>['data', 'verification']),
     );
   }
 
@@ -717,10 +702,10 @@ class CarHireApi {
 
     final decoded = _decode(response);
     if (decoded is Map) {
-      final payload = _unwrapMap(
-        decoded,
-        const <String>['data', 'verification'],
-      );
+      final payload = _unwrapMap(decoded, const <String>[
+        'data',
+        'verification',
+      ]);
       if (payload['status'] != null || payload['requirements'] != null) {
         return CarHireVerification.fromJson(payload);
       }
@@ -981,6 +966,175 @@ class CarHireApi {
   }
 
   // -------------------------------------------------------------------------
+  // Fleet setup: add, edit and retire a vehicle
+  // -------------------------------------------------------------------------
+
+  /// `POST /car-rental/cars`
+  ///
+  /// The backend pairs a GPS tracker automatically, so the new unit shows up
+  /// on the company dashboard with telemetry as soon as it is saved.
+  Future<FleetUnit?> createCompanyCar(Map<String, dynamic> payload) async {
+    final response = await _send(
+      () => ApiClient.post(
+        _carsPath,
+        body: jsonEncode(payload),
+        timeout: _timeout,
+      ),
+    );
+    final decoded = _decode(response);
+    final units = FleetUnit.listFromJson(decoded);
+    if (units.isNotEmpty) return units.first;
+    final row = decoded is Map ? _mapFrom(decoded, const ['data']) : null;
+    if (row == null || row.isEmpty) return null;
+    return FleetUnit.listFromJson(<dynamic>[row]).firstOrNull;
+  }
+
+  /// `PATCH /car-rental/cars/:id` — rates, specs, availability and listing.
+  Future<FleetUnit?> updateCompanyCar(
+    int carId,
+    Map<String, dynamic> changes,
+  ) async {
+    final response = await _send(
+      () => ApiClient.patch(
+        '$_carsPath/$carId',
+        body: jsonEncode(changes),
+        timeout: _timeout,
+      ),
+    );
+    final units = FleetUnit.listFromJson(_decode(response));
+    return units.isEmpty ? null : units.first;
+  }
+
+  /// `DELETE /car-rental/cars/:id`
+  Future<void> deleteCompanyCar(int carId) async {
+    await _send(() => ApiClient.delete('$_carsPath/$carId', timeout: _timeout));
+  }
+
+  /// `GET /car-rental/operators/:operatorId/locations`
+  Future<List<CompanyBranch>> getCompanyBranches(String operatorId) async {
+    final response = await _send(
+      () => ApiClient.get(
+        '/car-rental/operators/$operatorId/locations',
+        timeout: _timeout,
+      ),
+    );
+    return CompanyBranch.listFromJson(_decode(response));
+  }
+
+  /// `GET /car-rental/cars/:id/maintenance-blocks`
+  Future<List<MaintenanceBlock>> getMaintenanceBlocks(int carId) async {
+    final response = await _send(
+      () => ApiClient.get(
+        '$_carsPath/$carId/maintenance-blocks',
+        timeout: _timeout,
+      ),
+    );
+    return MaintenanceBlock.listFromJson(_decode(response));
+  }
+
+  /// `DELETE /car-rental/cars/:id/maintenance-blocks/:blockId`
+  Future<void> cancelMaintenanceBlock(int carId, String blockId) async {
+    await _send(
+      () => ApiClient.delete(
+        '$_carsPath/$carId/maintenance-blocks/$blockId',
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `GET /car-rental/cars/:id/compliance`
+  Future<CarCompliance> getCarCompliance(int carId) async {
+    final response = await _send(
+      () => ApiClient.get('$_carsPath/$carId/compliance', timeout: _timeout),
+    );
+    return CarCompliance.fromJson(_decode(response));
+  }
+
+  /// `POST /car-rental/cars/:id/documents`
+  Future<void> addCarDocument(
+    int carId, {
+    required String type,
+    required String fileReference,
+    String? referenceNumber,
+    DateTime? expiresAt,
+  }) async {
+    await _send(
+      () => ApiClient.post(
+        '$_carsPath/$carId/documents',
+        body: jsonEncode(<String, dynamic>{
+          'type': type,
+          'fileReference': fileReference,
+          if (referenceNumber != null && referenceNumber.trim().isNotEmpty)
+            'referenceNumber': referenceNumber.trim(),
+          if (expiresAt != null) 'expiresAt': _iso(expiresAt),
+        }),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `POST /uploads` — vehicle photos. Returns the public image URL.
+  Future<String> uploadPhoto(
+    Uint8List bytes, {
+    required String filename,
+    Duration timeout = const Duration(seconds: 60),
+  }) async {
+    final token = await AuthHandler.getTokenForApi();
+    if (token == null || token.trim().isEmpty) {
+      throw const CarHireApiException(
+        message: 'Sign in again to upload photos.',
+      );
+    }
+    final mime = lookupMimeType(filename, headerBytes: bytes) ?? 'image/jpeg';
+    if (!mime.startsWith('image/')) {
+      throw const CarHireApiException(
+        message: 'Choose a JPG, PNG or WEBP image.',
+      );
+    }
+
+    final request =
+        http.MultipartRequest('POST', ApiConfig.endpoint('/uploads'))
+          ..headers['Accept'] = 'application/json'
+          ..headers['Authorization'] = 'Bearer $token'
+          ..files.add(
+            http.MultipartFile.fromBytes(
+              'file',
+              bytes,
+              filename: filename.trim().isEmpty ? 'vehicle.jpg' : filename,
+              contentType: MediaType.parse(mime),
+            ),
+          );
+
+    try {
+      final streamed = await request.send().timeout(timeout);
+      final response = await http.Response.fromStream(
+        streamed,
+      ).timeout(timeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw CarHireApiException(
+          message: 'The photo could not be uploaded. Please try again.',
+          statusCode: response.statusCode,
+        );
+      }
+      final body = _decode(response);
+      final url = body is Map ? _strOf(body['url']) : '';
+      if (url.isEmpty) {
+        throw const CarHireApiException(
+          message: 'The upload finished without an image URL. Try again.',
+        );
+      }
+      return url;
+    } on CarHireApiException {
+      rethrow;
+    } catch (error) {
+      throw CarHireApiException(
+        message: UserFacingError.from(error),
+        kind: CarHireErrorKind.network,
+      );
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Helpers
   // -------------------------------------------------------------------------
 
@@ -1002,15 +1156,16 @@ class CarHireApi {
 
   static String _iso(DateTime value) => value.toUtc().toIso8601String();
 
+  static String _strOf(dynamic value) =>
+      value == null ? '' : value.toString().trim();
+
   static String _isoDate(DateTime value) {
     final local = value.toLocal();
     String pad(int part) => part.toString().padLeft(2, '0');
     return '${local.year}-${pad(local.month)}-${pad(local.day)}';
   }
 
-  Future<http.Response> _send(
-    Future<http.Response> Function() request,
-  ) async {
+  Future<http.Response> _send(Future<http.Response> Function() request) async {
     try {
       return await request();
     } on ApiException catch (error) {
@@ -1084,8 +1239,7 @@ class CarHireApi {
       CarHireErrorKind.validation =>
         'Some details are invalid. Please check the dates and try again.',
       CarHireErrorKind.unauthorized => 'Please sign in to continue.',
-      CarHireErrorKind.forbidden =>
-        'You do not have permission to do that.',
+      CarHireErrorKind.forbidden => 'You do not have permission to do that.',
       CarHireErrorKind.notFound =>
         "We couldn't find what you were looking for.",
       CarHireErrorKind.conflict =>
@@ -1097,10 +1251,8 @@ class CarHireApi {
       CarHireErrorKind.server =>
         'Our servers are busy. Please try again in a moment.',
       CarHireErrorKind.network ||
-      CarHireErrorKind.timeout =>
-        'Check your connection and try again.',
-      CarHireErrorKind.unknown =>
-        'Something went wrong. Please try again.',
+      CarHireErrorKind.timeout => 'Check your connection and try again.',
+      CarHireErrorKind.unknown => 'Something went wrong. Please try again.',
     };
 
     final raw = error.message.trim();

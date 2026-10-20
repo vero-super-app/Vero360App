@@ -164,20 +164,20 @@ class CarHireShape {
   static const Duration medium = Duration(milliseconds: 240);
 
   static List<BoxShadow> get cardShadow => <BoxShadow>[
-        BoxShadow(
-          color: CarHirePalette.primary.withValues(alpha: 0.05),
-          blurRadius: 24,
-          offset: const Offset(0, 10),
-        ),
-      ];
+    BoxShadow(
+      color: CarHirePalette.primary.withValues(alpha: 0.05),
+      blurRadius: 24,
+      offset: const Offset(0, 10),
+    ),
+  ];
 
   static List<BoxShadow> get floatingShadow => <BoxShadow>[
-        BoxShadow(
-          color: CarHirePalette.primary.withValues(alpha: 0.08),
-          blurRadius: 30,
-          offset: const Offset(0, 12),
-        ),
-      ];
+    BoxShadow(
+      color: CarHirePalette.primary.withValues(alpha: 0.08),
+      blurRadius: 30,
+      offset: const Offset(0, 12),
+    ),
+  ];
 }
 
 /// The canonical white card used across the provider and renter screens.
@@ -268,10 +268,7 @@ class CarHireSectionHeader extends StatelessWidget {
               ],
             ),
           ),
-          if (action != null) ...[
-            const SizedBox(width: 10),
-            action!,
-          ],
+          if (action != null) ...[const SizedBox(width: 10), action!],
         ],
       ),
     );
@@ -337,11 +334,7 @@ class CarHirePill extends StatelessWidget {
 
 /// Ratings are shown as a single quiet pill instead of colour-only stars.
 class CarHireRatingPill extends StatelessWidget {
-  const CarHireRatingPill({
-    super.key,
-    required this.rating,
-    this.reviews = 0,
-  });
+  const CarHireRatingPill({super.key, required this.rating, this.reviews = 0});
 
   final double rating;
   final int reviews;
@@ -420,10 +413,7 @@ ButtonStyle carHireGhostButton({Color? foreground}) {
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(CarHireShape.pillRadius),
     ),
-    textStyle: const TextStyle(
-      fontSize: 13,
-      fontWeight: FontWeight.w700,
-    ),
+    textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
   );
 }
 
@@ -458,10 +448,7 @@ InputDecoration carHireInputDecoration({
       fontSize: 12.5,
       fontWeight: FontWeight.w600,
     ),
-    hintStyle: const TextStyle(
-      color: CarHirePalette.muted,
-      fontSize: 13,
-    ),
+    hintStyle: const TextStyle(color: CarHirePalette.muted, fontSize: 13),
     helperStyle: const TextStyle(
       color: CarHirePalette.muted,
       fontSize: 10.5,
@@ -558,7 +545,9 @@ class CarHireIconButton extends StatelessWidget {
     final button = Material(
       color: background,
       shape: CircleBorder(
-        side: BorderSide(color: CarHirePalette.outlineVariant.withValues(alpha: 0.7)),
+        side: BorderSide(
+          color: CarHirePalette.outlineVariant.withValues(alpha: 0.7),
+        ),
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(

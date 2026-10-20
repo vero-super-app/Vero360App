@@ -2,8 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
+import 'package:vero360_app/features/car_hire/data/models/car_hire_section_models.dart';
+import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_browse_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_section_frame.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skeletons.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 import 'package:vero360_app/utils/formatters.dart';
@@ -139,6 +143,15 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
 
   Future<void> _refresh() async {
     ref.invalidate(carHireDetailProvider(widget.carId));
+    ref.invalidate(
+      carHireAvailabilityProvider(
+        CarHireAvailabilityRequest(
+          carId: widget.carId,
+          startAt: _startAt,
+          endAt: _endAt,
+        ),
+      ),
+    );
     try {
       await ref.read(carHireDetailProvider(widget.carId).future);
     } catch (_) {
@@ -156,8 +169,7 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
         backgroundColor: CarHirePalette.background,
         appBar: _appBar(),
         body: async.when(
-          loading: () =>
-              const CarHireLoadingState(message: 'Loading vehicle details…'),
+          loading: () => const CarHireDetailSkeleton(),
           error: (error, _) =>
               CarHireErrorState(error: error, onRetry: _refresh),
           data: (_) => CarHireErrorState(
@@ -169,7 +181,24 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
     }
 
     final refreshError = async.hasError ? async.error : null;
-    final available = car.isAvailable && car.availableForDates != false;
+
+    // The calendar check is its own section: it can load, fail and retry
+    // without touching the vehicle details above it.
+    final availabilityRequest = CarHireAvailabilityRequest(
+      carId: widget.carId,
+      startAt: _startAt,
+      endAt: _endAt,
+    );
+    final availabilityAsync = ref.watch(
+      carHireAvailabilityProvider(availabilityRequest),
+    );
+    final availability = availabilityAsync.asData?.value;
+    final checkingAvailability =
+        availabilityAsync.isLoading && availability == null;
+    final availabilityFailed = availabilityAsync.hasError;
+    final availableForDates =
+        availability?.availableForDates ?? car.availableForDates;
+    final available = car.isAvailable && availableForDates != false;
 
     return Scaffold(
       backgroundColor: CarHirePalette.background,
@@ -204,7 +233,18 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
                       ),
                       const SizedBox(height: 14),
                     ],
-                    _titleBlock(car, available),
+                    _titleBlock(car),
+                    const SizedBox(height: 12),
+                    _availabilityStatus(
+                      car: car,
+                      availability: availability,
+                      checking: checkingAvailability,
+                      failed: availabilityFailed,
+                      available: available,
+                      onRetry: () => ref.invalidate(
+                        carHireAvailabilityProvider(availabilityRequest),
+                      ),
+                    ),
                     const SizedBox(height: 16),
                     _specRow(car),
                     const SizedBox(height: 16),
@@ -238,7 +278,12 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
           ),
         ),
       ),
-      bottomNavigationBar: _continueBar(car),
+      bottomNavigationBar: _continueBar(
+        car,
+        available: available,
+        checkingAvailability: checkingAvailability,
+        availabilityFailed: availabilityFailed,
+      ),
     );
   }
 
@@ -246,7 +291,7 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
     return carHireAppBar(title: 'Vehicle details');
   }
 
-  Widget _titleBlock(CarListing car, bool available) {
+  Widget _titleBlock(CarListing car) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -286,19 +331,56 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
           const SizedBox(height: 10),
           _ProviderRow(provider: car.provider!),
         ],
-        const SizedBox(height: 12),
-        CarHirePill(
-          label: available ? 'Available for your dates' : 'Unavailable',
-          icon: available
-              ? Icons.check_circle_outline_rounded
-              : Icons.do_not_disturb_on_outlined,
-          background: available
-              ? CarHirePalette.successSoft
-              : CarHirePalette.errorSoft,
-          foreground: available ? CarHirePalette.success : CarHirePalette.error,
-          fontSize: 10.5,
-        ),
       ],
+    );
+  }
+
+  /// Availability is its own section: skeleton, error strip or status pill,
+  /// independent of the vehicle details above it.
+  Widget _availabilityStatus({
+    required CarListing car,
+    required CarHireAvailability? availability,
+    required bool checking,
+    required bool failed,
+    required bool available,
+    required VoidCallback onRetry,
+  }) {
+    if (checking) {
+      return const SizedBox(
+        height: 28,
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: CarHireAvailabilityPillSkeleton(),
+        ),
+      );
+    }
+    if (failed) {
+      return CarHireSectionErrorStrip(
+        message: 'We could not check these dates. Continue and we will '
+            'confirm availability at checkout.',
+        title: 'Availability not checked',
+        retryLabel: 'Retry',
+        onRetry: onRetry,
+        padding: EdgeInsets.zero,
+      );
+    }
+
+    final units = availability?.availableUnits ?? 0;
+    final label = available
+        ? units > 1
+              ? 'Available for your dates · $units units left'
+              : 'Available for your dates'
+        : 'Unavailable for these dates';
+    return CarHirePill(
+      label: label,
+      icon: available
+          ? Icons.check_circle_outline_rounded
+          : Icons.do_not_disturb_on_outlined,
+      background: available
+          ? CarHirePalette.successSoft
+          : CarHirePalette.errorSoft,
+      foreground: available ? CarHirePalette.success : CarHirePalette.error,
+      fontSize: 10.5,
     );
   }
 
@@ -410,9 +492,25 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
     );
   }
 
-  Widget _continueBar(CarListing car) {
-    final canContinue = _rangeValid && car.isBookable;
+  Widget _continueBar(
+    CarListing car, {
+    required bool available,
+    required bool checkingAvailability,
+    required bool availabilityFailed,
+  }) {
+    // Availability is allowed to be unknown: checkout re-validates with a
+    // quote, so a calendar failure must not trap the renter on this page.
+    final canContinue =
+        _rangeValid &&
+        car.isBookable &&
+        !checkingAvailability &&
+        (availabilityFailed || available);
     final estimate = car.dailyRate * _rentalDays;
+    final label = checkingAvailability
+        ? 'Checking…'
+        : !car.isBookable || (!available && !availabilityFailed)
+        ? 'Unavailable'
+        : 'Continue';
 
     return Container(
       decoration: const BoxDecoration(
@@ -480,7 +578,7 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
                   style: carHirePrimaryButton().copyWith(
                     minimumSize: WidgetStateProperty.all(const Size(148, 48)),
                   ),
-                  child: Text(car.isBookable ? 'Continue' : 'Unavailable'),
+                  child: Text(label),
                 ),
               ),
             ],

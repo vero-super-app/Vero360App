@@ -5,12 +5,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
+import 'package:vero360_app/features/car_hire/data/models/car_hire_section_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_account_pages.dart';
+import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_browse_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_company_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_listing_card.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_search_form.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_section_frame.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skeletons.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 
@@ -104,6 +108,12 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
     _searchController = TextEditingController(
       text: ref.read(carHireFiltersProvider).text,
     );
+    // Sections load independently after the first frame so the static chrome
+    // (location bar, search, filters) paints immediately.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(carHireBrowseProvider.notifier).loadAll();
+    });
   }
 
   @override
@@ -124,6 +134,7 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
     _searchDebounce = Timer(const Duration(milliseconds: 450), () {
       if (!mounted) return;
       ref.read(carHireFiltersProvider.notifier).setText(value);
+      ref.read(carHireBrowseProvider.notifier).refreshResults();
     });
   }
 
@@ -132,6 +143,7 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
     _searchController.clear();
     setState(() {});
     ref.read(carHireFiltersProvider.notifier).setText('');
+    ref.read(carHireBrowseProvider.notifier).refreshResults();
   }
 
   void _clearAllFilters() {
@@ -139,6 +151,7 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
     _searchController.clear();
     ref.read(carHireFiltersProvider.notifier).clear();
     setState(() => _category = _VehicleCategory.all);
+    ref.read(carHireBrowseProvider.notifier).refreshResults();
   }
 
   void _toggleCompany(CarHireCompanyOption company) {
@@ -146,6 +159,7 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
     ref
         .read(carHireFiltersProvider.notifier)
         .setCompany(current?.id == company.id ? null : company);
+    ref.read(carHireBrowseProvider.notifier).refreshResults();
   }
 
   Future<void> _openFilterSheet() async {
@@ -162,13 +176,14 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
       builder: (_) => _FilterSheet(
         initial: ref.read(carHireFiltersProvider),
         companies:
-            ref.read(carHireCompaniesProvider).value ??
+            ref.read(carHireBrowseProvider).companies.data ??
             const <CarHireCompanyOption>[],
         formatMoney: (value) => 'MWK ${_money.format(value)}',
       ),
     );
     if (next != null && mounted) {
       ref.read(carHireFiltersProvider.notifier).set(next);
+      ref.read(carHireBrowseProvider.notifier).refreshResults();
     }
   }
 
@@ -268,7 +283,7 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
     ref
         .read(carHireSearchProvider.notifier)
         .setPickupArea(_pickupController.text);
-    ref.invalidate(carHireResultsProvider);
+    ref.read(carHireBrowseProvider.notifier).refreshResults();
     FocusScope.of(context).unfocus();
     if (closeSheet && mounted) Navigator.of(context).maybePop();
   }
@@ -330,13 +345,8 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
     ref
         .read(carHireSearchProvider.notifier)
         .setPickupArea(_pickupController.text);
-    ref.invalidate(carHireResultsProvider);
-    ref.invalidate(carHireCompaniesProvider);
-    try {
-      await ref.read(carHireResultsProvider.future);
-    } catch (_) {
-      // The error state rendered by the provider is sufficient.
-    }
+    // Each section swallows its own failure; the strips explain what failed.
+    await ref.read(carHireBrowseProvider.notifier).loadAll();
   }
 
   void _snack(String message) {
@@ -489,11 +499,8 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
   @override
   Widget build(BuildContext context) {
     final query = ref.watch(carHireSearchProvider);
-    final results = ref.watch(carHireResultsProvider);
+    final browse = ref.watch(carHireBrowseProvider);
     final filters = ref.watch(carHireFiltersProvider);
-    final companies =
-        ref.watch(carHireCompaniesProvider).value ??
-        const <CarHireCompanyOption>[];
     final hasCompany =
         (ref.watch(carHireAccountProvider).value?.isActive ?? false) ||
         (ref.watch(companyAccessProvider).value?.hasCompany ?? false);
@@ -529,10 +536,15 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
             SliverToBoxAdapter(child: _locationBar(query)),
             const SliverToBoxAdapter(child: CarHireAccountBanner()),
             SliverToBoxAdapter(child: _searchRow(filters)),
-            SliverToBoxAdapter(child: _companyRail(companies, filters)),
-            SliverToBoxAdapter(child: _categoryRail()),
+            SliverToBoxAdapter(child: _companyRail(browse.companies, filters)),
+            SliverToBoxAdapter(
+              child: _categoryRail(
+                browse.facets,
+                browse.results.data?.data ?? const <CarListing>[],
+              ),
+            ),
             SliverToBoxAdapter(child: _activeFilterChips(filters)),
-            ..._resultSlivers(results, query, filters),
+            ..._resultSlivers(browse.results, query, filters),
             const SliverToBoxAdapter(
               child: CarHireAccountBanner(renterInvite: true),
             ),
@@ -687,6 +699,9 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
                         ref
                             .read(carHireFiltersProvider.notifier)
                             .setText(value);
+                        ref
+                            .read(carHireBrowseProvider.notifier)
+                            .refreshResults();
                       },
                       textInputAction: TextInputAction.search,
                       style: const TextStyle(
@@ -772,10 +787,29 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
   }
 
   Widget _companyRail(
-    List<CarHireCompanyOption> companies,
+    CarHireSectionState<List<CarHireCompanyOption>> companies,
     CarHireFilters filters,
   ) {
-    if (companies.isEmpty) return const SizedBox.shrink();
+    if (companies.isInitialLoading) {
+      return const CarHireCompanyRailSkeleton();
+    }
+    if (companies.isUnavailable) {
+      return CarHireSectionFrame(
+        title: 'Companies',
+        child: CarHireSectionErrorStrip(
+          title: 'Company filters unavailable',
+          message: 'Every car is still shown below.',
+          onRetry: companies.retryable
+              ? () => ref
+                    .read(carHireBrowseProvider.notifier)
+                    .refreshCompanies()
+              : null,
+        ),
+      );
+    }
+
+    final list = companies.data ?? const <CarHireCompanyOption>[];
+    if (list.isEmpty) return const SizedBox.shrink();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -783,15 +817,22 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
           padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
           child: Text('Companies', style: CarHireType.subtitle),
         ),
+        if (companies.showsStaleData)
+          CarHireSectionStaleStrip(
+            message: 'Showing the companies we loaded earlier.',
+            onRefresh: () =>
+                ref.read(carHireBrowseProvider.notifier).refreshCompanies(),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          ),
         SizedBox(
           height: 92,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            itemCount: companies.length,
+            itemCount: list.length,
             separatorBuilder: (_, _) => const SizedBox(width: 12),
             itemBuilder: (context, index) {
-              final company = companies[index];
+              final company = list[index];
               return _CompanyAvatar(
                 company: company,
                 selected: filters.company?.id == company.id,
@@ -875,7 +916,16 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
     );
   }
 
-  Widget _categoryRail() {
+  Widget _categoryRail(
+    CarHireSectionState<CarHireFacets> facets,
+    List<CarListing> cars,
+  ) {
+    // Only hide the rail when the first load is still running with nothing to
+    // count; the chips themselves are always usable once rendered.
+    if (facets.isInitialLoading && cars.isEmpty) {
+      return const CarHireFacetChipSkeleton();
+    }
+    final counts = facets.data?.categories ?? _localCategoryCounts(cars);
     return SizedBox(
       height: 66,
       child: ListView.separated(
@@ -887,7 +937,7 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
           final category = _VehicleCategory.values[index];
           final selected = category == _category;
           return _CategoryChip(
-            label: category.label,
+            label: _categoryLabel(category, counts),
             icon: category.icon,
             selected: selected,
             onTap: () => setState(() => _category = category),
@@ -897,222 +947,339 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
     );
   }
 
+  String _categoryLabel(
+    _VehicleCategory category,
+    CarHireCategoryCounts counts,
+  ) {
+    final count = switch (category) {
+      _VehicleCategory.all => counts.all,
+      _VehicleCategory.suv => counts.suv,
+      _VehicleCategory.luxury => counts.luxury,
+      _VehicleCategory.budget => counts.budget,
+      _VehicleCategory.sevenSeater => counts.sevenSeater,
+    };
+    return count > 0 ? '${category.label} · $count' : category.label;
+  }
+
+  /// Fallback chip counts when the facets section failed but the cards loaded.
+  /// Mirrors the server rules in `car-hire-sections.ts`.
+  CarHireCategoryCounts _localCategoryCounts(List<CarListing> cars) {
+    if (cars.isEmpty) return CarHireCategoryCounts.empty;
+    final median = _medianRate(cars);
+    var suv = 0;
+    var luxury = 0;
+    var budget = 0;
+    var sevenSeater = 0;
+    for (final car in cars) {
+      final body = (car.bodyType ?? '').toUpperCase();
+      if (body.contains('SUV') ||
+          body.contains('4X4') ||
+          body.contains('CROSSOVER') ||
+          body.contains('PICKUP')) {
+        suv += 1;
+      }
+      if (median > 0 && car.dailyRate > 0) {
+        if (car.dailyRate >= median * 1.3) luxury += 1;
+        if (car.dailyRate <= median * 0.75) budget += 1;
+      }
+      if ((car.seats ?? 0) >= 7) sevenSeater += 1;
+    }
+    return CarHireCategoryCounts(
+      all: cars.length,
+      suv: suv,
+      luxury: luxury,
+      budget: budget,
+      sevenSeater: sevenSeater,
+    );
+  }
+
   List<Widget> _resultSlivers(
-    AsyncValue<CarHireSearchResult> results,
+    CarHireSectionState<CarHireSearchResult> results,
     CarHireSearchQuery query,
     CarHireFilters filters,
   ) {
-    return results.when(
-      loading: () => <Widget>[
-        const SliverToBoxAdapter(
-          child: Padding(
-            padding: EdgeInsets.only(top: 24),
-            child: CarHireLoadingState(
-              message: 'Checking availability for your dates…',
-              padding: EdgeInsets.all(20),
-            ),
-          ),
-        ),
-      ],
-      error: (error, _) => <Widget>[
+    if (results.isInitialLoading) {
+      return const <Widget>[
+        SliverToBoxAdapter(child: CarHireResultsHeaderSkeleton()),
+        SliverToBoxAdapter(child: CarHireListingListSkeleton()),
+      ];
+    }
+
+    if (results.isUnavailable) {
+      return <Widget>[
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.only(top: 20),
-            child: CarHireErrorState(error: error, onRetry: _refresh),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: _resultsUnavailableCard(results),
           ),
         ),
-      ],
-      data: (result) {
-        final cars = result.data;
-        final visible = _visibleCars(cars);
-        final days = _rentalDays(query);
+      ];
+    }
 
-        if (cars.isEmpty && !filters.isEmpty) {
-          return <Widget>[
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.only(top: 16),
-                child: CarHireEmptyState(
-                  icon: Icons.filter_alt_off_outlined,
-                  title: 'No cars match your filters',
-                  message: filters.company != null
-                      ? '${filters.company!.name} has no cars matching these '
-                            'dates and filters. Try other dates or clear the '
-                            'filters.'
-                      : 'Nothing matches these dates and filters. Loosen a '
-                            'filter or clear them all.',
-                  actionLabel: 'Clear filters',
-                  onAction: _clearAllFilters,
+    final result = results.data ?? const CarHireSearchResult();
+    final cars = result.data;
+    final visible = _visibleCars(cars);
+    final days = _rentalDays(query);
+
+    final statusSlivers = <Widget>[
+      if (results.showsStaleData)
+        SliverToBoxAdapter(
+          child: CarHireSectionStaleStrip(
+            message: 'Showing earlier results for these dates.',
+            onRefresh: () =>
+                ref.read(carHireBrowseProvider.notifier).refreshResultCards(),
+          ),
+        )
+      else if (results.isRefreshing)
+        const SliverToBoxAdapter(
+          child: CarHireSectionUpdatingStrip(
+            message: 'Updating cars for your dates…',
+          ),
+        ),
+    ];
+
+    if (cars.isEmpty && !filters.isEmpty) {
+      return <Widget>[
+        ...statusSlivers,
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.only(top: 16),
+            child: CarHireEmptyState(
+              icon: Icons.filter_alt_off_outlined,
+              title: 'No cars match your filters',
+              message: filters.company != null
+                  ? '${filters.company!.name} has no cars matching these '
+                        'dates and filters. Try other dates or clear the '
+                        'filters.'
+                  : 'Nothing matches these dates and filters. Loosen a '
+                        'filter or clear them all.',
+              actionLabel: 'Clear filters',
+              onAction: _clearAllFilters,
+            ),
+          ),
+        ),
+      ];
+    }
+
+    if (cars.isEmpty) {
+      return <Widget>[
+        ...statusSlivers,
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.only(top: 16),
+            child: CarHireEmptyState(
+              icon: Icons.directions_car_outlined,
+              title: 'No cars available',
+              message: query.pickupArea.trim().isEmpty
+                  ? 'No vehicles match these dates. Try a different '
+                        'pick-up or return time.'
+                  : 'No vehicles match these dates in '
+                        '"${query.pickupArea}". Try different dates or clear '
+                        'the pick-up area.',
+              actionLabel: query.pickupArea.trim().isEmpty
+                  ? null
+                  : 'Clear area & retry',
+              onAction: query.pickupArea.trim().isEmpty
+                  ? null
+                  : () {
+                      _pickupController.clear();
+                      _onSearch();
+                    },
+            ),
+          ),
+        ),
+      ];
+    }
+
+    return <Widget>[
+      ...statusSlivers,
+      SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Text(
+                  '${visible.length} '
+                  '${visible.length == 1 ? 'car' : 'cars'} available',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: CarHireType.subtitle,
                 ),
               ),
-            ),
-          ];
-        }
-
-        if (cars.isEmpty) {
-          return <Widget>[
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.only(top: 16),
-                child: CarHireEmptyState(
-                  icon: Icons.directions_car_outlined,
-                  title: 'No cars available',
-                  message: query.pickupArea.trim().isEmpty
-                      ? 'No vehicles match these dates. Try a different '
-                            'pick-up or return time.'
-                      : 'No vehicles match these dates in '
-                            '"${query.pickupArea}". Try different dates or clear '
-                            'the pick-up area.',
-                  actionLabel: query.pickupArea.trim().isEmpty
-                      ? null
-                      : 'Clear area & retry',
-                  onAction: query.pickupArea.trim().isEmpty
-                      ? null
-                      : () {
-                          _pickupController.clear();
-                          _onSearch();
-                        },
-                ),
-              ),
-            ),
-          ];
-        }
-
-        return <Widget>[
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Expanded(
-                    child: Text(
-                      '${visible.length} '
-                      '${visible.length == 1 ? 'car' : 'cars'} available',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: CarHireType.subtitle,
+              const SizedBox(width: 8),
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: _openSortSheet,
+                  borderRadius: BorderRadius.circular(99),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 6,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.swap_vert_rounded,
+                          size: 16,
+                          color: CarHirePalette.onSurface,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          _sort.shortLabel,
+                          style: const TextStyle(
+                            color: CarHirePalette.onSurface,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          size: 16,
+                          color: CarHirePalette.onSurface,
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      onTap: _openSortSheet,
-                      borderRadius: BorderRadius.circular(99),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 4,
-                          vertical: 6,
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.swap_vert_rounded,
-                              size: 16,
-                              color: CarHirePalette.onSurface,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              _sort.shortLabel,
-                              style: const TextStyle(
-                                color: CarHirePalette.onSurface,
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const Icon(
-                              Icons.keyboard_arrow_down_rounded,
-                              size: 16,
-                              color: CarHirePalette.onSurface,
-                            ),
-                          ],
-                        ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      if (visible.isEmpty)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: CarHireSurface(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                children: [
+                  const Icon(
+                    Icons.tune_rounded,
+                    size: 26,
+                    color: CarHirePalette.muted,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'No cars match "${_category.label}"',
+                    textAlign: TextAlign.center,
+                    style: CarHireType.subtitle,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Try another category or clear the filter to see all '
+                    '${cars.length} available vehicles.',
+                    textAlign: TextAlign.center,
+                    style: CarHireType.bodySmall,
+                  ),
+                  const SizedBox(height: 12),
+                  TextButton(
+                    onPressed: () =>
+                        setState(() => _category = _VehicleCategory.all),
+                    style: TextButton.styleFrom(
+                      foregroundColor: CarHirePalette.accent,
+                      textStyle: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 12.5,
                       ),
                     ),
+                    child: const Text('Show all cars'),
                   ),
                 ],
               ),
             ),
           ),
-          if (visible.isEmpty)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                child: CarHireSurface(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    children: [
-                      const Icon(
-                        Icons.tune_rounded,
-                        size: 26,
-                        color: CarHirePalette.muted,
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        'No cars match "${_category.label}"',
-                        textAlign: TextAlign.center,
-                        style: CarHireType.subtitle,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Try another category or clear the filter to see all '
-                        '${cars.length} available vehicles.',
-                        textAlign: TextAlign.center,
-                        style: CarHireType.bodySmall,
-                      ),
-                      const SizedBox(height: 12),
-                      TextButton(
-                        onPressed: () =>
-                            setState(() => _category = _VehicleCategory.all),
-                        style: TextButton.styleFrom(
-                          foregroundColor: CarHirePalette.accent,
-                          textStyle: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 12.5,
-                          ),
-                        ),
-                        child: const Text('Show all cars'),
-                      ),
-                    ],
-                  ),
+        )
+      else
+        SliverPadding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          sliver: SliverList.builder(
+            itemCount: visible.length,
+            itemBuilder: (context, index) {
+              final car = visible[index];
+              return CarHireListingCard(
+                car: car,
+                rentalDays: days,
+                onTap: () => CarHireRoutes.openDetail(
+                  context,
+                  car: car,
+                  startAt: query.startAt,
+                  endAt: query.endAt,
                 ),
-              ),
-            )
-          else
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              sliver: SliverList.builder(
-                itemCount: visible.length,
-                itemBuilder: (context, index) {
-                  final car = visible[index];
-                  return CarHireListingCard(
-                    car: car,
-                    rentalDays: days,
-                    onTap: () => CarHireRoutes.openDetail(
-                      context,
-                      car: car,
-                      startAt: query.startAt,
-                      endAt: query.endAt,
-                    ),
-                  );
-                },
+              );
+            },
+          ),
+        ),
+      if (result.hasMore || result.total > cars.length)
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+            child: Text(
+              'Showing ${cars.length} of ${result.total}',
+              textAlign: TextAlign.center,
+              style: CarHireType.labelSmall,
+            ),
+          ),
+        ),
+    ];
+  }
+
+  /// Results failed with nothing cached: a compact card that keeps the page
+  /// (search, filters, companies) fully usable.
+  Widget _resultsUnavailableCard(CarHireSectionState<CarHireSearchResult> state) {
+    final message = state.error?.message.trim() ?? '';
+    return CarHireSurface(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              color: CarHirePalette.surfaceLow,
+              shape: BoxShape.circle,
+              border: Border.all(color: CarHirePalette.hairline),
+            ),
+            child: const Icon(
+              Icons.cloud_off_rounded,
+              size: 24,
+              color: CarHirePalette.muted,
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Cars could not load',
+            textAlign: TextAlign.center,
+            style: CarHireType.subtitle,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            message.isEmpty
+                ? 'Check your connection and try again.'
+                : message,
+            textAlign: TextAlign.center,
+            style: CarHireType.bodySmall,
+          ),
+          if (state.retryable) ...[
+            const SizedBox(height: 14),
+            SizedBox(
+              width: 200,
+              child: FilledButton.icon(
+                onPressed: () => ref
+                    .read(carHireBrowseProvider.notifier)
+                    .refreshResultCards(),
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: const Text('Try again'),
+                style: carHirePrimaryButton(),
               ),
             ),
-          if (result.hasMore || result.total > cars.length)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
-                child: Text(
-                  'Showing ${cars.length} of ${result.total}',
-                  textAlign: TextAlign.center,
-                  style: CarHireType.labelSmall,
-                ),
-              ),
-            ),
-        ];
-      },
+          ],
+        ],
+      ),
     );
   }
 }

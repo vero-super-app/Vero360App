@@ -4,9 +4,21 @@ import 'package:flutter/material.dart';
 /// wrapping many “core” placeholders (not one shimmer per cell).
 
 class AppSkeletonShimmer extends StatefulWidget {
-  const AppSkeletonShimmer({super.key, required this.child});
+  const AppSkeletonShimmer({
+    super.key,
+    required this.child,
+    this.colors = const [
+      Color(0xFFEBEBF5),
+      Color(0xFFF8F8FF),
+      Color(0xFFEBEBF5),
+    ],
+  });
 
   final Widget child;
+
+  /// Base, highlight and base colours of the sweeping gradient. Screens with a
+  /// warmer palette pass their own neutrals instead of the cool grey default.
+  final List<Color> colors;
 
   @override
   State<AppSkeletonShimmer> createState() => _AppSkeletonShimmerState();
@@ -44,11 +56,7 @@ class _AppSkeletonShimmerState extends State<AppSkeletonShimmer>
         shaderCallback: (bounds) => LinearGradient(
           begin: Alignment.centerLeft,
           end: Alignment.centerRight,
-          colors: const [
-            Color(0xFFEBEBF5),
-            Color(0xFFF8F8FF),
-            Color(0xFFEBEBF5),
-          ],
+          colors: widget.colors,
           stops: [
             (_anim.value - 0.5).clamp(0.0, 1.0),
             _anim.value.clamp(0.0, 1.0),

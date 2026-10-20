@@ -9,6 +9,7 @@ import 'package:uuid/uuid.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_company_models.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
+import 'package:vero360_app/features/car_hire/data/models/car_hire_section_models.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/config/api_config.dart';
@@ -69,6 +70,7 @@ class CarHireApiException implements Exception {
 class CarHireApi {
   static const Duration _timeout = Duration(seconds: 30);
   static const String _carsPath = '/car-rental/cars';
+  static const String _browsePath = '/car-rental/browse';
   static const String _quotesPath = '/car-rental/quotes';
   static const String _bookingsPath = '/car-rental/bookings';
   static const String _verificationPath = '/car-rental/verification/me';
@@ -99,6 +101,202 @@ class CarHireApi {
     int? limit,
     String? sort,
   }) async {
+    final query = _carsQuery(
+      pickupArea: pickupArea,
+      startAt: startAt,
+      endAt: endAt,
+      minSeats: minSeats,
+      transmission: transmission,
+      fuelType: fuelType,
+      bodyType: bodyType,
+      operatorId: operatorId,
+      text: text,
+      minRate: minRate,
+      maxRate: maxRate,
+      instantOnly: instantOnly,
+      page: page,
+      limit: limit,
+      sort: sort,
+    );
+
+    final response = await _send(
+      () => ApiClient.get(
+        _carsPath,
+        queryParameters: query.isEmpty ? null : query,
+        timeout: _timeout,
+      ),
+    );
+    return CarHireSearchResult.fromJson(_decode(response));
+  }
+
+  /// `GET /car-rental/browse` — one request with independently resolved
+  /// sections for companies, facets and results.
+  ///
+  /// Older deployments do not expose the composite route, so a missing route
+  /// falls back to the per-section calls in parallel. Either way the caller
+  /// receives one snapshot and each section can fail on its own.
+  Future<CarHireBrowseSnapshot> browse({
+    String? pickupArea,
+    DateTime? startAt,
+    DateTime? endAt,
+    int? minSeats,
+    String? transmission,
+    String? fuelType,
+    String? bodyType,
+    String? operatorId,
+    String? text,
+    double? minRate,
+    double? maxRate,
+    bool instantOnly = false,
+    int? page,
+    int? limit,
+    String? sort,
+  }) async {
+    final query = _carsQuery(
+      pickupArea: pickupArea,
+      startAt: startAt,
+      endAt: endAt,
+      minSeats: minSeats,
+      transmission: transmission,
+      fuelType: fuelType,
+      bodyType: bodyType,
+      operatorId: operatorId,
+      text: text,
+      minRate: minRate,
+      maxRate: maxRate,
+      instantOnly: instantOnly,
+      page: page,
+      limit: limit,
+      sort: sort,
+    );
+
+    try {
+      final response = await _send(
+        () => ApiClient.get(
+          _browsePath,
+          queryParameters: query.isEmpty ? null : query,
+          timeout: _timeout,
+        ),
+      );
+      return CarHireBrowseSnapshot.fromJson(_decode(response));
+    } on CarHireApiException catch (error) {
+      if (!_isMissingRoute(error)) rethrow;
+      return _browseSectionBySection(
+        pickupArea: pickupArea,
+        startAt: startAt,
+        endAt: endAt,
+        minSeats: minSeats,
+        transmission: transmission,
+        fuelType: fuelType,
+        bodyType: bodyType,
+        operatorId: operatorId,
+        text: text,
+        minRate: minRate,
+        maxRate: maxRate,
+        instantOnly: instantOnly,
+        page: page,
+        limit: limit,
+        sort: sort,
+      );
+    }
+  }
+
+  /// `GET /car-rental/cars/facets`
+  Future<CarHireFacets> getFacets({
+    String? pickupArea,
+    DateTime? startAt,
+    DateTime? endAt,
+    int? minSeats,
+    String? transmission,
+    String? fuelType,
+    String? bodyType,
+    String? operatorId,
+    String? text,
+    double? minRate,
+    double? maxRate,
+    bool instantOnly = false,
+  }) async {
+    final query = _carsQuery(
+      pickupArea: pickupArea,
+      startAt: startAt,
+      endAt: endAt,
+      minSeats: minSeats,
+      transmission: transmission,
+      fuelType: fuelType,
+      bodyType: bodyType,
+      operatorId: operatorId,
+      text: text,
+      minRate: minRate,
+      maxRate: maxRate,
+      instantOnly: instantOnly,
+    );
+
+    final response = await _send(
+      () => ApiClient.get(
+        '$_carsPath/facets',
+        queryParameters: query.isEmpty ? null : query,
+        timeout: _timeout,
+      ),
+    );
+    final decoded = _decode(response);
+    if (decoded is! Map) return CarHireFacets.empty;
+    return CarHireFacets.fromJson(
+      _unwrapMap(decoded, const <String>['data', 'facets']),
+    );
+  }
+
+  /// `GET /car-rental/cars/:id/availability`
+  Future<CarHireAvailability> getCarAvailability({
+    required int carId,
+    DateTime? startAt,
+    DateTime? endAt,
+  }) async {
+    final query = <String, String>{
+      if (startAt != null) 'startAt': _iso(startAt),
+      if (endAt != null) 'endAt': _iso(endAt),
+    };
+    try {
+      final response = await _send(
+        () => ApiClient.get(
+          '$_carsPath/$carId/availability',
+          queryParameters: query.isEmpty ? null : query,
+          timeout: _timeout,
+        ),
+      );
+      final decoded = _decode(response);
+      if (decoded is! Map) {
+        return CarHireAvailability(carId: carId);
+      }
+      return CarHireAvailability.fromJson(
+        _unwrapMap(decoded, const <String>['data', 'availability']),
+      );
+    } on CarHireApiException catch (error) {
+      // Older deployments do not expose the route; the car payload still
+      // carries `availableForDates`, so degrade to that instead of failing.
+      if (_isMissingRoute(error)) return CarHireAvailability(carId: carId);
+      rethrow;
+    }
+  }
+
+  /// Shared query map for the public catalogue endpoints, so search, facets and
+  /// browse can never drift apart.
+  Map<String, String> _carsQuery({
+    String? pickupArea,
+    DateTime? startAt,
+    DateTime? endAt,
+    int? minSeats,
+    String? transmission,
+    String? fuelType,
+    String? bodyType,
+    String? operatorId,
+    String? text,
+    double? minRate,
+    double? maxRate,
+    bool instantOnly = false,
+    int? page,
+    int? limit,
+    String? sort,
+  }) {
     final query = <String, String>{};
     final area = pickupArea?.trim();
     if (area != null && area.isNotEmpty) query['pickupArea'] = area;
@@ -124,15 +322,99 @@ class CarHireApi {
     if (page != null && page > 0) query['page'] = '$page';
     if (limit != null && limit > 0) query['limit'] = '$limit';
     if (sort != null && sort.trim().isNotEmpty) query['sort'] = sort.trim();
+    return query;
+  }
 
-    final response = await _send(
-      () => ApiClient.get(
-        _carsPath,
-        queryParameters: query.isEmpty ? null : query,
-        timeout: _timeout,
+  /// Parallel per-section calls for deployments without `/car-rental/browse`.
+  Future<CarHireBrowseSnapshot> _browseSectionBySection({
+    String? pickupArea,
+    DateTime? startAt,
+    DateTime? endAt,
+    int? minSeats,
+    String? transmission,
+    String? fuelType,
+    String? bodyType,
+    String? operatorId,
+    String? text,
+    double? minRate,
+    double? maxRate,
+    bool instantOnly = false,
+    int? page,
+    int? limit,
+    String? sort,
+  }) async {
+    // Start all three before awaiting so one slow section cannot delay another.
+    final companiesFuture = _settleSection(getPublicCompanies);
+    final facetsFuture = _settleSection(
+      () => getFacets(
+        pickupArea: pickupArea,
+        startAt: startAt,
+        endAt: endAt,
+        minSeats: minSeats,
+        transmission: transmission,
+        fuelType: fuelType,
+        bodyType: bodyType,
+        operatorId: operatorId,
+        text: text,
+        minRate: minRate,
+        maxRate: maxRate,
+        instantOnly: instantOnly,
       ),
     );
-    return CarHireSearchResult.fromJson(_decode(response));
+    final resultsFuture = _settleSection(
+      () => searchCars(
+        pickupArea: pickupArea,
+        startAt: startAt,
+        endAt: endAt,
+        minSeats: minSeats,
+        transmission: transmission,
+        fuelType: fuelType,
+        bodyType: bodyType,
+        operatorId: operatorId,
+        text: text,
+        minRate: minRate,
+        maxRate: maxRate,
+        instantOnly: instantOnly,
+        page: page,
+        limit: limit,
+        sort: sort,
+      ),
+    );
+
+    final companies = await companiesFuture;
+    final facets = await facetsFuture;
+    final results = await resultsFuture;
+
+    return CarHireBrowseSnapshot(
+      companies: companies,
+      facets: facets,
+      results: results,
+      degraded: companies.isUnavailable || facets.isUnavailable || results.isUnavailable,
+    );
+  }
+
+  Future<CarHireSection<T>> _settleSection<T>(Future<T> Function() call) async {
+    try {
+      return CarHireSection<T>.ok(await call());
+    } on CarHireApiException catch (error) {
+      final permanentFailure =
+          error.kind == CarHireErrorKind.validation ||
+          error.kind == CarHireErrorKind.forbidden;
+      return CarHireSection.failed<T>(
+        message: error.message,
+        retryable: !permanentFailure,
+      );
+    } catch (error) {
+      return CarHireSection.failed<T>(
+        message: UserFacingError.from(error),
+        retryable: true,
+      );
+    }
+  }
+
+  bool _isMissingRoute(CarHireApiException error) {
+    final status = error.statusCode;
+    return status == 404 || status == 405 || status == 501;
   }
 
   /// Companies that currently have cars on offer, for the company filter.

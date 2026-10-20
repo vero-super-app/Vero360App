@@ -211,54 +211,6 @@ final carHireFiltersProvider =
       CarHireFiltersNotifier.new,
     );
 
-/// Companies with cars on offer. Empty when the list cannot be loaded, so the
-/// browse page simply hides the company rail.
-final carHireCompaniesProvider = FutureProvider<List<CarHireCompanyOption>>((
-  ref,
-) async {
-  try {
-    return await ref.watch(carHireApiProvider).getPublicCompanies();
-  } catch (_) {
-    return const <CarHireCompanyOption>[];
-  }
-});
-
-/// Public search results. Availability comes from the server; the client never
-/// computes it.
-final carHireResultsProvider = FutureProvider<CarHireSearchResult>((ref) async {
-  final query = ref.watch(carHireSearchProvider);
-  final filters = ref.watch(carHireFiltersProvider);
-
-  if (!query.hasDates) {
-    throw const CarHireApiException(
-      message: 'Choose a pick-up and return date to see available cars.',
-      kind: CarHireErrorKind.validation,
-    );
-  }
-  if (!query.isDateRangeValid) {
-    throw const CarHireApiException(
-      message: 'The return date must be after the pick-up date.',
-      kind: CarHireErrorKind.validation,
-    );
-  }
-
-  final api = ref.watch(carHireApiProvider);
-  return api.searchCars(
-    pickupArea: query.pickupArea,
-    startAt: query.startAt,
-    endAt: query.endAt,
-    operatorId: filters.company?.id,
-    transmission: filters.transmission,
-    fuelType: filters.fuelType,
-    minSeats: filters.minSeats,
-    maxRate: filters.maxRate,
-    instantOnly: filters.instantOnly,
-    text: filters.text,
-    page: 1,
-    limit: 50,
-  );
-});
-
 // ---------------------------------------------------------------------------
 // Detail + bookings
 // ---------------------------------------------------------------------------

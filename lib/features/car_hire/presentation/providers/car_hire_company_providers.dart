@@ -44,6 +44,36 @@ final companyAccessProvider = FutureProvider<CompanyAccess>((ref) async {
   }
 });
 
+/// Where opening car hire should land.
+enum CarHireEntryDestination { company, marketplace }
+
+/// Resolved landing for the car hire entry point.
+///
+/// Opening car hire used to paint a spinner for the account, then a second
+/// spinner for the company memberships. This resolves both in one pass so the
+/// entry shows a single skeleton and hands straight over to the real page.
+final carHireEntryProvider = FutureProvider<CarHireEntryDestination>((
+  ref,
+) async {
+  final CarHireAccount account;
+  try {
+    account = await ref.watch(carHireAccountProvider.future);
+  } catch (_) {
+    // The marketplace must stay usable when the account lookup fails.
+    return CarHireEntryDestination.marketplace;
+  }
+  if (!account.isActive) return CarHireEntryDestination.marketplace;
+
+  // Warm the membership lookup the company home needs, so that page paints
+  // from cache instead of showing its own loading state.
+  try {
+    await ref.watch(companyAccessProvider.future);
+  } catch (_) {
+    // The company home owns the retry for membership failures.
+  }
+  return CarHireEntryDestination.company;
+});
+
 /// Dispatch board for one local day (`YYYY-MM-DD`).
 final companyDispatchProvider = FutureProvider.family<DispatchBoard, String>((
   ref,

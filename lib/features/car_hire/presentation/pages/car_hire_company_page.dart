@@ -27,41 +27,41 @@ class CarHireCompanyPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final access = ref.watch(companyAccessProvider);
+    final accessAsync = ref.watch(companyAccessProvider);
+    final access = accessAsync.value;
 
-    return access.when(
-      loading: () => Scaffold(
-        backgroundColor: CarHirePalette.background,
-        appBar: carHireAppBar(title: 'Company'),
-        body: const SingleChildScrollView(
-          padding: EdgeInsets.fromLTRB(16, 4, 16, 32),
-          child: CarHireCompanyDashboardSkeleton(),
-        ),
-      ),
-      error: (error, _) => Scaffold(
-        backgroundColor: CarHirePalette.background,
-        appBar: carHireAppBar(title: 'Company'),
-        body: CarHireErrorState(
-          error: error,
-          onRetry: () => ref.invalidate(companyAccessProvider),
-        ),
-      ),
-      data: (access) {
-        if (!access.hasCompany) {
-          return Scaffold(
-            backgroundColor: CarHirePalette.background,
-            appBar: carHireAppBar(title: 'Company'),
-            body: const CarHireEmptyState(
+    // Keep the resolved membership on screen while it refreshes so the
+    // dashboard never falls back to a skeleton once it has painted.
+    if (access != null && access.hasCompany) {
+      return _CompanyDashboard(access: access, asHome: asHome);
+    }
+
+    return Scaffold(
+      backgroundColor: CarHirePalette.background,
+      appBar: carHireAppBar(title: 'Company'),
+      body: access != null
+          ? const CarHireEmptyState(
               icon: Icons.business_outlined,
               title: 'No active company',
               message:
                   'Company mode is for staff of an approved car hire '
                   'company. Ask the company owner to invite your Vero360 email.',
+            )
+          : accessAsync.hasError
+          ? CarHireErrorState(
+              error: accessAsync.error,
+              onRetry: () => ref.invalidate(companyAccessProvider),
+            )
+          : Semantics(
+              label: 'Opening your company',
+              container: true,
+              child: const ExcludeSemantics(
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.fromLTRB(16, 4, 16, 32),
+                  child: CarHireCompanyDashboardSkeleton(),
+                ),
+              ),
             ),
-          );
-        }
-        return _CompanyDashboard(access: access, asHome: asHome);
-      },
     );
   }
 }

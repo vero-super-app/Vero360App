@@ -7,6 +7,7 @@ import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_price_breakdown.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skeletons.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_status_badge.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
@@ -407,8 +408,10 @@ class _CarHireBookingDetailPageState
       ),
       body: booking == null
           ? async.when(
-              loading: () => const CarHireLoadingState(
-                message: 'Loading booking details…',
+              skipLoadingOnRefresh: true,
+              loading: () => const SingleChildScrollView(
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 32),
+                child: ExcludeSemantics(child: CarHireCompanyBookingSkeleton()),
               ),
               error: (error, _) =>
                   CarHireErrorState(error: error, onRetry: _refresh),

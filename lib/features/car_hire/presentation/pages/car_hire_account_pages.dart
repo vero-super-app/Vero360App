@@ -8,30 +8,56 @@ import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_compan
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_company_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skeletons.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 
 /// Car hire entry point. A live car hire account lands on its company home;
 /// everyone else lands on the renter marketplace.
+///
+/// The destination is resolved once, behind a single skeleton shell, so
+/// opening car hire never shows two stacked loading screens.
 class CarHireHomePage extends ConsumerWidget {
   const CarHireHomePage({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final account = ref.watch(carHireAccountProvider);
-    return account.when(
-      skipLoadingOnRefresh: true,
-      loading: () => Scaffold(
-        backgroundColor: CarHirePalette.background,
-        appBar: carHireAppBar(title: 'Car hire'),
-        body: const CarHireLoadingState(message: 'Opening car hire…'),
+    final entry = ref.watch(carHireEntryProvider);
+
+    // Keep the last resolved destination while refreshing: the entry must
+    // never bounce back to a loader once the user is already inside.
+    final destination = entry.value;
+    if (destination != null) {
+      return switch (destination) {
+        CarHireEntryDestination.company => const CarHireCompanyPage(
+          asHome: true,
+        ),
+        CarHireEntryDestination.marketplace => const CarHireBrowsePage(),
+      };
+    }
+
+    // Once the account is known to be a live company, the remaining wait is
+    // the membership lookup, so show the dashboard's own skeleton instead of
+    // a generic one. Both share the same frame, so the switch is quiet.
+    final expectsCompany =
+        ref.watch(carHireAccountProvider).value?.isActive ?? false;
+
+    return Scaffold(
+      backgroundColor: CarHirePalette.background,
+      appBar: carHireAppBar(title: 'Car hire'),
+      body: Semantics(
+        label: 'Opening car hire',
+        container: true,
+        child: ExcludeSemantics(
+          child: expectsCompany
+              ? const SingleChildScrollView(
+                  padding: EdgeInsets.fromLTRB(16, 4, 16, 32),
+                  child: CarHireCompanyDashboardSkeleton(),
+                )
+              : const CarHireEntrySkeleton(),
+        ),
       ),
-      // The marketplace must stay usable even if the account lookup fails.
-      error: (_, _) => const CarHireBrowsePage(),
-      data: (account) => account.isActive
-          ? const CarHireCompanyPage(asHome: true)
-          : const CarHireBrowsePage(),
     );
   }
 }
@@ -182,7 +208,16 @@ class CarHireAccountStatusPage extends ConsumerWidget {
       backgroundColor: CarHirePalette.background,
       appBar: carHireAppBar(title: 'Car hire account'),
       body: async.when(
-        loading: () => const CarHireLoadingState(message: 'Checking account…'),
+        skipLoadingOnRefresh: true,
+        skipLoadingOnReload: true,
+        skipError: true,
+        loading: () => Semantics(
+          label: 'Checking car hire account',
+          container: true,
+          child: const ExcludeSemantics(
+            child: CarHireAccountStatusSkeleton(),
+          ),
+        ),
         error: (error, _) => CarHireErrorState(
           error: error,
           onRetry: () => ref.invalidate(carHireAccountProvider),

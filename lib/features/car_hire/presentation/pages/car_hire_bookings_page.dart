@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skeletons.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_status_badge.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
@@ -81,11 +82,18 @@ class _CarHireBookingsPageState extends ConsumerState<CarHireBookingsPage> {
         backgroundColor: CarHirePalette.surface,
         onRefresh: _refresh,
         child: bookings.when(
+          skipLoadingOnRefresh: true,
           loading: () => ListView(
             physics: const AlwaysScrollableScrollPhysics(),
-            children: const [
-              SizedBox(height: 120),
-              CarHireLoadingState(message: 'Loading your bookings…'),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+            children: [
+              Semantics(
+                label: 'Loading your bookings',
+                container: true,
+                child: const ExcludeSemantics(
+                  child: CarHireCompanyBookingListSkeleton(),
+                ),
+              ),
             ],
           ),
           error: (error, _) => ListView(

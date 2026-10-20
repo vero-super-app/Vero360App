@@ -971,3 +971,162 @@ class CarHireCompanyRowSkeleton extends StatelessWidget {
     );
   }
 }
+
+/// First paint of the car hire entry point.
+///
+/// Car hire opens either the company home or the renter marketplace; both
+/// begin with a header, a search block and a list of cards, so one shell
+/// keeps the hand-off to the real page visually quiet.
+class CarHireEntrySkeleton extends StatelessWidget {
+  const CarHireEntrySkeleton({super.key, this.cards = 2});
+
+  final int cards;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+      children: [
+        _SectionShimmer(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: const [
+                  AppSkeletonBox(
+                    width: 42,
+                    height: 42,
+                    radius: 21,
+                    color: CarHireSkeleton.bone,
+                  ),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        AppSkeletonBox(
+                          height: 15,
+                          width: 140,
+                          radius: 5,
+                          color: CarHireSkeleton.bone,
+                        ),
+                        SizedBox(height: 6),
+                        AppSkeletonBox(
+                          height: 10,
+                          width: 96,
+                          radius: 4,
+                          color: CarHireSkeleton.boneLight,
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(width: 10),
+                  AppSkeletonBox(
+                    width: 38,
+                    height: 38,
+                    radius: 19,
+                    color: CarHireSkeleton.boneLight,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              const AppSkeletonBox(
+                height: 96,
+                radius: 20,
+                color: CarHireSkeleton.bone,
+              ),
+              const SizedBox(height: 12),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                physics: const NeverScrollableScrollPhysics(),
+                child: Row(
+                  children: [
+                    for (var i = 0; i < 4; i++) ...[
+                      if (i > 0) const SizedBox(width: 8),
+                      AppSkeletonBox(
+                        height: 34,
+                        width: i == 0 ? 86 : 72,
+                        radius: 17,
+                        color: CarHireSkeleton.boneLight,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+              for (var i = 0; i < cards; i++)
+                Padding(
+                  padding: EdgeInsets.only(bottom: i == cards - 1 ? 0 : 20),
+                  child: const CarHireListingCardSkeleton(),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Account status page placeholder: status banner and account details.
+class CarHireAccountStatusSkeleton extends StatelessWidget {
+  const CarHireAccountStatusSkeleton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+      children: [
+        _SectionShimmer(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const AppSkeletonBox(
+                height: 92,
+                radius: 18,
+                color: CarHireSkeleton.bone,
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: CarHirePalette.surface,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: CarHirePalette.hairline),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (var i = 0; i < 4; i++)
+                      Padding(
+                        padding: EdgeInsets.only(bottom: i == 3 ? 0 : 12),
+                        child: Row(
+                          children: const [
+                            AppSkeletonBox(
+                              height: 10,
+                              width: 92,
+                              radius: 4,
+                              color: CarHireSkeleton.boneLight,
+                            ),
+                            SizedBox(width: 14),
+                            Expanded(
+                              child: AppSkeletonBox(
+                                height: 11,
+                                radius: 4,
+                                color: CarHireSkeleton.bone,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}

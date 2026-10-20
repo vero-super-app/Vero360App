@@ -155,7 +155,7 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
               loading: fleetAsync.isLoading && !fleetAsync.hasValue,
             ),
             const SizedBox(height: 14),
-            ..._pulseSection(fleetAsync, analytics, snapshot),
+            ..._pulseSection(fleetAsync, activeAsync, analytics, snapshot),
             const SizedBox(height: 18),
             if (widget.access.canViewBookings) ...[
               _NextOpsSection(
@@ -264,6 +264,7 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
 
   List<Widget> _pulseSection(
     AsyncValue<List<FleetUnit>> fleet,
+    AsyncValue<List<CarHireBooking>> activeBookings,
     CompanyAnalytics? analytics,
     _FleetSnapshot snapshot,
   ) {
@@ -293,6 +294,7 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
       _PulseCard(
         snapshot: snapshot,
         analytics: analytics,
+        bookingsFailed: activeBookings.hasError,
         loading: fleet.isLoading && !fleet.hasValue,
       ),
     ];
@@ -354,7 +356,7 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
           padding: const EdgeInsets.only(bottom: 10),
           onRefresh: () => ref.invalidate(companyFleetProvider),
         ),
-      if (!snapshot.bookingsKnown)
+      if (!snapshot.bookingsKnown && activeBookings.hasError)
         CarHireSectionErrorStrip(
           title: 'Live rentals not checked',
           message:
@@ -362,6 +364,11 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
               'You can still open a car or manage its dates.',
           padding: const EdgeInsets.only(bottom: 10),
           onRetry: () => ref.invalidate(companyBookingsProvider('ACTIVE')),
+        )
+      else if (!snapshot.bookingsKnown && activeBookings.isLoading)
+        const CarHireSectionUpdatingStrip(
+          message: 'Checking live rentals…',
+          padding: EdgeInsets.only(bottom: 10),
         )
       else if (activeBookings.hasError)
         CarHireSectionStaleStrip(
@@ -569,11 +576,15 @@ class _PulseCard extends StatelessWidget {
     required this.snapshot,
     required this.analytics,
     required this.loading,
+    this.bookingsFailed = false,
   });
 
   final _FleetSnapshot snapshot;
   final CompanyAnalytics? analytics;
   final bool loading;
+
+  /// Live rentals errored (rather than still loading).
+  final bool bookingsFailed;
 
   @override
   Widget build(BuildContext context) {
@@ -650,7 +661,7 @@ class _PulseCard extends StatelessWidget {
               ),
             ],
           ),
-          if (!snapshot.bookingsKnown) ...[
+          if (bookingsFailed) ...[
             const SizedBox(height: 8),
             Row(
               children: [

@@ -792,6 +792,31 @@ class CarHireApi {
     return CompanyMembership.listFromJson(_decode(response));
   }
 
+  /// `GET /car-rental/owner/analytics?from=YYYY-MM-DD&to=YYYY-MM-DD`
+  ///
+  /// Returns null when the membership cannot see company performance.
+  Future<CompanyAnalytics?> getCompanyAnalytics({
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    try {
+      final response = await _send(
+        () => ApiClient.get(
+          '/car-rental/owner/analytics',
+          queryParameters: <String, String>{
+            'from': _isoDate(from),
+            'to': _isoDate(to),
+          },
+          timeout: _timeout,
+        ),
+      );
+      return CompanyAnalytics.fromJson(_decode(response));
+    } on CarHireApiException catch (error) {
+      if (error.statusCode == 403 || error.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
   /// `GET /car-rental/owner/dispatch?date=YYYY-MM-DD`
   Future<DispatchBoard> getDispatchBoard({String? date}) async {
     final response = await _send(
@@ -976,6 +1001,12 @@ class CarHireApi {
   }
 
   static String _iso(DateTime value) => value.toUtc().toIso8601String();
+
+  static String _isoDate(DateTime value) {
+    final local = value.toLocal();
+    String pad(int part) => part.toString().padLeft(2, '0');
+    return '${local.year}-${pad(local.month)}-${pad(local.day)}';
+  }
 
   Future<http.Response> _send(
     Future<http.Response> Function() request,

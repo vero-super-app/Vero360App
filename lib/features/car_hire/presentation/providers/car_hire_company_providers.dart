@@ -62,6 +62,15 @@ final companyFleetProvider = FutureProvider<List<FleetUnit>>((ref) async {
   return ref.watch(carHireApiProvider).getCompanyFleet();
 });
 
+/// Company performance for the last 30 days; null when not permitted.
+final companyAnalyticsProvider = FutureProvider<CompanyAnalytics?>((ref) async {
+  final now = DateTime.now();
+  return ref.watch(carHireApiProvider).getCompanyAnalytics(
+        from: now.subtract(const Duration(days: 30)),
+        to: now,
+      );
+});
+
 final bookingUnitOptionsProvider =
     FutureProvider.family<List<BookingUnitOption>, int>((ref, bookingId) async {
   return ref.watch(carHireApiProvider).getBookingUnitOptions(bookingId);

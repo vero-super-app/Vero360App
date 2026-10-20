@@ -8,6 +8,8 @@ import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_bookin
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_browse_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_checkout_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_company_booking_page.dart';
+import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_company_bookings_page.dart';
+import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_company_fleet_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_company_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_detail_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_inspection_page.dart';
@@ -152,6 +154,20 @@ class CarHireRoutes {
   static Future<void> openCompany(BuildContext context) {
     return Navigator.of(context).push(
       CupertinoPageRoute<void>(builder: (_) => const CarHireCompanyPage()),
+    );
+  }
+
+  static Future<void> openCompanyBookings(BuildContext context) {
+    return Navigator.of(context).push(
+      CupertinoPageRoute<void>(
+        builder: (_) => const CarHireCompanyBookingsPage(),
+      ),
+    );
+  }
+
+  static Future<void> openCompanyFleet(BuildContext context) {
+    return Navigator.of(context).push(
+      CupertinoPageRoute<void>(builder: (_) => const CarHireCompanyFleetPage()),
     );
   }
 

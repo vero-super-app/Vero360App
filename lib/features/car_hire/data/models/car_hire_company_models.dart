@@ -314,6 +314,50 @@ class BookingUnitOption {
   }
 }
 
+/// Owner-scoped performance for a period, used by the fleet pulse card.
+class CompanyAnalytics {
+  const CompanyAnalytics({
+    this.revenue = 0,
+    this.bookings = 0,
+    this.completed = 0,
+    this.cancelled = 0,
+    this.utilizationRate = 0,
+    this.units = 0,
+    this.periodDays = 0,
+    this.currency = 'MWK',
+  });
+
+  final double revenue;
+  final int bookings;
+  final int completed;
+  final int cancelled;
+
+  /// Percentage of available car-days that were on hire.
+  final int utilizationRate;
+  final int units;
+  final int periodDays;
+  final String currency;
+
+  static CompanyAnalytics? fromJson(dynamic raw) {
+    final json = _map(raw);
+    final data = json['data'] is Map ? _map(json['data']) : json;
+    if (data.isEmpty) return null;
+    final revenueRaw = data['revenue'] ?? json['revenue'];
+    return CompanyAnalytics(
+      revenue: revenueRaw is num
+          ? revenueRaw.toDouble()
+          : double.tryParse(_str(revenueRaw)) ?? 0,
+      bookings: _int(data['bookings']),
+      completed: _int(data['completed']),
+      cancelled: _int(data['cancelled']),
+      utilizationRate: _int(data['utilizationRate']),
+      units: _int(data['totalCars'] ?? data['units']),
+      periodDays: _int(data['periodDays']),
+      currency: _str(data['currency']).isEmpty ? 'MWK' : _str(data['currency']),
+    );
+  }
+}
+
 class ServiceDueItem {
   const ServiceDueItem({
     required this.carId,

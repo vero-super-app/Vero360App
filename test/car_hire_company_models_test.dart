@@ -210,6 +210,29 @@ void main() {
     expect(board.isEmpty, isFalse);
   });
 
+  test('CompanyAnalytics parses the owner dashboard aggregates', () {
+    final analytics = CompanyAnalytics.fromJson(<String, dynamic>{
+      'data': <String, dynamic>{
+        'revenue': '1420000.50',
+        'bookings': 18,
+        'completed': 12,
+        'cancelled': 2,
+        'utilizationRate': '82',
+        'periodDays': 30,
+        'totalCars': 14,
+        'currency': 'MWK',
+      },
+    });
+    expect(analytics, isNotNull);
+    expect(analytics!.revenue, 1420000.5);
+    expect(analytics.bookings, 18);
+    expect(analytics.completed, 12);
+    expect(analytics.utilizationRate, 82);
+    expect(analytics.units, 14);
+    expect(analytics.periodDays, 30);
+    expect(CompanyAnalytics.fromJson(null), isNull);
+  });
+
   test('extension, inspection and incident keep UUID ids', () {
     const uuid = '3f2a1c4e-9b7d-4e21-8a55-0c6f2d9e1b77';
     expect(BookingExtension.fromJson({'id': uuid}).id, uuid);

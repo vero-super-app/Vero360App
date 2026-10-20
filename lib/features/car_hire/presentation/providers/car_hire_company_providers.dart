@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:vero360_app/features/car_hire/data/car_hire_api.dart';
@@ -6,9 +7,31 @@ import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 
+/// Changes whenever the Firebase login changes, so account-scoped providers
+/// refetch after sign-in, sign-out or switching accounts.
+final carHireLoginProvider = StreamProvider<String?>((ref) {
+  return FirebaseAuth.instance.authStateChanges().map((user) => user?.uid);
+});
+
+/// The login's single car hire account. Renters, signed-out users and any
+/// lookup the server refuses resolve to [CarHireAccount.none].
+final carHireAccountProvider = FutureProvider<CarHireAccount>((ref) async {
+  ref.watch(carHireLoginProvider);
+  try {
+    return await ref.watch(carHireApiProvider).getCarHireAccount();
+  } on CarHireApiException catch (error) {
+    final status = error.statusCode;
+    if (status == 401 || status == 403 || status == 404) {
+      return CarHireAccount.none;
+    }
+    rethrow;
+  }
+});
+
 /// Company memberships of the signed-in user. Signed-out users and renters
 /// without a company simply get no access; company mode stays hidden.
 final companyAccessProvider = FutureProvider<CompanyAccess>((ref) async {
+  ref.watch(carHireLoginProvider);
   try {
     final memberships = await ref.watch(carHireApiProvider).getMyCompanies();
     return CompanyAccess(memberships);

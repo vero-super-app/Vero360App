@@ -5,6 +5,53 @@ import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 
 void main() {
+  group('CarHireAccount', () {
+    test('parses a live business account with its tools', () {
+      final account = CarHireAccount.fromJson({
+        'state': 'ACTIVE',
+        'company': {
+          'id': 'op-1',
+          'type': 'BUSINESS',
+          'displayName': 'Lilongwe Rentals',
+          'contactPhone': '+265999',
+          'serviceAreas': ['Lilongwe', 'Salima'],
+          'reviewerNote': null,
+        },
+        'capabilities': ['fleet', 'bookings', 'branches'],
+      });
+      expect(account.isActive, isTrue);
+      expect(account.isBusiness, isTrue);
+      expect(account.companyId, 'op-1');
+      expect(account.serviceAreas, ['Lilongwe', 'Salima']);
+      expect(account.can('branches'), isTrue);
+      expect(account.can('multiUnit'), isFalse);
+    });
+
+    test('keeps the reviewer note for applications sent back', () {
+      final account = CarHireAccount.fromJson({
+        'state': 'NEEDS_INFORMATION',
+        'company': {
+          'id': 'op-2',
+          'type': 'INDIVIDUAL',
+          'displayName': 'J. Banda',
+          'reviewerNote': 'Add a reachable phone number',
+        },
+        'capabilities': [],
+      });
+      expect(account.state, CarHireAccountState.needsInformation);
+      expect(account.isActive, isFalse);
+      expect(account.hasProfile, isTrue);
+      expect(account.isBusiness, isFalse);
+      expect(account.reviewerNote, 'Add a reachable phone number');
+    });
+
+    test('treats renters and unknown states as no account', () {
+      final renter = CarHireAccount.fromJson({'state': 'NONE', 'company': null});
+      expect(renter.hasProfile, isFalse);
+      expect(CarHireAccount.fromJson('oops').state, CarHireAccountState.none);
+    });
+  });
+
   group('CarHireCompanyOption', () {
     test('parses a public company and builds initials', () {
       final company = CarHireCompanyOption.fromJson({

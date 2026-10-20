@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
+import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_account_pages.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_company_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
@@ -488,7 +489,8 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
     final companies = ref.watch(carHireCompaniesProvider).value ??
         const <CarHireCompanyOption>[];
     final hasCompany =
-        ref.watch(companyAccessProvider).value?.hasCompany ?? false;
+        (ref.watch(carHireAccountProvider).value?.isActive ?? false) ||
+            (ref.watch(companyAccessProvider).value?.hasCompany ?? false);
 
     return Scaffold(
       backgroundColor: CarHirePalette.background,
@@ -519,11 +521,15 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             SliverToBoxAdapter(child: _locationBar(query)),
+            const SliverToBoxAdapter(child: CarHireAccountBanner()),
             SliverToBoxAdapter(child: _searchRow(filters)),
             SliverToBoxAdapter(child: _companyRail(companies, filters)),
             SliverToBoxAdapter(child: _categoryRail()),
             SliverToBoxAdapter(child: _activeFilterChips(filters)),
             ..._resultSlivers(results, query, filters),
+            const SliverToBoxAdapter(
+              child: CarHireAccountBanner(renterInvite: true),
+            ),
             SliverToBoxAdapter(
               child: SizedBox(
                 height: MediaQuery.paddingOf(context).bottom + 28,

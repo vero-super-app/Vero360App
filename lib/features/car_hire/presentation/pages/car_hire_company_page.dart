@@ -13,7 +13,11 @@ import 'package:vero360_app/utils/formatters.dart';
 /// Day-to-day operations for car hire company staff. Fleet setup, pricing and
 /// branches stay on the web workspace.
 class CarHireCompanyPage extends ConsumerWidget {
-  const CarHireCompanyPage({super.key});
+  const CarHireCompanyPage({super.key, this.asHome = false});
+
+  /// True when this is the car hire landing page for a company account, so
+  /// the renter marketplace is offered as a secondary destination.
+  final bool asHome;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -52,6 +56,16 @@ class CarHireCompanyPage extends ConsumerWidget {
             backgroundColor: CarHirePalette.background,
             appBar: carHireAppBar(
               title: access.title,
+              actions: asHome
+                  ? [
+                      CarHireIconButton(
+                        icon: Icons.storefront_outlined,
+                        tooltip: 'Browse marketplace',
+                        onTap: () => CarHireRoutes.openBrowse(context),
+                      ),
+                      const SizedBox(width: 16),
+                    ]
+                  : null,
               bottom: const TabBar(
                 labelColor: CarHirePalette.onSurface,
                 unselectedLabelColor: CarHirePalette.muted,

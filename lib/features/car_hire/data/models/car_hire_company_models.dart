@@ -121,6 +121,90 @@ class CompanyAccess {
       usable.length == 1 ? usable.first.companyName : 'Your companies';
 }
 
+/// Where the login's car hire account stands.
+enum CarHireAccountState {
+  none,
+  inReview,
+  needsInformation,
+  rejected,
+  active,
+  suspended;
+
+  static CarHireAccountState fromWire(dynamic value) {
+    switch (_str(value).toUpperCase()) {
+      case 'ACTIVE':
+        return CarHireAccountState.active;
+      case 'SUSPENDED':
+        return CarHireAccountState.suspended;
+      case 'NEEDS_INFORMATION':
+        return CarHireAccountState.needsInformation;
+      case 'REJECTED':
+        return CarHireAccountState.rejected;
+      case 'IN_REVIEW':
+        return CarHireAccountState.inReview;
+      default:
+        return CarHireAccountState.none;
+    }
+  }
+}
+
+/// The single car hire account behind this login. One login runs one
+/// company; renters without a company have [CarHireAccountState.none].
+class CarHireAccount {
+  const CarHireAccount({
+    this.state = CarHireAccountState.none,
+    this.companyId,
+    this.companyName = '',
+    this.companyType = '',
+    this.contactPhone,
+    this.serviceAreas = const <String>[],
+    this.logoUrl,
+    this.reviewerNote,
+    this.capabilities = const <String>{},
+  });
+
+  static const CarHireAccount none = CarHireAccount();
+
+  final CarHireAccountState state;
+  final String? companyId;
+  final String companyName;
+
+  /// `BUSINESS` or `INDIVIDUAL`.
+  final String companyType;
+  final String? contactPhone;
+  final List<String> serviceAreas;
+  final String? logoUrl;
+  final String? reviewerNote;
+  final Set<String> capabilities;
+
+  bool get isActive => state == CarHireAccountState.active;
+  bool get hasProfile => state != CarHireAccountState.none;
+  bool get isBusiness => companyType.toUpperCase() == 'BUSINESS';
+  bool can(String capability) => capabilities.contains(capability);
+
+  factory CarHireAccount.fromJson(dynamic raw) {
+    final json = _map(raw);
+    final company = _map(json['company']);
+    return CarHireAccount(
+      state: CarHireAccountState.fromWire(json['state']),
+      companyId: _strOrNull(company['id']),
+      companyName: _str(company['displayName']),
+      companyType: _str(company['type']).toUpperCase(),
+      contactPhone: _strOrNull(company['contactPhone']),
+      serviceAreas: _list(company['serviceAreas'])
+          .map(_str)
+          .where((area) => area.isNotEmpty)
+          .toList(growable: false),
+      logoUrl: _strOrNull(company['logoUrl']),
+      reviewerNote: _strOrNull(company['reviewerNote']),
+      capabilities: _list(json['capabilities'])
+          .map(_str)
+          .where((item) => item.isNotEmpty)
+          .toSet(),
+    );
+  }
+}
+
 /// One physical car (registration) in the company fleet.
 class FleetUnit {
   const FleetUnit({

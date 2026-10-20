@@ -1,6 +1,8 @@
 import 'package:flutter/cupertino.dart';
 
+import 'package:vero360_app/features/car_hire/data/models/car_hire_company_models.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
+import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_account_pages.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_booking_detail_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_bookings_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_browse_page.dart';
@@ -17,9 +19,36 @@ import 'package:vero360_app/settings/Settings.dart' show PolicyPage;
 class CarHireRoutes {
   CarHireRoutes._();
 
+  /// Car hire entry: company home for a live car hire account, otherwise the
+  /// renter marketplace.
+  static Future<void> openHome(BuildContext context) {
+    return Navigator.of(context).push(
+      CupertinoPageRoute<void>(builder: (_) => const CarHireHomePage()),
+    );
+  }
+
   static Future<void> openBrowse(BuildContext context) {
     return Navigator.of(context).push(
       CupertinoPageRoute<void>(builder: (_) => const CarHireBrowsePage()),
+    );
+  }
+
+  static Future<void> openApply(
+    BuildContext context, {
+    CarHireAccount? existing,
+  }) {
+    return Navigator.of(context).push(
+      CupertinoPageRoute<void>(
+        builder: (_) => CarHireApplyPage(existing: existing),
+      ),
+    );
+  }
+
+  static Future<void> openAccountStatus(BuildContext context) {
+    return Navigator.of(context).push(
+      CupertinoPageRoute<void>(
+        builder: (_) => const CarHireAccountStatusPage(),
+      ),
     );
   }
 

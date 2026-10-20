@@ -733,6 +733,57 @@ class CarHireApi {
   // Company mode (providing company staff)
   // -------------------------------------------------------------------------
 
+  /// `GET /car-rental/operators/account` — the login's single car hire account.
+  Future<CarHireAccount> getCarHireAccount() async {
+    final response = await _send(
+      () => ApiClient.get('/car-rental/operators/account', timeout: _timeout),
+    );
+    return CarHireAccount.fromJson(_decode(response));
+  }
+
+  /// `POST /car-rental/operators/applications`
+  Future<void> applyForCarHireAccount({
+    required String type,
+    required String displayName,
+    String? contactPhone,
+    List<String> serviceAreas = const <String>[],
+  }) async {
+    await _send(
+      () => ApiClient.post(
+        '/car-rental/operators/applications',
+        body: jsonEncode(<String, dynamic>{
+          'type': type,
+          'displayName': displayName.trim(),
+          if (contactPhone != null && contactPhone.trim().isNotEmpty)
+            'contactPhone': contactPhone.trim(),
+          'serviceAreas': serviceAreas,
+        }),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `PATCH /car-rental/operators/:id` — also resubmits an application that
+  /// was sent back for more information.
+  Future<void> updateCarHireCompany(
+    String operatorId, {
+    String? displayName,
+    String? contactPhone,
+    List<String>? serviceAreas,
+  }) async {
+    await _send(
+      () => ApiClient.patch(
+        '/car-rental/operators/${Uri.encodeComponent(operatorId)}',
+        body: jsonEncode(<String, dynamic>{
+          if (displayName != null) 'displayName': displayName.trim(),
+          if (contactPhone != null) 'contactPhone': contactPhone.trim(),
+          'serviceAreas': ?serviceAreas,
+        }),
+        timeout: _timeout,
+      ),
+    );
+  }
+
   /// `GET /car-rental/operators/mine`
   Future<List<CompanyMembership>> getMyCompanies() async {
     final response = await _send(

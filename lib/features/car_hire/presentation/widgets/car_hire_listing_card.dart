@@ -50,7 +50,8 @@ class CarHireListingCard extends StatelessWidget {
       label: '${car.title}, '
           '${car.provider == null ? '' : '${car.providerLabel}, '}'
           '${car.pricePerDayLabel}'
-          '${_available ? '' : ', unavailable'}',
+          '${_available ? '' : ', unavailable'}'
+          '${_available && car.unitsLeftLabel != null ? ', ${car.unitsLeftLabel}' : ''}',
       child: Padding(
         padding: margin,
         child: Material(
@@ -188,7 +189,17 @@ class CarHireListingCard extends StatelessWidget {
                   fontSize: 11,
                 ),
               ),
-            ],
+            ] else if (car.unitsLeftLabel != null)
+              Positioned(
+                left: 12,
+                top: 12,
+                child: CarHirePill(
+                  label: car.unitsLeftLabel!,
+                  background: Colors.white.withValues(alpha: 0.95),
+                  foreground: CarHirePalette.onSurface,
+                  fontSize: 11,
+                ),
+              ),
           ],
         ),
       ),

@@ -571,6 +571,9 @@ class CarListing {
     this.minRentalDays = 1,
     this.maxRentalDays,
     this.provider,
+    this.listingId,
+    this.unitCount,
+    this.availableUnits,
   });
 
   final int id;
@@ -602,9 +605,26 @@ class CarListing {
   final int? maxRentalDays;
   final CarHireProvider? provider;
 
+  /// Shared id of identical units; null for a single-unit listing.
+  final String? listingId;
+
+  /// Identical units in service on this listing.
+  final int? unitCount;
+
+  /// Units free for the searched dates (or in service when undated).
+  final int? availableUnits;
+
   /// "Provided by …" line, empty when the backend did not send a provider.
   String get providerLabel =>
       provider == null ? '' : 'Provided by ${provider!.name}';
+
+  /// "3 left" for multi-unit listings; null when there is nothing to show.
+  String? get unitsLeftLabel {
+    final total = unitCount ?? 0;
+    final free = availableUnits;
+    if (total <= 1 || free == null || free <= 0) return null;
+    return '$free left';
+  }
 
   factory CarListing.fromJson(dynamic raw) {
     final json = _asMap(raw);
@@ -650,6 +670,9 @@ class CarListing {
       minRentalDays: minDaysRaw <= 0 ? 1 : minDaysRaw,
       maxRentalDays: _asNullableInt(json['maxRentalDays']),
       provider: CarHireProvider.fromJson(json['operator']),
+      listingId: _asStringOrNull(json['listingId']),
+      unitCount: _asNullableInt(json['unitCount']),
+      availableUnits: _asNullableInt(json['availableUnits']),
     );
   }
 
@@ -764,6 +787,9 @@ class CarListing {
       minRentalDays: minRentalDays,
       maxRentalDays: maxRentalDays,
       provider: provider,
+      listingId: listingId,
+      unitCount: unitCount,
+      availableUnits: availableUnits,
     );
   }
 }
@@ -1003,6 +1029,8 @@ class CarHireBooking {
     this.paymentReference,
     this.car,
     this.priceBreakdown = const <QuoteLineItem>[],
+    this.assignedPlate,
+    this.assignedColor,
   });
 
   final int id;
@@ -1035,6 +1063,10 @@ class CarHireBooking {
   final CarListing? car;
   final List<QuoteLineItem> priceBreakdown;
 
+  /// Registration of the assigned unit; only sent once the booking is confirmed.
+  final String? assignedPlate;
+  final String? assignedColor;
+
   factory CarHireBooking.fromJson(dynamic raw) {
     dynamic payload = raw;
     if (raw is Map) {
@@ -1044,6 +1076,7 @@ class CarHireBooking {
     final json = _asMap(payload);
     final carRaw = json['car'] ?? json['vehicle'];
     final breakdownRaw = json['priceBreakdown'];
+    final assignedUnit = _asMap(json['assignedUnit']);
 
     return CarHireBooking(
       id: _asInt(json['id']),
@@ -1082,6 +1115,8 @@ class CarHireBooking {
       priceBreakdown: breakdownRaw is List
           ? QuoteLineItem.listFromJson(breakdownRaw)
           : QuoteLineItem.listFromJson(_asMap(breakdownRaw)['lineItems']),
+      assignedPlate: _asStringOrNull(assignedUnit['licensePlate']),
+      assignedColor: _asStringOrNull(assignedUnit['color']),
     );
   }
 
@@ -1219,6 +1254,8 @@ class CarHireBooking {
       paymentReference: paymentReference ?? this.paymentReference,
       car: car ?? this.car,
       priceBreakdown: priceBreakdown,
+      assignedPlate: assignedPlate,
+      assignedColor: assignedColor,
     );
   }
 }

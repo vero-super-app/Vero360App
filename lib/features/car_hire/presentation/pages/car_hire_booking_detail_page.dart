@@ -654,6 +654,14 @@ class _CarHireBookingDetailPageState
             const Divider(height: 1, color: CarHirePalette.hairline),
             const SizedBox(height: 10),
           ],
+          if (booking.assignedPlate != null)
+            _InfoRow(
+              label: 'Vehicle',
+              value: [
+                booking.assignedPlate!,
+                if (booking.assignedColor != null) booking.assignedColor!,
+              ].join(' · '),
+            ),
           _InfoRow(
             label: 'Pick-up',
             value: booking.startAt == null

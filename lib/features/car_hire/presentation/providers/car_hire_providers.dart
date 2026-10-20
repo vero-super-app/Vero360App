@@ -502,7 +502,7 @@ class CarHireInspectionAcknowledgeController
 
   Future<HandoverInspection?> acknowledge({
     required int bookingId,
-    required int inspectionId,
+    required String inspectionId,
     required bool accept,
     String? note,
   }) async {

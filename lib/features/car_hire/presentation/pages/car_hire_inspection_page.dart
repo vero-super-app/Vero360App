@@ -18,11 +18,15 @@ class CarHireInspectionPage extends ConsumerStatefulWidget {
     required this.bookingId,
     required this.type,
     this.booking,
+    this.asCompany = false,
   });
 
   final int bookingId;
   final InspectionType type;
   final CarHireBooking? booking;
+
+  /// The providing company records handovers but never answers for the renter.
+  final bool asCompany;
 
   @override
   ConsumerState<CarHireInspectionPage> createState() =>
@@ -541,7 +545,7 @@ class _CarHireInspectionPageState
                 ),
               ),
           ],
-          if (inspection.awaitingRenterDecision) ...[
+          if (!widget.asCompany && inspection.awaitingRenterDecision) ...[
             const SizedBox(height: 10),
             Row(
               children: [

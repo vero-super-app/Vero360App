@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 
+import 'package:vero360_app/features/car_hire/data/models/car_hire_company_models.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
@@ -379,7 +380,7 @@ class CarHireApi {
       const <String>['data', 'extension'],
     );
     final extension = BookingExtension.fromJson(payload);
-    if (extension.id <= 0) {
+    if (extension.id.isEmpty) {
       throw const CarHireApiException(
         message: 'We could not confirm the extension request. '
             'Refresh the booking and try again.',
@@ -458,7 +459,7 @@ class CarHireApi {
       const <String>['data', 'inspection'],
     );
     final inspection = HandoverInspection.fromJson(payload);
-    if (inspection.id <= 0) {
+    if (inspection.id.isEmpty) {
       throw const CarHireApiException(
         message: 'We could not confirm the inspection. '
             'Refresh the booking and try again.',
@@ -489,7 +490,7 @@ class CarHireApi {
   /// `POST /car-rental/bookings/:id/inspections/:inspectionId/acknowledge`
   Future<HandoverInspection> acknowledgeInspection(
     int bookingId, {
-    required int inspectionId,
+    required String inspectionId,
     required String decision,
     String? note,
   }) async {
@@ -567,7 +568,7 @@ class CarHireApi {
       const <String>['data', 'incident'],
     );
     final incident = IncidentReport.fromJson(payload);
-    if (incident.id <= 0) {
+    if (incident.id.isEmpty) {
       throw const CarHireApiException(
         message: 'We could not confirm the incident report. '
             'Please try again.',
@@ -618,7 +619,7 @@ class CarHireApi {
       const <String>['data', 'case', 'supportCase'],
     );
     final supportCase = SupportCase.fromJson(payload);
-    if (supportCase.id <= 0) {
+    if (supportCase.id.isEmpty) {
       throw const CarHireApiException(
         message: 'We could not open the support case. Please try again.',
         kind: CarHireErrorKind.server,
@@ -700,6 +701,181 @@ class CarHireApi {
     }
     // The submission endpoint is not required to return the full view.
     return getVerificationRequirements();
+  }
+
+  // -------------------------------------------------------------------------
+  // Company mode (providing company staff)
+  // -------------------------------------------------------------------------
+
+  /// `GET /car-rental/operators/mine`
+  Future<List<CompanyMembership>> getMyCompanies() async {
+    final response = await _send(
+      () => ApiClient.get('/car-rental/operators/mine', timeout: _timeout),
+    );
+    return CompanyMembership.listFromJson(_decode(response));
+  }
+
+  /// `GET /car-rental/owner/dispatch?date=YYYY-MM-DD`
+  Future<DispatchBoard> getDispatchBoard({String? date}) async {
+    final response = await _send(
+      () => ApiClient.get(
+        '/car-rental/owner/dispatch',
+        queryParameters: date == null ? null : <String, String>{'date': date},
+        timeout: _timeout,
+      ),
+    );
+    return DispatchBoard.fromJson(_decode(response));
+  }
+
+  /// `GET /car-rental/owner/bookings`
+  Future<List<CarHireBooking>> getCompanyBookings({String? status}) async {
+    final response = await _send(
+      () => ApiClient.get(
+        '/car-rental/owner/bookings',
+        queryParameters: <String, String>{
+          'limit': '100',
+          if (status != null && status.isNotEmpty) 'status': status,
+        },
+        timeout: _timeout,
+      ),
+    );
+    return BookingPage.fromJson(_decode(response)).data;
+  }
+
+  /// `POST /car-rental/bookings/:id/confirm` (also accepts a request).
+  Future<void> confirmBooking(int bookingId) async {
+    await _send(
+      () => ApiClient.post(
+        '$_bookingsPath/$bookingId/confirm',
+        body: jsonEncode(<String, dynamic>{}),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `POST /car-rental/bookings/:id/reject`
+  Future<void> rejectBooking(int bookingId, {String? reason}) async {
+    final trimmed = reason?.trim() ?? '';
+    await _send(
+      () => ApiClient.post(
+        '$_bookingsPath/$bookingId/reject',
+        body: jsonEncode(<String, dynamic>{
+          if (trimmed.isNotEmpty) 'reason': trimmed,
+        }),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `POST /car-rental/bookings/:id/start|complete`
+  Future<void> setRentalStage(int bookingId, {required bool start}) async {
+    await _send(
+      () => ApiClient.post(
+        '$_bookingsPath/$bookingId/${start ? 'start' : 'complete'}',
+        body: jsonEncode(<String, dynamic>{}),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `GET /car-rental/bookings/:id/units`
+  Future<List<BookingUnitOption>> getBookingUnitOptions(int bookingId) async {
+    final response = await _send(
+      () => ApiClient.get('$_bookingsPath/$bookingId/units', timeout: _timeout),
+    );
+    return BookingUnitOption.listFromJson(_decode(response));
+  }
+
+  /// `POST /car-rental/bookings/:id/assign-unit`
+  Future<void> assignBookingUnit(int bookingId, int carId) async {
+    await _send(
+      () => ApiClient.post(
+        '$_bookingsPath/$bookingId/assign-unit',
+        body: jsonEncode(<String, dynamic>{'carId': carId}),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `POST /car-rental/bookings/:id/extensions/:extensionId/approve|decline`
+  Future<void> decideExtension(
+    int bookingId,
+    String extensionId, {
+    required bool approve,
+    String? reason,
+  }) async {
+    final trimmed = reason?.trim() ?? '';
+    await _send(
+      () => ApiClient.post(
+        '$_bookingsPath/$bookingId/extensions/$extensionId/'
+        '${approve ? 'approve' : 'decline'}',
+        body: jsonEncode(<String, dynamic>{
+          if (!approve && trimmed.isNotEmpty) 'reason': trimmed,
+        }),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `POST /car-rental/bookings/:id/incidents/:incidentId/resolve`
+  Future<void> resolveIncident(
+    int bookingId,
+    String incidentId, {
+    required String resolution,
+    String? remedy,
+  }) async {
+    await _send(
+      () => ApiClient.post(
+        '$_bookingsPath/$bookingId/incidents/$incidentId/resolve',
+        body: jsonEncode(<String, dynamic>{
+          'resolution': resolution.trim(),
+          if (remedy != null && remedy.isNotEmpty) 'remedy': remedy,
+        }),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `GET /car-rental/cars/owner/fleet`
+  Future<List<FleetUnit>> getCompanyFleet() async {
+    final response = await _send(
+      () => ApiClient.get('$_carsPath/owner/fleet', timeout: _timeout),
+    );
+    return FleetUnit.listFromJson(_decode(response));
+  }
+
+  /// `PATCH /car-rental/cars/:id` with `{ isAvailable }`.
+  Future<void> setUnitInService(int carId, bool inService) async {
+    await _send(
+      () => ApiClient.patch(
+        '$_carsPath/$carId',
+        body: jsonEncode(<String, dynamic>{'isAvailable': inService}),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `POST /car-rental/cars/:id/maintenance-blocks`
+  Future<void> addMaintenanceBlock(
+    int carId, {
+    required DateTime startAt,
+    required DateTime endAt,
+    required String category,
+    String? reason,
+  }) async {
+    final trimmed = reason?.trim() ?? '';
+    await _send(
+      () => ApiClient.post(
+        '$_carsPath/$carId/maintenance-blocks',
+        body: jsonEncode(<String, dynamic>{
+          'startAt': _iso(startAt),
+          'endAt': _iso(endAt),
+          'category': category,
+          if (trimmed.isNotEmpty) 'reason': trimmed,
+        }),
+        timeout: _timeout,
+      ),
+    );
   }
 
   // -------------------------------------------------------------------------

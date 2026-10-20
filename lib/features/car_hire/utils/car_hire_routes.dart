@@ -5,6 +5,8 @@ import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_bookin
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_bookings_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_browse_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_checkout_page.dart';
+import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_company_booking_page.dart';
+import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_company_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_detail_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_inspection_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_report_page.dart';
@@ -104,6 +106,7 @@ class CarHireRoutes {
     required int bookingId,
     required InspectionType type,
     CarHireBooking? booking,
+    bool asCompany = false,
   }) {
     return Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -111,7 +114,25 @@ class CarHireRoutes {
           bookingId: bookingId,
           type: type,
           booking: booking,
+          asCompany: asCompany,
         ),
+      ),
+    );
+  }
+
+  static Future<void> openCompany(BuildContext context) {
+    return Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const CarHireCompanyPage()),
+    );
+  }
+
+  static Future<void> openCompanyBooking(
+    BuildContext context, {
+    required int bookingId,
+  }) {
+    return Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CarHireCompanyBookingPage(bookingId: bookingId),
       ),
     );
   }

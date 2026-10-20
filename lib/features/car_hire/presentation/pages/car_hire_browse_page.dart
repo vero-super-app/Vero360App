@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
+import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_company_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_listing_card.dart';
@@ -416,12 +417,22 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
   Widget build(BuildContext context) {
     final query = ref.watch(carHireSearchProvider);
     final results = ref.watch(carHireResultsProvider);
+    final hasCompany =
+        ref.watch(companyAccessProvider).value?.hasCompany ?? false;
 
     return Scaffold(
       backgroundColor: CarHirePalette.background,
       appBar: carHireAppBar(
         title: 'Car hire',
         actions: [
+          if (hasCompany) ...[
+            CarHireIconButton(
+              icon: Icons.business_center_outlined,
+              tooltip: 'My company',
+              onTap: () => CarHireRoutes.openCompany(context),
+            ),
+            const SizedBox(width: 8),
+          ],
           CarHireIconButton(
             icon: Icons.receipt_long_rounded,
             tooltip: 'My bookings',

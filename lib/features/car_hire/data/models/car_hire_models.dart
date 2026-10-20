@@ -1059,6 +1059,11 @@ class CarHireBooking {
     this.priceBreakdown = const <QuoteLineItem>[],
     this.assignedPlate,
     this.assignedColor,
+    this.assignedCarId,
+    this.renterName,
+    this.renterPhone,
+    this.bookingMode = 'INSTANT',
+    this.branchName,
   });
 
   final int id;
@@ -1094,6 +1099,19 @@ class CarHireBooking {
   /// Registration of the assigned unit; only sent once the booking is confirmed.
   final String? assignedPlate;
   final String? assignedColor;
+  final int? assignedCarId;
+
+  /// Renter contact; only sent to the providing company.
+  final String? renterName;
+  final String? renterPhone;
+
+  /// `INSTANT` or `REQUEST` (company accepts before the renter pays).
+  final String bookingMode;
+
+  /// Pickup branch; sent on the company dispatch board.
+  final String? branchName;
+
+  bool get isRequest => bookingMode == 'REQUEST';
 
   factory CarHireBooking.fromJson(dynamic raw) {
     dynamic payload = raw;
@@ -1145,6 +1163,12 @@ class CarHireBooking {
           : QuoteLineItem.listFromJson(_asMap(breakdownRaw)['lineItems']),
       assignedPlate: _asStringOrNull(assignedUnit['licensePlate']),
       assignedColor: _asStringOrNull(assignedUnit['color']),
+      assignedCarId: _asNullableInt(assignedUnit['carId']),
+      renterName: _asStringOrNull(json['renterName']),
+      renterPhone: _asStringOrNull(json['renterPhone']),
+      bookingMode:
+          _asString(json['bookingMode'], fallback: 'INSTANT').toUpperCase(),
+      branchName: _asStringOrNull(_asMap(json['branch'])['name']),
     );
   }
 
@@ -1291,6 +1315,11 @@ class CarHireBooking {
       priceBreakdown: priceBreakdown,
       assignedPlate: assignedPlate,
       assignedColor: assignedColor,
+      assignedCarId: assignedCarId,
+      renterName: renterName,
+      renterPhone: renterPhone,
+      bookingMode: bookingMode,
+      branchName: branchName,
     );
   }
 }
@@ -1387,7 +1416,7 @@ class BookingExtension {
     this.createdAt,
   });
 
-  final int id;
+  final String id;
   final int? bookingId;
   final DateTime? requestedEndAt;
   final DateTime? previousEndAt;
@@ -1408,7 +1437,7 @@ class BookingExtension {
     final json = _asMap(payload);
 
     return BookingExtension(
-      id: _asInt(_pick(json, <String>['id', 'extensionId', 'extension_id'])),
+      id: _asString(_pick(json, <String>['id', 'extensionId', 'extension_id'])),
       bookingId: _asNullableInt(
         _pick(json, <String>['bookingId', 'booking_id']),
       ),
@@ -1539,7 +1568,7 @@ class HandoverInspection {
     this.acknowledgements = const <InspectionAcknowledgement>[],
   });
 
-  final int id;
+  final String id;
   final int? bookingId;
   final InspectionType type;
   final InspectionActorRole actorRole;
@@ -1565,7 +1594,7 @@ class HandoverInspection {
     final json = _asMap(payload);
 
     return HandoverInspection(
-      id: _asInt(_pick(json, <String>['id', 'inspectionId', 'inspection_id'])),
+      id: _asString(_pick(json, <String>['id', 'inspectionId', 'inspection_id'])),
       bookingId: _asNullableInt(
         _pick(json, <String>['bookingId', 'booking_id']),
       ),
@@ -1695,7 +1724,7 @@ class IncidentReport {
     this.createdAt,
   });
 
-  final int id;
+  final String id;
   final int? bookingId;
   final IncidentType type;
   final String description;
@@ -1713,7 +1742,7 @@ class IncidentReport {
     final json = _asMap(payload);
 
     return IncidentReport(
-      id: _asInt(_pick(json, <String>['id', 'incidentId', 'incident_id'])),
+      id: _asString(_pick(json, <String>['id', 'incidentId', 'incident_id'])),
       bookingId: _asNullableInt(
         _pick(json, <String>['bookingId', 'booking_id']),
       ),
@@ -1768,7 +1797,7 @@ class SupportCase {
     this.updatedAt,
   });
 
-  final int id;
+  final String id;
   final int? bookingId;
   final SupportCaseCategory category;
   final String subject;
@@ -1786,7 +1815,7 @@ class SupportCase {
     final json = _asMap(payload);
 
     return SupportCase(
-      id: _asInt(_pick(json, <String>['id', 'caseId', 'case_id'])),
+      id: _asString(_pick(json, <String>['id', 'caseId', 'case_id'])),
       bookingId: _asNullableInt(
         _pick(json, <String>['bookingId', 'booking_id']),
       ),

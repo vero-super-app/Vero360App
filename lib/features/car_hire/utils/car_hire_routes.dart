@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_booking_detail_page.dart';
@@ -19,7 +19,7 @@ class CarHireRoutes {
 
   static Future<void> openBrowse(BuildContext context) {
     return Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const CarHireBrowsePage()),
+      CupertinoPageRoute<void>(builder: (_) => const CarHireBrowsePage()),
     );
   }
 
@@ -30,7 +30,7 @@ class CarHireRoutes {
     DateTime? endAt,
   }) {
     return Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      CupertinoPageRoute<void>(
         builder: (_) => CarHireDetailPage(
           carId: car.id,
           initialCar: car,
@@ -48,7 +48,7 @@ class CarHireRoutes {
     required DateTime endAt,
   }) {
     return Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      CupertinoPageRoute<void>(
         builder: (_) => CarHireCheckoutPage(
           car: car,
           startAt: startAt,
@@ -60,7 +60,7 @@ class CarHireRoutes {
 
   static Future<void> openBookings(BuildContext context) {
     return Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const CarHireBookingsPage()),
+      CupertinoPageRoute<void>(builder: (_) => const CarHireBookingsPage()),
     );
   }
 
@@ -70,7 +70,7 @@ class CarHireRoutes {
     CarHireBooking? initialBooking,
     bool replace = false,
   }) {
-    final route = MaterialPageRoute<void>(
+    final route = CupertinoPageRoute<void>(
       builder: (_) => CarHireBookingDetailPage(
         bookingId: bookingId,
         initialBooking: initialBooking,
@@ -84,7 +84,7 @@ class CarHireRoutes {
 
   static Future<void> openVerification(BuildContext context) {
     return Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      CupertinoPageRoute<void>(
         builder: (_) => const CarHireVerificationPage(),
       ),
     );
@@ -94,7 +94,7 @@ class CarHireRoutes {
   /// `true` when the user taps "Agree & Continue".
   static Future<bool> openTerms(BuildContext context) async {
     final agreed = await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
+      CupertinoPageRoute<bool>(
         builder: (_) => const PolicyPage(focusCarHire: true),
       ),
     );
@@ -109,7 +109,7 @@ class CarHireRoutes {
     bool asCompany = false,
   }) {
     return Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      CupertinoPageRoute<void>(
         builder: (_) => CarHireInspectionPage(
           bookingId: bookingId,
           type: type,
@@ -122,7 +122,7 @@ class CarHireRoutes {
 
   static Future<void> openCompany(BuildContext context) {
     return Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const CarHireCompanyPage()),
+      CupertinoPageRoute<void>(builder: (_) => const CarHireCompanyPage()),
     );
   }
 
@@ -131,7 +131,7 @@ class CarHireRoutes {
     required int bookingId,
   }) {
     return Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      CupertinoPageRoute<void>(
         builder: (_) => CarHireCompanyBookingPage(bookingId: bookingId),
       ),
     );
@@ -144,7 +144,7 @@ class CarHireRoutes {
     String? bookingNumber,
   }) {
     return Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      CupertinoPageRoute<void>(
         builder: (_) => CarHireReportPage(
           bookingId: bookingId,
           initialTab: initialTab,

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui';
 
+import 'package:flutter/cupertino.dart' show CupertinoPageRoute;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -642,7 +643,11 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       default:
         page = const BikeRideShareMapScreen();
     }
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+    Navigator.of(context).push(
+      key == 'car_hire'
+          ? CupertinoPageRoute<void>(builder: (_) => page)
+          : MaterialPageRoute<void>(builder: (_) => page),
+    );
   }
 
   String? _merchantProfilePhoneOrNull(String? raw) {

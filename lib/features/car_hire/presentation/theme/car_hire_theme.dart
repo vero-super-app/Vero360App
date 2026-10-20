@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 /// Vero360 car-hire design tokens.
@@ -488,7 +489,9 @@ AppBar carHireAppBar({
     foregroundColor: CarHirePalette.onSurface,
     elevation: 0,
     scrolledUnderElevation: 0.5,
-    automaticallyImplyLeading: automaticallyImplyLeading,
+    automaticallyImplyLeading: false,
+    leading: automaticallyImplyLeading ? const CarHireBackButton() : null,
+    leadingWidth: automaticallyImplyLeading ? 84 : null,
     titleSpacing: automaticallyImplyLeading ? 0 : 16,
     centerTitle: false,
     title: Text(
@@ -503,6 +506,55 @@ AppBar carHireAppBar({
     actions: actions,
     bottom: bottom,
   );
+}
+
+/// iOS-style back control: a thin chevron with a "Back" label. Renders
+/// nothing when there is no route to return to.
+class CarHireBackButton extends StatelessWidget {
+  const CarHireBackButton({super.key, this.label = 'Back'});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final route = ModalRoute.of(context);
+    if (route == null || !route.canPop) return const SizedBox.shrink();
+    return Semantics(
+      button: true,
+      label: label,
+      child: InkWell(
+        onTap: () => Navigator.of(context).maybePop(),
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.only(left: 6, right: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                CupertinoIcons.back,
+                size: 27,
+                color: CarHirePalette.accent,
+              ),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.fade,
+                  softWrap: false,
+                  style: const TextStyle(
+                    color: CarHirePalette.accent,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// Circular icon button with a soft surface, used in app bars and cards.

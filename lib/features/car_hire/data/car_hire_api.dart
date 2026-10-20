@@ -87,6 +87,11 @@ class CarHireApi {
     String? transmission,
     String? fuelType,
     String? bodyType,
+    String? operatorId,
+    String? text,
+    double? minRate,
+    double? maxRate,
+    bool instantOnly = false,
     int? page,
     int? limit,
     String? sort,
@@ -106,6 +111,13 @@ class CarHireApi {
     if (bodyType != null && bodyType.trim().isNotEmpty) {
       query['bodyType'] = bodyType.trim();
     }
+    if (operatorId != null && operatorId.trim().isNotEmpty) {
+      query['operatorId'] = operatorId.trim();
+    }
+    if (text != null && text.trim().isNotEmpty) query['q'] = text.trim();
+    if (minRate != null && minRate > 0) query['minRate'] = '${minRate.round()}';
+    if (maxRate != null && maxRate > 0) query['maxRate'] = '${maxRate.round()}';
+    if (instantOnly) query['instantOnly'] = 'true';
     if (page != null && page > 0) query['page'] = '$page';
     if (limit != null && limit > 0) query['limit'] = '$limit';
     if (sort != null && sort.trim().isNotEmpty) query['sort'] = sort.trim();
@@ -118,6 +130,20 @@ class CarHireApi {
       ),
     );
     return CarHireSearchResult.fromJson(_decode(response));
+  }
+
+  /// Companies that currently have cars on offer, for the company filter.
+  Future<List<CarHireCompanyOption>> getPublicCompanies() async {
+    final response = await _send(
+      () => ApiClient.get('$_carsPath/companies', timeout: _timeout),
+    );
+    final body = _decode(response);
+    final rows = body is Map ? body['data'] : body;
+    if (rows is! List) return const <CarHireCompanyOption>[];
+    return rows
+        .map(CarHireCompanyOption.fromJson)
+        .whereType<CarHireCompanyOption>()
+        .toList(growable: false);
   }
 
   /// `GET /car-rental/cars/:id`

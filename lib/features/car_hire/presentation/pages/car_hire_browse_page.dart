@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -85,22 +87,86 @@ class CarHireBrowsePage extends ConsumerStatefulWidget {
 
 class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
   late final TextEditingController _pickupController;
+  late final TextEditingController _searchController;
+  Timer? _searchDebounce;
   _VehicleCategory _category = _VehicleCategory.all;
   _SortOption _sort = _SortOption.recommended;
 
   static final DateFormat _shortMonthDay = DateFormat('MMM d');
+  static final NumberFormat _money = NumberFormat.decimalPattern();
 
   @override
   void initState() {
     super.initState();
     final query = ref.read(carHireSearchProvider);
     _pickupController = TextEditingController(text: query.pickupArea);
+    _searchController =
+        TextEditingController(text: ref.read(carHireFiltersProvider).text);
   }
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _pickupController.dispose();
+    _searchController.dispose();
     super.dispose();
+  }
+
+  // ---------------------------------------------------------------------
+  // Filters
+  // ---------------------------------------------------------------------
+
+  void _onSearchTextChanged(String value) {
+    setState(() {});
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 450), () {
+      if (!mounted) return;
+      ref.read(carHireFiltersProvider.notifier).setText(value);
+    });
+  }
+
+  void _clearSearchText() {
+    _searchDebounce?.cancel();
+    _searchController.clear();
+    setState(() {});
+    ref.read(carHireFiltersProvider.notifier).setText('');
+  }
+
+  void _clearAllFilters() {
+    _searchDebounce?.cancel();
+    _searchController.clear();
+    ref.read(carHireFiltersProvider.notifier).clear();
+    setState(() => _category = _VehicleCategory.all);
+  }
+
+  void _toggleCompany(CarHireCompanyOption company) {
+    final current = ref.read(carHireFiltersProvider).company;
+    ref
+        .read(carHireFiltersProvider.notifier)
+        .setCompany(current?.id == company.id ? null : company);
+  }
+
+  Future<void> _openFilterSheet() async {
+    FocusScope.of(context).unfocus();
+    final next = await showModalBottomSheet<CarHireFilters>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: CarHirePalette.background,
+      barrierColor: CarHirePalette.primary.withValues(alpha: 0.45),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (_) => _FilterSheet(
+        initial: ref.read(carHireFiltersProvider),
+        companies:
+            ref.read(carHireCompaniesProvider).value ?? const <CarHireCompanyOption>[],
+        formatMoney: (value) => 'MWK ${_money.format(value)}',
+      ),
+    );
+    if (next != null && mounted) {
+      ref.read(carHireFiltersProvider.notifier).set(next);
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -259,6 +325,7 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
         .read(carHireSearchProvider.notifier)
         .setPickupArea(_pickupController.text);
     ref.invalidate(carHireResultsProvider);
+    ref.invalidate(carHireCompaniesProvider);
     try {
       await ref.read(carHireResultsProvider.future);
     } catch (_) {
@@ -417,6 +484,9 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
   Widget build(BuildContext context) {
     final query = ref.watch(carHireSearchProvider);
     final results = ref.watch(carHireResultsProvider);
+    final filters = ref.watch(carHireFiltersProvider);
+    final companies = ref.watch(carHireCompaniesProvider).value ??
+        const <CarHireCompanyOption>[];
     final hasCompany =
         ref.watch(companyAccessProvider).value?.hasCompany ?? false;
 
@@ -449,8 +519,11 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             SliverToBoxAdapter(child: _locationBar(query)),
+            SliverToBoxAdapter(child: _searchRow(filters)),
+            SliverToBoxAdapter(child: _companyRail(companies, filters)),
             SliverToBoxAdapter(child: _categoryRail()),
-            ..._resultSlivers(results, query),
+            SliverToBoxAdapter(child: _activeFilterChips(filters)),
+            ..._resultSlivers(results, query, filters),
             SliverToBoxAdapter(
               child: SizedBox(
                 height: MediaQuery.paddingOf(context).bottom + 28,
@@ -570,6 +643,224 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
     );
   }
 
+  Widget _searchRow(CarHireFilters filters) {
+    final count = filters.activeCount;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: Container(
+              height: 46,
+              decoration: BoxDecoration(
+                color: CarHirePalette.surface,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: CarHirePalette.hairline),
+              ),
+              child: Row(
+                children: [
+                  const SizedBox(width: 12),
+                  const Icon(
+                    Icons.search_rounded,
+                    size: 20,
+                    color: CarHirePalette.muted,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: _searchController,
+                      onChanged: _onSearchTextChanged,
+                      onSubmitted: (value) {
+                        _searchDebounce?.cancel();
+                        ref.read(carHireFiltersProvider.notifier).setText(value);
+                      },
+                      textInputAction: TextInputAction.search,
+                      style: const TextStyle(
+                        color: CarHirePalette.onSurface,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: InputBorder.none,
+                        hintText: 'Search make, model or company',
+                        hintStyle: TextStyle(
+                          color: CarHirePalette.muted,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (_searchController.text.isNotEmpty)
+                    IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: _clearSearchText,
+                      icon: const Icon(
+                        Icons.cancel_rounded,
+                        size: 18,
+                        color: CarHirePalette.muted,
+                      ),
+                    )
+                  else
+                    const SizedBox(width: 12),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Material(
+            color: count > 0 ? CarHirePalette.accent : CarHirePalette.surface,
+            borderRadius: BorderRadius.circular(14),
+            child: InkWell(
+              onTap: _openFilterSheet,
+              borderRadius: BorderRadius.circular(14),
+              child: Container(
+                height: 46,
+                padding: const EdgeInsets.symmetric(horizontal: 13),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: count > 0
+                        ? CarHirePalette.accent
+                        : CarHirePalette.hairline,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.tune_rounded,
+                      size: 18,
+                      color: count > 0
+                          ? CarHirePalette.onAccent
+                          : CarHirePalette.onSurface,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      count > 0 ? 'Filters · $count' : 'Filters',
+                      style: TextStyle(
+                        color: count > 0
+                            ? CarHirePalette.onAccent
+                            : CarHirePalette.onSurface,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _companyRail(
+    List<CarHireCompanyOption> companies,
+    CarHireFilters filters,
+  ) {
+    if (companies.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Text('Companies', style: CarHireType.subtitle),
+        ),
+        SizedBox(
+          height: 92,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: companies.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 12),
+            itemBuilder: (context, index) {
+              final company = companies[index];
+              return _CompanyAvatar(
+                company: company,
+                selected: filters.company?.id == company.id,
+                onTap: () => _toggleCompany(company),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _activeFilterChips(CarHireFilters filters) {
+    final chips = <Widget>[
+      if (filters.company != null)
+        _RemovableChip(
+          label: filters.company!.name,
+          onRemove: () =>
+              ref.read(carHireFiltersProvider.notifier).setCompany(null),
+        ),
+      if (filters.transmission != null)
+        _RemovableChip(
+          label: _titleCase(filters.transmission!),
+          onRemove: () => ref.read(carHireFiltersProvider.notifier).set(
+                filters.copyWith(transmission: () => null),
+              ),
+        ),
+      if (filters.fuelType != null)
+        _RemovableChip(
+          label: _titleCase(filters.fuelType!),
+          onRemove: () => ref.read(carHireFiltersProvider.notifier).set(
+                filters.copyWith(fuelType: () => null),
+              ),
+        ),
+      if (filters.minSeats != null)
+        _RemovableChip(
+          label: '${filters.minSeats}+ seats',
+          onRemove: () => ref.read(carHireFiltersProvider.notifier).set(
+                filters.copyWith(minSeats: () => null),
+              ),
+        ),
+      if (filters.maxRate != null)
+        _RemovableChip(
+          label: 'Up to MWK ${_money.format(filters.maxRate)}/day',
+          onRemove: () => ref.read(carHireFiltersProvider.notifier).set(
+                filters.copyWith(maxRate: () => null),
+              ),
+        ),
+      if (filters.instantOnly)
+        _RemovableChip(
+          label: 'Instant confirmation',
+          onRemove: () => ref.read(carHireFiltersProvider.notifier).set(
+                filters.copyWith(instantOnly: false),
+              ),
+        ),
+    ];
+    if (chips.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          ...chips,
+          TextButton(
+            onPressed: _clearAllFilters,
+            style: TextButton.styleFrom(
+              foregroundColor: CarHirePalette.accent,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: const Size(0, 32),
+              textStyle: const TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 12,
+              ),
+            ),
+            child: const Text('Clear all'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _categoryRail() {
     return SizedBox(
       height: 66,
@@ -595,6 +886,7 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
   List<Widget> _resultSlivers(
     AsyncValue<CarHireSearchResult> results,
     CarHireSearchQuery query,
+    CarHireFilters filters,
   ) {
     return results.when(
       loading: () => <Widget>[
@@ -623,6 +915,28 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
         final cars = result.data;
         final visible = _visibleCars(cars);
         final days = _rentalDays(query);
+
+        if (cars.isEmpty && !filters.isEmpty) {
+          return <Widget>[
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 16),
+                child: CarHireEmptyState(
+                  icon: Icons.filter_alt_off_outlined,
+                  title: 'No cars match your filters',
+                  message: filters.company != null
+                      ? '${filters.company!.name} has no cars matching these '
+                          'dates and filters. Try other dates or clear the '
+                          'filters.'
+                      : 'Nothing matches these dates and filters. Loosen a '
+                          'filter or clear them all.',
+                  actionLabel: 'Clear filters',
+                  onAction: _clearAllFilters,
+                ),
+              ),
+            ),
+          ];
+        }
 
         if (cars.isEmpty) {
           return <Widget>[
@@ -797,6 +1111,358 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
 // -------------------------------------------------------------------------
 // Small pieces
 // -------------------------------------------------------------------------
+
+String _titleCase(String value) {
+  final lower = value.trim().toLowerCase();
+  if (lower.isEmpty) return lower;
+  return lower[0].toUpperCase() + lower.substring(1);
+}
+
+class _CompanyAvatar extends StatelessWidget {
+  const _CompanyAvatar({
+    required this.company,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final CarHireCompanyOption company;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final logo = company.logoUrl?.trim() ?? '';
+    final initials = Text(
+      company.initials,
+      style: const TextStyle(
+        color: CarHirePalette.onSurface,
+        fontSize: 15,
+        fontWeight: FontWeight.w900,
+      ),
+    );
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '${company.name}, ${company.listings} cars',
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: SizedBox(
+          width: 70,
+          child: Column(
+            children: [
+              AnimatedContainer(
+                duration: CarHireShape.fast,
+                width: 56,
+                height: 56,
+                padding: const EdgeInsets.all(2.5),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: selected
+                        ? CarHirePalette.accent
+                        : CarHirePalette.hairline,
+                    width: selected ? 2.5 : 1,
+                  ),
+                ),
+                child: ClipOval(
+                  child: Container(
+                    color: CarHirePalette.surfaceLow,
+                    alignment: Alignment.center,
+                    child: logo.isEmpty
+                        ? initials
+                        : Image.network(
+                            logo,
+                            fit: BoxFit.cover,
+                            width: 56,
+                            height: 56,
+                            errorBuilder: (_, _, _) => initials,
+                          ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                company.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: selected
+                      ? CarHirePalette.accent
+                      : CarHirePalette.onSurface,
+                  fontSize: 11,
+                  fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
+                ),
+              ),
+              Text(
+                '${company.listings} ${company.listings == 1 ? 'car' : 'cars'}',
+                style: CarHireType.labelSmall.copyWith(fontSize: 10),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RemovableChip extends StatelessWidget {
+  const _RemovableChip({required this.label, required this.onRemove});
+
+  final String label;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: CarHirePalette.accentPale,
+      borderRadius: BorderRadius.circular(99),
+      child: InkWell(
+        onTap: onRemove,
+        borderRadius: BorderRadius.circular(99),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(11, 6, 7, 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  color: CarHirePalette.onSurface,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(width: 4),
+              const Icon(
+                Icons.close_rounded,
+                size: 15,
+                color: CarHirePalette.accent,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Bottom sheet that edits a draft of the filters and returns it on apply.
+class _FilterSheet extends StatefulWidget {
+  const _FilterSheet({
+    required this.initial,
+    required this.companies,
+    required this.formatMoney,
+  });
+
+  final CarHireFilters initial;
+  final List<CarHireCompanyOption> companies;
+  final String Function(double value) formatMoney;
+
+  @override
+  State<_FilterSheet> createState() => _FilterSheetState();
+}
+
+class _FilterSheetState extends State<_FilterSheet> {
+  late CarHireFilters _draft = widget.initial;
+
+  static const _transmissions = ['AUTOMATIC', 'MANUAL'];
+  static const _fuels = ['PETROL', 'DIESEL', 'HYBRID'];
+  static const _seats = [4, 5, 7];
+  static const _prices = <double>[50000, 80000, 120000, 200000];
+
+  Widget _section(String title, List<Widget> pills) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: CarHireType.subtitle),
+          const SizedBox(height: 9),
+          Wrap(spacing: 7, runSpacing: 7, children: pills),
+        ],
+      ),
+    );
+  }
+
+  Widget _pill(String label, bool selected, VoidCallback onTap) {
+    return _CategoryChip(
+      label: label,
+      icon: selected ? Icons.check_rounded : Icons.circle_outlined,
+      selected: selected,
+      onTap: onTap,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final draft = _draft;
+    return SafeArea(
+      top: false,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            margin: const EdgeInsets.only(top: 10),
+            width: 44,
+            height: 4,
+            decoration: BoxDecoration(
+              color: CarHirePalette.outlineVariant,
+              borderRadius: BorderRadius.circular(99),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text('Filters', style: CarHireType.titleLarge),
+                ),
+                TextButton(
+                  onPressed: () => setState(
+                    () => _draft = CarHireFilters(text: draft.text),
+                  ),
+                  style: TextButton.styleFrom(
+                    foregroundColor: CarHirePalette.accent,
+                    textStyle: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  child: const Text('Reset'),
+                ),
+              ],
+            ),
+          ),
+          Flexible(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (widget.companies.isNotEmpty)
+                    _section('Company', [
+                      _pill('Any company', draft.company == null, () {
+                        setState(
+                          () => _draft = draft.copyWith(company: () => null),
+                        );
+                      }),
+                      for (final company in widget.companies)
+                        _pill(
+                          company.name,
+                          draft.company?.id == company.id,
+                          () => setState(
+                            () => _draft = draft.copyWith(company: () => company),
+                          ),
+                        ),
+                    ]),
+                  _section('Gearbox', [
+                    _pill('Any', draft.transmission == null, () {
+                      setState(
+                        () => _draft = draft.copyWith(transmission: () => null),
+                      );
+                    }),
+                    for (final value in _transmissions)
+                      _pill(
+                        _titleCase(value),
+                        draft.transmission == value,
+                        () => setState(
+                          () => _draft =
+                              draft.copyWith(transmission: () => value),
+                        ),
+                      ),
+                  ]),
+                  _section('Fuel', [
+                    _pill('Any', draft.fuelType == null, () {
+                      setState(
+                        () => _draft = draft.copyWith(fuelType: () => null),
+                      );
+                    }),
+                    for (final value in _fuels)
+                      _pill(
+                        _titleCase(value),
+                        draft.fuelType == value,
+                        () => setState(
+                          () => _draft = draft.copyWith(fuelType: () => value),
+                        ),
+                      ),
+                  ]),
+                  _section('Seats', [
+                    _pill('Any', draft.minSeats == null, () {
+                      setState(
+                        () => _draft = draft.copyWith(minSeats: () => null),
+                      );
+                    }),
+                    for (final value in _seats)
+                      _pill(
+                        '$value+',
+                        draft.minSeats == value,
+                        () => setState(
+                          () => _draft = draft.copyWith(minSeats: () => value),
+                        ),
+                      ),
+                  ]),
+                  _section('Daily price', [
+                    _pill('Any price', draft.maxRate == null, () {
+                      setState(
+                        () => _draft = draft.copyWith(maxRate: () => null),
+                      );
+                    }),
+                    for (final value in _prices)
+                      _pill(
+                        'Up to ${widget.formatMoney(value)}',
+                        draft.maxRate == value,
+                        () => setState(
+                          () => _draft = draft.copyWith(maxRate: () => value),
+                        ),
+                      ),
+                  ]),
+                  const SizedBox(height: 14),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    activeTrackColor: CarHirePalette.accent,
+                    value: draft.instantOnly,
+                    onChanged: (value) => setState(
+                      () => _draft = draft.copyWith(instantOnly: value),
+                    ),
+                    title: const Text(
+                      'Instant confirmation only',
+                      style: CarHireType.subtitle,
+                    ),
+                    subtitle: const Text(
+                      'Hide companies that review each request first.',
+                      style: CarHireType.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
+            child: SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: FilledButton(
+                onPressed: () => Navigator.of(context).pop(_draft),
+                style: FilledButton.styleFrom(
+                  backgroundColor: CarHirePalette.accent,
+                  foregroundColor: CarHirePalette.onAccent,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                child: const Text('Show cars'),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _CategoryChip extends StatelessWidget {
   const _CategoryChip({

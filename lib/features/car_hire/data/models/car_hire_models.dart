@@ -543,6 +543,48 @@ class CarHireProvider {
   }
 }
 
+/// A company renters can filter by, with how many listings it has on offer.
+class CarHireCompanyOption {
+  const CarHireCompanyOption({
+    required this.id,
+    required this.name,
+    this.logoUrl,
+    this.listings = 0,
+    this.instantBook = true,
+  });
+
+  final String id;
+  final String name;
+  final String? logoUrl;
+  final int listings;
+  final bool instantBook;
+
+  String get initials {
+    final words = name
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .take(2)
+        .toList(growable: false);
+    if (words.isEmpty) return '?';
+    return words.map((word) => word[0].toUpperCase()).join();
+  }
+
+  static CarHireCompanyOption? fromJson(dynamic raw) {
+    if (raw is! Map) return null;
+    final json = _asMap(raw);
+    final id = _asString(json['id']);
+    final name = _asString(json['name'] ?? json['displayName']).trim();
+    if (id.isEmpty || name.isEmpty) return null;
+    return CarHireCompanyOption(
+      id: id,
+      name: name,
+      logoUrl: _asStringOrNull(json['logoUrl']),
+      listings: _asInt(json['listings']),
+      instantBook: _asBool(json['instantBook'], fallback: true),
+    );
+  }
+}
+
 class CarListing {
   const CarListing({
     required this.id,

@@ -2,8 +2,56 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:vero360_app/features/car_hire/data/models/car_hire_company_models.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
+import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 
 void main() {
+  group('CarHireCompanyOption', () {
+    test('parses a public company and builds initials', () {
+      final company = CarHireCompanyOption.fromJson({
+        'id': 'op-9',
+        'name': 'Blantyre Car Hire',
+        'logoUrl': null,
+        'listings': 4,
+        'instantBook': false,
+      })!;
+      expect(company.name, 'Blantyre Car Hire');
+      expect(company.listings, 4);
+      expect(company.instantBook, isFalse);
+      expect(company.initials, 'BC');
+    });
+
+    test('skips rows without an id or name', () {
+      expect(CarHireCompanyOption.fromJson({'id': '', 'name': 'X'}), isNull);
+      expect(CarHireCompanyOption.fromJson({'id': 'a', 'name': ' '}), isNull);
+      expect(CarHireCompanyOption.fromJson('nope'), isNull);
+    });
+  });
+
+  group('CarHireFilters', () {
+    const company = CarHireCompanyOption(id: 'op-1', name: 'Zed Rentals');
+
+    test('counts sheet filters but not the search text', () {
+      const filters = CarHireFilters(
+        company: company,
+        minSeats: 7,
+        instantOnly: true,
+        text: 'prado',
+      );
+      expect(filters.activeCount, 3);
+      expect(filters.isEmpty, isFalse);
+      expect(const CarHireFilters().isEmpty, isTrue);
+      expect(const CarHireFilters(text: 'x').isEmpty, isFalse);
+    });
+
+    test('copyWith can clear a single filter', () {
+      const filters = CarHireFilters(company: company, transmission: 'MANUAL');
+      final cleared = filters.copyWith(company: () => null);
+      expect(cleared.company, isNull);
+      expect(cleared.transmission, 'MANUAL');
+      expect(cleared == filters, isFalse);
+    });
+  });
+
   group('CompanyMembership', () {
     final memberships = CompanyMembership.listFromJson(<dynamic>[
       {

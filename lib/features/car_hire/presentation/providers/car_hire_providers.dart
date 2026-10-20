@@ -100,10 +100,133 @@ final carHireSearchProvider =
   CarHireSearchNotifier.new,
 );
 
+// ---------------------------------------------------------------------------
+// Browse filters
+// ---------------------------------------------------------------------------
+
+/// Optional narrowing of the public search, applied by the server.
+class CarHireFilters {
+  const CarHireFilters({
+    this.company,
+    this.transmission,
+    this.fuelType,
+    this.minSeats,
+    this.maxRate,
+    this.instantOnly = false,
+    this.text = '',
+  });
+
+  final CarHireCompanyOption? company;
+
+  /// `AUTOMATIC` / `MANUAL`, or null for any.
+  final String? transmission;
+
+  /// `PETROL` / `DIESEL` / `HYBRID` / `ELECTRIC`, or null for any.
+  final String? fuelType;
+  final int? minSeats;
+
+  /// Upper daily price, or null for no limit.
+  final double? maxRate;
+  final bool instantOnly;
+  final String text;
+
+  /// Filters chosen in the filter sheet (text search is counted separately).
+  int get activeCount => [
+        company != null,
+        transmission != null,
+        fuelType != null,
+        minSeats != null,
+        maxRate != null,
+        instantOnly,
+      ].where((active) => active).length;
+
+  bool get isEmpty => activeCount == 0 && text.trim().isEmpty;
+
+  CarHireFilters copyWith({
+    CarHireCompanyOption? Function()? company,
+    String? Function()? transmission,
+    String? Function()? fuelType,
+    int? Function()? minSeats,
+    double? Function()? maxRate,
+    bool? instantOnly,
+    String? text,
+  }) {
+    return CarHireFilters(
+      company: company != null ? company() : this.company,
+      transmission: transmission != null ? transmission() : this.transmission,
+      fuelType: fuelType != null ? fuelType() : this.fuelType,
+      minSeats: minSeats != null ? minSeats() : this.minSeats,
+      maxRate: maxRate != null ? maxRate() : this.maxRate,
+      instantOnly: instantOnly ?? this.instantOnly,
+      text: text ?? this.text,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is CarHireFilters &&
+        other.company?.id == company?.id &&
+        other.transmission == transmission &&
+        other.fuelType == fuelType &&
+        other.minSeats == minSeats &&
+        other.maxRate == maxRate &&
+        other.instantOnly == instantOnly &&
+        other.text == text;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        company?.id,
+        transmission,
+        fuelType,
+        minSeats,
+        maxRate,
+        instantOnly,
+        text,
+      );
+}
+
+class CarHireFiltersNotifier extends Notifier<CarHireFilters> {
+  @override
+  CarHireFilters build() => const CarHireFilters();
+
+  void set(CarHireFilters next) {
+    if (next != state) state = next;
+  }
+
+  void setCompany(CarHireCompanyOption? company) {
+    state = state.copyWith(company: () => company);
+  }
+
+  void setText(String value) {
+    final next = value.trim();
+    if (next != state.text) state = state.copyWith(text: next);
+  }
+
+  void clear() => state = const CarHireFilters();
+}
+
+final carHireFiltersProvider =
+    NotifierProvider<CarHireFiltersNotifier, CarHireFilters>(
+  CarHireFiltersNotifier.new,
+);
+
+/// Companies with cars on offer. Empty when the list cannot be loaded, so the
+/// browse page simply hides the company rail.
+final carHireCompaniesProvider =
+    FutureProvider<List<CarHireCompanyOption>>((ref) async {
+  try {
+    return await ref.watch(carHireApiProvider).getPublicCompanies();
+  } catch (_) {
+    return const <CarHireCompanyOption>[];
+  }
+});
+
 /// Public search results. Availability comes from the server; the client never
 /// computes it.
 final carHireResultsProvider = FutureProvider<CarHireSearchResult>((ref) async {
   final query = ref.watch(carHireSearchProvider);
+  final filters = ref.watch(carHireFiltersProvider);
 
   if (!query.hasDates) {
     throw const CarHireApiException(
@@ -123,8 +246,15 @@ final carHireResultsProvider = FutureProvider<CarHireSearchResult>((ref) async {
     pickupArea: query.pickupArea,
     startAt: query.startAt,
     endAt: query.endAt,
+    operatorId: filters.company?.id,
+    transmission: filters.transmission,
+    fuelType: filters.fuelType,
+    minSeats: filters.minSeats,
+    maxRate: filters.maxRate,
+    instantOnly: filters.instantOnly,
+    text: filters.text,
     page: 1,
-    limit: 20,
+    limit: 50,
   );
 });
 

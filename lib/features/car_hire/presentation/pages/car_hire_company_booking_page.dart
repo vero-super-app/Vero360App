@@ -8,6 +8,8 @@ import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_co
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_company_widgets.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_section_frame.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skeletons.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_status_badge.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
@@ -20,17 +22,23 @@ class CarHireCompanyBookingPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final booking = ref.watch(carHireBookingDetailProvider(bookingId));
+    final bookingAsync = ref.watch(carHireBookingDetailProvider(bookingId));
     final access = ref.watch(companyAccessProvider).value;
     final canManage = access?.canManageBookings ?? false;
 
     return Scaffold(
       backgroundColor: CarHirePalette.background,
       appBar: carHireAppBar(
-        title: booking.value?.bookingNumberLabel ?? 'Booking',
+        title: bookingAsync.value?.bookingNumberLabel ?? 'Booking',
       ),
-      body: booking.when(
-        loading: () => const CarHireLoadingState(message: 'Loading booking…'),
+      body: bookingAsync.when(
+        skipLoadingOnRefresh: true,
+        skipLoadingOnReload: true,
+        skipError: true,
+        loading: () => const SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(16, 8, 16, 32),
+          child: CarHireCompanyBookingSkeleton(),
+        ),
         error: (error, _) => CarHireErrorState(
           error: error,
           onRetry: () =>
@@ -41,13 +49,28 @@ class CarHireCompanyBookingPage extends ConsumerWidget {
           onRefresh: () async {
             ref.invalidate(bookingExtensionsProvider(bookingId));
             ref.invalidate(bookingIncidentsProvider(bookingId));
-            ref.invalidate(carHireBookingDetailProvider(bookingId));
-            await ref.read(carHireBookingDetailProvider(bookingId).future);
+            try {
+              await ref.read(carHireBookingDetailProvider(bookingId).future);
+            } catch (_) {
+              // The inline section state keeps the last good booking on screen.
+            }
           },
           child: ListView(
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
             children: [
+              if (bookingAsync.hasError)
+                CarHireSectionStaleStrip(
+                  message: 'Showing the saved booking. Live updates failed.',
+                  padding: const EdgeInsets.only(bottom: 10),
+                  onRefresh: () =>
+                      ref.invalidate(carHireBookingDetailProvider(bookingId)),
+                )
+              else if (bookingAsync.isLoading)
+                const CarHireSectionUpdatingStrip(
+                  message: 'Refreshing booking…',
+                  padding: EdgeInsets.only(bottom: 10),
+                ),
               _Summary(booking: booking),
               const SizedBox(height: 12),
               if (canManage)
@@ -375,8 +398,10 @@ class _UnitSheet extends ConsumerWidget {
             ),
             const SizedBox(height: 12),
             options.when(
-              loading: () =>
-                  const CarHireLoadingState(message: 'Loading units…'),
+              loading: () => const Padding(
+                padding: EdgeInsets.symmetric(vertical: 6),
+                child: CarHireCompanyRowSkeleton(count: 3),
+              ),
               error: (error, _) => CarHireInlineError(
                 message: error is CarHireApiException
                     ? error.message
@@ -440,12 +465,42 @@ class _Extensions extends ConsumerWidget {
     final extensions = ref.watch(bookingExtensionsProvider(booking.id));
     final busy = ref.watch(companyActionProvider).submitting;
     final rows = extensions.value ?? const <BookingExtension>[];
+    if (extensions.hasError && !extensions.hasValue) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 14, bottom: 8),
+            child: Text('Extension requests', style: CarHireType.title),
+          ),
+          CarHireSectionErrorStrip(
+            message: 'Extension requests could not load.',
+            padding: EdgeInsets.zero,
+            onRetry: () =>
+                ref.invalidate(bookingExtensionsProvider(booking.id)),
+          ),
+        ],
+      );
+    }
+    if (extensions.isLoading && !extensions.hasValue) {
+      return const Padding(
+        padding: EdgeInsets.only(top: 14, bottom: 4),
+        child: CarHireCompanyRowSkeleton(count: 1),
+      );
+    }
     if (rows.isEmpty) return const SizedBox.shrink();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         CompanyGroupHeader(title: 'Extension requests', count: rows.length),
+        if (extensions.hasError)
+          CarHireSectionStaleStrip(
+            message: 'Extensions may be out of date.',
+            padding: const EdgeInsets.only(bottom: 8),
+            onRefresh: () =>
+                ref.invalidate(bookingExtensionsProvider(booking.id)),
+          ),
         for (final extension in rows)
           CarHireSurface(
             margin: const EdgeInsets.only(bottom: 8),
@@ -629,12 +684,41 @@ class _Incidents extends ConsumerWidget {
     final incidents = ref.watch(bookingIncidentsProvider(booking.id));
     final busy = ref.watch(companyActionProvider).submitting;
     final rows = incidents.value ?? const <IncidentReport>[];
+    if (incidents.hasError && !incidents.hasValue) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 14, bottom: 8),
+            child: Text('Incidents', style: CarHireType.title),
+          ),
+          CarHireSectionErrorStrip(
+            message: 'Incidents could not load.',
+            padding: EdgeInsets.zero,
+            onRetry: () => ref.invalidate(bookingIncidentsProvider(booking.id)),
+          ),
+        ],
+      );
+    }
+    if (incidents.isLoading && !incidents.hasValue) {
+      return const Padding(
+        padding: EdgeInsets.only(top: 14, bottom: 4),
+        child: CarHireCompanyRowSkeleton(count: 1),
+      );
+    }
     if (rows.isEmpty) return const SizedBox.shrink();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         CompanyGroupHeader(title: 'Incidents', count: rows.length),
+        if (incidents.hasError)
+          CarHireSectionStaleStrip(
+            message: 'Incidents may be out of date.',
+            padding: const EdgeInsets.only(bottom: 8),
+            onRefresh: () =>
+                ref.invalidate(bookingIncidentsProvider(booking.id)),
+          ),
         for (final incident in rows)
           CarHireSurface(
             margin: const EdgeInsets.only(bottom: 8),

@@ -325,3 +325,649 @@ class CarHireDetailSkeleton extends StatelessWidget {
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// Company / management pages
+// ---------------------------------------------------------------------------
+
+/// Four metric tiles inside a card: the fleet pulse placeholder.
+class CarHireCompanyPulseSkeleton extends StatelessWidget {
+  const CarHireCompanyPulseSkeleton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionShimmer(
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
+        decoration: BoxDecoration(
+          color: CarHirePalette.surface,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: CarHirePalette.hairline),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: const [
+                AppSkeletonBox(
+                  height: 14,
+                  width: 88,
+                  radius: 5,
+                  color: CarHireSkeleton.bone,
+                ),
+                Spacer(),
+                AppSkeletonBox(
+                  height: 18,
+                  width: 46,
+                  radius: 9,
+                  color: CarHireSkeleton.boneLight,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                for (var i = 0; i < 4; i++) ...[
+                  if (i > 0) const SizedBox(width: 7),
+                  const Expanded(
+                    child: AppSkeletonBox(
+                      height: 52,
+                      radius: 11,
+                      color: CarHireSkeleton.boneLight,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 10),
+            const AppSkeletonBox(
+              height: 48,
+              radius: 12,
+              color: CarHireSkeleton.boneLight,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Three "needs you today" rows.
+class CarHireCompanyOpsRowSkeleton extends StatelessWidget {
+  const CarHireCompanyOpsRowSkeleton({super.key, this.count = 3});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionShimmer(
+      child: Column(
+        children: [
+          for (var i = 0; i < count; i++)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+              child: Row(
+                children: [
+                  AppSkeletonBox(
+                    width: 30,
+                    height: 30,
+                    radius: 15,
+                    color: CarHireSkeleton.bone,
+                  ),
+                  SizedBox(width: 9),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        AppSkeletonBox(
+                          height: 11,
+                          width: 120,
+                          radius: 4,
+                          color: CarHireSkeleton.bone,
+                        ),
+                        SizedBox(height: 5),
+                        AppSkeletonBox(
+                          height: 9,
+                          width: 170,
+                          radius: 4,
+                          color: CarHireSkeleton.boneLight,
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  AppSkeletonBox(
+                    height: 22,
+                    width: 62,
+                    radius: 11,
+                    color: CarHireSkeleton.boneLight,
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One fleet car card: thumbnail, title, status pill and two actions.
+class CarHireCompanyCarCardSkeleton extends StatelessWidget {
+  const CarHireCompanyCarCardSkeleton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionShimmer(
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: CarHirePalette.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: CarHirePalette.hairline),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                AppSkeletonBox(
+                  width: 76,
+                  height: 60,
+                  radius: 10,
+                  color: CarHireSkeleton.bone,
+                ),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      AppSkeletonBox(
+                        height: 13,
+                        width: 150,
+                        radius: 5,
+                        color: CarHireSkeleton.bone,
+                      ),
+                      SizedBox(height: 7),
+                      AppSkeletonBox(
+                        height: 10,
+                        width: 110,
+                        radius: 4,
+                        color: CarHireSkeleton.boneLight,
+                      ),
+                      SizedBox(height: 7),
+                      AppSkeletonBox(
+                        height: 18,
+                        width: 130,
+                        radius: 9,
+                        color: CarHireSkeleton.boneLight,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: const [
+                Expanded(
+                  child: AppSkeletonBox(
+                    height: 34,
+                    radius: 17,
+                    color: CarHireSkeleton.boneLight,
+                  ),
+                ),
+                SizedBox(width: 8),
+                Expanded(
+                  child: AppSkeletonBox(
+                    height: 34,
+                    radius: 17,
+                    color: CarHireSkeleton.boneLight,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Dashboard placeholder: header strip, pulse, today's operations and cars.
+class CarHireCompanyDashboardSkeleton extends StatelessWidget {
+  const CarHireCompanyDashboardSkeleton({super.key, this.cards = 2});
+
+  final int cards;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SectionShimmer(
+          child: Row(
+            children: const [
+              AppSkeletonBox(
+                width: 42,
+                height: 42,
+                radius: 21,
+                color: CarHireSkeleton.bone,
+              ),
+              SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AppSkeletonBox(
+                      height: 15,
+                      width: 130,
+                      radius: 5,
+                      color: CarHireSkeleton.bone,
+                    ),
+                    SizedBox(height: 6),
+                    AppSkeletonBox(
+                      height: 10,
+                      width: 96,
+                      radius: 4,
+                      color: CarHireSkeleton.boneLight,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        const CarHireCompanyPulseSkeleton(),
+        const SizedBox(height: 18),
+        const CarHireCompanyOpsRowSkeleton(),
+        const SizedBox(height: 18),
+        for (var i = 0; i < cards; i++) const CarHireCompanyCarCardSkeleton(),
+      ],
+    );
+  }
+}
+
+/// Two payment-style lines used inside detail sheets.
+class CarHireCompanyLineSkeleton extends StatelessWidget {
+  const CarHireCompanyLineSkeleton({super.key, this.width = 160});
+
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionShimmer(
+      child: AppSkeletonBox(
+        height: 12,
+        width: width,
+        radius: 5,
+        color: CarHireSkeleton.boneLight,
+      ),
+    );
+  }
+}
+
+/// Fleet page placeholder: stat row and three unit groups.
+class CarHireCompanyFleetSkeleton extends StatelessWidget {
+  const CarHireCompanyFleetSkeleton({super.key, this.groups = 3});
+
+  final int groups;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionShimmer(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            margin: const EdgeInsets.only(bottom: 16),
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            decoration: BoxDecoration(
+              color: CarHirePalette.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: CarHirePalette.hairline),
+            ),
+            child: Row(
+              children: [
+                for (var i = 0; i < 4; i++)
+                  const Expanded(
+                    child: Column(
+                      children: [
+                        AppSkeletonBox(
+                          height: 17,
+                          width: 34,
+                          radius: 5,
+                          color: CarHireSkeleton.bone,
+                        ),
+                        SizedBox(height: 5),
+                        AppSkeletonBox(
+                          height: 9,
+                          width: 52,
+                          radius: 4,
+                          color: CarHireSkeleton.boneLight,
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          for (var i = 0; i < groups; i++)
+            Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+              decoration: BoxDecoration(
+                color: CarHirePalette.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: CarHirePalette.hairline),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const AppSkeletonBox(
+                    height: 13,
+                    width: 160,
+                    radius: 5,
+                    color: CarHireSkeleton.bone,
+                  ),
+                  const SizedBox(height: 6),
+                  const AppSkeletonBox(
+                    height: 9,
+                    width: 54,
+                    radius: 4,
+                    color: CarHireSkeleton.boneLight,
+                  ),
+                  const SizedBox(height: 10),
+                  for (var row = 0; row < 2; row++)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 6),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                AppSkeletonBox(
+                                  height: 11,
+                                  width: 78,
+                                  radius: 4,
+                                  color: CarHireSkeleton.bone,
+                                ),
+                                SizedBox(height: 5),
+                                AppSkeletonBox(
+                                  height: 9,
+                                  width: 64,
+                                  radius: 4,
+                                  color: CarHireSkeleton.boneLight,
+                                ),
+                              ],
+                            ),
+                          ),
+                          AppSkeletonBox(
+                            height: 22,
+                            width: 36,
+                            radius: 11,
+                            color: CarHireSkeleton.boneLight,
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Booking inbox placeholder: a stack of rows.
+class CarHireCompanyBookingListSkeleton extends StatelessWidget {
+  const CarHireCompanyBookingListSkeleton({super.key, this.count = 4});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionShimmer(
+      child: Column(
+        children: [
+          for (var i = 0; i < count; i++)
+            Container(
+              margin: const EdgeInsets.only(bottom: 9),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: CarHirePalette.surface,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: CarHirePalette.hairline),
+              ),
+              child: Row(
+                children: [
+                  const AppSkeletonBox(
+                    width: 40,
+                    height: 40,
+                    radius: 12,
+                    color: CarHireSkeleton.bone,
+                  ),
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: const [
+                        AppSkeletonBox(
+                          height: 12,
+                          width: 140,
+                          radius: 4,
+                          color: CarHireSkeleton.bone,
+                        ),
+                        SizedBox(height: 6),
+                        AppSkeletonBox(
+                          height: 9,
+                          width: 190,
+                          radius: 4,
+                          color: CarHireSkeleton.boneLight,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  const AppSkeletonBox(
+                    height: 20,
+                    width: 54,
+                    radius: 10,
+                    color: CarHireSkeleton.boneLight,
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Company booking detail placeholder: summary card and the action buttons.
+class CarHireCompanyBookingSkeleton extends StatelessWidget {
+  const CarHireCompanyBookingSkeleton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionShimmer(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: CarHirePalette.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: CarHirePalette.hairline),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    AppSkeletonBox(
+                      height: 20,
+                      width: 92,
+                      radius: 10,
+                      color: CarHireSkeleton.bone,
+                    ),
+                    SizedBox(width: 6),
+                    AppSkeletonBox(
+                      height: 20,
+                      width: 70,
+                      radius: 10,
+                      color: CarHireSkeleton.boneLight,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                for (var i = 0; i < 6; i++)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 9),
+                    child: Row(
+                      children: [
+                        AppSkeletonBox(
+                          height: 10,
+                          width: 62,
+                          radius: 4,
+                          color: CarHireSkeleton.boneLight,
+                        ),
+                        SizedBox(width: 12),
+                        Expanded(
+                          child: AppSkeletonBox(
+                            height: 11,
+                            radius: 4,
+                            color: CarHireSkeleton.bone,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          const AppSkeletonBox(
+            height: 46,
+            radius: 23,
+            color: CarHireSkeleton.boneLight,
+          ),
+          const SizedBox(height: 8),
+          const AppSkeletonBox(
+            height: 42,
+            radius: 21,
+            color: CarHireSkeleton.boneLight,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Vehicle workspace placeholder: hero, snapshot, location and reservation.
+class CarHireCompanyUnitSkeleton extends StatelessWidget {
+  const CarHireCompanyUnitSkeleton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionShimmer(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const AppSkeletonBox(
+            height: 42,
+            radius: 13,
+            color: CarHireSkeleton.boneLight,
+          ),
+          const SizedBox(height: 12),
+          const AppSkeletonBox(
+            height: 176,
+            radius: 18,
+            color: CarHireSkeleton.bone,
+          ),
+          const SizedBox(height: 10),
+          const AppSkeletonBox(
+            height: 14,
+            width: 170,
+            radius: 5,
+            color: CarHireSkeleton.bone,
+          ),
+          const SizedBox(height: 12),
+          const AppSkeletonBox(
+            height: 92,
+            radius: 16,
+            color: CarHireSkeleton.boneLight,
+          ),
+          const SizedBox(height: 12),
+          const AppSkeletonBox(
+            height: 96,
+            radius: 16,
+            color: CarHireSkeleton.boneLight,
+          ),
+          const SizedBox(height: 12),
+          const AppSkeletonBox(
+            height: 104,
+            radius: 16,
+            color: CarHireSkeleton.boneLight,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Generic list row skeleton for sheet sections (documents, blocks, units).
+class CarHireCompanyRowSkeleton extends StatelessWidget {
+  const CarHireCompanyRowSkeleton({super.key, this.count = 2});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SectionShimmer(
+      child: Column(
+        children: [
+          for (var i = 0; i < count; i++)
+            Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              decoration: BoxDecoration(
+                color: CarHirePalette.surfaceLow,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: const [
+                  AppSkeletonBox(
+                    width: 18,
+                    height: 18,
+                    radius: 5,
+                    color: CarHireSkeleton.bone,
+                  ),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: AppSkeletonBox(
+                      height: 11,
+                      radius: 4,
+                      color: CarHireSkeleton.bone,
+                    ),
+                  ),
+                  SizedBox(width: 10),
+                  AppSkeletonBox(
+                    width: 48,
+                    height: 22,
+                    radius: 11,
+                    color: CarHireSkeleton.boneLight,
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}

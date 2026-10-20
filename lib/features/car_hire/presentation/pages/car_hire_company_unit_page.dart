@@ -10,6 +10,8 @@ import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_co
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_company_widgets.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_section_frame.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skeletons.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 import 'package:vero360_app/utils/formatters.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
@@ -118,8 +120,8 @@ class _CarHireCompanyUnitPageState
 
   @override
   Widget build(BuildContext context) {
-    final fleet = ref.watch(companyFleetProvider).value;
-    final unit = _current(fleet);
+    final fleet = ref.watch(companyFleetProvider);
+    final unit = _current(fleet.value);
     final bookingAsync = ref.watch(unitActiveBookingProvider(unit.id));
     final booking = bookingAsync.value;
     final analytics = ref.watch(companyAnalyticsProvider).value;
@@ -161,6 +163,14 @@ class _CarHireCompanyUnitPageState
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
           children: [
+            if (fleet.hasError)
+              CarHireSectionStaleStrip(
+                message:
+                    'Showing the details you opened. Live fleet data could '
+                    'not refresh.',
+                padding: const EdgeInsets.only(bottom: 10),
+                onRefresh: () => ref.invalidate(companyFleetProvider),
+              ),
             _StatusBar(
               unit: unit,
               booking: booking,
@@ -184,6 +194,8 @@ class _CarHireCompanyUnitPageState
             _ReservationCard(
               booking: booking,
               loading: bookingAsync.isLoading && !bookingAsync.hasValue,
+              error: bookingAsync.hasError && !bookingAsync.hasValue,
+              onRetry: () => ref.invalidate(unitActiveBookingProvider(unit.id)),
               unit: unit,
               onOpen: booking == null
                   ? null
@@ -751,15 +763,21 @@ class _LocationCard extends ConsumerWidget {
     final longitude = tracker?.longitude ?? unit.car.longitude;
     final hasFix = latitude != null && longitude != null;
 
-    final branches = unit.operatorId == null
+    final branchesAsync = unit.operatorId == null
         ? null
-        : ref.watch(companyBranchesProvider(unit.operatorId!)).value;
+        : ref.watch(companyBranchesProvider(unit.operatorId!));
+    final branches = branchesAsync?.value;
     String? branchName;
     if (branches != null && unit.locationId != null) {
       for (final branch in branches) {
         if (branch.id == unit.locationId) branchName = branch.name;
       }
     }
+    final branchFailed =
+        branchesAsync != null &&
+        branchesAsync.hasError &&
+        !branchesAsync.hasValue &&
+        unit.locationId != null;
 
     final place = [
       ?branchName,
@@ -803,6 +821,15 @@ class _LocationCard extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 8),
+          if (branchFailed) ...[
+            CarHireSectionErrorStrip(
+              message: 'Branch details could not load.',
+              padding: EdgeInsets.zero,
+              onRetry: () =>
+                  ref.invalidate(companyBranchesProvider(unit.operatorId!)),
+            ),
+            const SizedBox(height: 7),
+          ],
           if (place.isNotEmpty) ...[
             Row(
               children: [
@@ -888,6 +915,8 @@ class _ReservationCard extends StatelessWidget {
   const _ReservationCard({
     required this.booking,
     required this.loading,
+    required this.error,
+    required this.onRetry,
     required this.unit,
     required this.onOpen,
     required this.onBlock,
@@ -895,6 +924,8 @@ class _ReservationCard extends StatelessWidget {
 
   final CarHireBooking? booking;
   final bool loading;
+  final bool error;
+  final VoidCallback onRetry;
   final FleetUnit unit;
   final VoidCallback? onOpen;
   final VoidCallback? onBlock;
@@ -903,17 +934,47 @@ class _ReservationCard extends StatelessWidget {
   Widget build(BuildContext context) {
     if (loading && booking == null) {
       return const CarHireSurface(
-        padding: EdgeInsets.symmetric(vertical: 16),
+        padding: EdgeInsets.fromLTRB(13, 12, 13, 12),
         radius: 16,
-        child: Center(
-          child: SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: CarHirePalette.accent,
+        child: CarHireCompanyRowSkeleton(count: 2),
+      );
+    }
+
+    if (booking == null && error) {
+      return CarHireSurface(
+        padding: const EdgeInsets.fromLTRB(13, 12, 13, 12),
+        radius: 16,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            CarHireSectionErrorStrip(
+              title: 'Live rental not checked',
+              message:
+                  'We could not read active rentals. This car may be on '
+                  'rent — open the booking inbox before handing it out.',
+              padding: EdgeInsets.zero,
+              onRetry: onRetry,
             ),
-          ),
+            if (onBlock != null && unit.car.isAvailable) ...[
+              const SizedBox(height: 6),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: onBlock,
+                  style: TextButton.styleFrom(
+                    foregroundColor: CarHirePalette.accent,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: const Text(
+                    'Block dates',
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+            ],
+          ],
         ),
       );
     }
@@ -1212,14 +1273,19 @@ class _ManagementGrid extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final compliance = ref.watch(companyComplianceProvider(unit.id)).value;
-    final blocks =
-        ref.watch(companyMaintenanceBlocksProvider(unit.id)).value ?? const [];
+    final complianceState = ref.watch(companyComplianceProvider(unit.id));
+    final compliance = complianceState.value;
+    final blocksState = ref.watch(companyMaintenanceBlocksProvider(unit.id));
+    final blocks = blocksState.value ?? const [];
     final activeBlocks = blocks.where((block) => block.isActive).length;
     final service = unit.nextServiceDueAt;
+    final complianceFailed = complianceState.hasError && compliance == null;
+    final blocksFailed = blocksState.hasError && !blocksState.hasValue;
 
     final documentNote = compliance == null
-        ? 'Checking…'
+        ? complianceFailed
+              ? 'Could not check · retry'
+              : 'Checking…'
         : compliance.compliant
         ? 'Approved'
         : compliance.issueCount == 1
@@ -1233,7 +1299,9 @@ class _ManagementGrid extends ConsumerWidget {
         'Due ${CarHireFormatters.formatDate(service)}'
       else
         'Next ${CarHireFormatters.formatDate(service)}',
-      if (activeBlocks > 0)
+      if (blocksFailed)
+        'Blocks unavailable'
+      else if (activeBlocks > 0)
         activeBlocks == 1 ? '1 active block' : '$activeBlocks active blocks',
     ].join(' · ');
 
@@ -1265,13 +1333,21 @@ class _ManagementGrid extends ConsumerWidget {
           iconColor: CarHirePalette.primary,
           title: 'Documents',
           subtitle: documentNote,
-          footer: compliance != null && !compliance.compliant
+          footer: complianceFailed
+              ? 'Retry'
+              : compliance != null && !compliance.compliant
               ? 'Review'
               : 'Private',
-          footerTone: compliance != null && !compliance.compliant
+          footerTone: complianceFailed
+              ? CarHirePalette.warning
+              : compliance != null && !compliance.compliant
               ? CarHirePalette.warning
               : CarHirePalette.muted,
-          onTap: enabled ? onDocuments : null,
+          onTap: enabled
+              ? complianceFailed
+                    ? () => ref.invalidate(companyComplianceProvider(unit.id))
+                    : onDocuments
+              : null,
         ),
         _ModuleTile(
           icon: Icons.build_circle_outlined,
@@ -2130,20 +2206,24 @@ class _DocumentsSheetState extends ConsumerState<_DocumentsSheet> {
       title: 'Documents & insurance',
       subtitle: widget.unit.plateLabel,
       children: [
-        compliance.when(
-          loading: () => const Padding(
-            padding: EdgeInsets.symmetric(vertical: 14),
-            child: LinearProgressIndicator(
-              color: CarHirePalette.accent,
-              backgroundColor: CarHirePalette.surfaceLow,
-            ),
+        if (compliance.hasError && compliance.hasValue)
+          CarHireSectionStaleStrip(
+            message: 'Compliance may be out of date.',
+            padding: EdgeInsets.zero,
+            onRefresh: () =>
+                ref.invalidate(companyComplianceProvider(widget.unit.id)),
           ),
-          error: (error, _) => Text(
-            'Compliance could not be loaded.',
-            style: CarHireType.bodySmall.copyWith(color: CarHirePalette.error),
-          ),
-          data: (state) => _ComplianceSummary(state: state),
-        ),
+        if (compliance.hasValue)
+          _ComplianceSummary(state: compliance.value!)
+        else if (compliance.hasError)
+          CarHireSectionErrorStrip(
+            message: 'Compliance could not be loaded.',
+            padding: EdgeInsets.zero,
+            onRetry: () =>
+                ref.invalidate(companyComplianceProvider(widget.unit.id)),
+          )
+        else
+          const CarHireCompanyRowSkeleton(count: 2),
         const SizedBox(height: 16),
         Text(
           'Add a document',
@@ -2489,39 +2569,42 @@ class _ServiceSheetState extends ConsumerState<_ServiceSheet> {
           ],
         ),
         const SizedBox(height: 2),
-        blocks.when(
-          loading: () => const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
-            child: LinearProgressIndicator(
-              color: CarHirePalette.accent,
-              backgroundColor: CarHirePalette.surfaceLow,
+        if (blocks.hasError && !blocks.hasValue)
+          CarHireSectionErrorStrip(
+            message: 'Blocks could not be loaded.',
+            padding: EdgeInsets.zero,
+            onRetry: () => ref.invalidate(
+              companyMaintenanceBlocksProvider(widget.unit.id),
             ),
-          ),
-          error: (error, _) => Text(
-            'Blocks could not be loaded.',
-            style: CarHireType.bodySmall.copyWith(color: CarHirePalette.error),
-          ),
-          data: (rows) {
-            if (rows.isEmpty) {
-              return const Padding(
-                padding: EdgeInsets.symmetric(vertical: 10),
-                child: Text(
-                  'No cleaning, safety or maintenance blocks.',
-                  style: CarHireType.bodySmall,
-                ),
-              );
-            }
-            return Column(
-              children: [
-                for (final block in rows)
-                  _BlockRow(
-                    block: block,
-                    onCancel: block.isActive ? () => _cancel(block) : null,
+          )
+        else if (blocks.isLoading && !blocks.hasValue)
+          const CarHireCompanyRowSkeleton(count: 2)
+        else if ((blocks.value ?? const <MaintenanceBlock>[]).isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 10),
+            child: Text(
+              'No cleaning, safety or maintenance blocks.',
+              style: CarHireType.bodySmall,
+            ),
+          )
+        else
+          Column(
+            children: [
+              if (blocks.hasError)
+                CarHireSectionStaleStrip(
+                  message: 'Blocks may be out of date.',
+                  padding: const EdgeInsets.only(bottom: 8),
+                  onRefresh: () => ref.invalidate(
+                    companyMaintenanceBlocksProvider(widget.unit.id),
                   ),
-              ],
-            );
-          },
-        ),
+                ),
+              for (final block in blocks.value!)
+                _BlockRow(
+                  block: block,
+                  onCancel: block.isActive ? () => _cancel(block) : null,
+                ),
+            ],
+          ),
       ],
     );
   }

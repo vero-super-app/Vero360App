@@ -6,6 +6,8 @@ import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_company_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_company_widgets.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_section_frame.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skeletons.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 import 'package:vero360_app/utils/formatters.dart';
@@ -31,7 +33,10 @@ class CarHireCompanyPage extends ConsumerWidget {
       loading: () => Scaffold(
         backgroundColor: CarHirePalette.background,
         appBar: carHireAppBar(title: 'Company'),
-        body: const CarHireLoadingState(message: 'Loading your company…'),
+        body: const SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(16, 4, 16, 32),
+          child: CarHireCompanyDashboardSkeleton(),
+        ),
       ),
       error: (error, _) => Scaffold(
         backgroundColor: CarHirePalette.background,
@@ -104,18 +109,20 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
   @override
   Widget build(BuildContext context) {
     final fleetAsync = ref.watch(companyFleetProvider);
-    final bookings =
-        ref.watch(companyBookingsProvider('ACTIVE')).value ??
-        const <CarHireBooking>[];
+    final activeAsync = widget.access.canViewBookings
+        ? ref.watch(companyBookingsProvider('ACTIVE'))
+        : const AsyncValue<List<CarHireBooking>>.data(<CarHireBooking>[]);
     final boardAsync = widget.access.canViewBookings
         ? ref.watch(companyDispatchProvider(companyDateKey(DateTime.now())))
         : const AsyncValue<DispatchBoard>.loading();
     final analytics = ref.watch(companyAnalyticsProvider).value;
 
     final units = fleetAsync.value ?? const <FleetUnit>[];
+    final bookings = activeAsync.value ?? const <CarHireBooking>[];
     final snapshot = _FleetSnapshot(
       units: units,
       activeByUnit: _activeByUnit(bookings),
+      bookingsKnown: activeAsync.hasValue,
     );
 
     final visible = _visibleUnits(snapshot);
@@ -142,13 +149,13 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
           children: [
-            _CompanyStrip(access: widget.access, snapshot: snapshot),
-            const SizedBox(height: 14),
-            _PulseCard(
+            _CompanyStrip(
+              access: widget.access,
               snapshot: snapshot,
-              analytics: analytics,
               loading: fleetAsync.isLoading && !fleetAsync.hasValue,
             ),
+            const SizedBox(height: 14),
+            ..._pulseSection(fleetAsync, analytics, snapshot),
             const SizedBox(height: 18),
             if (widget.access.canViewBookings) ...[
               _NextOpsSection(
@@ -224,7 +231,7 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
               ),
             ),
             const SizedBox(height: 12),
-            ..._carSection(snapshot, visible, fleetAsync),
+            ..._carSection(snapshot, visible, fleetAsync, activeAsync),
           ],
         ),
       ),
@@ -255,27 +262,64 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
         .toList(growable: false);
   }
 
+  List<Widget> _pulseSection(
+    AsyncValue<List<FleetUnit>> fleet,
+    CompanyAnalytics? analytics,
+    _FleetSnapshot snapshot,
+  ) {
+    if (fleet.isLoading && !fleet.hasValue) {
+      return const [CarHireCompanyPulseSkeleton()];
+    }
+    if (fleet.hasError && !fleet.hasValue) {
+      return [
+        CarHireSectionErrorStrip(
+          title: 'Fleet numbers unavailable',
+          message:
+              'Live counts could not load. Today’s work and your cars '
+              'below still load on their own.',
+          padding: EdgeInsets.zero,
+          onRetry: () => ref.invalidate(companyFleetProvider),
+        ),
+      ];
+    }
+    return [
+      if (fleet.hasError) ...[
+        CarHireSectionStaleStrip(
+          message: 'Fleet numbers may be out of date.',
+          padding: const EdgeInsets.only(bottom: 8),
+          onRefresh: () => ref.invalidate(companyFleetProvider),
+        ),
+      ],
+      _PulseCard(
+        snapshot: snapshot,
+        analytics: analytics,
+        loading: fleet.isLoading && !fleet.hasValue,
+      ),
+    ];
+  }
+
   List<Widget> _carSection(
     _FleetSnapshot snapshot,
     List<FleetUnit> visible,
     AsyncValue<List<FleetUnit>> fleet,
+    AsyncValue<List<CarHireBooking>> activeBookings,
   ) {
     if (fleet.hasError && !fleet.hasValue) {
       return [
-        _QuietCard(
-          icon: Icons.cloud_off_rounded,
-          message: 'Could not load the fleet.',
-          actionLabel: 'Retry',
-          onAction: () => ref.invalidate(companyFleetProvider),
+        CarHireSectionErrorStrip(
+          title: 'Fleet unavailable',
+          message:
+              'We could not load your cars. The rest of the page is still '
+              'usable — retry when the connection is back.',
+          padding: EdgeInsets.zero,
+          onRetry: () => ref.invalidate(companyFleetProvider),
         ),
       ];
     }
-    if (!fleet.hasValue) {
+    if (fleet.isLoading && !fleet.hasValue) {
       return const [
-        _QuietCard(
-          icon: Icons.directions_car_outlined,
-          message: 'Loading cars…',
-        ),
+        CarHireCompanyCarCardSkeleton(),
+        CarHireCompanyCarCardSkeleton(),
       ];
     }
     if (snapshot.units.isEmpty) {
@@ -304,10 +348,32 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
     final cards = visible.take(_maxCards).toList(growable: false);
     final remaining = visible.length - cards.length;
     return [
+      if (fleet.hasError)
+        CarHireSectionStaleStrip(
+          message: 'Showing the last fleet we loaded.',
+          padding: const EdgeInsets.only(bottom: 10),
+          onRefresh: () => ref.invalidate(companyFleetProvider),
+        ),
+      if (!snapshot.bookingsKnown)
+        CarHireSectionErrorStrip(
+          title: 'Live rentals not checked',
+          message:
+              'Car statuses may be out of date until active rentals load. '
+              'You can still open a car or manage its dates.',
+          padding: const EdgeInsets.only(bottom: 10),
+          onRetry: () => ref.invalidate(companyBookingsProvider('ACTIVE')),
+        )
+      else if (activeBookings.hasError)
+        CarHireSectionStaleStrip(
+          message: 'Rental statuses may be out of date.',
+          padding: const EdgeInsets.only(bottom: 10),
+          onRefresh: () => ref.invalidate(companyBookingsProvider('ACTIVE')),
+        ),
       for (final unit in cards)
         _CarCard(
           unit: unit,
           booking: snapshot.activeByUnit[unit.id],
+          statusUnknown: !snapshot.bookingsKnown,
           canManage: widget.access.canManageFleet,
           onOpenBooking: (booking) =>
               CarHireRoutes.openCompanyBooking(context, bookingId: booking.id),
@@ -356,10 +422,18 @@ Map<int, CarHireBooking> _activeByUnit(List<CarHireBooking> bookings) {
 }
 
 class _FleetSnapshot {
-  const _FleetSnapshot({required this.units, required this.activeByUnit});
+  const _FleetSnapshot({
+    required this.units,
+    required this.activeByUnit,
+    this.bookingsKnown = true,
+  });
 
   final List<FleetUnit> units;
   final Map<int, CarHireBooking> activeByUnit;
+
+  /// False when live rentals could not be read, so on-road/ready counts are
+  /// unknown rather than wrongly showing every car as ready.
+  final bool bookingsKnown;
 
   int get total => units.length;
 
@@ -380,14 +454,21 @@ class _FleetSnapshot {
 // ---------------------------------------------------------------------------
 
 class _CompanyStrip extends StatelessWidget {
-  const _CompanyStrip({required this.access, required this.snapshot});
+  const _CompanyStrip({
+    required this.access,
+    required this.snapshot,
+    this.loading = false,
+  });
 
   final CompanyAccess access;
   final _FleetSnapshot snapshot;
+  final bool loading;
 
   @override
   Widget build(BuildContext context) {
-    final subline = snapshot.units.isEmpty
+    final subline = loading
+        ? 'Loading live fleet…'
+        : snapshot.units.isEmpty
         ? 'Live operations'
         : '${snapshot.total} cars · ${snapshot.ready} ready';
 
@@ -497,6 +578,8 @@ class _PulseCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     String count(int value) => loading && snapshot.total == 0 ? '—' : '$value';
+    String rentalCount(int value) =>
+        !snapshot.bookingsKnown ? '—' : count(value);
 
     return CarHireSurface(
       shadow: true,
@@ -541,7 +624,7 @@ class _PulseCard extends StatelessWidget {
               const SizedBox(width: 7),
               Expanded(
                 child: _PulseMetric(
-                  value: count(snapshot.onRoad),
+                  value: rentalCount(snapshot.onRoad),
                   label: 'On road',
                   background: CarHirePalette.accentPale,
                   valueColor: CarHirePalette.accent,
@@ -551,7 +634,7 @@ class _PulseCard extends StatelessWidget {
               const SizedBox(width: 7),
               Expanded(
                 child: _PulseMetric(
-                  value: count(snapshot.ready),
+                  value: rentalCount(snapshot.ready),
                   label: 'Ready',
                   background: CarHirePalette.surfaceLow,
                 ),
@@ -559,7 +642,7 @@ class _PulseCard extends StatelessWidget {
               const SizedBox(width: 7),
               Expanded(
                 child: _PulseMetric(
-                  value: count(snapshot.prep),
+                  value: rentalCount(snapshot.prep),
                   label: 'In prep',
                   background: CarHirePalette.surfaceLow,
                   valueColor: CarHirePalette.muted,
@@ -567,6 +650,27 @@ class _PulseCard extends StatelessWidget {
               ),
             ],
           ),
+          if (!snapshot.bookingsKnown) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Icon(
+                  Icons.cloud_off_rounded,
+                  size: 13,
+                  color: CarHirePalette.muted,
+                ),
+                const SizedBox(width: 5),
+                Expanded(
+                  child: Text(
+                    'Rental statuses unavailable · counts may be incomplete.',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: CarHireType.bodySmall.copyWith(fontSize: 10.5),
+                  ),
+                ),
+              ],
+            ),
+          ],
           if (analytics != null) ...[
             const SizedBox(height: 10),
             Container(
@@ -769,18 +873,28 @@ class _NextOpsSection extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 6),
+        if (board.hasError && data != null)
+          CarHireSectionStaleStrip(
+            message: 'Today’s work may be out of date.',
+            padding: const EdgeInsets.only(bottom: 6),
+            onRefresh: onRetry,
+          ),
         CarHireSurface(
           radius: 16,
           padding: const EdgeInsets.all(7),
           child: Column(
             children: [
               if (board.hasError && data == null)
-                _QuietRow(
-                  icon: Icons.cloud_off_rounded,
-                  message: 'Could not load today.',
-                  actionLabel: 'Retry',
-                  onAction: onRetry,
+                CarHireSectionErrorStrip(
+                  message: 'Could not load today’s work.',
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 4,
+                  ),
+                  onRetry: onRetry,
                 )
+              else if (board.isLoading && data == null)
+                const CarHireCompanyOpsRowSkeleton()
               else if (data == null)
                 const _QuietRow(
                   icon: Icons.schedule_rounded,
@@ -1103,6 +1217,7 @@ class _CarCard extends StatelessWidget {
     required this.onBlock,
     required this.onOpenFleet,
     required this.onOpenUnit,
+    this.statusUnknown = false,
   });
 
   final FleetUnit unit;
@@ -1113,16 +1228,21 @@ class _CarCard extends StatelessWidget {
   final VoidCallback onOpenFleet;
   final VoidCallback onOpenUnit;
 
+  /// Live rentals failed to load; avoid claiming the car is ready.
+  final bool statusUnknown;
+
   bool get _onRoad => booking != null;
   bool get _inPrep => !unit.car.isAvailable && !_onRoad;
 
   Color get _tone {
+    if (statusUnknown && !_onRoad && !_inPrep) return CarHirePalette.muted;
     if (_onRoad) return CarHirePalette.accent;
     if (_inPrep) return CarHirePalette.warning;
     return CarHirePalette.success;
   }
 
   Color get _toneSoft {
+    if (statusUnknown && !_onRoad && !_inPrep) return CarHirePalette.surfaceLow;
     if (_onRoad) return CarHirePalette.accentPale;
     if (_inPrep) return CarHirePalette.warningSoft;
     return CarHirePalette.successSoft;
@@ -1131,6 +1251,7 @@ class _CarCard extends StatelessWidget {
   String get _statusLabel {
     if (_onRoad) return 'On road · ${_returnsLabel(booking!.endAt)}';
     if (_inPrep) return 'In prep · unavailable';
+    if (statusUnknown) return 'Status not checked';
     if (unit.car.dailyRate > 0) {
       return 'Ready · ${CarHireFormatters.formatCurrency(unit.car.dailyRate)}/day';
     }

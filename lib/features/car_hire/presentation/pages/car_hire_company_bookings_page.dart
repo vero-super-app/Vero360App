@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_company_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_company_widgets.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_section_frame.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skeletons.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 
@@ -20,7 +23,10 @@ class CarHireCompanyBookingsPage extends ConsumerWidget {
       backgroundColor: CarHirePalette.background,
       appBar: carHireAppBar(title: 'Bookings'),
       body: access.when(
-        loading: () => const CarHireLoadingState(message: 'Loading bookings…'),
+        loading: () => const SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(16, 8, 16, 32),
+          child: CarHireCompanyBookingListSkeleton(),
+        ),
         error: (error, _) => CarHireErrorState(
           error: error,
           onRetry: () => ref.invalidate(companyAccessProvider),
@@ -91,59 +97,83 @@ class _BookingsViewState extends ConsumerState<_BookingsView> {
         Expanded(
           child: RefreshIndicator(
             color: CarHirePalette.accent,
-            onRefresh: () =>
-                ref.refresh(companyBookingsProvider(_status).future),
-            child: bookings.when(
-              loading: () =>
-                  const CarHireLoadingState(message: 'Loading bookings…'),
-              error: (error, _) => ListView(
-                children: [
-                  CarHireErrorState(
-                    error: error,
-                    onRetry: () =>
-                        ref.invalidate(companyBookingsProvider(_status)),
-                  ),
-                ],
-              ),
-              data: (rows) {
-                if (rows.isEmpty) {
-                  return ListView(
-                    children: const [
-                      CarHireEmptyState(
-                        icon: Icons.inbox_outlined,
-                        title: 'Nothing here',
-                        message: 'No bookings match this filter.',
-                      ),
-                    ],
-                  );
-                }
-                return ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Text(
-                        rows.length == 1
-                            ? '1 booking'
-                            : '${rows.length} bookings',
-                        style: CarHireType.labelSmall,
-                      ),
-                    ),
-                    for (final booking in rows)
-                      CompanyBookingTile(
-                        booking: booking,
-                        onTap: () => CarHireRoutes.openCompanyBooking(
-                          context,
-                          bookingId: booking.id,
-                        ),
-                      ),
-                  ],
-                );
-              },
-            ),
+            onRefresh: () async {
+              ref.invalidate(companyBookingsProvider(_status));
+              try {
+                await ref.read(companyBookingsProvider(_status).future);
+              } catch (_) {
+                // The inline section state explains the failure.
+              }
+            },
+            child: _listBody(bookings),
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _listBody(AsyncValue<List<CarHireBooking>> bookings) {
+    final rows = bookings.value ?? const <CarHireBooking>[];
+    if (bookings.hasError && !bookings.hasValue) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+        children: [
+          CarHireSectionErrorStrip(
+            title: 'Bookings unavailable',
+            message:
+                'We could not load this queue. Your other filters keep '
+                'working — retry when the connection is back.',
+            padding: const EdgeInsets.only(top: 4),
+            onRetry: () => ref.invalidate(companyBookingsProvider(_status)),
+          ),
+        ],
+      );
+    }
+    if (bookings.isLoading && !bookings.hasValue) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+        children: const [CarHireCompanyBookingListSkeleton()],
+      );
+    }
+    if (rows.isEmpty) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: const [
+          CarHireEmptyState(
+            icon: Icons.inbox_outlined,
+            title: 'Nothing here',
+            message: 'No bookings match this filter.',
+          ),
+        ],
+      );
+    }
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+      children: [
+        if (bookings.hasError)
+          CarHireSectionStaleStrip(
+            message: 'Showing the last bookings we loaded.',
+            padding: const EdgeInsets.only(bottom: 8),
+            onRefresh: () => ref.invalidate(companyBookingsProvider(_status)),
+          ),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            rows.length == 1 ? '1 booking' : '${rows.length} bookings',
+            style: CarHireType.labelSmall,
+          ),
+        ),
+        for (final booking in rows)
+          CompanyBookingTile(
+            booking: booking,
+            onTap: () => CarHireRoutes.openCompanyBooking(
+              context,
+              bookingId: booking.id,
+            ),
+          ),
       ],
     );
   }

@@ -162,6 +162,21 @@ void main() {
       });
       expect(single.unitsLeftLabel, isNull);
     });
+
+    test('parses the pickup branch and booking mode', () {
+      final car = CarListing.fromJson(<String, dynamic>{
+        'id': 7,
+        'instantBook': false,
+        'location': {'id': 'b1', 'name': 'Airport desk', 'address': 'KIA'},
+      });
+      expect(car.branchLabel, 'Airport desk, KIA');
+      expect(car.instantBook, isFalse);
+      expect(car.bookingModeLabel, contains('24h'));
+
+      final plain = CarListing.fromJson(<String, dynamic>{'id': 8});
+      expect(plain.branchLabel, isNull);
+      expect(plain.instantBook, isTrue);
+    });
   });
 
   group('RentalQuote.fromJson', () {
@@ -280,6 +295,25 @@ void main() {
       expect(booking.assignedPlate, 'BZ 1234');
       expect(booking.assignedColor, 'White');
       expect(CarHireBooking.fromJson(<String, dynamic>{'id': 81}).assignedPlate, isNull);
+    });
+
+    test('blocks payment while a request awaits the company', () {
+      final waiting = CarHireBooking.fromJson(<String, dynamic>{
+        'id': 82,
+        'bookingStatus': 'PENDING',
+        'paymentStatus': 'NOT_STARTED',
+        'nextAction': 'AWAITING_PROVIDER',
+      });
+      expect(waiting.canPay, isFalse);
+      expect(waiting.nextActionLabel, contains('24 hours'));
+
+      final accepted = CarHireBooking.fromJson(<String, dynamic>{
+        'id': 83,
+        'bookingStatus': 'CONFIRMED',
+        'paymentStatus': 'NOT_STARTED',
+        'nextAction': 'PAYMENT_REQUIRED',
+      });
+      expect(accepted.canPay, isTrue);
     });
 
     Map<String, dynamic> bookingJson() {

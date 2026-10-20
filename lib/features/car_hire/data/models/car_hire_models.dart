@@ -574,6 +574,9 @@ class CarListing {
     this.listingId,
     this.unitCount,
     this.availableUnits,
+    this.branchName,
+    this.branchAddress,
+    this.instantBook = true,
   });
 
   final int id;
@@ -614,6 +617,24 @@ class CarListing {
   /// Units free for the searched dates (or in service when undated).
   final int? availableUnits;
 
+  /// Company branch the car is collected from, when set.
+  final String? branchName;
+  final String? branchAddress;
+
+  /// False when the company accepts each request before the renter pays.
+  final bool instantBook;
+
+  String get bookingModeLabel => instantBook
+      ? 'Confirmed instantly after payment'
+      : 'Company confirms within 24h, then you pay';
+
+  String? get branchLabel {
+    final name = branchName?.trim();
+    if (name == null || name.isEmpty) return null;
+    final address = branchAddress?.trim();
+    return address == null || address.isEmpty ? name : '$name, $address';
+  }
+
   /// "Provided by …" line, empty when the backend did not send a provider.
   String get providerLabel =>
       provider == null ? '' : 'Provided by ${provider!.name}';
@@ -634,6 +655,7 @@ class CarListing {
         .toList(growable: false);
     final imageUrl = _asStringOrNull(json['imageUrl']);
     final minDaysRaw = _asInt(json['minRentalDays'], fallback: 1);
+    final location = _asMap(json['location']);
 
     return CarListing(
       id: _asInt(json['id']),
@@ -673,6 +695,9 @@ class CarListing {
       listingId: _asStringOrNull(json['listingId']),
       unitCount: _asNullableInt(json['unitCount']),
       availableUnits: _asNullableInt(json['availableUnits']),
+      branchName: _asStringOrNull(location['name']),
+      branchAddress: _asStringOrNull(location['address']),
+      instantBook: _asBool(json['instantBook'], fallback: true),
     );
   }
 
@@ -790,6 +815,9 @@ class CarListing {
       listingId: listingId,
       unitCount: unitCount,
       availableUnits: availableUnits,
+      branchName: branchName,
+      branchAddress: branchAddress,
+      instantBook: instantBook,
     );
   }
 }
@@ -1181,7 +1209,11 @@ class CarHireBooking {
     }
     // The server-derived hint tells us when payment is no longer the next step.
     final action = _normalizedNextAction;
-    if (action == 'PICKUP_DUE' || action == 'OWNER_REVIEW') return false;
+    if (action == 'PICKUP_DUE' ||
+        action == 'OWNER_REVIEW' ||
+        action == 'AWAITING_PROVIDER') {
+      return false;
+    }
     return true;
   }
 
@@ -1199,6 +1231,9 @@ class CarHireBooking {
         return 'Your payment is being confirmed. Refresh in a moment.';
       case 'OWNER_REVIEW':
         return 'Waiting for the vehicle provider to confirm.';
+      case 'AWAITING_PROVIDER':
+        return 'Request sent. The company responds within 24 hours; '
+            'you pay once they accept.';
       case 'PICKUP_DUE':
         return 'Your pick-up is due. Bring your booking number and licence.';
       case 'RETURN_DUE':

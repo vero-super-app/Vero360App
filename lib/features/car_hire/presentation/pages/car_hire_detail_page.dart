@@ -279,7 +279,7 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
             Expanded(
               child: Text(
                 [
-                  car.pickupAreaLabel,
+                  car.branchLabel ?? car.pickupAreaLabel,
                   if (car.subtitle.isNotEmpty) car.subtitle,
                 ].join(' · '),
                 maxLines: 2,
@@ -365,6 +365,25 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
               style: CarHireType.labelSmall,
             ),
           ],
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Icon(
+                car.instantBook
+                    ? Icons.bolt_rounded
+                    : Icons.schedule_rounded,
+                size: 14,
+                color: CarHirePalette.muted,
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  car.bookingModeLabel,
+                  style: CarHireType.labelSmall,
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );

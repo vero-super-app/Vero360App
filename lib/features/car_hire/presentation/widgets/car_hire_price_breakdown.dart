@@ -87,29 +87,38 @@ class CarHirePriceBreakdown extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final rows = <Widget>[];
+    // v2 quotes itemise company pricing adjustments, so the summary rows
+    // would repeat them.
+    final itemised = lineItems.any(
+      (item) =>
+          item.code == 'seasonal_adjustment' ||
+          item.code == 'weekend_adjustment' ||
+          item.code == 'duration_discount',
+    );
 
     for (final item in lineItems) {
       if (item.label.trim().isEmpty && item.amount == 0) continue;
       rows.add(
         _row(
           item.label.trim().isEmpty ? 'Charge' : item.label,
-          _money(item.amount),
+          item.amount < 0 ? '- ${_money(-item.amount)}' : _money(item.amount),
+          color: item.amount < 0 ? CarHirePalette.success : null,
         ),
       );
     }
 
-    if (showSubtotal && subtotal > 0) {
+    if (showSubtotal && subtotal > 0 && !itemised) {
       rows.add(const _Hairline());
       rows.add(_row('Subtotal', _money(subtotal), muted: true));
     }
 
-    if (surcharges > 0) {
+    if (surcharges > 0 && !itemised) {
       rows.add(_row('Surcharges', _money(surcharges)));
     }
     if (insurance > 0) {
       rows.add(_row('Insurance', _money(insurance)));
     }
-    if (discounts > 0) {
+    if (discounts > 0 && !itemised) {
       rows.add(
         _row(
           'Discounts',

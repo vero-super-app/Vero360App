@@ -1014,6 +1014,14 @@ class CarHireApi {
     required String displayName,
     String? contactPhone,
     List<String> serviceAreas = const <String>[],
+    String? registrationNumber,
+    String? taxId,
+    String? idNumber,
+    String? payoutMethod,
+    String? payoutAccountName,
+    String? payoutAccountNumber,
+    String? payoutBankName,
+    List<CompanyDocument> documents = const <CompanyDocument>[],
   }) async {
     await _send(
       () => ApiClient.post(
@@ -1024,6 +1032,26 @@ class CarHireApi {
           if (contactPhone != null && contactPhone.trim().isNotEmpty)
             'contactPhone': contactPhone.trim(),
           'serviceAreas': serviceAreas,
+          if (registrationNumber != null &&
+              registrationNumber.trim().isNotEmpty)
+            'registrationNumber': registrationNumber.trim(),
+          if (taxId != null && taxId.trim().isNotEmpty) 'taxId': taxId.trim(),
+          if (idNumber != null && idNumber.trim().isNotEmpty)
+            'idNumber': idNumber.trim(),
+          if (payoutMethod != null && payoutMethod.trim().isNotEmpty)
+            'payoutMethod': payoutMethod.trim(),
+          if (payoutAccountName != null &&
+              payoutAccountName.trim().isNotEmpty)
+            'payoutAccountName': payoutAccountName.trim(),
+          if (payoutAccountNumber != null &&
+              payoutAccountNumber.trim().isNotEmpty)
+            'payoutAccountNumber': payoutAccountNumber.trim(),
+          if (payoutBankName != null && payoutBankName.trim().isNotEmpty)
+            'payoutBankName': payoutBankName.trim(),
+          if (documents.isNotEmpty)
+            'documents': documents
+                .map((document) => document.toJson())
+                .toList(growable: false),
         }),
         timeout: _timeout,
       ),
@@ -1032,11 +1060,22 @@ class CarHireApi {
 
   /// `PATCH /car-rental/operators/:id` — also resubmits an application that
   /// was sent back for more information.
+  ///
+  /// Only the fields passed are sent, so a profile edit never clears detail
+  /// the owner already supplied.
   Future<void> updateCarHireCompany(
     String operatorId, {
     String? displayName,
     String? contactPhone,
     List<String>? serviceAreas,
+    String? registrationNumber,
+    String? taxId,
+    String? idNumber,
+    String? payoutMethod,
+    String? payoutAccountName,
+    String? payoutAccountNumber,
+    String? payoutBankName,
+    List<CompanyDocument>? documents,
   }) async {
     await _send(
       () => ApiClient.patch(
@@ -1045,6 +1084,20 @@ class CarHireApi {
           if (displayName != null) 'displayName': displayName.trim(),
           if (contactPhone != null) 'contactPhone': contactPhone.trim(),
           'serviceAreas': ?serviceAreas,
+          if (registrationNumber != null)
+            'registrationNumber': registrationNumber.trim(),
+          if (taxId != null) 'taxId': taxId.trim(),
+          if (idNumber != null) 'idNumber': idNumber.trim(),
+          if (payoutMethod != null) 'payoutMethod': payoutMethod.trim(),
+          if (payoutAccountName != null)
+            'payoutAccountName': payoutAccountName.trim(),
+          if (payoutAccountNumber != null)
+            'payoutAccountNumber': payoutAccountNumber.trim(),
+          if (payoutBankName != null) 'payoutBankName': payoutBankName.trim(),
+          if (documents != null)
+            'documents': documents
+                .map((document) => document.toJson())
+                .toList(growable: false),
         }),
         timeout: _timeout,
       ),

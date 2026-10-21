@@ -153,6 +153,51 @@ enum CarHireAccountState {
   }
 }
 
+/// A compliance document link attached to a company application.
+class CompanyDocument {
+  const CompanyDocument({
+    required this.type,
+    required this.url,
+    this.uploadedAt = '',
+  });
+
+  /// BUSINESS_REGISTRATION | NATIONAL_ID | TAX_CLEARANCE | INSURANCE
+  final String type;
+  final String url;
+  final String uploadedAt;
+
+  String get label => switch (type.toUpperCase()) {
+    'BUSINESS_REGISTRATION' => 'Business registration',
+    'NATIONAL_ID' => 'National ID',
+    'TAX_CLEARANCE' => 'Tax clearance',
+    'INSURANCE' => 'Insurance',
+    _ => type.isEmpty ? 'Document' : type,
+  };
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'type': type,
+    'url': url.trim(),
+    if (uploadedAt.isNotEmpty) 'uploadedAt': uploadedAt,
+  };
+
+  static List<CompanyDocument> listFromJson(dynamic raw) {
+    final out = <CompanyDocument>[];
+    for (final item in _list(raw)) {
+      final row = _map(item);
+      final url = _str(row['url']);
+      if (url.isEmpty) continue;
+      out.add(
+        CompanyDocument(
+          type: _str(row['type']).toUpperCase(),
+          url: url,
+          uploadedAt: _str(row['uploadedAt']),
+        ),
+      );
+    }
+    return out;
+  }
+}
+
 /// The single car hire account behind this login. One login runs one
 /// company; renters without a company have [CarHireAccountState.none].
 class CarHireAccount {
@@ -166,6 +211,15 @@ class CarHireAccount {
     this.logoUrl,
     this.reviewerNote,
     this.capabilities = const <String>{},
+    this.registrationNumber,
+    this.taxId,
+    this.idNumber,
+    this.payoutMethod,
+    this.payoutBankName,
+    this.payoutAccountName,
+    this.payoutAccountNumber,
+    this.documents = const <CompanyDocument>[],
+    this.verificationGaps = const <String>[],
   });
 
   static const CarHireAccount none = CarHireAccount();
@@ -182,10 +236,43 @@ class CarHireAccount {
   final String? reviewerNote;
   final Set<String> capabilities;
 
+  /// Business registration / certificate of incorporation number.
+  final String? registrationNumber;
+
+  /// TPIN / tax identification number.
+  final String? taxId;
+
+  /// National ID, used for INDIVIDUAL owners.
+  final String? idNumber;
+  final String? payoutMethod;
+  final String? payoutBankName;
+  final String? payoutAccountName;
+  final String? payoutAccountNumber;
+  final List<CompanyDocument> documents;
+
+  /// Human labels for verification detail still missing for this type.
+  final List<String> verificationGaps;
+
   bool get isActive => state == CarHireAccountState.active;
   bool get hasProfile => state != CarHireAccountState.none;
   bool get isBusiness => companyType.toUpperCase() == 'BUSINESS';
   bool can(String capability) => capabilities.contains(capability);
+
+  String get payoutMethodLabel =>
+      switch (payoutMethod?.toUpperCase()) {
+        'BANK' => 'Bank transfer',
+        'MOBILE_MONEY' => 'Mobile money',
+        _ => '',
+      };
+
+  /// Existing link for one document type, used to prefill the apply form.
+  String documentFor(String type) {
+    final target = type.toUpperCase();
+    for (final document in documents) {
+      if (document.type.toUpperCase() == target) return document.url;
+    }
+    return '';
+  }
 
   factory CarHireAccount.fromJson(dynamic raw) {
     final json = _map(raw);
@@ -204,6 +291,17 @@ class CarHireAccount {
       capabilities: _list(
         json['capabilities'],
       ).map(_str).where((item) => item.isNotEmpty).toSet(),
+      registrationNumber: _strOrNull(company['registrationNumber']),
+      taxId: _strOrNull(company['taxId']),
+      idNumber: _strOrNull(company['idNumber']),
+      payoutMethod: _strOrNull(company['payoutMethod'])?.toUpperCase(),
+      payoutBankName: _strOrNull(company['payoutBankName']),
+      payoutAccountName: _strOrNull(company['payoutAccountName']),
+      payoutAccountNumber: _strOrNull(company['payoutAccountNumber']),
+      documents: CompanyDocument.listFromJson(company['documents']),
+      verificationGaps: _list(
+        company['verificationGaps'],
+      ).map(_str).where((item) => item.isNotEmpty).toList(growable: false),
     );
   }
 }

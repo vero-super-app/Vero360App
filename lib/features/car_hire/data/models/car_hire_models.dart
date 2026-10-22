@@ -195,7 +195,9 @@ List<String> _asChecklist(dynamic value) {
         return;
       }
       final text = _asString(item).toLowerCase();
-      if (text.isEmpty || text == 'false' || text == 'no' || text == '0') return;
+      if (text.isEmpty || text == 'false' || text == 'no' || text == '0') {
+        return;
+      }
       items.add(label);
     });
     return items;
@@ -212,7 +214,11 @@ List<String> _asChecklist(dynamic value) {
 List<String> _asMedia(dynamic value) {
   if (value is List) {
     return value
-        .map((item) => item is Map ? _asString(item['url'] ?? item['reference']) : _asString(item))
+        .map(
+          (item) => item is Map
+              ? _asString(item['url'] ?? item['reference'])
+              : _asString(item),
+        )
         .where((item) => item.isNotEmpty)
         .toList(growable: false);
   }
@@ -259,8 +265,7 @@ enum BookingStatus {
       this == expired ||
       this == rejected;
 
-  bool get isOpen =>
-      this == pending || this == confirmed || this == active;
+  bool get isOpen => this == pending || this == confirmed || this == active;
 }
 
 enum PaymentStatus {
@@ -512,6 +517,79 @@ enum SupportCaseCategory {
 // Public vehicle listing (`CarPublicView`)
 // ---------------------------------------------------------------------------
 
+/// The company or individual host that provides a listing.
+class CarHireProvider {
+  const CarHireProvider({
+    required this.id,
+    required this.name,
+    this.type = '',
+    this.logoUrl,
+  });
+
+  final String id;
+  final String name;
+  final String type;
+  final String? logoUrl;
+
+  bool get isBusiness => type.toUpperCase() == 'BUSINESS';
+
+  static CarHireProvider? fromJson(dynamic raw) {
+    if (raw is! Map) return null;
+    final json = _asMap(raw);
+    final id = _asString(json['id']);
+    final name = _asString(json['name'] ?? json['displayName']).trim();
+    if (id.isEmpty || name.isEmpty) return null;
+    return CarHireProvider(
+      id: id,
+      name: name,
+      type: _asString(json['type']),
+      logoUrl: _asStringOrNull(json['logoUrl']),
+    );
+  }
+}
+
+/// A company renters can filter by, with how many listings it has on offer.
+class CarHireCompanyOption {
+  const CarHireCompanyOption({
+    required this.id,
+    required this.name,
+    this.logoUrl,
+    this.listings = 0,
+    this.instantBook = true,
+  });
+
+  final String id;
+  final String name;
+  final String? logoUrl;
+  final int listings;
+  final bool instantBook;
+
+  String get initials {
+    final words = name
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .take(2)
+        .toList(growable: false);
+    if (words.isEmpty) return '?';
+    return words.map((word) => word[0].toUpperCase()).join();
+  }
+
+  static CarHireCompanyOption? fromJson(dynamic raw) {
+    if (raw is! Map) return null;
+    final json = _asMap(raw);
+    final id = _asString(json['id']);
+    final name = _asString(json['name'] ?? json['displayName']).trim();
+    if (id.isEmpty || name.isEmpty) return null;
+    return CarHireCompanyOption(
+      id: id,
+      name: name,
+      logoUrl: _asStringOrNull(json['logoUrl']),
+      listings: _asInt(json['listings']),
+      instantBook: _asBool(json['instantBook'], fallback: true),
+    );
+  }
+}
+
 class CarListing {
   const CarListing({
     required this.id,
@@ -539,6 +617,13 @@ class CarListing {
     this.depositAmount = 0,
     this.minRentalDays = 1,
     this.maxRentalDays,
+    this.provider,
+    this.listingId,
+    this.unitCount,
+    this.availableUnits,
+    this.branchName,
+    this.branchAddress,
+    this.instantBook = true,
   });
 
   final int id;
@@ -568,6 +653,46 @@ class CarListing {
   final double depositAmount;
   final int minRentalDays;
   final int? maxRentalDays;
+  final CarHireProvider? provider;
+
+  /// Shared id of identical units; null for a single-unit listing.
+  final String? listingId;
+
+  /// Identical units in service on this listing.
+  final int? unitCount;
+
+  /// Units free for the searched dates (or in service when undated).
+  final int? availableUnits;
+
+  /// Company branch the car is collected from, when set.
+  final String? branchName;
+  final String? branchAddress;
+
+  /// False when the company accepts each request before the renter pays.
+  final bool instantBook;
+
+  String get bookingModeLabel => instantBook
+      ? 'Confirmed instantly after payment'
+      : 'Company confirms within 24h, then you pay';
+
+  String? get branchLabel {
+    final name = branchName?.trim();
+    if (name == null || name.isEmpty) return null;
+    final address = branchAddress?.trim();
+    return address == null || address.isEmpty ? name : '$name, $address';
+  }
+
+  /// "Provided by …" line, empty when the backend did not send a provider.
+  String get providerLabel =>
+      provider == null ? '' : 'Provided by ${provider!.name}';
+
+  /// "3 left" for multi-unit listings; null when there is nothing to show.
+  String? get unitsLeftLabel {
+    final total = unitCount ?? 0;
+    final free = availableUnits;
+    if (total <= 1 || free == null || free <= 0) return null;
+    return '$free left';
+  }
 
   factory CarListing.fromJson(dynamic raw) {
     final json = _asMap(raw);
@@ -577,6 +702,7 @@ class CarListing {
         .toList(growable: false);
     final imageUrl = _asStringOrNull(json['imageUrl']);
     final minDaysRaw = _asInt(json['minRentalDays'], fallback: 1);
+    final location = _asMap(json['location']);
 
     return CarListing(
       id: _asInt(json['id']),
@@ -605,13 +731,21 @@ class CarListing {
       listingStatus: ListingStatus.fromWire(
         _asStringOrNull(json['listingStatus']) ?? 'PUBLISHED',
       ),
-      availableForDates: json.containsKey('availableForDates') &&
+      availableForDates:
+          json.containsKey('availableForDates') &&
               json['availableForDates'] != null
           ? _asBool(json['availableForDates'])
           : null,
       depositAmount: _asDouble(json['depositAmount']),
       minRentalDays: minDaysRaw <= 0 ? 1 : minDaysRaw,
       maxRentalDays: _asNullableInt(json['maxRentalDays']),
+      provider: CarHireProvider.fromJson(json['operator']),
+      listingId: _asStringOrNull(json['listingId']),
+      unitCount: _asNullableInt(json['unitCount']),
+      availableUnits: _asNullableInt(json['availableUnits']),
+      branchName: _asStringOrNull(location['name']),
+      branchAddress: _asStringOrNull(location['address']),
+      instantBook: _asBool(json['instantBook'], fallback: true),
     );
   }
 
@@ -725,6 +859,13 @@ class CarListing {
       depositAmount: depositAmount,
       minRentalDays: minRentalDays,
       maxRentalDays: maxRentalDays,
+      provider: provider,
+      listingId: listingId,
+      unitCount: unitCount,
+      availableUnits: availableUnits,
+      branchName: branchName,
+      branchAddress: branchAddress,
+      instantBook: instantBook,
     );
   }
 }
@@ -760,10 +901,7 @@ class CarHireSearchResult {
       data: data,
       page: _asInt(meta['page'] ?? json['page'], fallback: 1),
       limit: _asInt(meta['limit'] ?? json['limit'], fallback: 20),
-      total: _asInt(
-        meta['total'] ?? json['total'],
-        fallback: data.length,
-      ),
+      total: _asInt(meta['total'] ?? json['total'], fallback: data.length),
       hasMore: _asBool(meta['hasMore'] ?? json['hasMore'], fallback: false),
     );
   }
@@ -964,6 +1102,13 @@ class CarHireBooking {
     this.paymentReference,
     this.car,
     this.priceBreakdown = const <QuoteLineItem>[],
+    this.assignedPlate,
+    this.assignedColor,
+    this.assignedCarId,
+    this.renterName,
+    this.renterPhone,
+    this.bookingMode = 'INSTANT',
+    this.branchName,
   });
 
   final int id;
@@ -996,6 +1141,23 @@ class CarHireBooking {
   final CarListing? car;
   final List<QuoteLineItem> priceBreakdown;
 
+  /// Registration of the assigned unit; only sent once the booking is confirmed.
+  final String? assignedPlate;
+  final String? assignedColor;
+  final int? assignedCarId;
+
+  /// Renter contact; only sent to the providing company.
+  final String? renterName;
+  final String? renterPhone;
+
+  /// `INSTANT` or `REQUEST` (company accepts before the renter pays).
+  final String bookingMode;
+
+  /// Pickup branch; sent on the company dispatch board.
+  final String? branchName;
+
+  bool get isRequest => bookingMode == 'REQUEST';
+
   factory CarHireBooking.fromJson(dynamic raw) {
     dynamic payload = raw;
     if (raw is Map) {
@@ -1005,6 +1167,7 @@ class CarHireBooking {
     final json = _asMap(payload);
     final carRaw = json['car'] ?? json['vehicle'];
     final breakdownRaw = json['priceBreakdown'];
+    final assignedUnit = _asMap(json['assignedUnit']);
 
     return CarHireBooking(
       id: _asInt(json['id']),
@@ -1043,6 +1206,16 @@ class CarHireBooking {
       priceBreakdown: breakdownRaw is List
           ? QuoteLineItem.listFromJson(breakdownRaw)
           : QuoteLineItem.listFromJson(_asMap(breakdownRaw)['lineItems']),
+      assignedPlate: _asStringOrNull(assignedUnit['licensePlate']),
+      assignedColor: _asStringOrNull(assignedUnit['color']),
+      assignedCarId: _asNullableInt(assignedUnit['carId']),
+      renterName: _asStringOrNull(json['renterName']),
+      renterPhone: _asStringOrNull(json['renterPhone']),
+      bookingMode: _asString(
+        json['bookingMode'],
+        fallback: 'INSTANT',
+      ).toUpperCase(),
+      branchName: _asStringOrNull(_asMap(json['branch'])['name']),
     );
   }
 
@@ -1058,8 +1231,12 @@ class CarHireBooking {
     final start = startAt;
     final end = endAt;
     if (start == null && end == null) return 'Dates not confirmed';
-    if (start == null) return 'Return ${CarHireFormatters.formatDateTime(end!)}';
-    if (end == null) return 'Pick-up ${CarHireFormatters.formatDateTime(start)}';
+    if (start == null) {
+      return 'Return ${CarHireFormatters.formatDateTime(end!)}';
+    }
+    if (end == null) {
+      return 'Pick-up ${CarHireFormatters.formatDateTime(start)}';
+    }
     return '${CarHireFormatters.formatDateTime(start)} → '
         '${CarHireFormatters.formatDateTime(end)}';
   }
@@ -1107,7 +1284,11 @@ class CarHireBooking {
     }
     // The server-derived hint tells us when payment is no longer the next step.
     final action = _normalizedNextAction;
-    if (action == 'PICKUP_DUE' || action == 'OWNER_REVIEW') return false;
+    if (action == 'PICKUP_DUE' ||
+        action == 'OWNER_REVIEW' ||
+        action == 'AWAITING_PROVIDER') {
+      return false;
+    }
     return true;
   }
 
@@ -1125,6 +1306,9 @@ class CarHireBooking {
         return 'Your payment is being confirmed. Refresh in a moment.';
       case 'OWNER_REVIEW':
         return 'Waiting for the vehicle provider to confirm.';
+      case 'AWAITING_PROVIDER':
+        return 'Request sent. The company responds within 24 hours; '
+            'you pay once they accept.';
       case 'PICKUP_DUE':
         return 'Your pick-up is due. Bring your booking number and licence.';
       case 'RETURN_DUE':
@@ -1180,6 +1364,13 @@ class CarHireBooking {
       paymentReference: paymentReference ?? this.paymentReference,
       car: car ?? this.car,
       priceBreakdown: priceBreakdown,
+      assignedPlate: assignedPlate,
+      assignedColor: assignedColor,
+      assignedCarId: assignedCarId,
+      renterName: renterName,
+      renterPhone: renterPhone,
+      bookingMode: bookingMode,
+      branchName: branchName,
     );
   }
 }
@@ -1276,7 +1467,7 @@ class BookingExtension {
     this.createdAt,
   });
 
-  final int id;
+  final String id;
   final int? bookingId;
   final DateTime? requestedEndAt;
   final DateTime? previousEndAt;
@@ -1297,7 +1488,7 @@ class BookingExtension {
     final json = _asMap(payload);
 
     return BookingExtension(
-      id: _asInt(_pick(json, <String>['id', 'extensionId', 'extension_id'])),
+      id: _asString(_pick(json, <String>['id', 'extensionId', 'extension_id'])),
       bookingId: _asNullableInt(
         _pick(json, <String>['bookingId', 'booking_id']),
       ),
@@ -1343,8 +1534,8 @@ class BookingExtension {
     final list = raw is List
         ? raw
         : (raw is Map
-            ? _asList(_asMap(raw)['data'] ?? _asMap(raw)['extensions'])
-            : const <dynamic>[]);
+              ? _asList(_asMap(raw)['data'] ?? _asMap(raw)['extensions'])
+              : const <dynamic>[]);
     return list
         .whereType<Map>()
         .map((item) => BookingExtension.fromJson(item))
@@ -1355,8 +1546,7 @@ class BookingExtension {
       ? 'Return date not provided'
       : CarHireFormatters.formatDateTime(requestedEndAt!);
 
-  String get additionalAmountLabel =>
-      carHireMoney(currency, additionalAmount);
+  String get additionalAmountLabel => carHireMoney(currency, additionalAmount);
 
   bool get hasAdditionalAmount => additionalAmount > 0;
 }
@@ -1386,7 +1576,12 @@ class InspectionAcknowledgement {
         _pick(json, <String>['decision', 'status']),
       ).toUpperCase(),
       note: _asStringOrNull(
-        _pick(json, <String>['note', 'reason', 'disputeReason', 'dispute_reason']),
+        _pick(json, <String>[
+          'note',
+          'reason',
+          'disputeReason',
+          'dispute_reason',
+        ]),
       ),
       createdAt: _asDate(_pick(json, <String>['createdAt', 'created_at'])),
     );
@@ -1428,7 +1623,7 @@ class HandoverInspection {
     this.acknowledgements = const <InspectionAcknowledgement>[],
   });
 
-  final int id;
+  final String id;
   final int? bookingId;
   final InspectionType type;
   final InspectionActorRole actorRole;
@@ -1454,7 +1649,9 @@ class HandoverInspection {
     final json = _asMap(payload);
 
     return HandoverInspection(
-      id: _asInt(_pick(json, <String>['id', 'inspectionId', 'inspection_id'])),
+      id: _asString(
+        _pick(json, <String>['id', 'inspectionId', 'inspection_id']),
+      ),
       bookingId: _asNullableInt(
         _pick(json, <String>['bookingId', 'booking_id']),
       ),
@@ -1475,7 +1672,11 @@ class HandoverInspection {
       notes: _asStringOrNull(json['notes']),
       media: _asMedia(json['media']),
       status: InspectionStatus.fromWire(
-        _pick(json, <String>['status', 'inspectionStatus', 'inspection_status']),
+        _pick(json, <String>[
+          'status',
+          'inspectionStatus',
+          'inspection_status',
+        ]),
       ),
       acknowledgedAt: _asDate(
         _pick(json, <String>['acknowledgedAt', 'acknowledged_at']),
@@ -1501,8 +1702,8 @@ class HandoverInspection {
     final list = raw is List
         ? raw
         : (raw is Map
-            ? _asList(_asMap(raw)['data'] ?? _asMap(raw)['inspections'])
-            : const <dynamic>[]);
+              ? _asList(_asMap(raw)['data'] ?? _asMap(raw)['inspections'])
+              : const <dynamic>[]);
     return list
         .whereType<Map>()
         .map((item) => HandoverInspection.fromJson(item))
@@ -1510,9 +1711,9 @@ class HandoverInspection {
   }
 
   bool get renterAcknowledged => acknowledgements.any((entry) {
-        final party = entry.party.toUpperCase();
-        return party == 'RENTER' || party == 'CUSTOMER' || party == 'USER';
-      });
+    final party = entry.party.toUpperCase();
+    return party == 'RENTER' || party == 'CUSTOMER' || party == 'USER';
+  });
 
   /// The renter may accept or decline a handover recorded by the provider.
   bool get awaitingRenterDecision =>
@@ -1584,7 +1785,7 @@ class IncidentReport {
     this.createdAt,
   });
 
-  final int id;
+  final String id;
   final int? bookingId;
   final IncidentType type;
   final String description;
@@ -1602,7 +1803,7 @@ class IncidentReport {
     final json = _asMap(payload);
 
     return IncidentReport(
-      id: _asInt(_pick(json, <String>['id', 'incidentId', 'incident_id'])),
+      id: _asString(_pick(json, <String>['id', 'incidentId', 'incident_id'])),
       bookingId: _asNullableInt(
         _pick(json, <String>['bookingId', 'booking_id']),
       ),
@@ -1611,7 +1812,12 @@ class IncidentReport {
       ),
       description: _asString(json['description']),
       occurredAt: _asDate(
-        _pick(json, <String>['occurredAt', 'occurred_at', 'happenedAt', 'happened_at']),
+        _pick(json, <String>[
+          'occurredAt',
+          'occurred_at',
+          'happenedAt',
+          'happened_at',
+        ]),
       ),
       contactPhone: _asStringOrNull(
         _pick(json, <String>['contactPhone', 'contact_phone']),
@@ -1625,8 +1831,8 @@ class IncidentReport {
     final list = raw is List
         ? raw
         : (raw is Map
-            ? _asList(_asMap(raw)['data'] ?? _asMap(raw)['incidents'])
-            : const <dynamic>[]);
+              ? _asList(_asMap(raw)['data'] ?? _asMap(raw)['incidents'])
+              : const <dynamic>[]);
     return list
         .whereType<Map>()
         .map((item) => IncidentReport.fromJson(item))
@@ -1657,7 +1863,7 @@ class SupportCase {
     this.updatedAt,
   });
 
-  final int id;
+  final String id;
   final int? bookingId;
   final SupportCaseCategory category;
   final String subject;
@@ -1675,7 +1881,7 @@ class SupportCase {
     final json = _asMap(payload);
 
     return SupportCase(
-      id: _asInt(_pick(json, <String>['id', 'caseId', 'case_id'])),
+      id: _asString(_pick(json, <String>['id', 'caseId', 'case_id'])),
       bookingId: _asNullableInt(
         _pick(json, <String>['bookingId', 'booking_id']),
       ),
@@ -1694,8 +1900,8 @@ class SupportCase {
     final list = raw is List
         ? raw
         : (raw is Map
-            ? _asList(_asMap(raw)['data'] ?? _asMap(raw)['cases'])
-            : const <dynamic>[]);
+              ? _asList(_asMap(raw)['data'] ?? _asMap(raw)['cases'])
+              : const <dynamic>[]);
     return list
         .whereType<Map>()
         .map((item) => SupportCase.fromJson(item))
@@ -1709,9 +1915,8 @@ class SupportCase {
     return value.isEmpty ? 'Submitted' : value;
   }
 
-  String get createdAtLabel => createdAt == null
-      ? ''
-      : CarHireFormatters.formatDateTime(createdAt!);
+  String get createdAtLabel =>
+      createdAt == null ? '' : CarHireFormatters.formatDateTime(createdAt!);
 }
 
 /// One row of the `POST /verification/submissions` payload.

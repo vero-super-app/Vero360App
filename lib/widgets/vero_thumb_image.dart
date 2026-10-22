@@ -11,6 +11,27 @@ int thumbnailCachePx(BuildContext context, {double logical = 360}) {
   return (logical * dpr).round().clamp(256, 1200);
 }
 
+/// MemoryImage compares by bytes identity, so a fresh decode on every build
+/// misses Flutter's image cache and re-decodes the picture. Reuse providers.
+final Map<String, MemoryImage> _memoryImages = <String, MemoryImage>{};
+const int _maxMemoryImages = 150;
+
+MemoryImage _memoryImageFor(String raw) {
+  final hit = _memoryImages.remove(raw);
+  if (hit != null) {
+    _memoryImages[raw] = hit;
+    return hit;
+  }
+  final base64Part = raw.contains(',') ? raw.split(',').last : raw;
+  final Uint8List bytes = base64Decode(base64Part);
+  final image = MemoryImage(bytes);
+  _memoryImages[raw] = image;
+  if (_memoryImages.length > _maxMemoryImages) {
+    _memoryImages.remove(_memoryImages.keys.first);
+  }
+  return image;
+}
+
 /// Shared product/listing image with RAM-safe decode (aspect ratio preserved).
 class VeroThumbImage extends StatelessWidget {
   final dynamic imageData;
@@ -48,20 +69,11 @@ class VeroThumbImage extends StatelessWidget {
         );
       }
 
-      final Uint8List bytes;
-      if (raw.startsWith('data:image')) {
-        final base64Part = raw.contains(',') ? raw.split(',').last : raw;
-        bytes = base64Decode(base64Part);
-      } else {
-        final base64Part = raw.contains(',') ? raw.split(',').last : raw;
-        bytes = base64Decode(base64Part);
-      }
-
       // Only width — keeps aspect ratio; BoxFit.cover fills the card.
       return SizedBox.expand(
         child: Image(
           image: ResizeImage(
-            MemoryImage(bytes),
+            _memoryImageFor(raw),
             width: cachePx,
             allowUpscaling: false,
           ),

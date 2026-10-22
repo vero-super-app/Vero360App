@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 /// Vero360 car-hire design tokens.
@@ -163,20 +164,20 @@ class CarHireShape {
   static const Duration medium = Duration(milliseconds: 240);
 
   static List<BoxShadow> get cardShadow => <BoxShadow>[
-        BoxShadow(
-          color: CarHirePalette.primary.withValues(alpha: 0.05),
-          blurRadius: 24,
-          offset: const Offset(0, 10),
-        ),
-      ];
+    BoxShadow(
+      color: CarHirePalette.primary.withValues(alpha: 0.05),
+      blurRadius: 24,
+      offset: const Offset(0, 10),
+    ),
+  ];
 
   static List<BoxShadow> get floatingShadow => <BoxShadow>[
-        BoxShadow(
-          color: CarHirePalette.primary.withValues(alpha: 0.08),
-          blurRadius: 30,
-          offset: const Offset(0, 12),
-        ),
-      ];
+    BoxShadow(
+      color: CarHirePalette.primary.withValues(alpha: 0.08),
+      blurRadius: 30,
+      offset: const Offset(0, 12),
+    ),
+  ];
 }
 
 /// The canonical white card used across the provider and renter screens.
@@ -267,10 +268,7 @@ class CarHireSectionHeader extends StatelessWidget {
               ],
             ),
           ),
-          if (action != null) ...[
-            const SizedBox(width: 10),
-            action!,
-          ],
+          if (action != null) ...[const SizedBox(width: 10), action!],
         ],
       ),
     );
@@ -336,11 +334,7 @@ class CarHirePill extends StatelessWidget {
 
 /// Ratings are shown as a single quiet pill instead of colour-only stars.
 class CarHireRatingPill extends StatelessWidget {
-  const CarHireRatingPill({
-    super.key,
-    required this.rating,
-    this.reviews = 0,
-  });
+  const CarHireRatingPill({super.key, required this.rating, this.reviews = 0});
 
   final double rating;
   final int reviews;
@@ -419,10 +413,7 @@ ButtonStyle carHireGhostButton({Color? foreground}) {
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(CarHireShape.pillRadius),
     ),
-    textStyle: const TextStyle(
-      fontSize: 13,
-      fontWeight: FontWeight.w700,
-    ),
+    textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
   );
 }
 
@@ -457,10 +448,7 @@ InputDecoration carHireInputDecoration({
       fontSize: 12.5,
       fontWeight: FontWeight.w600,
     ),
-    hintStyle: const TextStyle(
-      color: CarHirePalette.muted,
-      fontSize: 13,
-    ),
+    hintStyle: const TextStyle(color: CarHirePalette.muted, fontSize: 13),
     helperStyle: const TextStyle(
       color: CarHirePalette.muted,
       fontSize: 10.5,
@@ -488,7 +476,8 @@ AppBar carHireAppBar({
     foregroundColor: CarHirePalette.onSurface,
     elevation: 0,
     scrolledUnderElevation: 0.5,
-    automaticallyImplyLeading: automaticallyImplyLeading,
+    automaticallyImplyLeading: false,
+    leading: automaticallyImplyLeading ? const CarHireBackButton() : null,
     titleSpacing: automaticallyImplyLeading ? 0 : 16,
     centerTitle: false,
     title: Text(
@@ -503,6 +492,27 @@ AppBar carHireAppBar({
     actions: actions,
     bottom: bottom,
   );
+}
+
+/// iOS-style back chevron. Renders nothing when there is no route to return
+/// to.
+class CarHireBackButton extends StatelessWidget {
+  const CarHireBackButton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final route = ModalRoute.of(context);
+    if (route == null || !route.canPop) return const SizedBox.shrink();
+    return IconButton(
+      tooltip: 'Back',
+      onPressed: () => Navigator.of(context).maybePop(),
+      icon: const Icon(
+        CupertinoIcons.back,
+        size: 27,
+        color: CarHirePalette.accent,
+      ),
+    );
+  }
 }
 
 /// Circular icon button with a soft surface, used in app bars and cards.
@@ -535,7 +545,9 @@ class CarHireIconButton extends StatelessWidget {
     final button = Material(
       color: background,
       shape: CircleBorder(
-        side: BorderSide(color: CarHirePalette.outlineVariant.withValues(alpha: 0.7)),
+        side: BorderSide(
+          color: CarHirePalette.outlineVariant.withValues(alpha: 0.7),
+        ),
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(

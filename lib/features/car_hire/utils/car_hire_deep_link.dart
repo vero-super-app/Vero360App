@@ -13,11 +13,7 @@ import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_detail
 /// picker on the detail page shows the same wall-clock range the renter chose
 /// on the web.
 class CarHireDeepLinkTarget {
-  const CarHireDeepLinkTarget({
-    required this.carId,
-    this.startAt,
-    this.endAt,
-  });
+  const CarHireDeepLinkTarget({required this.carId, this.startAt, this.endAt});
 
   final int carId;
   final DateTime? startAt;

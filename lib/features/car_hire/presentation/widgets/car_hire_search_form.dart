@@ -41,15 +41,7 @@ class CarHireSearchForm extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (showHeader) ...[
-              const Text('Plan your drive', style: CarHireType.overline),
-              const SizedBox(height: 6),
               const Text('Where and when?', style: CarHireType.titleLarge),
-              const SizedBox(height: 4),
-              Text(
-                'Pick-up area is optional. Dates are checked against live '
-                'availability.',
-                style: CarHireType.bodySmall,
-              ),
               const SizedBox(height: 16),
             ],
             TextField(
@@ -62,7 +54,7 @@ class CarHireSearchForm extends StatelessWidget {
                 color: CarHirePalette.onSurface,
               ),
               decoration: carHireInputDecoration(
-                label: 'Pick-up area',
+                label: 'Pick-up area (optional)',
                 hint: 'City, neighbourhood or airport',
                 prefixIcon: const Icon(
                   Icons.place_outlined,
@@ -131,25 +123,6 @@ class CarHireSearchForm extends StatelessWidget {
                   : const Icon(Icons.search_rounded, size: 19),
               label: Text(searching ? 'Searching…' : 'Search cars'),
               style: carHirePrimaryButton(),
-            ),
-            const SizedBox(height: 9),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(
-                  Icons.verified_user_outlined,
-                  size: 13,
-                  color: CarHirePalette.muted,
-                ),
-                const SizedBox(width: 5),
-                Flexible(
-                  child: Text(
-                    'Availability is confirmed by Vero360 for your full period.',
-                    textAlign: TextAlign.center,
-                    style: CarHireType.labelSmall,
-                  ),
-                ),
-              ],
             ),
           ],
         ),

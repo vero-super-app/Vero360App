@@ -6,6 +6,7 @@ import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_pr
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_status_badge.dart';
+import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 import 'package:vero360_app/features/car_rental/utils/car_rental_colors.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
@@ -24,10 +25,7 @@ class _CarHireVerificationPageState
       <String, TextEditingController>{};
 
   TextEditingController _controllerFor(String requirement) {
-    return _controllers.putIfAbsent(
-      requirement,
-      () => TextEditingController(),
-    );
+    return _controllers.putIfAbsent(requirement, () => TextEditingController());
   }
 
   @override
@@ -69,8 +67,9 @@ class _CarHireVerificationPageState
     }
     if (evidence.isEmpty) return;
 
-    final result =
-        await ref.read(verificationSubmitProvider.notifier).submit(evidence);
+    final result = await ref
+        .read(verificationSubmitProvider.notifier)
+        .submit(evidence);
     if (!mounted) return;
 
     if (result != null) {
@@ -120,10 +119,7 @@ class _CarHireVerificationPageState
         loading: () => const CarHireLoadingState(
           message: 'Loading verification requirements…',
         ),
-        error: (error, _) => CarHireErrorState(
-          error: error,
-          onRetry: _refresh,
-        ),
+        error: (error, _) => CarHireErrorState(error: error, onRetry: _refresh),
         data: (verification) => RefreshIndicator(
           color: CarRentalColors.brandOrange,
           onRefresh: _refresh,
@@ -141,24 +137,26 @@ class _CarHireVerificationPageState
                 const SizedBox(height: 12),
                 CarHireInlineError(message: mutation.error!.message),
               ],
-              const SizedBox(height: 12),
-              if (verification.status == VerificationState.verified)
-                _verifiedNote()
-              else if (verification.requirements.isEmpty)
-                const _Panel(
-                  child: Text(
-                    'Vero360 has not listed any document requirements for '
-                    'your account right now. If support asked you for a '
-                    'document, contact them to have the requirement added.',
-                    style: TextStyle(
-                      color: CarRentalColors.body,
+              if (verification.status != VerificationState.verified &&
+                  verification.requirements.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                _submissionCard(verification.requirements, mutation),
+              ],
+              const SizedBox(height: 8),
+              Center(
+                child: TextButton(
+                  onPressed: () => CarHireRoutes.openTerms(context),
+                  style: TextButton.styleFrom(
+                    foregroundColor: CarRentalColors.grey,
+                    textStyle: const TextStyle(
                       fontSize: 12.5,
-                      height: 1.5,
+                      fontWeight: FontWeight.w600,
+                      decoration: TextDecoration.underline,
                     ),
                   ),
-                )
-              else
-                _submissionCard(verification.requirements, mutation),
+                  child: const Text('How we handle your documents'),
+                ),
+              ),
             ],
           ),
         ),
@@ -231,74 +229,6 @@ class _CarHireVerificationPageState
               ),
             ),
           ],
-          if (verification.requirements.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            const Text(
-              'Required documents',
-              style: TextStyle(
-                color: CarRentalColors.title,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 6),
-            ...verification.requirements.map(
-              (requirement) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.only(top: 1),
-                      child: Icon(
-                        Icons.description_outlined,
-                        size: 15,
-                        color: CarRentalColors.brandOrange,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        requirement,
-                        style: const TextStyle(
-                          color: CarRentalColors.title,
-                          fontSize: 12,
-                          height: 1.4,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _verifiedNote() {
-    return _Panel(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(
-            Icons.verified_user_rounded,
-            color: CarRentalColors.success,
-          ),
-          const SizedBox(width: 9),
-          const Expanded(
-            child: Text(
-              'Your driver verification is complete. You do not need to '
-              'submit anything else unless Vero360 support asks you to renew '
-              'an expiring document.',
-              style: TextStyle(
-                color: CarRentalColors.body,
-                fontSize: 12.5,
-                height: 1.5,
-              ),
-            ),
-          ),
         ],
       ),
     );
@@ -322,12 +252,9 @@ class _CarHireVerificationPageState
               fontWeight: FontWeight.w800,
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           const Text(
-            'Upload is handled by Vero360 support in this version of the app. '
-            'Enter the document reference or upload ID support gave you for '
-            'each requirement. Files themselves are stored by Vero360 '
-            'support — this form sends only the reference.',
+            'Enter the reference support gave you for each document.',
             style: TextStyle(
               color: CarRentalColors.body,
               fontSize: 11.5,
@@ -343,7 +270,6 @@ class _CarHireVerificationPageState
               decoration: carHireInputDecoration(
                 label: requirement,
                 hint: 'Document reference / upload ID',
-                helper: 'Provided by Vero360 support',
               ),
             ),
             const SizedBox(height: 12),
@@ -367,18 +293,6 @@ class _CarHireVerificationPageState
             ),
             style: carHirePrimaryButton(),
           ),
-          if (!_hasAnyReference(requirements))
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: Text(
-                'Enter at least one document reference to submit.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: CarRentalColors.grey,
-                  fontSize: 10.5,
-                ),
-              ),
-            ),
         ],
       ),
     );
@@ -387,28 +301,21 @@ class _CarHireVerificationPageState
   String _statusCopy(VerificationState status) {
     switch (status) {
       case VerificationState.notStarted:
-        return 'Vero360 has not received your driver documents yet. Submit '
-            'the references support requested to start the review.';
+        return 'Submit your documents to start the review.';
       case VerificationState.submitted:
-        return 'Your documents have been submitted. Vero360 support will '
-            'review them and update this status.';
+        return 'Submitted. Support will review your documents.';
       case VerificationState.underReview:
-        return 'Vero360 support is reviewing your documents. You can submit '
-            'additional references if support asked for them.';
+        return 'Support is reviewing your documents.';
       case VerificationState.verified:
-        return 'Vero360 has verified your driver documents.';
+        return 'You are verified to rent.';
       case VerificationState.rejected:
-        return 'Vero360 could not verify the documents submitted. Check the '
-            'next step below and submit a new reference.';
+        return 'We could not verify your documents. Submit a new reference.';
       case VerificationState.expired:
-        return 'Your verification has expired. Submit a current document '
-            'reference to renew it.';
+        return 'Your verification expired. Submit a current document.';
       case VerificationState.suspended:
-        return 'Driver verification is suspended. Contact Vero360 support '
-            'before booking another vehicle.';
+        return 'Verification is suspended. Contact support before booking.';
       case VerificationState.unknown:
-        return 'We could not read your verification status. Refresh to try '
-            'again, or contact Vero360 support.';
+        return 'We could not load your status. Pull down to refresh.';
     }
   }
 }
@@ -420,9 +327,6 @@ class _Panel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CarHireSurface(
-      padding: const EdgeInsets.all(16),
-      child: child,
-    );
+    return CarHireSurface(padding: const EdgeInsets.all(16), child: child);
   }
 }

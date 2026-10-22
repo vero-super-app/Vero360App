@@ -1,11 +1,18 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
+import 'package:mime/mime.dart';
 import 'package:uuid/uuid.dart';
 
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
+import 'package:vero360_app/features/car_hire/data/models/car_hire_company_models.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
+import 'package:vero360_app/features/car_hire/data/models/car_hire_section_models.dart';
 import 'package:vero360_app/GernalServices/api_client.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
+import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 
 // ---------------------------------------------------------------------------
@@ -44,15 +51,13 @@ class CarHireApiException implements Exception {
 
   bool get requiresLogin => statusCode == 401;
 
-  bool get isNotFound =>
-      statusCode == 404 || kind == CarHireErrorKind.notFound;
+  bool get isNotFound => statusCode == 404 || kind == CarHireErrorKind.notFound;
 
   /// A 410 from the quote/booking flow means the offer expired.
   bool get isQuoteExpired => statusCode == 410;
 
   /// A 409 from quote/booking creation means an availability conflict.
-  bool get isConflict =>
-      statusCode == 409 || kind == CarHireErrorKind.conflict;
+  bool get isConflict => statusCode == 409 || kind == CarHireErrorKind.conflict;
 
   @override
   String toString() => message;
@@ -65,6 +70,7 @@ class CarHireApiException implements Exception {
 class CarHireApi {
   static const Duration _timeout = Duration(seconds: 30);
   static const String _carsPath = '/car-rental/cars';
+  static const String _browsePath = '/car-rental/browse';
   static const String _quotesPath = '/car-rental/quotes';
   static const String _bookingsPath = '/car-rental/bookings';
   static const String _verificationPath = '/car-rental/verification/me';
@@ -86,10 +92,211 @@ class CarHireApi {
     String? transmission,
     String? fuelType,
     String? bodyType,
+    String? operatorId,
+    String? text,
+    double? minRate,
+    double? maxRate,
+    bool instantOnly = false,
     int? page,
     int? limit,
     String? sort,
   }) async {
+    final query = _carsQuery(
+      pickupArea: pickupArea,
+      startAt: startAt,
+      endAt: endAt,
+      minSeats: minSeats,
+      transmission: transmission,
+      fuelType: fuelType,
+      bodyType: bodyType,
+      operatorId: operatorId,
+      text: text,
+      minRate: minRate,
+      maxRate: maxRate,
+      instantOnly: instantOnly,
+      page: page,
+      limit: limit,
+      sort: sort,
+    );
+
+    final response = await _send(
+      () => ApiClient.get(
+        _carsPath,
+        queryParameters: query.isEmpty ? null : query,
+        timeout: _timeout,
+      ),
+    );
+    return CarHireSearchResult.fromJson(_decode(response));
+  }
+
+  /// `GET /car-rental/browse` — one request with independently resolved
+  /// sections for companies, facets and results.
+  ///
+  /// Older deployments do not expose the composite route, so a missing route
+  /// falls back to the per-section calls in parallel. Either way the caller
+  /// receives one snapshot and each section can fail on its own.
+  Future<CarHireBrowseSnapshot> browse({
+    String? pickupArea,
+    DateTime? startAt,
+    DateTime? endAt,
+    int? minSeats,
+    String? transmission,
+    String? fuelType,
+    String? bodyType,
+    String? operatorId,
+    String? text,
+    double? minRate,
+    double? maxRate,
+    bool instantOnly = false,
+    int? page,
+    int? limit,
+    String? sort,
+  }) async {
+    final query = _carsQuery(
+      pickupArea: pickupArea,
+      startAt: startAt,
+      endAt: endAt,
+      minSeats: minSeats,
+      transmission: transmission,
+      fuelType: fuelType,
+      bodyType: bodyType,
+      operatorId: operatorId,
+      text: text,
+      minRate: minRate,
+      maxRate: maxRate,
+      instantOnly: instantOnly,
+      page: page,
+      limit: limit,
+      sort: sort,
+    );
+
+    try {
+      final response = await _send(
+        () => ApiClient.get(
+          _browsePath,
+          queryParameters: query.isEmpty ? null : query,
+          timeout: _timeout,
+        ),
+      );
+      return CarHireBrowseSnapshot.fromJson(_decode(response));
+    } on CarHireApiException catch (error) {
+      if (!_isMissingRoute(error)) rethrow;
+      return _browseSectionBySection(
+        pickupArea: pickupArea,
+        startAt: startAt,
+        endAt: endAt,
+        minSeats: minSeats,
+        transmission: transmission,
+        fuelType: fuelType,
+        bodyType: bodyType,
+        operatorId: operatorId,
+        text: text,
+        minRate: minRate,
+        maxRate: maxRate,
+        instantOnly: instantOnly,
+        page: page,
+        limit: limit,
+        sort: sort,
+      );
+    }
+  }
+
+  /// `GET /car-rental/cars/facets`
+  Future<CarHireFacets> getFacets({
+    String? pickupArea,
+    DateTime? startAt,
+    DateTime? endAt,
+    int? minSeats,
+    String? transmission,
+    String? fuelType,
+    String? bodyType,
+    String? operatorId,
+    String? text,
+    double? minRate,
+    double? maxRate,
+    bool instantOnly = false,
+  }) async {
+    final query = _carsQuery(
+      pickupArea: pickupArea,
+      startAt: startAt,
+      endAt: endAt,
+      minSeats: minSeats,
+      transmission: transmission,
+      fuelType: fuelType,
+      bodyType: bodyType,
+      operatorId: operatorId,
+      text: text,
+      minRate: minRate,
+      maxRate: maxRate,
+      instantOnly: instantOnly,
+    );
+
+    final response = await _send(
+      () => ApiClient.get(
+        '$_carsPath/facets',
+        queryParameters: query.isEmpty ? null : query,
+        timeout: _timeout,
+      ),
+    );
+    final decoded = _decode(response);
+    if (decoded is! Map) return CarHireFacets.empty;
+    return CarHireFacets.fromJson(
+      _unwrapMap(decoded, const <String>['data', 'facets']),
+    );
+  }
+
+  /// `GET /car-rental/cars/:id/availability`
+  Future<CarHireAvailability> getCarAvailability({
+    required int carId,
+    DateTime? startAt,
+    DateTime? endAt,
+  }) async {
+    final query = <String, String>{
+      if (startAt != null) 'startAt': _iso(startAt),
+      if (endAt != null) 'endAt': _iso(endAt),
+    };
+    try {
+      final response = await _send(
+        () => ApiClient.get(
+          '$_carsPath/$carId/availability',
+          queryParameters: query.isEmpty ? null : query,
+          timeout: _timeout,
+        ),
+      );
+      final decoded = _decode(response);
+      if (decoded is! Map) {
+        return CarHireAvailability(carId: carId);
+      }
+      return CarHireAvailability.fromJson(
+        _unwrapMap(decoded, const <String>['data', 'availability']),
+      );
+    } on CarHireApiException catch (error) {
+      // Older deployments do not expose the route; the car payload still
+      // carries `availableForDates`, so degrade to that instead of failing.
+      if (_isMissingRoute(error)) return CarHireAvailability(carId: carId);
+      rethrow;
+    }
+  }
+
+  /// Shared query map for the public catalogue endpoints, so search, facets and
+  /// browse can never drift apart.
+  Map<String, String> _carsQuery({
+    String? pickupArea,
+    DateTime? startAt,
+    DateTime? endAt,
+    int? minSeats,
+    String? transmission,
+    String? fuelType,
+    String? bodyType,
+    String? operatorId,
+    String? text,
+    double? minRate,
+    double? maxRate,
+    bool instantOnly = false,
+    int? page,
+    int? limit,
+    String? sort,
+  }) {
     final query = <String, String>{};
     final area = pickupArea?.trim();
     if (area != null && area.isNotEmpty) query['pickupArea'] = area;
@@ -105,18 +312,123 @@ class CarHireApi {
     if (bodyType != null && bodyType.trim().isNotEmpty) {
       query['bodyType'] = bodyType.trim();
     }
+    if (operatorId != null && operatorId.trim().isNotEmpty) {
+      query['operatorId'] = operatorId.trim();
+    }
+    if (text != null && text.trim().isNotEmpty) query['q'] = text.trim();
+    if (minRate != null && minRate > 0) query['minRate'] = '${minRate.round()}';
+    if (maxRate != null && maxRate > 0) query['maxRate'] = '${maxRate.round()}';
+    if (instantOnly) query['instantOnly'] = 'true';
     if (page != null && page > 0) query['page'] = '$page';
     if (limit != null && limit > 0) query['limit'] = '$limit';
     if (sort != null && sort.trim().isNotEmpty) query['sort'] = sort.trim();
+    return query;
+  }
 
-    final response = await _send(
-      () => ApiClient.get(
-        _carsPath,
-        queryParameters: query.isEmpty ? null : query,
-        timeout: _timeout,
+  /// Parallel per-section calls for deployments without `/car-rental/browse`.
+  Future<CarHireBrowseSnapshot> _browseSectionBySection({
+    String? pickupArea,
+    DateTime? startAt,
+    DateTime? endAt,
+    int? minSeats,
+    String? transmission,
+    String? fuelType,
+    String? bodyType,
+    String? operatorId,
+    String? text,
+    double? minRate,
+    double? maxRate,
+    bool instantOnly = false,
+    int? page,
+    int? limit,
+    String? sort,
+  }) async {
+    // Start all three before awaiting so one slow section cannot delay another.
+    final companiesFuture = _settleSection(getPublicCompanies);
+    final facetsFuture = _settleSection(
+      () => getFacets(
+        pickupArea: pickupArea,
+        startAt: startAt,
+        endAt: endAt,
+        minSeats: minSeats,
+        transmission: transmission,
+        fuelType: fuelType,
+        bodyType: bodyType,
+        operatorId: operatorId,
+        text: text,
+        minRate: minRate,
+        maxRate: maxRate,
+        instantOnly: instantOnly,
       ),
     );
-    return CarHireSearchResult.fromJson(_decode(response));
+    final resultsFuture = _settleSection(
+      () => searchCars(
+        pickupArea: pickupArea,
+        startAt: startAt,
+        endAt: endAt,
+        minSeats: minSeats,
+        transmission: transmission,
+        fuelType: fuelType,
+        bodyType: bodyType,
+        operatorId: operatorId,
+        text: text,
+        minRate: minRate,
+        maxRate: maxRate,
+        instantOnly: instantOnly,
+        page: page,
+        limit: limit,
+        sort: sort,
+      ),
+    );
+
+    final companies = await companiesFuture;
+    final facets = await facetsFuture;
+    final results = await resultsFuture;
+
+    return CarHireBrowseSnapshot(
+      companies: companies,
+      facets: facets,
+      results: results,
+      degraded: companies.isUnavailable || facets.isUnavailable || results.isUnavailable,
+    );
+  }
+
+  Future<CarHireSection<T>> _settleSection<T>(Future<T> Function() call) async {
+    try {
+      return CarHireSection<T>.ok(await call());
+    } on CarHireApiException catch (error) {
+      final permanentFailure =
+          error.kind == CarHireErrorKind.validation ||
+          error.kind == CarHireErrorKind.forbidden;
+      return CarHireSection.failed<T>(
+        message: error.message,
+        retryable: !permanentFailure,
+      );
+    } catch (error) {
+      return CarHireSection.failed<T>(
+        message: UserFacingError.from(error),
+        retryable: true,
+      );
+    }
+  }
+
+  bool _isMissingRoute(CarHireApiException error) {
+    final status = error.statusCode;
+    return status == 404 || status == 405 || status == 501;
+  }
+
+  /// Companies that currently have cars on offer, for the company filter.
+  Future<List<CarHireCompanyOption>> getPublicCompanies() async {
+    final response = await _send(
+      () => ApiClient.get('$_carsPath/companies', timeout: _timeout),
+    );
+    final body = _decode(response);
+    final rows = body is Map ? body['data'] : body;
+    if (rows is! List) return const <CarHireCompanyOption>[];
+    return rows
+        .map(CarHireCompanyOption.fromJson)
+        .whereType<CarHireCompanyOption>()
+        .toList(growable: false);
   }
 
   /// `GET /car-rental/cars/:id`
@@ -131,10 +443,7 @@ class CarHireApi {
         kind: CarHireErrorKind.server,
       );
     }
-    final payload = _unwrapMap(
-      decoded,
-      const <String>['data', 'car'],
-    );
+    final payload = _unwrapMap(decoded, const <String>['data', 'car']);
     if (payload.isEmpty) {
       throw const CarHireApiException(
         message: 'We could not load this vehicle. Please try again.',
@@ -168,7 +477,8 @@ class CarHireApi {
     final decoded = _decode(response);
     if (decoded is! Map) {
       throw const CarHireApiException(
-        message: 'We could not prepare a price for these dates. '
+        message:
+            'We could not prepare a price for these dates. '
             'Please try again.',
         kind: CarHireErrorKind.server,
       );
@@ -250,10 +560,7 @@ class CarHireApi {
     } on CarHireApiException catch (error) {
       if (error.statusCode != 404) rethrow;
       final response = await _send(
-        () => ApiClient.get(
-          '$_bookingsPath/my-bookings',
-          timeout: _timeout,
-        ),
+        () => ApiClient.get('$_bookingsPath/my-bookings', timeout: _timeout),
       );
       return BookingPage.fromJson(_decode(response));
     }
@@ -271,10 +578,7 @@ class CarHireApi {
         kind: CarHireErrorKind.server,
       );
     }
-    final payload = _unwrapMap(
-      decoded,
-      const <String>['data', 'booking'],
-    );
+    final payload = _unwrapMap(decoded, const <String>['data', 'booking']);
     if (payload.isEmpty) {
       throw const CarHireApiException(
         message: 'We could not load this booking. Please try again.',
@@ -295,10 +599,7 @@ class CarHireApi {
     );
     final decoded = _decode(response);
     if (decoded is Map) {
-      final payload = _unwrapMap(
-        decoded,
-        const <String>['data', 'booking'],
-      );
+      final payload = _unwrapMap(decoded, const <String>['data', 'booking']);
       if (payload.isNotEmpty && payload['id'] != null) {
         return CarHireBooking.fromJson(payload);
       }
@@ -349,10 +650,7 @@ class CarHireApi {
     if (decoded is! Map) {
       return const CarHireVerification();
     }
-    final payload = _unwrapMap(
-      decoded,
-      const <String>['data', 'verification'],
-    );
+    final payload = _unwrapMap(decoded, const <String>['data', 'verification']);
     return CarHireVerification.fromJson(payload);
   }
 
@@ -374,14 +672,15 @@ class CarHireApi {
         timeout: _timeout,
       ),
     );
-    final payload = _mapFrom(
-      _decode(response),
-      const <String>['data', 'extension'],
-    );
+    final payload = _mapFrom(_decode(response), const <String>[
+      'data',
+      'extension',
+    ]);
     final extension = BookingExtension.fromJson(payload);
-    if (extension.id <= 0) {
+    if (extension.id.isEmpty) {
       throw const CarHireApiException(
-        message: 'We could not confirm the extension request. '
+        message:
+            'We could not confirm the extension request. '
             'Refresh the booking and try again.',
         kind: CarHireErrorKind.server,
       );
@@ -397,10 +696,10 @@ class CarHireApi {
         timeout: _timeout,
       ),
     );
-    final list = _listFrom(
-      _decode(response),
-      const <String>['data', 'extensions'],
-    );
+    final list = _listFrom(_decode(response), const <String>[
+      'data',
+      'extensions',
+    ]);
     return list
         .whereType<Map>()
         .map((item) => BookingExtension.fromJson(item))
@@ -453,14 +752,15 @@ class CarHireApi {
         timeout: _timeout,
       ),
     );
-    final payload = _mapFrom(
-      _decode(response),
-      const <String>['data', 'inspection'],
-    );
+    final payload = _mapFrom(_decode(response), const <String>[
+      'data',
+      'inspection',
+    ]);
     final inspection = HandoverInspection.fromJson(payload);
-    if (inspection.id <= 0) {
+    if (inspection.id.isEmpty) {
       throw const CarHireApiException(
-        message: 'We could not confirm the inspection. '
+        message:
+            'We could not confirm the inspection. '
             'Refresh the booking and try again.',
         kind: CarHireErrorKind.server,
       );
@@ -476,10 +776,10 @@ class CarHireApi {
         timeout: _timeout,
       ),
     );
-    final list = _listFrom(
-      _decode(response),
-      const <String>['data', 'inspections'],
-    );
+    final list = _listFrom(_decode(response), const <String>[
+      'data',
+      'inspections',
+    ]);
     return list
         .whereType<Map>()
         .map((item) => HandoverInspection.fromJson(item))
@@ -489,7 +789,7 @@ class CarHireApi {
   /// `POST /car-rental/bookings/:id/inspections/:inspectionId/acknowledge`
   Future<HandoverInspection> acknowledgeInspection(
     int bookingId, {
-    required int inspectionId,
+    required String inspectionId,
     required String decision,
     String? note,
   }) async {
@@ -514,10 +814,7 @@ class CarHireApi {
       ),
     );
     final decoded = _decode(response);
-    final payload = _mapFrom(
-      decoded,
-      const <String>['data', 'inspection'],
-    );
+    final payload = _mapFrom(decoded, const <String>['data', 'inspection']);
     if (payload['id'] != null) {
       return HandoverInspection.fromJson(payload);
     }
@@ -529,7 +826,8 @@ class CarHireApi {
       if (inspection.id == inspectionId) return inspection;
     }
     throw const CarHireApiException(
-      message: 'The decision was sent, but we could not reload the '
+      message:
+          'The decision was sent, but we could not reload the '
           'inspection. Refresh the booking.',
       kind: CarHireErrorKind.server,
     );
@@ -562,14 +860,15 @@ class CarHireApi {
         timeout: _timeout,
       ),
     );
-    final payload = _mapFrom(
-      _decode(response),
-      const <String>['data', 'incident'],
-    );
+    final payload = _mapFrom(_decode(response), const <String>[
+      'data',
+      'incident',
+    ]);
     final incident = IncidentReport.fromJson(payload);
-    if (incident.id <= 0) {
+    if (incident.id.isEmpty) {
       throw const CarHireApiException(
-        message: 'We could not confirm the incident report. '
+        message:
+            'We could not confirm the incident report. '
             'Please try again.',
         kind: CarHireErrorKind.server,
       );
@@ -585,10 +884,10 @@ class CarHireApi {
         timeout: _timeout,
       ),
     );
-    final list = _listFrom(
-      _decode(response),
-      const <String>['data', 'incidents'],
-    );
+    final list = _listFrom(_decode(response), const <String>[
+      'data',
+      'incidents',
+    ]);
     return list
         .whereType<Map>()
         .map((item) => IncidentReport.fromJson(item))
@@ -613,12 +912,13 @@ class CarHireApi {
         timeout: _timeout,
       ),
     );
-    final payload = _mapFrom(
-      _decode(response),
-      const <String>['data', 'case', 'supportCase'],
-    );
+    final payload = _mapFrom(_decode(response), const <String>[
+      'data',
+      'case',
+      'supportCase',
+    ]);
     final supportCase = SupportCase.fromJson(payload);
-    if (supportCase.id <= 0) {
+    if (supportCase.id.isEmpty) {
       throw const CarHireApiException(
         message: 'We could not open the support case. Please try again.',
         kind: CarHireErrorKind.server,
@@ -635,10 +935,7 @@ class CarHireApi {
         timeout: _timeout,
       ),
     );
-    final list = _listFrom(
-      _decode(response),
-      const <String>['data', 'cases'],
-    );
+    final list = _listFrom(_decode(response), const <String>['data', 'cases']);
     return list
         .whereType<Map>()
         .map((item) => SupportCase.fromJson(item))
@@ -657,10 +954,7 @@ class CarHireApi {
     final decoded = _decode(response);
     if (decoded is! Map) return const CarHireVerification();
     return CarHireVerification.fromJson(
-      _unwrapMap(
-        decoded,
-        const <String>['data', 'verification'],
-      ),
+      _unwrapMap(decoded, const <String>['data', 'verification']),
     );
   }
 
@@ -690,16 +984,489 @@ class CarHireApi {
 
     final decoded = _decode(response);
     if (decoded is Map) {
-      final payload = _unwrapMap(
-        decoded,
-        const <String>['data', 'verification'],
-      );
+      final payload = _unwrapMap(decoded, const <String>[
+        'data',
+        'verification',
+      ]);
       if (payload['status'] != null || payload['requirements'] != null) {
         return CarHireVerification.fromJson(payload);
       }
     }
     // The submission endpoint is not required to return the full view.
     return getVerificationRequirements();
+  }
+
+  // -------------------------------------------------------------------------
+  // Company mode (providing company staff)
+  // -------------------------------------------------------------------------
+
+  /// `GET /car-rental/operators/account` — the login's single car hire account.
+  Future<CarHireAccount> getCarHireAccount() async {
+    final response = await _send(
+      () => ApiClient.get('/car-rental/operators/account', timeout: _timeout),
+    );
+    return CarHireAccount.fromJson(_decode(response));
+  }
+
+  /// `POST /car-rental/operators/applications`
+  Future<void> applyForCarHireAccount({
+    required String type,
+    required String displayName,
+    String? contactPhone,
+    List<String> serviceAreas = const <String>[],
+    String? registrationNumber,
+    String? taxId,
+    String? idNumber,
+    String? payoutMethod,
+    String? payoutAccountName,
+    String? payoutAccountNumber,
+    String? payoutBankName,
+    List<CompanyDocument> documents = const <CompanyDocument>[],
+  }) async {
+    await _send(
+      () => ApiClient.post(
+        '/car-rental/operators/applications',
+        body: jsonEncode(<String, dynamic>{
+          'type': type,
+          'displayName': displayName.trim(),
+          if (contactPhone != null && contactPhone.trim().isNotEmpty)
+            'contactPhone': contactPhone.trim(),
+          'serviceAreas': serviceAreas,
+          if (registrationNumber != null &&
+              registrationNumber.trim().isNotEmpty)
+            'registrationNumber': registrationNumber.trim(),
+          if (taxId != null && taxId.trim().isNotEmpty) 'taxId': taxId.trim(),
+          if (idNumber != null && idNumber.trim().isNotEmpty)
+            'idNumber': idNumber.trim(),
+          if (payoutMethod != null && payoutMethod.trim().isNotEmpty)
+            'payoutMethod': payoutMethod.trim(),
+          if (payoutAccountName != null &&
+              payoutAccountName.trim().isNotEmpty)
+            'payoutAccountName': payoutAccountName.trim(),
+          if (payoutAccountNumber != null &&
+              payoutAccountNumber.trim().isNotEmpty)
+            'payoutAccountNumber': payoutAccountNumber.trim(),
+          if (payoutBankName != null && payoutBankName.trim().isNotEmpty)
+            'payoutBankName': payoutBankName.trim(),
+          if (documents.isNotEmpty)
+            'documents': documents
+                .map((document) => document.toJson())
+                .toList(growable: false),
+        }),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `PATCH /car-rental/operators/:id` — also resubmits an application that
+  /// was sent back for more information.
+  ///
+  /// Only the fields passed are sent, so a profile edit never clears detail
+  /// the owner already supplied.
+  Future<void> updateCarHireCompany(
+    String operatorId, {
+    String? displayName,
+    String? contactPhone,
+    List<String>? serviceAreas,
+    String? registrationNumber,
+    String? taxId,
+    String? idNumber,
+    String? payoutMethod,
+    String? payoutAccountName,
+    String? payoutAccountNumber,
+    String? payoutBankName,
+    List<CompanyDocument>? documents,
+  }) async {
+    await _send(
+      () => ApiClient.patch(
+        '/car-rental/operators/${Uri.encodeComponent(operatorId)}',
+        body: jsonEncode(<String, dynamic>{
+          if (displayName != null) 'displayName': displayName.trim(),
+          if (contactPhone != null) 'contactPhone': contactPhone.trim(),
+          'serviceAreas': ?serviceAreas,
+          if (registrationNumber != null)
+            'registrationNumber': registrationNumber.trim(),
+          if (taxId != null) 'taxId': taxId.trim(),
+          if (idNumber != null) 'idNumber': idNumber.trim(),
+          if (payoutMethod != null) 'payoutMethod': payoutMethod.trim(),
+          if (payoutAccountName != null)
+            'payoutAccountName': payoutAccountName.trim(),
+          if (payoutAccountNumber != null)
+            'payoutAccountNumber': payoutAccountNumber.trim(),
+          if (payoutBankName != null) 'payoutBankName': payoutBankName.trim(),
+          if (documents != null)
+            'documents': documents
+                .map((document) => document.toJson())
+                .toList(growable: false),
+        }),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `GET /car-rental/operators/mine`
+  Future<List<CompanyMembership>> getMyCompanies() async {
+    final response = await _send(
+      () => ApiClient.get('/car-rental/operators/mine', timeout: _timeout),
+    );
+    return CompanyMembership.listFromJson(_decode(response));
+  }
+
+  /// `GET /car-rental/owner/analytics?from=YYYY-MM-DD&to=YYYY-MM-DD`
+  ///
+  /// Returns null when the membership cannot see company performance.
+  Future<CompanyAnalytics?> getCompanyAnalytics({
+    required DateTime from,
+    required DateTime to,
+  }) async {
+    try {
+      final response = await _send(
+        () => ApiClient.get(
+          '/car-rental/owner/analytics',
+          queryParameters: <String, String>{
+            'from': _isoDate(from),
+            'to': _isoDate(to),
+          },
+          timeout: _timeout,
+        ),
+      );
+      return CompanyAnalytics.fromJson(_decode(response));
+    } on CarHireApiException catch (error) {
+      if (error.statusCode == 403 || error.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// `GET /car-rental/owner/dispatch?date=YYYY-MM-DD`
+  Future<DispatchBoard> getDispatchBoard({String? date}) async {
+    final response = await _send(
+      () => ApiClient.get(
+        '/car-rental/owner/dispatch',
+        queryParameters: date == null ? null : <String, String>{'date': date},
+        timeout: _timeout,
+      ),
+    );
+    return DispatchBoard.fromJson(_decode(response));
+  }
+
+  /// `GET /car-rental/owner/bookings`
+  Future<List<CarHireBooking>> getCompanyBookings({String? status}) async {
+    final response = await _send(
+      () => ApiClient.get(
+        '/car-rental/owner/bookings',
+        queryParameters: <String, String>{
+          'limit': '100',
+          if (status != null && status.isNotEmpty) 'status': status,
+        },
+        timeout: _timeout,
+      ),
+    );
+    return BookingPage.fromJson(_decode(response)).data;
+  }
+
+  /// `POST /car-rental/bookings/:id/confirm` (also accepts a request).
+  Future<void> confirmBooking(int bookingId) async {
+    await _send(
+      () => ApiClient.post(
+        '$_bookingsPath/$bookingId/confirm',
+        body: jsonEncode(<String, dynamic>{}),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `POST /car-rental/bookings/:id/reject`
+  Future<void> rejectBooking(int bookingId, {String? reason}) async {
+    final trimmed = reason?.trim() ?? '';
+    await _send(
+      () => ApiClient.post(
+        '$_bookingsPath/$bookingId/reject',
+        body: jsonEncode(<String, dynamic>{
+          if (trimmed.isNotEmpty) 'reason': trimmed,
+        }),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `POST /car-rental/bookings/:id/start|complete`
+  Future<void> setRentalStage(int bookingId, {required bool start}) async {
+    await _send(
+      () => ApiClient.post(
+        '$_bookingsPath/$bookingId/${start ? 'start' : 'complete'}',
+        body: jsonEncode(<String, dynamic>{}),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `GET /car-rental/bookings/:id/units`
+  Future<List<BookingUnitOption>> getBookingUnitOptions(int bookingId) async {
+    final response = await _send(
+      () => ApiClient.get('$_bookingsPath/$bookingId/units', timeout: _timeout),
+    );
+    return BookingUnitOption.listFromJson(_decode(response));
+  }
+
+  /// `POST /car-rental/bookings/:id/assign-unit`
+  Future<void> assignBookingUnit(int bookingId, int carId) async {
+    await _send(
+      () => ApiClient.post(
+        '$_bookingsPath/$bookingId/assign-unit',
+        body: jsonEncode(<String, dynamic>{'carId': carId}),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `POST /car-rental/bookings/:id/extensions/:extensionId/approve|decline`
+  Future<void> decideExtension(
+    int bookingId,
+    String extensionId, {
+    required bool approve,
+    String? reason,
+  }) async {
+    final trimmed = reason?.trim() ?? '';
+    await _send(
+      () => ApiClient.post(
+        '$_bookingsPath/$bookingId/extensions/$extensionId/'
+        '${approve ? 'approve' : 'decline'}',
+        body: jsonEncode(<String, dynamic>{
+          if (!approve && trimmed.isNotEmpty) 'reason': trimmed,
+        }),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `POST /car-rental/bookings/:id/incidents/:incidentId/resolve`
+  Future<void> resolveIncident(
+    int bookingId,
+    String incidentId, {
+    required String resolution,
+    String? remedy,
+  }) async {
+    await _send(
+      () => ApiClient.post(
+        '$_bookingsPath/$bookingId/incidents/$incidentId/resolve',
+        body: jsonEncode(<String, dynamic>{
+          'resolution': resolution.trim(),
+          if (remedy != null && remedy.isNotEmpty) 'remedy': remedy,
+        }),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `GET /car-rental/cars/owner/fleet`
+  Future<List<FleetUnit>> getCompanyFleet() async {
+    final response = await _send(
+      () => ApiClient.get('$_carsPath/owner/fleet', timeout: _timeout),
+    );
+    return FleetUnit.listFromJson(_decode(response));
+  }
+
+  /// `PATCH /car-rental/cars/:id` with `{ isAvailable }`.
+  Future<void> setUnitInService(int carId, bool inService) async {
+    await _send(
+      () => ApiClient.patch(
+        '$_carsPath/$carId',
+        body: jsonEncode(<String, dynamic>{'isAvailable': inService}),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `POST /car-rental/cars/:id/maintenance-blocks`
+  Future<void> addMaintenanceBlock(
+    int carId, {
+    required DateTime startAt,
+    required DateTime endAt,
+    required String category,
+    String? reason,
+  }) async {
+    final trimmed = reason?.trim() ?? '';
+    await _send(
+      () => ApiClient.post(
+        '$_carsPath/$carId/maintenance-blocks',
+        body: jsonEncode(<String, dynamic>{
+          'startAt': _iso(startAt),
+          'endAt': _iso(endAt),
+          'category': category,
+          if (trimmed.isNotEmpty) 'reason': trimmed,
+        }),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Fleet setup: add, edit and retire a vehicle
+  // -------------------------------------------------------------------------
+
+  /// `POST /car-rental/cars`
+  ///
+  /// The backend pairs a GPS tracker automatically, so the new unit shows up
+  /// on the company dashboard with telemetry as soon as it is saved.
+  Future<FleetUnit?> createCompanyCar(Map<String, dynamic> payload) async {
+    final response = await _send(
+      () => ApiClient.post(
+        _carsPath,
+        body: jsonEncode(payload),
+        timeout: _timeout,
+      ),
+    );
+    final decoded = _decode(response);
+    final units = FleetUnit.listFromJson(decoded);
+    if (units.isNotEmpty) return units.first;
+    final row = decoded is Map ? _mapFrom(decoded, const ['data']) : null;
+    if (row == null || row.isEmpty) return null;
+    return FleetUnit.listFromJson(<dynamic>[row]).firstOrNull;
+  }
+
+  /// `PATCH /car-rental/cars/:id` — rates, specs, availability and listing.
+  Future<FleetUnit?> updateCompanyCar(
+    int carId,
+    Map<String, dynamic> changes,
+  ) async {
+    final response = await _send(
+      () => ApiClient.patch(
+        '$_carsPath/$carId',
+        body: jsonEncode(changes),
+        timeout: _timeout,
+      ),
+    );
+    final units = FleetUnit.listFromJson(_decode(response));
+    return units.isEmpty ? null : units.first;
+  }
+
+  /// `DELETE /car-rental/cars/:id`
+  Future<void> deleteCompanyCar(int carId) async {
+    await _send(() => ApiClient.delete('$_carsPath/$carId', timeout: _timeout));
+  }
+
+  /// `GET /car-rental/operators/:operatorId/locations`
+  Future<List<CompanyBranch>> getCompanyBranches(String operatorId) async {
+    final response = await _send(
+      () => ApiClient.get(
+        '/car-rental/operators/$operatorId/locations',
+        timeout: _timeout,
+      ),
+    );
+    return CompanyBranch.listFromJson(_decode(response));
+  }
+
+  /// `GET /car-rental/cars/:id/maintenance-blocks`
+  Future<List<MaintenanceBlock>> getMaintenanceBlocks(int carId) async {
+    final response = await _send(
+      () => ApiClient.get(
+        '$_carsPath/$carId/maintenance-blocks',
+        timeout: _timeout,
+      ),
+    );
+    return MaintenanceBlock.listFromJson(_decode(response));
+  }
+
+  /// `DELETE /car-rental/cars/:id/maintenance-blocks/:blockId`
+  Future<void> cancelMaintenanceBlock(int carId, String blockId) async {
+    await _send(
+      () => ApiClient.delete(
+        '$_carsPath/$carId/maintenance-blocks/$blockId',
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `GET /car-rental/cars/:id/compliance`
+  Future<CarCompliance> getCarCompliance(int carId) async {
+    final response = await _send(
+      () => ApiClient.get('$_carsPath/$carId/compliance', timeout: _timeout),
+    );
+    return CarCompliance.fromJson(_decode(response));
+  }
+
+  /// `POST /car-rental/cars/:id/documents`
+  Future<void> addCarDocument(
+    int carId, {
+    required String type,
+    required String fileReference,
+    String? referenceNumber,
+    DateTime? expiresAt,
+  }) async {
+    await _send(
+      () => ApiClient.post(
+        '$_carsPath/$carId/documents',
+        body: jsonEncode(<String, dynamic>{
+          'type': type,
+          'fileReference': fileReference,
+          if (referenceNumber != null && referenceNumber.trim().isNotEmpty)
+            'referenceNumber': referenceNumber.trim(),
+          if (expiresAt != null) 'expiresAt': _iso(expiresAt),
+        }),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `POST /uploads` — vehicle photos. Returns the public image URL.
+  Future<String> uploadPhoto(
+    Uint8List bytes, {
+    required String filename,
+    Duration timeout = const Duration(seconds: 60),
+  }) async {
+    final token = await AuthHandler.getTokenForApi();
+    if (token == null || token.trim().isEmpty) {
+      throw const CarHireApiException(
+        message: 'Sign in again to upload photos.',
+      );
+    }
+    final mime = lookupMimeType(filename, headerBytes: bytes) ?? 'image/jpeg';
+    if (!mime.startsWith('image/')) {
+      throw const CarHireApiException(
+        message: 'Choose a JPG, PNG or WEBP image.',
+      );
+    }
+
+    final request =
+        http.MultipartRequest('POST', ApiConfig.endpoint('/uploads'))
+          ..headers['Accept'] = 'application/json'
+          ..headers['Authorization'] = 'Bearer $token'
+          ..files.add(
+            http.MultipartFile.fromBytes(
+              'file',
+              bytes,
+              filename: filename.trim().isEmpty ? 'vehicle.jpg' : filename,
+              contentType: MediaType.parse(mime),
+            ),
+          );
+
+    try {
+      final streamed = await request.send().timeout(timeout);
+      final response = await http.Response.fromStream(
+        streamed,
+      ).timeout(timeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw CarHireApiException(
+          message: 'The photo could not be uploaded. Please try again.',
+          statusCode: response.statusCode,
+        );
+      }
+      final body = _decode(response);
+      final url = body is Map ? _strOf(body['url']) : '';
+      if (url.isEmpty) {
+        throw const CarHireApiException(
+          message: 'The upload finished without an image URL. Try again.',
+        );
+      }
+      return url;
+    } on CarHireApiException {
+      rethrow;
+    } catch (error) {
+      throw CarHireApiException(
+        message: UserFacingError.from(error),
+        kind: CarHireErrorKind.network,
+      );
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -724,9 +1491,16 @@ class CarHireApi {
 
   static String _iso(DateTime value) => value.toUtc().toIso8601String();
 
-  Future<http.Response> _send(
-    Future<http.Response> Function() request,
-  ) async {
+  static String _strOf(dynamic value) =>
+      value == null ? '' : value.toString().trim();
+
+  static String _isoDate(DateTime value) {
+    final local = value.toLocal();
+    String pad(int part) => part.toString().padLeft(2, '0');
+    return '${local.year}-${pad(local.month)}-${pad(local.day)}';
+  }
+
+  Future<http.Response> _send(Future<http.Response> Function() request) async {
     try {
       return await request();
     } on ApiException catch (error) {
@@ -800,8 +1574,7 @@ class CarHireApi {
       CarHireErrorKind.validation =>
         'Some details are invalid. Please check the dates and try again.',
       CarHireErrorKind.unauthorized => 'Please sign in to continue.',
-      CarHireErrorKind.forbidden =>
-        'You do not have permission to do that.',
+      CarHireErrorKind.forbidden => 'You do not have permission to do that.',
       CarHireErrorKind.notFound =>
         "We couldn't find what you were looking for.",
       CarHireErrorKind.conflict =>
@@ -813,10 +1586,8 @@ class CarHireApi {
       CarHireErrorKind.server =>
         'Our servers are busy. Please try again in a moment.',
       CarHireErrorKind.network ||
-      CarHireErrorKind.timeout =>
-        'Check your connection and try again.',
-      CarHireErrorKind.unknown =>
-        'Something went wrong. Please try again.',
+      CarHireErrorKind.timeout => 'Check your connection and try again.',
+      CarHireErrorKind.unknown => 'Something went wrong. Please try again.',
     };
 
     final raw = error.message.trim();

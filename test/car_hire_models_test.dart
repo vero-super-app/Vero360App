@@ -120,6 +120,63 @@ void main() {
       expect(car.make, 'Toyota');
       expect(car.title, 'Toyota Vitz');
     });
+
+    test('parses the providing company', () {
+      final car = CarListing.fromJson(<String, dynamic>{
+        'id': 3,
+        'make': 'Toyota',
+        'model': 'Hilux',
+        'operator': {
+          'id': 'op-1',
+          'name': 'Lilongwe Car Rentals',
+          'type': 'BUSINESS',
+          'logoUrl': null,
+        },
+      });
+
+      expect(car.provider?.name, 'Lilongwe Car Rentals');
+      expect(car.provider?.isBusiness, isTrue);
+      expect(car.providerLabel, 'Provided by Lilongwe Car Rentals');
+    });
+
+    test('has no provider when the backend omits it', () {
+      final car = CarListing.fromJson(<String, dynamic>{'id': 4, 'operator': null});
+      expect(car.provider, isNull);
+      expect(car.providerLabel, isEmpty);
+    });
+
+    test('shows units left only for multi-unit listings', () {
+      final multi = CarListing.fromJson(<String, dynamic>{
+        'id': 5,
+        'listingId': 'grp-1',
+        'unitCount': 4,
+        'availableUnits': 3,
+      });
+      expect(multi.listingId, 'grp-1');
+      expect(multi.unitsLeftLabel, '3 left');
+
+      final single = CarListing.fromJson(<String, dynamic>{
+        'id': 6,
+        'unitCount': 1,
+        'availableUnits': 1,
+      });
+      expect(single.unitsLeftLabel, isNull);
+    });
+
+    test('parses the pickup branch and booking mode', () {
+      final car = CarListing.fromJson(<String, dynamic>{
+        'id': 7,
+        'instantBook': false,
+        'location': {'id': 'b1', 'name': 'Airport desk', 'address': 'KIA'},
+      });
+      expect(car.branchLabel, 'Airport desk, KIA');
+      expect(car.instantBook, isFalse);
+      expect(car.bookingModeLabel, contains('24h'));
+
+      final plain = CarListing.fromJson(<String, dynamic>{'id': 8});
+      expect(plain.branchLabel, isNull);
+      expect(plain.instantBook, isTrue);
+    });
   });
 
   group('RentalQuote.fromJson', () {
@@ -230,6 +287,35 @@ void main() {
   });
 
   group('CarHireBooking.fromJson', () {
+    test('parses the assigned unit plate when present', () {
+      final booking = CarHireBooking.fromJson(<String, dynamic>{
+        'id': 80,
+        'assignedUnit': {'carId': 12, 'licensePlate': 'BZ 1234', 'color': 'White'},
+      });
+      expect(booking.assignedPlate, 'BZ 1234');
+      expect(booking.assignedColor, 'White');
+      expect(CarHireBooking.fromJson(<String, dynamic>{'id': 81}).assignedPlate, isNull);
+    });
+
+    test('blocks payment while a request awaits the company', () {
+      final waiting = CarHireBooking.fromJson(<String, dynamic>{
+        'id': 82,
+        'bookingStatus': 'PENDING',
+        'paymentStatus': 'NOT_STARTED',
+        'nextAction': 'AWAITING_PROVIDER',
+      });
+      expect(waiting.canPay, isFalse);
+      expect(waiting.nextActionLabel, contains('24 hours'));
+
+      final accepted = CarHireBooking.fromJson(<String, dynamic>{
+        'id': 83,
+        'bookingStatus': 'CONFIRMED',
+        'paymentStatus': 'NOT_STARTED',
+        'nextAction': 'PAYMENT_REQUIRED',
+      });
+      expect(accepted.canPay, isTrue);
+    });
+
     Map<String, dynamic> bookingJson() {
       return <String, dynamic>{
         'id': 77,

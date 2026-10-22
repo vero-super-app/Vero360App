@@ -244,11 +244,7 @@ class CarHireEmptyState extends StatelessWidget {
               child: Icon(icon, size: 32, color: CarHirePalette.onSurface),
             ),
             const SizedBox(height: 18),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: CarHireType.title,
-            ),
+            Text(title, textAlign: TextAlign.center, style: CarHireType.title),
             const SizedBox(height: 6),
             Text(
               message,

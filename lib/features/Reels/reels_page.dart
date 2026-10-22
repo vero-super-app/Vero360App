@@ -13,6 +13,8 @@ import 'package:vero360_app/features/Reels/reel_feed_view.dart';
 import 'package:vero360_app/features/Reels/reel_model.dart';
 import 'package:vero360_app/features/Reels/reel_search_page.dart';
 import 'package:vero360_app/features/Reels/reel_service.dart';
+import 'package:vero360_app/features/Reels/reel_upload_manager.dart';
+import 'package:vero360_app/features/Reels/reel_video_cache.dart';
 import 'package:vero360_app/features/Reels/user_reels_page.dart';
 
 enum _FeedMode { forYou, following }
@@ -40,11 +42,13 @@ class _ReelsPageState extends State<ReelsPage> {
   String? _error;
   bool _covered = false;
   int _feedGeneration = 0;
+  StreamSubscription<ReelUploadResult>? _uploadSub;
 
   @override
   void initState() {
     super.initState();
     widget.visible.addListener(_onVisibility);
+    _uploadSub = ReelUploadManager.instance.results.listen(_onUploadResult);
     _loadForYou(reset: true);
   }
 
@@ -60,11 +64,20 @@ class _ReelsPageState extends State<ReelsPage> {
   @override
   void dispose() {
     widget.visible.removeListener(_onVisibility);
+    _uploadSub?.cancel();
     super.dispose();
   }
 
   void _onVisibility() {
     if (mounted) setState(() {});
+  }
+
+  /// Offline, reels whose video is on the device come first so the feed still plays.
+  List<Reel> _playableFirst(List<Reel> reels) {
+    final cache = ReelVideoCache.instance;
+    final ready = reels.where((r) => cache.isCached(r.videoUrl)).toList();
+    if (ready.isEmpty) return reels;
+    return [...ready, ...reels.where((r) => !cache.isCached(r.videoUrl))];
   }
 
   Future<void> _loadForYou({bool reset = false}) async {
@@ -74,13 +87,41 @@ class _ReelsPageState extends State<ReelsPage> {
       if (reset) _error = null;
     });
     try {
+      // First open: show what's on the device right away, then merge fresh reels.
+      var showedQuick = false;
+      if (reset && _forYou.isEmpty) {
+        await ReelVideoCache.instance.init();
+        try {
+          final quick = await _service.fetchForYou(cacheOnly: true);
+          if (mounted && quick.reels.isNotEmpty) {
+            setState(() {
+              _forYou
+                ..clear()
+                ..addAll(_playableFirst(quick.reels));
+              _cursor = quick.cursor;
+              _hasMore = quick.hasMore;
+              _feedGeneration++;
+            });
+            showedQuick = true;
+          }
+        } catch (_) {}
+      }
       final page = await _service.fetchForYou(after: reset ? null : _cursor);
       if (!mounted) return;
+      if (showedQuick) {
+        setState(() {
+          final seen = _forYou.map((r) => r.id).toSet();
+          _forYou.addAll(page.reels.where((r) => !seen.contains(r.id)));
+          _cursor = page.cursor;
+          _hasMore = page.hasMore;
+        });
+        return;
+      }
       setState(() {
         if (reset) {
           _forYou
             ..clear()
-            ..addAll(page.reels);
+            ..addAll(page.fromCache ? _playableFirst(page.reels) : page.reels);
           _feedGeneration++;
         } else {
           final seen = _forYou.map((r) => r.id).toSet();
@@ -159,13 +200,25 @@ class _ReelsPageState extends State<ReelsPage> {
       ));
       return;
     }
-    final posted = await _pushCovered<bool>(
+    await _pushCovered<bool>(
       MaterialPageRoute(builder: (_) => const PostReelPage()),
     );
-    if (posted == true && mounted) {
-      setState(() => _mode = _FeedMode.forYou);
-      await _loadForYou(reset: true);
+  }
+
+  void _onUploadResult(ReelUploadResult result) {
+    if (!mounted || !result.ok) return;
+    if (_forYou.isEmpty && _mode == _FeedMode.forYou) {
+      unawaited(_loadForYou(reset: true));
     }
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: const Text('Your reel is posted'),
+      behavior: SnackBarBehavior.floating,
+      action: SnackBarAction(
+        label: 'View',
+        textColor: const Color(0xFFFF8A00),
+        onPressed: _openMine,
+      ),
+    ));
   }
 
   Future<void> _openMine() async {
@@ -282,6 +335,20 @@ class _ReelsPageState extends State<ReelsPage> {
                       highlighted: true,
                     ),
                   ],
+                ),
+              ),
+            ),
+            SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 62, 16, 0),
+                child: ValueListenableBuilder<ReelUpload?>(
+                  valueListenable: ReelUploadManager.instance.current,
+                  builder: (context, upload, _) => upload == null
+                      ? const SizedBox.shrink()
+                      : Align(
+                          alignment: Alignment.topCenter,
+                          child: _UploadPill(upload: upload),
+                        ),
                 ),
               ),
             ),
@@ -434,6 +501,104 @@ class _LiveButton extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// Background reel upload: progress while posting, Retry when it failed.
+class _UploadPill extends StatelessWidget {
+  const _UploadPill({required this.upload});
+
+  final ReelUpload upload;
+
+  static const _orange = Color(0xFFFF8A00);
+
+  @override
+  Widget build(BuildContext context) {
+    final manager = ReelUploadManager.instance;
+    final failed = upload.failed;
+    final pct = (upload.progress * 100).floor();
+    final label = failed
+        ? 'Reel not posted'
+        : upload.progress >= 1
+            ? 'Finishing up…'
+            : pct > 0
+                ? 'Posting your reel  $pct%'
+                : 'Posting your reel…';
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 360),
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10)],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(
+                failed ? Icons.error_outline_rounded : Icons.cloud_upload_rounded,
+                color: failed ? Colors.redAccent : _orange,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF1F2430),
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+              if (failed) ...[
+                TextButton(
+                  onPressed: manager.retry,
+                  style: TextButton.styleFrom(
+                    foregroundColor: _orange,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  child: const Text('Retry', style: TextStyle(fontWeight: FontWeight.w900)),
+                ),
+                IconButton(
+                  onPressed: manager.dismiss,
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.close_rounded, size: 18, color: Colors.black45),
+                ),
+              ] else
+                const SizedBox(width: 4),
+            ],
+          ),
+          if (!failed) ...[
+            const SizedBox(height: 6),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: upload.progress > 0 && upload.progress < 1 ? upload.progress : null,
+                minHeight: 4,
+                color: _orange,
+                backgroundColor: const Color(0xFFFFE6C7),
+              ),
+            ),
+            const SizedBox(height: 2),
+          ] else if (upload.error != null)
+            Padding(
+              padding: const EdgeInsets.only(left: 28, right: 8, bottom: 2),
+              child: Text(
+                upload.error!,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.black54, fontSize: 12),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

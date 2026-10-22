@@ -41,7 +41,6 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_m
 import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_promote_service.dart';
 
-import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/GernalServices/marketplace_stock_reminder_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_seller_loader.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_id_resolver.dart';
@@ -199,7 +198,6 @@ class _MarketplaceMerchantDashboardState
     extends State<MarketplaceMerchantDashboard> with TickerProviderStateMixin {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final MerchantServiceHelper _helper = MerchantServiceHelper();
   final OrderService _orderService = OrderService();
 
   // G?? Use CartService singleton from provider
@@ -959,11 +957,30 @@ class _MarketplaceMerchantDashboardState
     } catch (_) {}
   }
 
+  static Object? _jsonSafe(Object? v) {
+    if (v is Timestamp) return v.toDate().toIso8601String();
+    if (v is DateTime) return v.toIso8601String();
+    if (v is GeoPoint) return {'latitude': v.latitude, 'longitude': v.longitude};
+    if (v is DocumentReference) return v.path;
+    return v?.toString();
+  }
+
+  Timer? _persistItemsTimer;
+
   Future<void> _persistItemsCache(List<Map<String, dynamic>> items) async {
     final uid = (_auth.currentUser?.uid ?? _uid).trim();
     if (uid.isEmpty) return;
-    final copy = items.map((e) => Map<String, dynamic>.from(e)).toList();
-    _itemsMemoryByUid[uid] = copy;
+    items = items.map((e) => Map<String, dynamic>.from(e)).toList();
+    _itemsMemoryByUid[uid] = items;
+    // Listener bursts would re-encode the whole list each time.
+    _persistItemsTimer?.cancel();
+    _persistItemsTimer = Timer(
+      const Duration(seconds: 2),
+      () => unawaited(_writeItemsCache(uid, items)),
+    );
+  }
+
+  Future<void> _writeItemsCache(String uid, List<Map<String, dynamic>> copy) async {
     try {
       // Keep prefs payload small G?? drop huge base64 blobs from disk cache.
       final slim = copy.map((e) {
@@ -981,9 +998,11 @@ class _MarketplaceMerchantDashboardState
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(
         '$_prefsItemsCachePrefix$uid',
-        jsonEncode(slim),
+        jsonEncode(slim, toEncodable: _jsonSafe),
       );
-    } catch (_) {}
+    } catch (e) {
+      if (kDebugMode) debugPrint('[My Items] cache write failed: $e');
+    }
   }
 
   void _applyItemsToUi(List<Map<String, dynamic>> list, {bool persist = true}) {
@@ -1005,6 +1024,10 @@ class _MarketplaceMerchantDashboardState
   @override
   void dispose() {
     _ticker?.cancel();
+    _itemsByUidSub?.cancel();
+    _itemsByNestSub?.cancel();
+    _mergeItemsTimer?.cancel();
+    _persistItemsTimer?.cancel();
     _marketplaceTabs.dispose();
     _priceFocus.removeListener(_onPriceFieldFocused);
     _priceFocus.dispose();
@@ -1028,7 +1051,6 @@ class _MarketplaceMerchantDashboardState
       tick++;
       _hydrateFromFirebaseAuth();
       unawaited(_loadWalletBalance());
-      if (tick % 2 == 0) unawaited(_loadItems(showLoading: false));
       if (tick % 3 == 0) unawaited(_loadOrderStats());
       if (tick % 4 == 0) unawaited(_fetchCurrentUserMe());
     });
@@ -1072,7 +1094,7 @@ class _MarketplaceMerchantDashboardState
     final uid = _auth.currentUser?.uid ?? _uid;
     if (uid.isEmpty) return;
     try {
-      final doc = await _firestore.collection('users').doc(uid).get();
+      final doc = await _sharedDoc('users', uid);
       final data = doc.data();
       if (data == null || !mounted) return;
       final phoneVal = _sanitizePhone(
@@ -1172,6 +1194,11 @@ class _MarketplaceMerchantDashboardState
     final nestRaw = await _getNestUserId();
     final backendId = int.tryParse(nestRaw ?? '');
     if (backendId == null || backendId <= 0) return;
+    // Rewrites up to 100 listings; once a day is enough.
+    final prefs = await SharedPreferences.getInstance();
+    final syncKey = 'merchant_backend_id_synced_$uid';
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    if (prefs.getString(syncKey) == '$backendId@$today') return;
     try {
       await _firestore.collection('marketplace_merchants').doc(uid).set(
         {
@@ -1192,6 +1219,7 @@ class _MarketplaceMerchantDashboardState
         SetOptions(merge: true),
       );
       await _backfillMerchantBackendIdOnItems(uid, backendId, nestRaw!);
+      await prefs.setString(syncKey, '$backendId@$today');
     } catch (e) {
       debugPrint('sync backendUserId: $e');
     }
@@ -1286,8 +1314,7 @@ class _MarketplaceMerchantDashboardState
 
     // Always hydrate shop profile fields from marketplace_merchants.
     try {
-      final doc =
-          await _firestore.collection('marketplace_merchants').doc(u.uid).get();
+      final doc = await _sharedDoc('marketplace_merchants', u.uid);
       final data = doc.data();
       if (data != null) {
         final fromDoc = fromMap(data, includeListingName: true);
@@ -1356,7 +1383,7 @@ class _MarketplaceMerchantDashboardState
     // 2) Firestore users — business fields only (not personal name).
     if (resolved.isEmpty) {
       try {
-        final doc = await _firestore.collection('users').doc(u.uid).get();
+        final doc = await _sharedDoc('users', u.uid);
         final fromUser = fromMap(doc.data());
         if (fromUser != null && fromUser.isNotEmpty) resolved = fromUser;
       } catch (_) {}
@@ -1370,35 +1397,13 @@ class _MarketplaceMerchantDashboardState
 
     // 4) API /users/me
     if (resolved.isEmpty) {
-      try {
-        final bearer = await _getBearerTokenForApi();
-        if (bearer != null && bearer.isNotEmpty) {
-          final base = await ApiConfig.readBase();
-          final resp = await http.get(
-            Uri.parse('$base/users/me'),
-            headers: {
-              'Authorization': 'Bearer $bearer',
-              'Accept': 'application/json'
-            },
-          );
-          if (resp.statusCode == 200) {
-            final decoded = jsonDecode(resp.body);
-            final Map<String, dynamic> payload = (decoded is Map &&
-                    decoded['data'] is Map)
-                ? Map<String, dynamic>.from(decoded['data'])
-                : (decoded is Map ? Map<String, dynamic>.from(decoded) : {});
-            final user = (payload['user'] is Map)
-                ? Map<String, dynamic>.from(payload['user'] as Map)
-                : payload;
-
-            final business =
-                (user['businessName'] ?? user['merchantName'] ?? '')
-                    .toString()
-                    .trim();
-            if (business.isNotEmpty) resolved = business;
-          }
-        }
-      } catch (_) {}
+      final user = await _usersMe();
+      if (user != null) {
+        final business = (user['businessName'] ?? user['merchantName'] ?? '')
+            .toString()
+            .trim();
+        if (business.isNotEmpty) resolved = business;
+      }
     }
 
     if (resolved.isEmpty && authDisplay.isNotEmpty) {
@@ -1433,6 +1438,45 @@ class _MarketplaceMerchantDashboardState
   String _displayBusinessName() {
     if (_businessName.trim().isNotEmpty) return _businessName.trim();
     return 'Marketplace Merchant';
+  }
+
+  Future<Map<String, dynamic>?>? _usersMeRead;
+  DateTime _usersMeAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// `/users/me` user object, shared by every loader for 30s.
+  Future<Map<String, dynamic>?> _usersMe() {
+    final fresh = DateTime.now().difference(_usersMeAt) < const Duration(seconds: 30);
+    if (_usersMeRead != null && fresh) return _usersMeRead!;
+    _usersMeAt = DateTime.now();
+    return _usersMeRead = () async {
+      try {
+        final bearer = await _getBearerTokenForApi();
+        if (bearer == null || bearer.isEmpty) return null;
+        final base = await ApiConfig.readBase();
+        final resp = await http.get(
+          Uri.parse('$base/users/me'),
+          headers: {
+            'Authorization': 'Bearer $bearer',
+            'Accept': 'application/json'
+          },
+        ).timeout(const Duration(seconds: 20));
+        if (resp.statusCode != 200) {
+          _usersMeRead = null;
+          return null;
+        }
+        final decoded = jsonDecode(resp.body);
+        final Map<String, dynamic> payload =
+            (decoded is Map && decoded['data'] is Map)
+                ? Map<String, dynamic>.from(decoded['data'])
+                : (decoded is Map ? Map<String, dynamic>.from(decoded) : {});
+        return (payload['user'] is Map)
+            ? Map<String, dynamic>.from(payload['user'] as Map)
+            : payload;
+      } catch (_) {
+        _usersMeRead = null;
+        return null;
+      }
+    }();
   }
 
   // ----------------- API auth: prefs token OR Firebase idToken -----------------
@@ -1938,33 +1982,10 @@ class _MarketplaceMerchantDashboardState
     });
 
     try {
-      final bearer = await _getBearerTokenForApi();
-      if (bearer == null || bearer.isEmpty) {
-        if (mounted) setState(() => _loadingMe = false);
-        return;
-      }
-
-      final base = await ApiConfig.readBase();
-      final resp = await http.get(
-        Uri.parse('$base/users/me'),
-        headers: {
-          'Authorization': 'Bearer $bearer',
-          'Accept': 'application/json'
-        },
-      );
-
+      final user = await _usersMe();
       if (!mounted) return;
 
-      if (resp.statusCode == 200) {
-        final decoded = jsonDecode(resp.body);
-        final Map<String, dynamic> payload =
-            (decoded is Map && decoded['data'] is Map)
-                ? Map<String, dynamic>.from(decoded['data'])
-                : (decoded is Map ? Map<String, dynamic>.from(decoded) : {});
-        final user = (payload['user'] is Map)
-            ? Map<String, dynamic>.from(payload['user'] as Map)
-            : payload;
-
+      if (user != null) {
         final emailVal =
             (user['email'] ?? user['userEmail'] ?? '').toString().trim();
         final phoneVal = _sanitizePhone(
@@ -2013,6 +2034,23 @@ class _MarketplaceMerchantDashboardState
   }
 
   // ----------------- Dashboard API + Wallet -----------------
+  final Map<String, ({DateTime at, Future<DocumentSnapshot<Map<String, dynamic>>> read})>
+      _docReads = {};
+
+  /// Profile, KYC and business-name loaders all read the same docs at startup;
+  /// share one read per doc for a few seconds.
+  Future<DocumentSnapshot<Map<String, dynamic>>> _sharedDoc(String collection, String id) {
+    final key = '$collection/$id';
+    final hit = _docReads[key];
+    if (hit != null && DateTime.now().difference(hit.at) < const Duration(seconds: 20)) {
+      return hit.read;
+    }
+    final read = _firestore.collection(collection).doc(id).get();
+    _docReads[key] = (at: DateTime.now(), read: read);
+    unawaited(read.then((_) {}, onError: (_) => _docReads.remove(key)));
+    return read;
+  }
+
   Future<void> _loadMerchantData() async {
     if (!mounted) return;
 
@@ -2021,45 +2059,29 @@ class _MarketplaceMerchantDashboardState
 
     if (_uid.isNotEmpty) {
       try {
-        final dashboardFuture =
-            _helper.getMerchantDashboardData(_uid, 'marketplace');
-        final walletFuture = _loadWalletBalance();
-        final results = await Future.wait([dashboardFuture, walletFuture]);
-        final dashboardData = results[0] as Map<String, dynamic>;
-        if (!dashboardData.containsKey('error')) {
-          final merchant = dashboardData['merchant'];
-
+        // Earnings / sold / recent sales come from real merchant orders in
+        // _loadOrderStats(); only the merchant profile doc is needed here.
+        final doc = await _sharedDoc('marketplace_merchants', _uid);
+        final merchant = doc.data();
+        if (merchant != null) {
           if (!mounted) return;
           setState(() {
-            // Earnings / sold / recent sales come from real merchant orders
-            // in _loadOrderStats() — not the dashboard Firestore stub.
+            final mr = merchant['rating'];
+            if (mr is num) _rating = mr.toDouble();
 
-            final ti = dashboardData['totalItems'];
-            final ai = dashboardData['activeItems'];
-            if (ti is int) _totalItems = ti;
-            if (ai is int) _activeItems = ai;
+            final ms = merchant['status'];
+            if (ms != null && ms.toString().trim().isNotEmpty) {
+              _status = ms.toString().trim();
+            }
 
-            if (merchant is Map) {
-              final mr = merchant['rating'];
-              if (mr is num) _rating = mr.toDouble();
-
-              final ms = merchant['status'];
-              if (ms != null && ms.toString().trim().isNotEmpty) {
-                _status = ms.toString().trim();
-              }
-
-              final mp = _sanitizePhone(
-                  (merchant['phone'] ?? '').toString().trim());
-              if (mp.isNotEmpty) {
-                _merchantPhone = mp;
-                unawaited(prefs.setString('merchant_profile_phone', mp));
-              }
+            final mp = _sanitizePhone(
+                (merchant['phone'] ?? '').toString().trim());
+            if (mp.isNotEmpty) {
+              _merchantPhone = mp;
+              unawaited(prefs.setString('merchant_profile_phone', mp));
             }
           });
         }
-
-        // Load order stats in background (real sold/earnings)
-        unawaited(_loadOrderStats());
       } catch (e) {
         debugPrint('Error loading dashboard: $e');
       }
@@ -2075,7 +2097,13 @@ class _MarketplaceMerchantDashboardState
 
   /// Load sold items count, total earnings, and recent sales from this
   /// merchant's incoming orders (and escrow as a fast/accurate fallback).
-  Future<void> _loadOrderStats() async {
+  Future<void>? _orderStatsInFlight;
+
+  /// Fetching every merchant order is the heaviest call here; never run two at once.
+  Future<void> _loadOrderStats() => _orderStatsInFlight ??=
+      _loadOrderStatsNow().whenComplete(() => _orderStatsInFlight = null);
+
+  Future<void> _loadOrderStatsNow() async {
     if (!mounted) return;
     final myFirebaseUid = (_auth.currentUser?.uid ?? _uid).trim();
 
@@ -2268,8 +2296,19 @@ class _MarketplaceMerchantDashboardState
     return double.tryParse('${raw ?? ''}'.replaceAll(',', '')) ?? 0;
   }
 
-  /// Completed refunds keyed by order id and order number.
-  Future<Map<String, double>> _completedRefundAmounts(String uid) async {
+  Future<Map<String, double>>? _refundsInFlight;
+  DateTime _refundsAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// Completed refunds keyed by order id and order number. Escrow and order
+  /// stats both need this at startup, so one query is shared for a short while.
+  Future<Map<String, double>> _completedRefundAmounts(String uid) {
+    final fresh = DateTime.now().difference(_refundsAt) < const Duration(seconds: 30);
+    if (_refundsInFlight != null && fresh) return _refundsInFlight!;
+    _refundsAt = DateTime.now();
+    return _refundsInFlight = _completedRefundAmountsNow(uid);
+  }
+
+  Future<Map<String, double>> _completedRefundAmountsNow(String uid) async {
     if (uid.isEmpty) return const {};
     try {
       final snap = await _firestore
@@ -2501,25 +2540,8 @@ class _MarketplaceMerchantDashboardState
 
       if (!allowNetwork) return null;
 
-      final bearer = await _getBearerTokenForApi();
-      if (bearer == null || bearer.isEmpty) return null;
-
-      final base = await ApiConfig.readBase();
-      final resp = await http.get(
-        Uri.parse('$base/users/me'),
-        headers: {
-          'Authorization': 'Bearer $bearer',
-          'Accept': 'application/json'
-        },
-      );
-      if (resp.statusCode != 200) return null;
-
-      final decoded = jsonDecode(resp.body);
-      final Map<String, dynamic> payload =
-          (decoded is Map && decoded['data'] is Map)
-              ? Map<String, dynamic>.from(decoded['data'])
-              : (decoded is Map ? Map<String, dynamic>.from(decoded) : {});
-      final user = (payload['user'] is Map) ? payload['user'] as Map : payload;
+      final user = await _usersMe();
+      if (user == null) return null;
 
       final rawId = user['id'] ?? user['userId'] ?? user['sub'];
       if (rawId == null) return null;
@@ -2533,6 +2555,61 @@ class _MarketplaceMerchantDashboardState
   }
 
   // ----------------- Items load + counts (total/active) -----------------
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _itemsByUidSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _itemsByNestSub;
+  final Map<String, Map<String, dynamic>> _itemsByUidDocs = {};
+  final Map<String, Map<String, dynamic>> _itemsByNestDocs = {};
+  String _itemsListenUid = '';
+  String _itemsListenNest = '';
+  Timer? _mergeItemsTimer;
+
+  void _onItemsSnapshot(
+    QuerySnapshot<Map<String, dynamic>> snap,
+    Map<String, Map<String, dynamic>> into,
+  ) {
+    for (final change in snap.docChanges) {
+      final doc = change.doc;
+      if (change.type == DocumentChangeType.removed) {
+        into.remove(doc.id);
+      } else {
+        into[doc.id] = {...?doc.data(), 'id': doc.id};
+      }
+    }
+    // An empty local cache on first open isn't "no items" — wait for the server.
+    if (snap.metadata.isFromCache && snap.docs.isEmpty) {
+      Future<void>.delayed(const Duration(seconds: 5), () {
+        if (mounted && _loadingItems) setState(() => _loadingItems = false);
+      });
+      return;
+    }
+    // Both listeners fire together on open; merge once.
+    _mergeItemsTimer?.cancel();
+    _mergeItemsTimer = Timer(const Duration(milliseconds: 60), _mergeListenedItems);
+  }
+
+  void _onItemsListenError(Object e) {
+    debugPrint('Error loading items: $e');
+    if (mounted && _loadingItems) setState(() => _loadingItems = false);
+  }
+
+  static int _itemCreatedMillis(Map<String, dynamic> it) {
+    final raw = it['createdAt'];
+    if (raw is Timestamp) return raw.millisecondsSinceEpoch;
+    if (raw is num) return raw.toInt();
+    if (raw is String) return DateTime.tryParse(raw)?.millisecondsSinceEpoch ?? 0;
+    return 0;
+  }
+
+  void _mergeListenedItems() {
+    final merged = <String, Map<String, dynamic>>{
+      ..._itemsByNestDocs,
+      ..._itemsByUidDocs,
+    };
+    final list = merged.values.toList()
+      ..sort((a, b) => _itemCreatedMillis(b).compareTo(_itemCreatedMillis(a)));
+    _applyItemsToUi(list);
+  }
+
   /// When [showLoading] is false, keeps the current grid visible while refreshing
   /// in the background (used by periodic updates so the UI stays stable).
   Future<void> _loadItems({bool showLoading = true}) async {
@@ -2549,67 +2626,44 @@ class _MarketplaceMerchantDashboardState
     }
 
     try {
+      // Live listeners: first event comes from the local cache, later ones
+      // carry only changed listings instead of re-downloading every item.
       final firebaseUid = (_auth.currentUser?.uid ?? _uid).trim();
-      // Prefer Firebase UID query first (no network). Nest id is optional merge.
-      final nestSellerId = await _getNestUserId(allowNetwork: false);
-
-      Future<QuerySnapshot<Map<String, dynamic>>> runQuery(
-        Query<Map<String, dynamic>> query, {
-        required bool preferCache,
-      }) async {
-        if (preferCache) {
-          try {
-            final cached =
-                await query.get(const GetOptions(source: Source.cache));
-            if (cached.docs.isNotEmpty) return cached;
-          } catch (_) {}
-        }
-        return query.get();
-      }
-
-      final byMerchant = <String, Map<String, dynamic>>{};
-
-      if (firebaseUid.isNotEmpty) {
-        final q = _firestore
+      if (firebaseUid.isNotEmpty &&
+          (_itemsByUidSub == null || _itemsListenUid != firebaseUid)) {
+        await _itemsByUidSub?.cancel();
+        _itemsByUidDocs.clear();
+        _itemsListenUid = firebaseUid;
+        _itemsByUidSub = _firestore
             .collection('marketplace_items')
-            .where('merchantId', isEqualTo: firebaseUid);
-        final snap = await runQuery(q, preferCache: true);
-        for (final doc in snap.docs) {
-          byMerchant[doc.id] = {...doc.data(), 'id': doc.id};
-        }
-        // Paint cache/server merchantId results immediately.
-        if (byMerchant.isNotEmpty) {
-          _applyItemsToUi(byMerchant.values.toList());
-        }
+            .where('merchantId', isEqualTo: firebaseUid)
+            .snapshots()
+            .listen(
+              (snap) => _onItemsSnapshot(snap, _itemsByUidDocs),
+              onError: _onItemsListenError,
+            );
       }
 
-      // Optional: also match sellerUserId (Nest) without blocking first paint.
       final nestId =
-          nestSellerId ?? await _getNestUserId(allowNetwork: true);
-      if (nestId != null && nestId.trim().isNotEmpty) {
-        final q = _firestore
+          (await _getNestUserId(allowNetwork: false) ??
+                  await _getNestUserId(allowNetwork: true) ??
+                  '')
+              .trim();
+      if (!mounted) return;
+      if (nestId.isNotEmpty &&
+          (_itemsByNestSub == null || _itemsListenNest != nestId)) {
+        await _itemsByNestSub?.cancel();
+        _itemsByNestDocs.clear();
+        _itemsListenNest = nestId;
+        _itemsByNestSub = _firestore
             .collection('marketplace_items')
-            .where('sellerUserId', isEqualTo: nestId.trim());
-        final snap = await runQuery(q, preferCache: true);
-        for (final doc in snap.docs) {
-          byMerchant[doc.id] = {...doc.data(), 'id': doc.id};
-        }
+            .where('sellerUserId', isEqualTo: nestId)
+            .snapshots()
+            .listen(
+              (snap) => _onItemsSnapshot(snap, _itemsByNestDocs),
+              onError: _onItemsListenError,
+            );
       }
-
-      // Refresh merchantId from server once (after cache paint).
-      if (firebaseUid.isNotEmpty) {
-        try {
-          final server = await _firestore
-              .collection('marketplace_items')
-              .where('merchantId', isEqualTo: firebaseUid)
-              .get(const GetOptions(source: Source.server));
-          for (final doc in server.docs) {
-            byMerchant[doc.id] = {...doc.data(), 'id': doc.id};
-          }
-        } catch (_) {}
-      }
-
-      _applyItemsToUi(byMerchant.values.toList());
     } catch (e) {
       debugPrint('Error loading items: $e');
       if (!mounted) return;
@@ -2706,13 +2760,19 @@ class _MarketplaceMerchantDashboardState
   // ----------------- Pull-to-refresh -----------------
   Future<void> _refreshAll() async {
     _hydrateFromFirebaseAuth();
-    await _pullPhoneAndProfileFromFirestore();
-    await _loadKycStatus();
-    await _ensureBusinessName();
-    await _fetchCurrentUserMe();
-    await _loadMerchantData();
-    await _loadItems(showLoading: false);
-    await _loadOrderStats();
+    _docReads.clear();
+    _usersMeRead = null;
+    _refundsInFlight = null;
+    await Future.wait<void>([
+      _pullPhoneAndProfileFromFirestore(),
+      _loadKycStatus(),
+      _ensureBusinessName(),
+      _fetchCurrentUserMe(),
+      _loadMerchantData(),
+      _loadWalletBalance(),
+      _loadItems(showLoading: false),
+      _loadOrderStats(),
+    ]);
     if (_merchantProfileUrl.trim().isNotEmpty) {
       unawaited(_warmProfilePhotoCache(_merchantProfileUrl));
     }
@@ -2722,7 +2782,7 @@ class _MarketplaceMerchantDashboardState
     final uid = (_auth.currentUser?.uid ?? _uid).trim();
     if (uid.isEmpty) return;
     try {
-      final doc = await _firestore.collection('users').doc(uid).get();
+      final doc = await _sharedDoc('users', uid);
       final data = doc.data() ?? {};
       final status = (data['kycStatus'] ?? '').toString().trim().toLowerCase();
       final reason = (data['kycRejectionReason'] ?? '').toString().trim();
@@ -2741,6 +2801,7 @@ class _MarketplaceMerchantDashboardState
       MaterialPageRoute(builder: (_) => const KycVerificationScreen()),
     );
     if (!mounted) return;
+    _docReads.clear();
     await _loadKycStatus();
   }
 
@@ -2758,13 +2819,20 @@ class _MarketplaceMerchantDashboardState
     if (s.startsWith('http://') || s.startsWith('https://')) {
       return CachedNetworkImageProvider(s);
     }
+    if (_profileMemoryImage != null && _profileMemorySource == s) {
+      return _profileMemoryImage;
+    }
     try {
       final bytes = base64Decode(s);
-      return MemoryImage(bytes);
+      _profileMemorySource = s;
+      return _profileMemoryImage = MemoryImage(bytes);
     } catch (_) {
       return null;
     }
   }
+
+  String? _profileMemorySource;
+  MemoryImage? _profileMemoryImage;
 
   // ----------------- Profile photo (Firebase Storage) -----------------
   void _showPhotoSheet() {
@@ -6068,12 +6136,13 @@ class _MarketplaceMerchantDashboardState
             ),
             child: const Center(child: Text('No items yet')),
           )
-        else
+        else ...[
+          // shrinkWrap builds every card up front; keep the preview small.
           GridView.builder(
             shrinkWrap: true,
             primary: false,
             physics: const NeverScrollableScrollPhysics(),
-            itemCount: _items.length,
+            itemCount: _items.length.clamp(0, _kHomeItemsPreview),
             gridDelegate: _merchantItemsGridDelegate(context),
             itemBuilder: (_, i) {
               final it = _items[i];
@@ -6084,9 +6153,35 @@ class _MarketplaceMerchantDashboardState
               );
             },
           ),
+          if (_items.length > _kHomeItemsPreview)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () => _marketplaceTabs.animateTo(2),
+                  icon: const Icon(Icons.grid_view_rounded, size: 18),
+                  label: Text(
+                    'See all ${_items.length} items',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _brandOrange,
+                    side: BorderSide(color: _brandOrange.withValues(alpha: 0.5)),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ],
     );
   }
+
+  static const int _kHomeItemsPreview = 6;
 
   Future<void> _promoteItem(Map<String, dynamic> it) async {
     final id = (it['id'] ?? '').toString().trim();

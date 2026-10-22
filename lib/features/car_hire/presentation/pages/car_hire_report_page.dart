@@ -33,9 +33,12 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
 
   final TextEditingController _incidentDescriptionController =
       TextEditingController();
-  final TextEditingController _incidentPhoneController = TextEditingController();
-  final TextEditingController _supportSubjectController = TextEditingController();
-  final TextEditingController _supportMessageController = TextEditingController();
+  final TextEditingController _incidentPhoneController =
+      TextEditingController();
+  final TextEditingController _supportSubjectController =
+      TextEditingController();
+  final TextEditingController _supportMessageController =
+      TextEditingController();
 
   IncidentType _incidentType = IncidentType.accident;
   SupportCaseCategory _supportCategory = SupportCaseCategory.booking;
@@ -75,7 +78,9 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
     }
 
     setState(() => _incidentError = null);
-    final result = await ref.read(incidentReportProvider.notifier).report(
+    final result = await ref
+        .read(incidentReportProvider.notifier)
+        .report(
           bookingId: widget.bookingId,
           type: _incidentType,
           description: description,
@@ -113,7 +118,9 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
     }
 
     setState(() => _supportError = null);
-    final result = await ref.read(supportCaseProvider.notifier).open(
+    final result = await ref
+        .read(supportCaseProvider.notifier)
+        .open(
           bookingId: widget.bookingId,
           category: _supportCategory,
           subject: subject,
@@ -183,10 +190,7 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
       ),
       body: TabBarView(
         controller: _tabController,
-        children: [
-          _incidentTab(incidentState),
-          _supportTab(supportState),
-        ],
+        children: [_incidentTab(incidentState), _supportTab(supportState)],
       ),
     );
   }
@@ -209,8 +213,8 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
               const _SectionTitle('Report an incident'),
               const SizedBox(height: 4),
               Text(
-                'Use this for accidents, breakdowns, theft, safety problems '
-                'or a provider who did not show up.${_bookingReference()}',
+                'Accidents, breakdowns, theft, safety or a no-show.'
+                '${_bookingReference()}',
                 style: const TextStyle(
                   color: CarRentalColors.body,
                   fontSize: 11.5,
@@ -243,8 +247,7 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
                 textCapitalization: TextCapitalization.sentences,
                 decoration: _decoration(
                   'What happened?',
-                  hint: 'Where, when and what you observed. '
-                      'At least 5 characters.',
+                  hint: 'Where, when and what happened',
                   alignLabelWithHint: true,
                 ),
               ),
@@ -280,8 +283,9 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
                 style: FilledButton.styleFrom(
                   backgroundColor: CarRentalColors.error,
                   foregroundColor: Colors.white,
-                  disabledBackgroundColor:
-                      CarRentalColors.error.withValues(alpha: 0.4),
+                  disabledBackgroundColor: CarRentalColors.error.withValues(
+                    alpha: 0.4,
+                  ),
                   disabledForegroundColor: Colors.white,
                   minimumSize: const Size.fromHeight(46),
                   shape: RoundedRectangleBorder(
@@ -317,10 +321,7 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
               if (items.isEmpty) {
                 return const Text(
                   'No incidents reported for this booking.',
-                  style: TextStyle(
-                    color: CarRentalColors.body,
-                    fontSize: 12,
-                  ),
+                  style: TextStyle(color: CarRentalColors.body, fontSize: 12),
                 );
               }
               return Column(
@@ -408,9 +409,7 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
               const _SectionTitle('Open a support case'),
               const SizedBox(height: 4),
               Text(
-                'Tell Vero360 support what you need. For handover or damage '
-                'disputes, include dates and inspection references.'
-                '${_bookingReference()}',
+                'Tell us what you need.${_bookingReference()}',
                 style: const TextStyle(
                   color: CarRentalColors.body,
                   fontSize: 11.5,
@@ -423,7 +422,9 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
                 isExpanded: true,
                 decoration: _decoration('Category'),
                 items: SupportCaseCategory.values
-                    .where((category) => category != SupportCaseCategory.unknown)
+                    .where(
+                      (category) => category != SupportCaseCategory.unknown,
+                    )
                     .map(
                       (category) => DropdownMenuItem<SupportCaseCategory>(
                         value: category,
@@ -473,9 +474,7 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
                         ),
                       )
                     : const Icon(Icons.support_agent_rounded, size: 18),
-                label: Text(
-                  state.submitting ? 'Sending…' : 'Send to support',
-                ),
+                label: Text(state.submitting ? 'Sending…' : 'Send to support'),
                 style: carHirePrimaryButton(),
               ),
             ],
@@ -505,10 +504,7 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
               if (items.isEmpty) {
                 return const Text(
                   'No support cases for this booking yet.',
-                  style: TextStyle(
-                    color: CarRentalColors.body,
-                    fontSize: 12,
-                  ),
+                  style: TextStyle(color: CarRentalColors.body, fontSize: 12),
                 );
               }
               return Column(
@@ -586,7 +582,7 @@ class _CarHireReportPageState extends ConsumerState<CarHireReportPage>
   String _bookingReference() {
     final number = widget.bookingNumber?.trim();
     if (number == null || number.isEmpty) return '';
-    return ' This will be attached to $number.';
+    return ' Linked to $number.';
   }
 
   InputDecoration _decoration(
@@ -624,10 +620,7 @@ class _Panel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CarHireSurface(
-      padding: const EdgeInsets.all(16),
-      child: child,
-    );
+    return CarHireSurface(padding: const EdgeInsets.all(16), child: child);
   }
 }
 

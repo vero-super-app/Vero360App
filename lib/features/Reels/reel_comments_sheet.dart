@@ -548,7 +548,47 @@ class _ReelCommentsSheetState extends State<_ReelCommentsSheet> {
     );
   }
 
+  Widget _guestComposer() {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: Color(0xFFEDEEF1))),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+          child: Row(
+            children: [
+              const Icon(Icons.lock_outline_rounded, size: 18, color: _kMuted),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Sign in to like and comment',
+                  style: TextStyle(color: _kMuted, fontWeight: FontWeight.w600),
+                ),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final nav = Navigator.of(context);
+                  nav.pop();
+                  nav.pushNamed('/login');
+                },
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFFF8A00),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                ),
+                child: const Text('Sign in', style: TextStyle(fontWeight: FontWeight.w800)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _composer() {
+    if (!_service.isSignedIn) return _guestComposer();
     final replyTo = _replyTo;
     return Container(
       decoration: const BoxDecoration(

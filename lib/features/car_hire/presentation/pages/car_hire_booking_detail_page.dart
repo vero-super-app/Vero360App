@@ -7,6 +7,7 @@ import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_price_breakdown.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skeletons.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_status_badge.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
@@ -85,8 +86,12 @@ class _CarHireBookingDetailPageState
   }
 
   Future<void> _refreshStatus() async {
-    final current = _localBooking ??
-        ref.read(carHireBookingDetailProvider(widget.bookingId)).asData?.value ??
+    final current =
+        _localBooking ??
+        ref
+            .read(carHireBookingDetailProvider(widget.bookingId))
+            .asData
+            ?.value ??
         widget.initialBooking;
     if (current == null) return;
 
@@ -96,25 +101,18 @@ class _CarHireBookingDetailPageState
     });
 
     try {
-      final fresh =
-          await ref.read(carHireApiProvider).getBooking(current.id);
+      final fresh = await ref.read(carHireApiProvider).getBooking(current.id);
       if (!mounted) return;
       setState(() => _localBooking = fresh);
       ref.invalidate(myCarHireBookingsProvider);
       ref.invalidate(carHireBookingDetailProvider(widget.bookingId));
 
-      if (fresh.paymentSucceeded) {
-        ToastHelper.showToast(
-          context,
-          'Payment confirmed by Vero360. Booking status: '
-          '${fresh.bookingStatus.label}.',
-        );
-      } else {
-        ToastHelper.showToast(
-          context,
-          'Payment status from Vero360: "${fresh.paymentLabel}".',
-        );
-      }
+      ToastHelper.showToast(
+        context,
+        fresh.paymentSucceeded
+            ? 'Payment confirmed.'
+            : 'Payment not confirmed yet. Check again in a moment.',
+      );
     } on CarHireApiException catch (error) {
       if (!mounted) return;
       setState(() => _actionError = error.message);
@@ -133,9 +131,8 @@ class _CarHireBookingDetailPageState
         return AlertDialog(
           title: const Text('Cancel this booking?'),
           content: const Text(
-            'This releases the dates and cannot be undone. Any refund is '
-            'handled according to the rental terms and the payment status '
-            'shown on this booking.',
+            'This releases your dates and cannot be undone. Refunds follow '
+            'the rental terms.',
           ),
           actions: [
             TextButton(
@@ -162,8 +159,9 @@ class _CarHireBookingDetailPageState
     });
 
     try {
-      final updated =
-          await ref.read(carHireApiProvider).cancelBooking(booking.id);
+      final updated = await ref
+          .read(carHireApiProvider)
+          .cancelBooking(booking.id);
       if (!mounted) return;
       setState(() => _localBooking = updated);
       ref.invalidate(myCarHireBookingsProvider);
@@ -193,10 +191,9 @@ class _CarHireBookingDetailPageState
     });
 
     try {
-      final initiation = await ref.read(carHireApiProvider).initiatePayment(
-            booking.id,
-            phoneNumber: phone,
-          );
+      final initiation = await ref
+          .read(carHireApiProvider)
+          .initiatePayment(booking.id, phoneNumber: phone);
       if (initiation.booking != null && mounted) {
         setState(() => _localBooking = initiation.booking);
       }
@@ -205,7 +202,8 @@ class _CarHireBookingDetailPageState
       if (rawUrl == null || rawUrl.isEmpty) {
         if (!mounted) return;
         setState(() {
-          _actionError = 'The payment provider did not return a checkout link. '
+          _actionError =
+              'The payment provider did not return a checkout link. '
               'Please try again.';
         });
         return;
@@ -301,8 +299,8 @@ class _CarHireBookingDetailPageState
             '${CarHireFormatters.formatDateTime(currentEnd)}.\n'
             'Requested return: '
             '${CarHireFormatters.formatDateTime(requested)}.\n\n'
-            'The vehicle provider reviews the request. Any additional amount '
-            'is quoted by the server and shown on this booking.',
+            'The provider will review it. Any extra cost appears on this '
+            'booking.',
           ),
           actions: [
             TextButton(
@@ -330,7 +328,7 @@ class _CarHireBookingDetailPageState
         context,
         extension.hasAdditionalAmount
             ? 'Extension requested. Additional amount quoted: '
-                '${extension.additionalAmountLabel}.'
+                  '${extension.additionalAmountLabel}.'
             : 'Extension requested. No additional amount was quoted.',
       );
       return;
@@ -367,8 +365,10 @@ class _CarHireBookingDetailPageState
         latest = inspection;
         continue;
       }
-      final current = inspection.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-      final previous = latest.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final current =
+          inspection.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final previous =
+          latest.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
       if (current.isAfter(previous)) latest = inspection;
     }
     return latest;
@@ -377,12 +377,10 @@ class _CarHireBookingDetailPageState
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(carHireBookingDetailProvider(widget.bookingId));
-    final booking = _localBooking ??
-        async.asData?.value ??
-        widget.initialBooking;
+    final booking =
+        _localBooking ?? async.asData?.value ?? widget.initialBooking;
     final extensions = ref.watch(bookingExtensionsProvider(widget.bookingId));
-    final inspections =
-        ref.watch(bookingInspectionsProvider(widget.bookingId));
+    final inspections = ref.watch(bookingInspectionsProvider(widget.bookingId));
     final extensionState = ref.watch(extensionRequestProvider);
 
     return Scaffold(
@@ -410,13 +408,13 @@ class _CarHireBookingDetailPageState
       ),
       body: booking == null
           ? async.when(
-              loading: () => const CarHireLoadingState(
-                message: 'Loading booking details…',
+              skipLoadingOnRefresh: true,
+              loading: () => const SingleChildScrollView(
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 32),
+                child: ExcludeSemantics(child: CarHireCompanyBookingSkeleton()),
               ),
-              error: (error, _) => CarHireErrorState(
-                error: error,
-                onRetry: _refresh,
-              ),
+              error: (error, _) =>
+                  CarHireErrorState(error: error, onRetry: _refresh),
               data: (_) => CarHireErrorState(
                 message: 'We could not find this booking.',
                 onRetry: _refresh,
@@ -449,21 +447,18 @@ class _CarHireBookingDetailPageState
                     _InlineError(message: _actionError!),
                   ],
                   const SizedBox(height: 12),
-                  _carCard(booking),
-                  const SizedBox(height: 12),
-                  _datesCard(booking),
-                  const SizedBox(height: 12),
-                  _inspectionsCard(booking, inspections),
-                  const SizedBox(height: 12),
-                  _extensionsCard(booking, extensions, extensionState),
-                  const SizedBox(height: 12),
-                  _priceCard(booking),
+                  _tripCard(booking),
                   const SizedBox(height: 12),
                   _paymentCard(booking),
                   const SizedBox(height: 12),
-                  _cancellationCard(booking),
+                  _inspectionsCard(booking, inspections),
+                  if (booking.bookingStatus.isOpen ||
+                      (extensions.asData?.value.isNotEmpty ?? false)) ...[
+                    const SizedBox(height: 12),
+                    _extensionsCard(booking, extensions, extensionState),
+                  ],
                   const SizedBox(height: 12),
-                  _supportCard(booking),
+                  _manageCard(booking),
                 ],
               ),
             ),
@@ -478,39 +473,18 @@ class _CarHireBookingDetailPageState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      booking.bookingNumberLabel,
-                      style: CarHireType.titleLarge,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      booking.car?.title ?? 'Vehicle rental',
-                      style: const TextStyle(
-                        color: CarRentalColors.body,
-                        fontSize: 12.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Flexible(
-                child: CarHireStatusBadge.booking(booking.bookingStatus),
-              ),
-            ],
+          Text(booking.bookingNumberLabel, style: CarHireType.labelSmall),
+          const SizedBox(height: 2),
+          Text(
+            booking.car?.title ?? 'Vehicle rental',
+            style: CarHireType.titleLarge,
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
+              CarHireStatusBadge.booking(booking.bookingStatus),
               CarHireStatusBadge.payment(booking.paymentStatus),
             ],
           ),
@@ -564,8 +538,7 @@ class _CarHireBookingDetailPageState
                   SizedBox(width: 7),
                   Expanded(
                     child: Text(
-                      'The hold on these dates has expired. Refresh the '
-                      'booking or start a new search for current availability.',
+                      'The hold on these dates has expired.',
                       style: TextStyle(
                         color: CarRentalColors.error,
                         fontSize: 11.5,
@@ -577,37 +550,33 @@ class _CarHireBookingDetailPageState
               ),
             ),
           ],
-          const SizedBox(height: 10),
-          _InfoRow(label: 'Hold', value: booking.holdExpiryLabel),
-          if (booking.driverName != null)
-            _InfoRow(label: 'Driver', value: booking.driverName!),
-          if (booking.renterNotes != null)
-            _InfoRow(label: 'Notes', value: booking.renterNotes!),
+          if (booking.bookingStatus == BookingStatus.pending &&
+              !holdExpired) ...[
+            const SizedBox(height: 10),
+            _InfoRow(label: 'Hold until', value: booking.holdExpiryLabel),
+          ],
+          if (booking.cancelledAt != null) ...[
+            const SizedBox(height: 10),
+            _InfoRow(
+              label: 'Cancelled',
+              value: CarHireFormatters.formatDateTime(booking.cancelledAt!),
+            ),
+            if (booking.cancellationReason != null)
+              _InfoRow(label: 'Reason', value: booking.cancellationReason!),
+          ],
         ],
       ),
     );
   }
 
-  Widget _carCard(CarHireBooking booking) {
+  Widget _tripCard(CarHireBooking booking) {
     final car = booking.car;
 
     return _Panel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const _SectionTitle('Vehicle'),
-          const SizedBox(height: 10),
-          if (car == null)
-            const Text(
-              'Vehicle details are not available for this booking. '
-              'Contact support if you need them.',
-              style: TextStyle(
-                color: CarRentalColors.body,
-                fontSize: 12,
-                height: 1.4,
-              ),
-            )
-          else
+          if (car != null) ...[
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -657,16 +626,19 @@ class _CarHireBookingDetailPageState
                           ),
                         ),
                       ],
-                      const SizedBox(height: 5),
-                      Text(
-                        '${car.seatsLabel} · ${car.transmissionLabel} · '
-                        '${car.fuelLabel}',
-                        style: const TextStyle(
-                          color: CarRentalColors.body,
-                          fontSize: 11,
-                          height: 1.35,
+                      if (car.provider != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          car.providerLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: CarRentalColors.body,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
+                      ],
                       const SizedBox(height: 3),
                       Text(
                         car.pickupAreaLabel,
@@ -680,18 +652,18 @@ class _CarHireBookingDetailPageState
                 ),
               ],
             ),
-        ],
-      ),
-    );
-  }
-
-  Widget _datesCard(CarHireBooking booking) {
-    return _Panel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const _SectionTitle('Rental period'),
-          const SizedBox(height: 10),
+            const SizedBox(height: 12),
+            const Divider(height: 1, color: CarHirePalette.hairline),
+            const SizedBox(height: 10),
+          ],
+          if (booking.assignedPlate != null)
+            _InfoRow(
+              label: 'Vehicle',
+              value: [
+                booking.assignedPlate!,
+                if (booking.assignedColor != null) booking.assignedColor!,
+              ].join(' · '),
+            ),
           _InfoRow(
             label: 'Pick-up',
             value: booking.startAt == null
@@ -704,6 +676,10 @@ class _CarHireBookingDetailPageState
                 ? 'Not provided'
                 : CarHireFormatters.formatDateTime(booking.endAt!),
           ),
+          if (booking.driverName != null)
+            _InfoRow(label: 'Driver', value: booking.driverName!),
+          if (booking.renterNotes != null)
+            _InfoRow(label: 'Note', value: booking.renterNotes!),
         ],
       ),
     );
@@ -714,32 +690,26 @@ class _CarHireBookingDetailPageState
     AsyncValue<List<HandoverInspection>> inspections,
   ) {
     final pickup = _latestInspection(inspections, InspectionType.pickup);
-    final returnInspection =
-        _latestInspection(inspections, InspectionType.returnInspection);
+    final returnInspection = _latestInspection(
+      inspections,
+      InspectionType.returnInspection,
+    );
     final canPickup = _canRecordInspection(booking, InspectionType.pickup);
-    final canReturn = _canRecordInspection(booking, InspectionType.returnInspection);
+    final canReturn = _canRecordInspection(
+      booking,
+      InspectionType.returnInspection,
+    );
     final items = inspections.asData?.value ?? const <HandoverInspection>[];
-    final awaitingDecision =
-        items.where((inspection) => inspection.awaitingRenterDecision).length;
-    final disputed =
-        items.where((inspection) => inspection.isDisputed).length;
+    final awaitingDecision = items
+        .where((inspection) => inspection.awaitingRenterDecision)
+        .length;
+    final disputed = items.where((inspection) => inspection.isDisputed).length;
 
     return _Panel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const _SectionTitle('Handover inspections'),
-          const SizedBox(height: 4),
-          const Text(
-            'The pick-up and return condition of the vehicle is recorded by '
-            'you and the provider. Both sides can accept or decline the '
-            "other party's record.",
-            style: TextStyle(
-              color: CarRentalColors.body,
-              fontSize: 11.5,
-              height: 1.45,
-            ),
-          ),
           const SizedBox(height: 10),
           _inspectionSummaryRow('Pick-up', pickup),
           const SizedBox(height: 6),
@@ -758,9 +728,8 @@ class _CarHireBookingDetailPageState
               message: inspections.error is CarHireApiException
                   ? (inspections.error as CarHireApiException).message
                   : UserFacingError.from(inspections.error!),
-              onRetry: () => ref.invalidate(
-                bookingInspectionsProvider(widget.bookingId),
-              ),
+              onRetry: () =>
+                  ref.invalidate(bookingInspectionsProvider(widget.bookingId)),
             ),
           ],
           if (awaitingDecision > 0) ...[
@@ -782,9 +751,8 @@ class _CarHireBookingDetailPageState
                   SizedBox(width: 7),
                   Expanded(
                     child: Text(
-                      'An inspection recorded by the provider is waiting for '
-                      'your decision. Open the inspection page to accept or '
-                      'decline it.',
+                      'The provider recorded an inspection. Open it to accept '
+                      'or decline.',
                       style: TextStyle(
                         color: CarRentalColors.greyDark,
                         fontSize: 11.5,
@@ -815,8 +783,7 @@ class _CarHireBookingDetailPageState
                   SizedBox(width: 7),
                   Expanded(
                     child: Text(
-                      'A handover inspection is disputed. Vero360 support can '
-                      'review the record and any media references.',
+                      'An inspection is disputed. Support can review it.',
                       style: TextStyle(
                         color: CarRentalColors.error,
                         fontSize: 11.5,
@@ -835,14 +802,14 @@ class _CarHireBookingDetailPageState
                 child: OutlinedButton.icon(
                   onPressed: canPickup
                       ? () => CarHireRoutes.openInspection(
-                            context,
-                            bookingId: booking.id,
-                            type: InspectionType.pickup,
-                            booking: booking,
-                          )
+                          context,
+                          bookingId: booking.id,
+                          type: InspectionType.pickup,
+                          booking: booking,
+                        )
                       : null,
                   icon: const Icon(Icons.login_rounded, size: 17),
-                  label: const Text('Pickup inspection'),
+                  label: const Text('Pick-up'),
                   style: OutlinedButton.styleFrom(
                     minimumSize: const Size.fromHeight(44),
                   ),
@@ -853,14 +820,14 @@ class _CarHireBookingDetailPageState
                 child: OutlinedButton.icon(
                   onPressed: canReturn
                       ? () => CarHireRoutes.openInspection(
-                            context,
-                            bookingId: booking.id,
-                            type: InspectionType.returnInspection,
-                            booking: booking,
-                          )
+                          context,
+                          bookingId: booking.id,
+                          type: InspectionType.returnInspection,
+                          booking: booking,
+                        )
                       : null,
                   icon: const Icon(Icons.logout_rounded, size: 17),
-                  label: const Text('Return inspection'),
+                  label: const Text('Return'),
                   style: OutlinedButton.styleFrom(
                     minimumSize: const Size.fromHeight(44),
                   ),
@@ -868,11 +835,10 @@ class _CarHireBookingDetailPageState
               ),
             ],
           ),
-          if (!canPickup && !canReturn) ...[
+          if (!canPickup && !canReturn && booking.bookingStatus.isOpen) ...[
             const SizedBox(height: 6),
             const Text(
-              'Inspections open once the booking is confirmed. The return '
-              'inspection opens while the rental is active.',
+              'Available once the booking is confirmed.',
               style: TextStyle(
                 color: CarRentalColors.grey,
                 fontSize: 10.5,
@@ -893,10 +859,7 @@ class _CarHireBookingDetailPageState
           width: 62,
           child: Text(
             label,
-            style: const TextStyle(
-              color: CarRentalColors.grey,
-              fontSize: 11.5,
-            ),
+            style: const TextStyle(color: CarRentalColors.grey, fontSize: 11.5),
           ),
         ),
         Expanded(
@@ -916,9 +879,7 @@ class _CarHireBookingDetailPageState
         ),
         if (inspection != null) ...[
           const SizedBox(width: 8),
-          Flexible(
-            child: CarHireStatusBadge.inspection(inspection.status),
-          ),
+          Flexible(child: CarHireStatusBadge.inspection(inspection.status)),
         ],
       ],
     );
@@ -935,18 +896,7 @@ class _CarHireBookingDetailPageState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const _SectionTitle('Extension requests'),
-          const SizedBox(height: 4),
-          const Text(
-            'Need the vehicle longer? Ask for a later return time. The '
-            'provider reviews the request and the server quotes any '
-            'additional amount.',
-            style: TextStyle(
-              color: CarRentalColors.body,
-              fontSize: 11.5,
-              height: 1.45,
-            ),
-          ),
+          const _SectionTitle('Need it longer?'),
           const SizedBox(height: 10),
           if (extensions.isLoading)
             const LinearProgressIndicator(
@@ -959,18 +909,11 @@ class _CarHireBookingDetailPageState
               message: extensions.error is CarHireApiException
                   ? (extensions.error as CarHireApiException).message
                   : UserFacingError.from(extensions.error!),
-              onRetry: () => ref.invalidate(
-                bookingExtensionsProvider(widget.bookingId),
-              ),
+              onRetry: () =>
+                  ref.invalidate(bookingExtensionsProvider(widget.bookingId)),
             )
           else if (items.isEmpty)
-            const Text(
-              'No extension requests yet.',
-              style: TextStyle(
-                color: CarRentalColors.body,
-                fontSize: 12,
-              ),
-            )
+            const SizedBox.shrink()
           else
             for (final extension in items)
               Container(
@@ -1000,9 +943,7 @@ class _CarHireBookingDetailPageState
                         ),
                         const SizedBox(width: 6),
                         Flexible(
-                          child: CarHireStatusBadge.extension(
-                            extension.status,
-                          ),
+                          child: CarHireStatusBadge.extension(extension.status),
                         ),
                       ],
                     ),
@@ -1010,7 +951,7 @@ class _CarHireBookingDetailPageState
                     Text(
                       extension.hasAdditionalAmount
                           ? 'Additional amount quoted: '
-                              '${extension.additionalAmountLabel}'
+                                '${extension.additionalAmountLabel}'
                           : 'No additional amount was quoted.',
                       style: const TextStyle(
                         color: CarRentalColors.body,
@@ -1036,29 +977,8 @@ class _CarHireBookingDetailPageState
             const SizedBox(height: 8),
             CarHireInlineError(message: extensionState.error!.message),
           ],
-          const SizedBox(height: 10),
-          if (!booking.bookingStatus.isOpen)
-            const Text(
-              'Extensions can only be requested while the booking is pending, '
-              'confirmed or active.',
-              style: TextStyle(
-                color: CarRentalColors.grey,
-                fontSize: 10.5,
-                height: 1.4,
-              ),
-            )
-          else if (booking.endAt == null)
-            const Text(
-              'This booking has no return time, so it cannot be extended from '
-              'the app. Contact support.',
-              style: TextStyle(
-                color: CarRentalColors.grey,
-                fontSize: 10.5,
-                height: 1.4,
-              ),
-            )
-          else
-            FilledButton.icon(
+          if (booking.bookingStatus.isOpen && booking.endAt != null)
+            OutlinedButton.icon(
               onPressed: extensionState.submitting
                   ? null
                   : () => _requestExtension(booking),
@@ -1066,10 +986,7 @@ class _CarHireBookingDetailPageState
                   ? const SizedBox(
                       width: 16,
                       height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
+                      child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.more_time_rounded, size: 18),
               label: Text(
@@ -1077,60 +994,31 @@ class _CarHireBookingDetailPageState
                     ? 'Sending request…'
                     : 'Request extension',
               ),
-              style: carHirePrimaryButton(),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(44),
+              ),
             ),
-        ],
-      ),
-    );
-  }
-
-  Widget _priceCard(CarHireBooking booking) {
-    return _Panel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const _SectionTitle('Price breakdown'),
-          const SizedBox(height: 10),
-          CarHirePriceBreakdown.booking(booking),
-          const SizedBox(height: 4),
-          const Text(
-            'Amounts come from the server quote and booking record. Vero360 '
-            'does not calculate the total on this screen.',
-            style: TextStyle(
-              color: CarRentalColors.grey,
-              fontSize: 10.5,
-              height: 1.4,
-            ),
-          ),
         ],
       ),
     );
   }
 
   Widget _paymentCard(CarHireBooking booking) {
-    final paid = booking.paymentSucceeded;
-    final pending = booking.paymentStatus == PaymentStatus.pending;
-
     return _Panel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const _SectionTitle('Payment'),
-          const SizedBox(height: 10),
           Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(
-                child: Text(
-                  booking.paymentLabel,
-                  style: TextStyle(
-                    color: paid
-                        ? CarRentalColors.success
-                        : pending
-                            ? CarRentalColors.brandOrange
-                            : CarRentalColors.title,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Total', style: CarHireType.labelSmall),
+                    const SizedBox(height: 2),
+                    Text(booking.totalLabel, style: CarHireType.priceSmall),
+                  ],
                 ),
               ),
               const SizedBox(width: 8),
@@ -1139,51 +1027,36 @@ class _CarHireBookingDetailPageState
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          _InfoRow(label: 'Amount', value: booking.totalLabel),
-          if (booking.paymentReference != null)
-            _InfoRow(
-              label: 'Reference',
-              value: booking.paymentReference!,
-            ),
-          if (paid) ...[
-            const SizedBox(height: 8),
-            const Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          Theme(
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: const EdgeInsets.only(bottom: 4),
+              dense: true,
+              iconColor: CarRentalColors.title,
+              collapsedIconColor: CarRentalColors.grey,
+              title: const Text(
+                'Price breakdown',
+                style: TextStyle(
+                  color: CarRentalColors.title,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
               children: [
-                Icon(
-                  Icons.verified_rounded,
-                  size: 16,
-                  color: CarRentalColors.success,
-                ),
-                SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    'Vero360 has confirmed this payment with the payment '
-                    'provider.',
-                    style: TextStyle(
-                      color: CarRentalColors.body,
-                      fontSize: 11.5,
-                      height: 1.4,
-                    ),
+                CarHirePriceBreakdown.booking(booking),
+                if (booking.paymentReference != null) ...[
+                  const SizedBox(height: 8),
+                  _InfoRow(
+                    label: 'Reference',
+                    value: booking.paymentReference!,
                   ),
-                ),
+                ],
               ],
             ),
-          ] else if (pending) ...[
-            const SizedBox(height: 8),
-            const Text(
-              'The payment provider has not confirmed this payment yet. '
-              'Refresh the booking in a moment.',
-              style: TextStyle(
-                color: CarRentalColors.body,
-                fontSize: 11.5,
-                height: 1.4,
-              ),
-            ),
-          ],
+          ),
           if (booking.canPay) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 4),
             FilledButton.icon(
               onPressed: _paymentLaunching || _refreshing
                   ? null
@@ -1204,175 +1077,100 @@ class _CarHireBookingDetailPageState
               style: carHirePrimaryButton(),
             ),
           ],
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            onPressed: _refreshing ? null : _refreshStatus,
-            icon: _refreshing
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.refresh_rounded, size: 18),
-            label: const Text('Refresh payment status'),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size.fromHeight(44),
+          if (!booking.paymentSucceeded &&
+              booking.paymentStatus == PaymentStatus.pending) ...[
+            const SizedBox(height: 4),
+            TextButton.icon(
+              onPressed: _refreshing ? null : _refreshStatus,
+              icon: const Icon(Icons.refresh_rounded, size: 17),
+              label: const Text("I've paid · Check status"),
+              style: TextButton.styleFrom(
+                foregroundColor: CarRentalColors.title,
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _cancellationCard(CarHireBooking booking) {
-    final cancelled = booking.bookingStatus == BookingStatus.cancelled;
-    final canCancel = booking.canCancel;
+  Widget _manageCard(CarHireBooking booking) {
+    final canCancel =
+        booking.canCancel && booking.bookingStatus != BookingStatus.cancelled;
 
-    return _Panel(
+    return CarHireSurface(
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const _SectionTitle('Cancellation'),
-          const SizedBox(height: 8),
-          if (cancelled || booking.cancelledAt != null) ...[
-            Text(
-              booking.cancelledAt == null
-                  ? 'This booking is cancelled.'
-                  : 'Cancelled ${CarHireFormatters.formatDateTime(booking.cancelledAt!)}.',
-              style: const TextStyle(
-                color: CarRentalColors.body,
-                fontSize: 12,
-                height: 1.4,
-              ),
+          _ManageTile(
+            icon: Icons.report_problem_outlined,
+            label: 'Report an issue',
+            onTap: () => CarHireRoutes.openReport(
+              context,
+              bookingId: booking.id,
+              initialTab: 0,
+              bookingNumber: booking.bookingNumber,
             ),
-            if (booking.cancellationReason != null) ...[
-              const SizedBox(height: 4),
-              Text(
-                'Reason: ${booking.cancellationReason}',
-                style: const TextStyle(
-                  color: CarRentalColors.body,
-                  fontSize: 12,
-                  height: 1.4,
-                ),
-              ),
-            ],
-          ] else if (canCancel) ...[
-            const Text(
-              'You can cancel a pending or confirmed booking before pick-up. '
-              'This releases the dates; any refund follows the rental terms.',
-              style: TextStyle(
-                color: CarRentalColors.body,
-                fontSize: 11.5,
-                height: 1.45,
-              ),
+          ),
+          _ManageTile(
+            icon: Icons.support_agent_rounded,
+            label: 'Get help',
+            onTap: () => CarHireRoutes.openReport(
+              context,
+              bookingId: booking.id,
+              initialTab: 1,
+              bookingNumber: booking.bookingNumber,
             ),
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              onPressed: _cancelling
-                  ? null
-                  : () => _cancelBooking(booking),
-              icon: _cancelling
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.cancel_outlined, size: 18),
-              label: Text(
-                _cancelling ? 'Cancelling…' : 'Cancel booking',
-              ),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: CarRentalColors.error,
-                side: const BorderSide(color: CarRentalColors.error),
-                minimumSize: const Size.fromHeight(44),
-              ),
-            ),
-          ] else
-            const Text(
-              'This booking can no longer be cancelled from the app.',
-              style: TextStyle(
-                color: CarRentalColors.body,
-                fontSize: 12,
-                height: 1.4,
-              ),
+          ),
+          _ManageTile(
+            icon: Icons.description_outlined,
+            label: 'Rental terms',
+            onTap: () => CarHireRoutes.openTerms(context),
+          ),
+          if (canCancel)
+            _ManageTile(
+              icon: Icons.cancel_outlined,
+              label: _cancelling ? 'Cancelling…' : 'Cancel booking',
+              color: CarRentalColors.error,
+              onTap: _cancelling ? null : () => _cancelBooking(booking),
             ),
         ],
       ),
     );
   }
+}
 
-  Widget _supportCard(CarHireBooking booking) {
-    return _Panel(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(
-            Icons.support_agent_rounded,
-            color: CarRentalColors.brandOrange,
-          ),
-          const SizedBox(width: 9),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Need help with this rental?',
-                  style: TextStyle(
-                    color: CarRentalColors.title,
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                const Text(
-                  'Keep your booking number handy when contacting support.',
-                  style: TextStyle(
-                    color: CarRentalColors.body,
-                    fontSize: 11.5,
-                    height: 1.4,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 6,
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: () => CarHireRoutes.openReport(
-                        context,
-                        bookingId: booking.id,
-                        initialTab: 0,
-                        bookingNumber: booking.bookingNumber,
-                      ),
-                      icon: const Icon(Icons.report_problem_outlined, size: 17),
-                      label: const Text('Report an issue'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: CarRentalColors.error,
-                        side: const BorderSide(color: CarRentalColors.error),
-                      ),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: () => CarHireRoutes.openReport(
-                        context,
-                        bookingId: booking.id,
-                        initialTab: 1,
-                        bookingNumber: booking.bookingNumber,
-                      ),
-                      icon: const Icon(Icons.support_agent_rounded, size: 17),
-                      label: const Text('Get help'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: CarRentalColors.brandOrange,
-                        side: const BorderSide(
-                          color: CarRentalColors.brandOrange,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
+class _ManageTile extends StatelessWidget {
+  const _ManageTile({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.color = CarRentalColors.title,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      onTap: onTap,
+      dense: true,
+      leading: Icon(icon, size: 20, color: color),
+      title: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 13.5,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      trailing: const Icon(
+        Icons.chevron_right_rounded,
+        size: 20,
+        color: CarRentalColors.grey,
       ),
     );
   }
@@ -1398,25 +1196,13 @@ class _PaymentPhoneDialogState extends State<_PaymentPhoneDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Continue to payment'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Enter a mobile money number if your payment provider requires '
-            'one. You can leave it blank.',
-            style: TextStyle(fontSize: 12, height: 1.4),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _controller,
-            keyboardType: TextInputType.phone,
-            decoration: const InputDecoration(
-              labelText: 'Mobile money number (optional)',
-              hintText: '+265…',
-            ),
-          ),
-        ],
+      content: TextField(
+        controller: _controller,
+        keyboardType: TextInputType.phone,
+        decoration: const InputDecoration(
+          labelText: 'Mobile money number (optional)',
+          hintText: '+265…',
+        ),
       ),
       actions: [
         TextButton(
@@ -1424,8 +1210,7 @@ class _PaymentPhoneDialogState extends State<_PaymentPhoneDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: () =>
-              Navigator.of(context).pop(_controller.text.trim()),
+          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
           child: const Text('Continue'),
         ),
       ],
@@ -1440,10 +1225,7 @@ class _Panel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CarHireSurface(
-      padding: const EdgeInsets.all(16),
-      child: child,
-    );
+    return CarHireSurface(padding: const EdgeInsets.all(16), child: child);
   }
 }
 

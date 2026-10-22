@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui';
 
+import 'package:flutter/cupertino.dart' show CupertinoPageRoute;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,7 +17,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:vero360_app/Quickservices/social.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
-import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_browse_page.dart';
+import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_account_pages.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/bike_ride_share_map_screen.dart';
 import 'package:vero360_app/features/ride_share/ride_share_entry_resolver.dart';
@@ -557,10 +558,10 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       _openDigitalServices(initialCategory: 'gift_cards');
       return;
     }
-    // Car hire has its own renter journey. Keep this branch ahead of the
+    // Car hire has its own journey. Keep this branch ahead of the
     // ride-share resolver so Vero Ride behaviour is untouched.
     if (key == 'car_hire') {
-      CarHireRoutes.openBrowse(context);
+      CarHireRoutes.openHome(context);
       return;
     }
     if (RideShareEntryResolver.isRideShareServiceKey(key)) {
@@ -621,7 +622,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
         page = const CustomerServicePage();
         break;
       case 'car_hire':
-        page = const CarHireBrowsePage();
+        page = const CarHireHomePage();
         break;
       case 'taxi':
       case 'ride':
@@ -642,7 +643,11 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       default:
         page = const BikeRideShareMapScreen();
     }
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+    Navigator.of(context).push(
+      key == 'car_hire'
+          ? CupertinoPageRoute<void>(builder: (_) => page)
+          : MaterialPageRoute<void>(builder: (_) => page),
+    );
   }
 
   String? _merchantProfilePhoneOrNull(String? raw) {

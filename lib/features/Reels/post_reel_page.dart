@@ -9,6 +9,7 @@ import 'package:video_player/video_player.dart';
 import 'package:vero360_app/features/Reels/reel_model.dart';
 import 'package:vero360_app/features/Reels/reel_music_picker.dart';
 import 'package:vero360_app/features/Reels/reel_service.dart';
+import 'package:vero360_app/features/Reels/reel_upload_manager.dart';
 import 'package:vero360_app/features/Reels/reels_nav_icon.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
@@ -34,7 +35,6 @@ class _PostReelPageState extends State<PostReelPage> {
   ReelMusic? _music;
   ReelIdentity? _me;
   bool _posting = false;
-  double _progress = 0;
 
   @override
   void initState() {
@@ -128,31 +128,24 @@ class _PostReelPageState extends State<PostReelPage> {
   Future<void> _post() async {
     final path = _path;
     if (path == null || _posting) return;
-    _preview?.pause();
-    setState(() {
-      _posting = true;
-      _progress = 0;
-    });
-    try {
-      await _service.postReel(
-        filePath: path,
-        caption: _caption.text,
-        duration: _duration,
-        product: _product,
-        music: _music,
-        onProgress: (p) {
-          if (mounted) setState(() => _progress = p);
-        },
-      );
-      if (!mounted) return;
-      _toast('Reel posted', ok: true);
-      Navigator.of(context).pop(true);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _posting = false);
-      final msg = e.toString().replaceFirst('Exception: ', '');
-      _toast(msg.length > 120 ? 'Could not post reel. Check your connection.' : msg);
+    if (!_service.isSignedIn) {
+      _toast('Sign in to post a reel.');
+      return;
     }
+    final started = ReelUploadManager.instance.start(
+      filePath: path,
+      caption: _caption.text,
+      duration: _duration,
+      product: _product,
+      music: _music,
+    );
+    if (!started) {
+      _toast('Wait for your other reel to finish posting.');
+      return;
+    }
+    _preview?.pause();
+    setState(() => _posting = true);
+    Navigator.of(context).pop(true);
   }
 
   String _fmt(Duration d) {
@@ -607,7 +600,6 @@ class _PostReelPageState extends State<PostReelPage> {
   }
 
   Widget _postBar() {
-    final pct = (_progress * 100).round();
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
       decoration: BoxDecoration(
@@ -629,15 +621,10 @@ class _PostReelPageState extends State<PostReelPage> {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                ColoredBox(color: _posting ? _kOrangeSoft : _kOrange),
-                FractionallySizedBox(
-                  alignment: Alignment.centerLeft,
-                  widthFactor: _posting ? _progress.clamp(0.02, 1.0) : 1,
-                  child: const DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [Color(0xFFFFA43A), _kOrange, _kOrangeDeep],
-                      ),
+                const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Color(0xFFFFA43A), _kOrange, _kOrangeDeep],
                     ),
                   ),
                 ),
@@ -645,17 +632,11 @@ class _PostReelPageState extends State<PostReelPage> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
-                        _posting ? Icons.cloud_upload_rounded : Icons.send_rounded,
-                        color: Colors.white,
-                        size: 20,
-                      ),
+                      const Icon(Icons.send_rounded, color: Colors.white, size: 20),
                       const SizedBox(width: 8),
-                      Text(
-                        _posting
-                            ? (_progress > 0 ? 'Uploading $pct%' : 'Starting upload…')
-                            : 'Share reel',
-                        style: const TextStyle(
+                      const Text(
+                        'Share reel',
+                        style: TextStyle(
                           color: Colors.white,
                           fontSize: 16,
                           fontWeight: FontWeight.w900,

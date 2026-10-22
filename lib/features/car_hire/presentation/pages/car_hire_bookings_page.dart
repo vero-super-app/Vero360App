@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skeletons.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_status_badge.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
@@ -81,21 +82,25 @@ class _CarHireBookingsPageState extends ConsumerState<CarHireBookingsPage> {
         backgroundColor: CarHirePalette.surface,
         onRefresh: _refresh,
         child: bookings.when(
+          skipLoadingOnRefresh: true,
           loading: () => ListView(
             physics: const AlwaysScrollableScrollPhysics(),
-            children: const [
-              SizedBox(height: 120),
-              CarHireLoadingState(message: 'Loading your bookings…'),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+            children: [
+              Semantics(
+                label: 'Loading your bookings',
+                container: true,
+                child: const ExcludeSemantics(
+                  child: CarHireCompanyBookingListSkeleton(),
+                ),
+              ),
             ],
           ),
           error: (error, _) => ListView(
             physics: const AlwaysScrollableScrollPhysics(),
             children: [
               const SizedBox(height: 60),
-              CarHireErrorState(
-                error: error,
-                onRetry: _refresh,
-              ),
+              CarHireErrorState(error: error, onRetry: _refresh),
             ],
           ),
           data: (items) {
@@ -107,9 +112,7 @@ class _CarHireBookingsPageState extends ConsumerState<CarHireBookingsPage> {
                   CarHireEmptyState(
                     icon: Icons.receipt_long_outlined,
                     title: 'No car hire bookings yet',
-                    message:
-                        'When you book a car, your booking and payment status '
-                        'will appear here.',
+                    message: 'Your car hire bookings will appear here.',
                     actionLabel: 'Browse cars',
                     onAction: () => CarHireRoutes.openBrowse(context),
                   ),
@@ -128,33 +131,6 @@ class _CarHireBookingsPageState extends ConsumerState<CarHireBookingsPage> {
                 24 + MediaQuery.paddingOf(context).bottom,
               ),
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Your trips',
-                        style: CarHireType.titleLarge,
-                      ),
-                    ),
-                    CarHirePill(
-                      label: '${items.length} total',
-                      background: CarHirePalette.accentPale,
-                      foreground: CarHirePalette.onAccentSoft,
-                      fontSize: 10.5,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 9,
-                        vertical: 5,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Track payment, handover inspections and extensions for '
-                  'every rental.',
-                  style: CarHireType.bodySmall,
-                ),
-                const SizedBox(height: 14),
                 SizedBox(
                   height: 38,
                   child: ListView.separated(
@@ -187,12 +163,6 @@ class _CarHireBookingsPageState extends ConsumerState<CarHireBookingsPage> {
                         Text(
                           'Nothing in ${_scope.label.toLowerCase()} trips',
                           style: CarHireType.subtitle,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Switch the filter to see your other bookings.',
-                          textAlign: TextAlign.center,
-                          style: CarHireType.bodySmall,
                         ),
                       ],
                     ),
@@ -249,9 +219,7 @@ class _ScopeChip extends StatelessWidget {
           child: Text(
             label,
             style: TextStyle(
-              color: selected
-                  ? Colors.white
-                  : CarHirePalette.onSurfaceVariant,
+              color: selected ? Colors.white : CarHirePalette.onSurfaceVariant,
               fontSize: 11.5,
               fontWeight: FontWeight.w800,
             ),
@@ -376,10 +344,7 @@ class _BookingListCard extends StatelessWidget {
                     children: [
                       Text('Total', style: CarHireType.labelSmall),
                       const SizedBox(height: 1),
-                      Text(
-                        booking.totalLabel,
-                        style: CarHireType.priceSmall,
-                      ),
+                      Text(booking.totalLabel, style: CarHireType.priceSmall),
                     ],
                   ),
                 ),
@@ -387,9 +352,7 @@ class _BookingListCard extends StatelessWidget {
                 Flexible(
                   child: Align(
                     alignment: Alignment.centerRight,
-                    child: CarHireStatusBadge.payment(
-                      booking.paymentStatus,
-                    ),
+                    child: CarHireStatusBadge.payment(booking.paymentStatus),
                   ),
                 ),
                 const SizedBox(width: 4),

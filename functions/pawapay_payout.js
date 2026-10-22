@@ -429,15 +429,32 @@ const getPawaPayDepositStatus = onCall(
 
     const ref = admin.firestore().collection('pawapay_deposits').doc(depositId);
     const snap = await ref.get();
-    if (!snap.exists || String((snap.data() || {}).userId || '') !== uid) {
+    const stored = snap.data() || {};
+    if (!snap.exists || String(stored.userId || '') !== uid) {
       throw new HttpsError('not-found', 'Payment not found.');
     }
 
-    const { ok, body } = await pawapayRequest(`/v2/deposits/${encodeURIComponent(depositId)}`, {
-      method: 'GET',
-    });
-    const remote = body && body.data && typeof body.data === 'object' ? body.data : body;
-    const status = String((remote && remote.status) || '').toUpperCase();
+    const storedStatus = String(stored.status || '').toLowerCase();
+    if (storedStatus === 'completed' || storedStatus === 'failed') {
+      return {
+        depositId,
+        status: storedStatus,
+        failure: stored.failure || '',
+      };
+    }
+
+    let remote = {};
+    let ok = false;
+    try {
+      const live = await pawapayRequest(`/v2/deposits/${encodeURIComponent(depositId)}`, {
+        method: 'GET',
+      });
+      ok = live.ok;
+      remote = paymentRecord(live.body);
+    } catch (_) {
+      return { depositId, status: 'pending' };
+    }
+    const status = paymentStatus(remote);
     if (!ok && !status) {
       return { depositId, status: 'pending' };
     }
@@ -448,8 +465,8 @@ const getPawaPayDepositStatus = onCall(
       );
       return { depositId, status: 'completed' };
     }
-    if (status === 'FAILED') {
-      const failure = failureMessage(remote || body);
+    if (status === 'FAILED' || status === 'REJECTED') {
+      const failure = failureMessage(remote);
       await ref.set(
         {
           status: 'failed',
@@ -467,8 +484,25 @@ const getPawaPayDepositStatus = onCall(
 function callbackPayload(body) {
   if (!body || typeof body !== 'object') return null;
   if (body.payoutId || body.depositId) return body;
-  if (body.data && typeof body.data === 'object') return body.data;
+  const data = body.data;
+  if (Array.isArray(data) && data[0] && typeof data[0] === 'object') return data[0];
+  if (data && typeof data === 'object') return data;
   return body;
+}
+
+/** PawaPay v2 GET wraps the payment in { status: "FOUND", data: { status: "COMPLETED" } }. */
+function paymentRecord(body) {
+  if (!body || typeof body !== 'object') return {};
+  const envelope = String(body.status || '').toUpperCase();
+  let data = body.data;
+  if (Array.isArray(data)) data = data[0];
+  if (data && typeof data === 'object' && !Array.isArray(data)) return data;
+  if (envelope === 'FOUND' || envelope === 'NOT_FOUND') return {};
+  return body;
+}
+
+function paymentStatus(record) {
+  return String((record && record.status) || '').toUpperCase();
 }
 
 const pawapayWebhook = onRequest(

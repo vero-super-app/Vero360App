@@ -2103,8 +2103,9 @@ exports.activateMarketplacePromotion =
 
 /** Spotify song search for reels — see ./spotify_search.js */
 exports.spotifySearch = require('./spotify_search').spotifySearch;
-exports.prepareReelDownload = require('./reel_download').prepareReelDownload;
-exports.brandReelOnPost = require('./reel_download').brandReelOnPost;
+const reelDownload = require('./reel_download');
+exports.prepareReelDownload = reelDownload.prepareReelDownload;
+exports.brandReelOnPost = reelDownload.brandReelOnPost;
 
 // ─────────────────────────────────────────────────────────────
 // Reels: tell followers when someone they follow goes LIVE or posts a reel.

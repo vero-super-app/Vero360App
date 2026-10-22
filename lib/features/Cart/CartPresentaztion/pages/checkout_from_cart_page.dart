@@ -1799,14 +1799,17 @@ class InAppPaymentPage extends StatefulWidget {
 }
 
 class _InAppPaymentPageState extends State<InAppPaymentPage> {
-  Timer? _pollTimer;
   bool _resultHandled = false;
   final order_svc.OrderService _orderService = order_svc.OrderService();
   final TextEditingController _momoPhone = TextEditingController();
   String _momoOperator = PawaPayPayment.airtelOperatorId;
   bool _momoBusy = false;
   bool _momoWaiting = false;
+  bool _placingOrder = false;
+  bool _paid = false;
+  String _orderSyncWarning = '';
   String _momoMessage = '';
+  int _payGen = 0;
 
   @override
   void initState() {
@@ -1829,10 +1832,12 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   }
 
   Future<void> _startPawaPayDeposit() async {
-    if (_momoBusy || _resultHandled) return;
+    if (_momoBusy || _resultHandled || _paid) return;
+    final gen = ++_payGen;
     setState(() {
       _momoBusy = true;
       _momoWaiting = false;
+      _placingOrder = false;
       _momoMessage = '';
     });
     try {
@@ -1842,33 +1847,43 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         operatorId: _momoOperator,
         reference: widget.txRef,
       );
-      if (!mounted) return;
+      if (!mounted || gen != _payGen) return;
       setState(() => _momoWaiting = true);
-      _pollTimer?.cancel();
-      _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
-        try {
-          final status = await PawaPayPayment.readStatus(depositId);
-          final state = (status['status'] ?? '').toString();
-          if (state == 'completed') {
-            _handlePaymentSuccess();
-          } else if (state == 'failed') {
-            _pollTimer?.cancel();
-            if (!mounted) return;
-            setState(() {
-              _momoBusy = false;
-              _momoWaiting = false;
-              _momoMessage = PawaPayPayment.explainFailure(
-                (status['failure'] ?? '').toString(),
-              );
-            });
-          }
-        } catch (_) {}
-      });
-    } catch (e) {
-      if (!mounted) return;
+      final status = await PawaPayPayment.waitUntilFinal(depositId);
+      if (!mounted || gen != _payGen) return;
+      final state = (status['status'] ?? '').toString();
+      if (state == 'completed') {
+        setState(() {
+          _placingOrder = true;
+          _momoWaiting = true;
+        });
+        await _handlePaymentSuccess();
+        return;
+      }
+      if (state == 'failed') {
+        setState(() {
+          _momoBusy = false;
+          _momoWaiting = false;
+          _placingOrder = false;
+          _momoMessage = PawaPayPayment.explainFailure(
+            (status['failure'] ?? '').toString(),
+          );
+        });
+        return;
+      }
       setState(() {
         _momoBusy = false;
         _momoWaiting = false;
+        _placingOrder = false;
+        _momoMessage =
+            'Still waiting for confirmation. If you already approved the prompt, tap Pay again.';
+      });
+    } catch (e) {
+      if (!mounted || gen != _payGen) return;
+      setState(() {
+        _momoBusy = false;
+        _momoWaiting = false;
+        _placingOrder = false;
         _momoMessage = PawaPayPayment.readableError(e);
       });
     }
@@ -1904,6 +1919,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
           errorMessage: message,
         );
       }
+      rethrow;
     }
   }
 
@@ -2195,11 +2211,11 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     }
   }
 
-  void _handlePaymentSuccess() {
+  Future<void> _handlePaymentSuccess() async {
     if (_resultHandled) return;
     _resultHandled = true;
-    _pollTimer?.cancel();
 
+    var syncWarning = '';
     final shouldClearCart = widget.clearCartOnSuccess;
     final clearFuture = shouldClearCart
         ? () async {
@@ -2212,15 +2228,12 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
           }()
         : Future<void>.value();
 
-    // Non-cart paths still fire-and-forget; cart path awaits below.
-
     final food = widget.foodCheckout;
     final cartItems = widget.cartItemsForMerchantCredit ?? const <CartModel>[];
     final foodItems = cartItems.where((e) => e.isFood).toList();
     final marketItems = cartItems.where((e) => !e.isFood).toList();
     final esc = widget.accommodationEscrow;
 
-    // Earn a Vero spin after successful marketplace / food / stay payment.
     final spinSource = (food != null || foodItems.isNotEmpty)
         ? VeroRewardsService.sourceFood
         : (marketItems.isNotEmpty ||
@@ -2238,50 +2251,37 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
       );
     }
 
-    if (food != null || foodItems.isNotEmpty) {
-      unawaited(_persistFoodOrderAfterPayment(cartFoodItems: foodItems));
-    }
-
-    if (marketItems.isNotEmpty) {
-      unawaited(_createConfirmedOrdersAndEscrow(marketItems));
-    } else if (food == null && foodItems.isEmpty) {
-      final items = widget.cartItemsForMerchantCredit;
-      if (items != null && items.isNotEmpty) {
-        unawaited(_createConfirmedOrdersAndEscrow(items));
+    try {
+      if (food != null || foodItems.isNotEmpty) {
+        await _persistFoodOrderAfterPayment(cartFoodItems: foodItems);
       }
-    }
-
-    final isFoodCartCheckout = foodItems.isNotEmpty && food == null;
-
-    if (food != null && marketItems.isEmpty) {
-      ToastHelper.showCustomToast(
-        widget.rootContext,
-        'Payment successful — the kitchen has your order.',
-        isSuccess: true,
-        errorMessage: '',
-      );
-      if (mounted) Navigator.of(context).pop();
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (widget.rootContext.mounted) {
-          Navigator.of(widget.rootContext).pop();
-          Navigator.of(widget.rootContext).push(
-            MaterialPageRoute(builder: (_) => const FoodMyOrdersPage()),
-          );
+      if (marketItems.isNotEmpty) {
+        await _createConfirmedOrdersAndEscrow(marketItems);
+      } else if (food == null && foodItems.isEmpty) {
+        final items = widget.cartItemsForMerchantCredit;
+        if (items != null && items.isNotEmpty) {
+          await _createConfirmedOrdersAndEscrow(items);
         }
-      });
-      return;
+      }
+      if (esc != null) {
+        await OrderEscrowService.createHoldForAccommodationBooking(
+          txRef: widget.txRef,
+          grossAmountMwk: widget.providerAmountMwk ?? widget.totalAmount,
+          params: esc,
+        );
+      }
+    } catch (e) {
+      debugPrint('[InAppPaymentPage] order fulfill failed: $e');
+      syncWarning =
+          'Payment is confirmed, but we could not finish sending the order. Contact support with ref ${widget.txRef}.';
     }
-    if (esc != null) {
-      unawaited(OrderEscrowService.createHoldForAccommodationBooking(
-        txRef: widget.txRef,
-        grossAmountMwk: widget.providerAmountMwk ?? widget.totalAmount,
-        params: esc,
-      ));
-    }
-    final isDigital = widget.digitalProductName != null && widget.digitalProductName!.isNotEmpty;
+
+    await clearFuture;
+
+    final isDigital =
+        widget.digitalProductName != null && widget.digitalProductName!.isNotEmpty;
     final productName = widget.digitalProductName ?? 'your order';
 
-    // Persist digital order / platform fee credit when caller provided a hook.
     if (isDigital && widget.onSuccessNavigate != null) {
       try {
         widget.onSuccessNavigate!(widget.rootContext);
@@ -2290,71 +2290,52 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
       }
     }
 
+    if (!mounted) return;
+    setState(() {
+      _paid = true;
+      _placingOrder = false;
+      _momoBusy = false;
+      _momoWaiting = false;
+      _orderSyncWarning = syncWarning;
+    });
+
     ToastHelper.showCustomToast(
       widget.rootContext,
       isDigital
           ? 'Payment successful!'
-          : isFoodCartCheckout
+          : (food != null || foodItems.isNotEmpty)
               ? 'Payment successful — the kitchen has your order.'
-              : 'Payment Successful!',
+              : 'Payment successful — the merchant has your order.',
       isSuccess: true,
       errorMessage: '',
     );
 
     if (isDigital) {
-      // Digital purchase: thank-you message (email not sent from app)
       final message =
           'Thank you for purchasing $productName on Vero. Contact support if you need instructions.';
-      if (mounted) {
-        Navigator.of(context).pop(); // close webview
-        if (!widget.rootContext.mounted) return;
-        showDialog(
-          context: widget.rootContext,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Purchase successful'),
-            content: Text(message),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.of(ctx).pop();
-                  Navigator.of(widget.rootContext).pop(); // back to homepage (pops DigitalProductDetailPage)
-                },
-                child: const Text('OK'),
-              ),
-            ],
-          ),
-        );
-      }
-    } else if (widget.onSuccessNavigate != null) {
-      if (mounted) {
-        Navigator.of(context).pop(); // close webview
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (widget.rootContext.mounted) {
-            widget.onSuccessNavigate!(widget.rootContext);
-          }
-        });
-      }
-    } else if (widget.popOnlyOnSuccess) {
-      if (mounted) Navigator.of(context).pop();
-    } else {
-      // Cart checkout: finish clearing before leaving so the cart isn't "stuck".
-      unawaited(() async {
-        await clearFuture;
-        if (!mounted) return;
-        Navigator.of(context).pop(); // close webview
-        if (!widget.rootContext.mounted) return;
-        Navigator.of(widget.rootContext).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const OrdersPage()),
-          (route) => route.isFirst,
-        );
-      }());
+      if (!widget.rootContext.mounted) return;
+      await showDialog<void>(
+        context: widget.rootContext,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Purchase successful'),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(ctx).pop();
+                Navigator.of(widget.rootContext).pop();
+              },
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
     }
   }
 
   void _handlePaymentFailure() {
     if (_resultHandled) return;
     _resultHandled = true;
-    _pollTimer?.cancel();
     final isDigital = widget.digitalProductName != null && widget.digitalProductName!.isNotEmpty;
 
     if (isDigital) {
@@ -2400,9 +2381,208 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
 
   @override
   void dispose() {
-    _pollTimer?.cancel();
+    _payGen++;
     _momoPhone.dispose();
     super.dispose();
+  }
+
+  void _openOrders() {
+    final food = widget.foodCheckout;
+    final cartItems = widget.cartItemsForMerchantCredit ?? const <CartModel>[];
+    final foodOnly = food != null ||
+        (cartItems.isNotEmpty && cartItems.every((e) => e.isFood));
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    if (!widget.rootContext.mounted) return;
+    if (widget.onSuccessNavigate != null) {
+      widget.onSuccessNavigate!(widget.rootContext);
+      return;
+    }
+    if (widget.popOnlyOnSuccess) return;
+    Navigator.of(widget.rootContext).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) =>
+            foodOnly ? const FoodMyOrdersPage() : const OrdersPage(),
+      ),
+      (route) => route.isFirst,
+    );
+  }
+
+  Widget _paidBody() {
+    final items = widget.cartItemsForMerchantCredit ?? const <CartModel>[];
+    final food = widget.foodCheckout;
+    final merchants = <String>{
+      ...items.map((e) => e.merchantName.trim()).where((e) => e.isNotEmpty),
+    };
+    final sentTo = food != null
+        ? 'The kitchen has your order.'
+        : merchants.isEmpty
+            ? 'The merchant has your order.'
+            : 'Sent to ${merchants.take(2).join(' · ')}.';
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
+      children: [
+        Center(
+          child: Container(
+            width: 84,
+            height: 84,
+            decoration: BoxDecoration(
+              color: const Color(0xFF16A34A).withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.check_rounded,
+              size: 44,
+              color: Color(0xFF16A34A),
+            ),
+          ),
+        ),
+        const SizedBox(height: 20),
+        const Text(
+          'Payment received',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 28,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.6,
+            color: Color(0xFF16284C),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          sentTo,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 15,
+            height: 1.45,
+            color: Color(0xFF8A5A32),
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 22),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: const Color(0xFFFFE0C2)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Order summary',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF16284C),
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (food != null)
+                _PaidLine(
+                  title: food.foodName,
+                  subtitle: 'Qty 1',
+                  amount: food.totalMwk,
+                ),
+              for (final it in items)
+                _PaidLine(
+                  title: it.name,
+                  subtitle:
+                      'Qty ${it.quantity}${it.merchantName.isEmpty ? '' : ' · ${it.merchantName}'}',
+                  amount: it.price * it.quantity,
+                ),
+              if (food == null && items.isEmpty)
+                Text(
+                  widget.digitalProductName ?? 'Paid order',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF16284C),
+                  ),
+                ),
+              const Divider(height: 22),
+              Row(
+                children: [
+                  const Text(
+                    'Total paid',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF16284C),
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    'MWK ${PawaPayPayment.formatMwk(widget.totalAmount.round())}',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                      color: Color(0xFF16284C),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Ref ${widget.txRef}',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Color(0xFF8A847C),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (_orderSyncWarning.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          Text(
+            _orderSyncWarning,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Color(0xFF9F2D22),
+              fontWeight: FontWeight.w600,
+              height: 1.4,
+            ),
+          ),
+        ],
+        const SizedBox(height: 24),
+        SizedBox(
+          height: 54,
+          child: FilledButton(
+            onPressed: _openOrders,
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFFF8A00),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              textStyle: const TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 16,
+              ),
+            ),
+            child: const Text('View my orders'),
+          ),
+        ),
+        const SizedBox(height: 10),
+        TextButton(
+          onPressed: () {
+            if (mounted) Navigator.of(context).pop();
+            if (widget.rootContext.mounted) {
+              Navigator.of(widget.rootContext).pop();
+            }
+          },
+          child: const Text(
+            'Done',
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF16284C),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   Future<void> _onBackPressed() async {
@@ -2517,6 +2697,11 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
       onSubmit: _startPawaPayDeposit,
       busy: _momoBusy,
       waiting: _momoWaiting,
+      placing: _placingOrder,
+      waitingTitle: _placingOrder ? 'Placing your order' : null,
+      waitingSubtitle: _placingOrder
+          ? 'Payment is confirmed. Sending this order to the merchant…'
+          : null,
       message: _momoMessage,
     );
   }
@@ -2524,7 +2709,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: false,
+      canPop: _paid,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
         _onBackPressed();
@@ -2549,11 +2734,68 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
           ),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back_ios_new_rounded),
-            onPressed: _onBackPressed,
+            onPressed: _paid
+                ? () {
+                    if (mounted) Navigator.of(context).pop();
+                  }
+                : _onBackPressed,
             tooltip: 'Back to checkout',
           ),
         ),
-        body: _pawaPayBody(),
+        body: _paid ? _paidBody() : _pawaPayBody(),
+      ),
+    );
+  }
+}
+
+class _PaidLine extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final num amount;
+
+  const _PaidLine({
+    required this.title,
+    required this.subtitle,
+    required this.amount,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF16284C),
+                  ),
+                ),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF8A847C),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Text(
+            'MWK ${PawaPayPayment.formatMwk(amount.round())}',
+            style: const TextStyle(
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF16284C),
+            ),
+          ),
+        ],
       ),
     );
   }

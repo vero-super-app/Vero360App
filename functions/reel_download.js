@@ -6,7 +6,9 @@ const axios = require('axios');
 const admin = require('firebase-admin');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { onDocumentCreated } = require('firebase-functions/v2/firestore');
-const { renderBrandedReel } = require('./reel_watermark');
+function renderBrandedReel(opts) {
+  return require('./reel_watermark').renderBrandedReel(opts);
+}
 
 if (!admin.apps.length) {
   admin.initializeApp();

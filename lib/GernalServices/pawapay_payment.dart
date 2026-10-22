@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -95,6 +98,66 @@ class PawaPayPayment {
     });
     return Map<String, dynamic>.from(result.data as Map);
   }
+
+  static String _normalizeState(Object? raw) {
+    return (raw ?? '').toString().trim().toLowerCase();
+  }
+
+  /// Stops when PawaPay (or the webhook) marks the deposit completed/failed.
+  /// Listens to Firestore first so a successful callback is not missed if the
+  /// status callable is slow or still parses `{ status: "FOUND" }` as pending.
+  static Future<Map<String, dynamic>> waitUntilFinal(
+    String depositId, {
+    Duration timeout = const Duration(minutes: 4),
+    Duration pollEvery = const Duration(seconds: 3),
+  }) async {
+    final completer = Completer<Map<String, dynamic>>();
+
+    void finish(Map<String, dynamic> result) {
+      if (!completer.isCompleted) completer.complete(result);
+    }
+
+    void consider(Map<String, dynamic> status) {
+      final state = _normalizeState(status['status']);
+      if (state == 'completed' || state == 'failed') {
+        finish({
+          'depositId': depositId,
+          'status': state,
+          'failure': (status['failure'] ?? '').toString(),
+        });
+      }
+    }
+
+    final sub = FirebaseFirestore.instance
+        .collection('pawapay_deposits')
+        .doc(depositId)
+        .snapshots()
+        .listen((snap) {
+      final data = snap.data();
+      if (data == null) return;
+      consider(data);
+    }, onError: (_) {});
+
+    Future<void> pollOnce() async {
+      try {
+        consider(await readStatus(depositId));
+      } catch (_) {}
+    }
+
+    await pollOnce();
+    final poll = Timer.periodic(pollEvery, (_) => unawaited(pollOnce()));
+    final limit = Timer(timeout, () {
+      finish({'depositId': depositId, 'status': 'timeout'});
+    });
+
+    try {
+      return await completer.future;
+    } finally {
+      await sub.cancel();
+      poll.cancel();
+      limit.cancel();
+    }
+  }
 }
 
 class PawaPayCheckoutView extends StatelessWidget {
@@ -110,6 +173,9 @@ class PawaPayCheckoutView extends StatelessWidget {
   final bool busy;
   final bool waiting;
   final String message;
+  final String? waitingTitle;
+  final String? waitingSubtitle;
+  final bool placing;
 
   const PawaPayCheckoutView({
     super.key,
@@ -121,6 +187,9 @@ class PawaPayCheckoutView extends StatelessWidget {
     required this.busy,
     required this.waiting,
     required this.message,
+    this.waitingTitle,
+    this.waitingSubtitle,
+    this.placing = false,
   });
 
   @override
@@ -132,7 +201,11 @@ class PawaPayCheckoutView extends StatelessWidget {
         padding: EdgeInsets.fromLTRB(20, 8, 20, 16 + bottom),
         children: [
                 if (waiting)
-                  _WaitingPanel(phone: phoneController.text.trim())
+                  _WaitingPanel(
+                    phone: phoneController.text.trim(),
+                    title: waitingTitle,
+                    subtitle: waitingSubtitle,
+                  )
                 else ...[
                   _AmountHero(amountMwk: amountMwk),
                   const SizedBox(height: 26),
@@ -322,9 +395,11 @@ class PawaPayCheckoutView extends StatelessWidget {
                           ),
                           const SizedBox(width: 10),
                           Text(
-                            waiting
-                                ? 'Waiting for approval'
-                                : 'Sending prompt',
+                            placing
+                                ? 'Placing your order'
+                                : waiting
+                                    ? 'Waiting for approval'
+                                    : 'Sending prompt',
                           ),
                         ],
                       )
@@ -429,7 +504,9 @@ class _AmountHero extends StatelessWidget {
 
 class _WaitingPanel extends StatelessWidget {
   final String phone;
-  const _WaitingPanel({required this.phone});
+  final String? title;
+  final String? subtitle;
+  const _WaitingPanel({required this.phone, this.title, this.subtitle});
 
   @override
   Widget build(BuildContext context) {
@@ -455,10 +532,10 @@ class _WaitingPanel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 22),
-          const Text(
-            'Check your phone',
+          Text(
+            title ?? 'Check your phone',
             textAlign: TextAlign.center,
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: 28,
               fontWeight: FontWeight.w800,
               letterSpacing: -0.6,
@@ -467,9 +544,10 @@ class _WaitingPanel extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            phone.isEmpty
-                ? 'Approve the mobile-money prompt to complete this payment.'
-                : 'Approve the prompt sent to $phone.',
+            subtitle ??
+                (phone.isEmpty
+                    ? 'Approve the mobile-money prompt to complete this payment.'
+                    : 'Approve the prompt sent to $phone.'),
             textAlign: TextAlign.center,
             style: const TextStyle(
               fontSize: 15,
@@ -628,22 +706,21 @@ class _PawaPayCheckoutPageState extends State<PawaPayCheckoutPage> {
       );
       if (!mounted) return;
       setState(() => _waiting = true);
-      for (var i = 0; i < 40; i++) {
-        await Future<void>.delayed(const Duration(seconds: 3));
-        if (!mounted) return;
-        final status = await PawaPayPayment.readStatus(depositId);
-        final state = (status['status'] ?? '').toString();
-        if (state == 'completed') {
-          if (mounted) Navigator.of(context).pop(depositId);
-          return;
-        }
-        if (state == 'failed') {
-          throw Exception(
-            PawaPayPayment.explainFailure((status['failure'] ?? '').toString()),
-          );
-        }
+      final status = await PawaPayPayment.waitUntilFinal(depositId);
+      if (!mounted) return;
+      final state = (status['status'] ?? '').toString();
+      if (state == 'completed') {
+        Navigator.of(context).pop(depositId);
+        return;
       }
-      throw Exception('Still waiting for the phone prompt. Try again.');
+      if (state == 'failed') {
+        throw Exception(
+          PawaPayPayment.explainFailure((status['failure'] ?? '').toString()),
+        );
+      }
+      throw Exception(
+        'Still waiting for the phone prompt. If you already approved it, stay on this page and try Pay again.',
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() {

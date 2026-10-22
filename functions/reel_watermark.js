@@ -1,7 +1,18 @@
 const path = require('path');
 const { execFile } = require('child_process');
-const sharp = require('sharp');
-const ffmpegPath = require('ffmpeg-static');
+
+// Loaded on first render — requiring sharp/ffmpeg-static at module load
+// makes `firebase deploy` miss the 10s discovery timeout.
+let _sharp;
+let _ffmpegPath;
+function sharp(...args) {
+  if (!_sharp) _sharp = require('sharp');
+  return _sharp(...args);
+}
+function ffmpegBin() {
+  if (!_ffmpegPath) _ffmpegPath = require('ffmpeg-static');
+  return _ffmpegPath;
+}
 
 const W = 720;
 const H = 1280;
@@ -290,7 +301,7 @@ async function buildEndCard({ ownerName, ownerPhoto, isMerchant }) {
 
 function run(args) {
   return new Promise((resolve, reject) => {
-    execFile(ffmpegPath, args, { maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile(ffmpegBin(), args, { maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
         err.stderr = String(stderr || '').slice(-4000);
         reject(err);

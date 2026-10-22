@@ -4,7 +4,6 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui';
 
-import 'package:flutter/cupertino.dart' show CupertinoPageRoute;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -17,7 +16,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:vero360_app/Quickservices/social.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
-import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_account_pages.dart';
+import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_browse_page.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/bike_ride_share_map_screen.dart';
 import 'package:vero360_app/features/ride_share/ride_share_entry_resolver.dart';
@@ -50,7 +49,6 @@ import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
-import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
@@ -69,6 +67,8 @@ import 'package:vero360_app/features/DigitalServices/digital_product.dart';
 import 'package:vero360_app/features/DigitalServices/digital_services_catalog.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_service_order_service.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_services_page.dart';
+import 'package:vero360_app/features/DigitalServices/presentation/digital_my_orders_page.dart';
+import 'package:vero360_app/features/DigitalServices/presentation/digital_kyc_upload_section.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_product_amount_page.dart';
 import 'package:vero360_app/features/DigitalServices/chatgpt_plans.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/chatgpt_plan_picker_page.dart';
@@ -558,10 +558,10 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       _openDigitalServices(initialCategory: 'gift_cards');
       return;
     }
-    // Car hire has its own journey. Keep this branch ahead of the
+    // Car hire has its own renter journey. Keep this branch ahead of the
     // ride-share resolver so Vero Ride behaviour is untouched.
     if (key == 'car_hire') {
-      CarHireRoutes.openHome(context);
+      CarHireRoutes.openBrowse(context);
       return;
     }
     if (RideShareEntryResolver.isRideShareServiceKey(key)) {
@@ -622,7 +622,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
         page = const CustomerServicePage();
         break;
       case 'car_hire':
-        page = const CarHireHomePage();
+        page = const CarHireBrowsePage();
         break;
       case 'taxi':
       case 'ride':
@@ -643,11 +643,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       default:
         page = const BikeRideShareMapScreen();
     }
-    Navigator.of(context).push(
-      key == 'car_hire'
-          ? CupertinoPageRoute<void>(builder: (_) => page)
-          : MaterialPageRoute<void>(builder: (_) => page),
-    );
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
   }
 
   String? _merchantProfilePhoneOrNull(String? raw) {
@@ -2579,9 +2575,38 @@ class _DigitalServicesSectionState extends State<DigitalServicesSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _SectionHeader(
+        _SectionHeader(
           title: 'Digital Services',
           subtitle: 'Subscriptions & top-ups',
+          action: TextButton(
+            onPressed: () {
+              final signedIn = FirebaseAuth.instance.currentUser != null;
+              if (!signedIn) {
+                ToastHelper.showCustomToast(
+                  context,
+                  'Sign in to view your digital orders.',
+                  isSuccess: false,
+                  errorMessage: '',
+                );
+                return;
+              }
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const DigitalMyOrdersPage(),
+                ),
+              );
+            },
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFFFF8A00),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text(
+              'My Orders',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+            ),
+          ),
         ),
         const SizedBox(height: 12),
         LayoutBuilder(
@@ -4369,6 +4394,7 @@ class DigitalProductDetailPage extends StatefulWidget {
 
 class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
   final _formKey = GlobalKey<FormState>();
+  final _kycKey = GlobalKey<DigitalPayoutKycSectionState>();
   late final TextEditingController _nameCtrl;
   late final TextEditingController _phoneCtrl;
   late final TextEditingController _emailCtrl;
@@ -4407,6 +4433,11 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
     return RegExp(r'^0[89]\d{8}$').hasMatch(digits);
   }
 
+  bool _isLoggedInBuyer() {
+    final user = FirebaseAuth.instance.currentUser;
+    return user != null && !user.isAnonymous;
+  }
+
   static String _normalizePhone(String raw) {
     final digits = raw.replaceAll(RegExp(r'\D'), '');
     if (digits.length >= 9 &&
@@ -4432,31 +4463,22 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
     }
     if (!_formKey.currentState!.validate()) return;
 
-    final firebaseUser = FirebaseAuth.instance.currentUser;
-    var loggedIn = firebaseUser != null &&
-        !firebaseUser.isAnonymous &&
-        await AuthHandler.isAuthenticated();
-    if (!loggedIn) {
-      if (!mounted) return;
-      ToastHelper.showCustomToast(
-        context,
-        'You’re not logged in. Please sign in to continue.',
-        isSuccess: false,
-        errorMessage: '',
-      );
-      await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
-      );
-      if (!mounted) return;
-      final again = FirebaseAuth.instance.currentUser;
-      loggedIn = again != null &&
-          !again.isAnonymous &&
-          await AuthHandler.isAuthenticated();
-      if (!loggedIn) return;
-    }
-
     setState(() => _submitting = true);
     try {
+      DigitalPayoutKycPayload? payoutKyc;
+      if (_product.needsPayoutKyc) {
+        payoutKyc = await _kycKey.currentState?.validateAndUpload();
+        if (payoutKyc == null) {
+          ToastHelper.showCustomToast(
+            context,
+            'Add your payout photos and details before paying.',
+            isSuccess: false,
+            errorMessage: '',
+          );
+          return;
+        }
+      }
+
       final name      = _nameCtrl.text.trim();
       final email     = _emailCtrl.text.trim();
       final phone     = _normalizePhone(_phoneCtrl.text.trim());
@@ -4488,6 +4510,7 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
         buyerEmail: email,
         buyerPhone: phone,
         selectedUsd: _isFixedPrice ? null : widget.selectedUsd,
+        payoutKyc: payoutKyc,
       );
 
       if (!mounted) return;
@@ -4674,6 +4697,17 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                 ),
               ),
 
+              if (_product.needsPayoutKyc) ...[
+                const SizedBox(height: 16),
+                DigitalPayoutKycSection(
+                  key: _kycKey,
+                  product: _product,
+                ),
+              ],
+
+              const SizedBox(height: 12),
+              _DigitalGuestNotice(loggedIn: _isLoggedInBuyer()),
+
               const SizedBox(height: 20),
 
               SizedBox(
@@ -4700,13 +4734,45 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
               const SizedBox(height: 10),
               const Center(
                 child: Text(
-                  'Secure checkout • Check your notifications and email for instructions',
+                  'Secure checkout • Signed-in buyers get codes in My Orders. Guests get them by email.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: AppColors.body, fontWeight: FontWeight.w600, fontSize: 12),
                 ),
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DigitalGuestNotice extends StatelessWidget {
+  const _DigitalGuestNotice({required this.loggedIn});
+
+  final bool loggedIn;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: loggedIn ? const Color(0xFFECFDF5) : const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: loggedIn ? const Color(0xFFBBF7D0) : AppColors.brandOrangeSoft,
+        ),
+      ),
+      child: Text(
+        loggedIn
+            ? 'You are signed in. After payment, card details and joining links appear in My Digital Orders.'
+            : 'You are not signed in. After payment we will email card details and joining links to the address above.',
+        style: const TextStyle(
+          fontWeight: FontWeight.w700,
+          fontSize: 12.5,
+          height: 1.35,
+          color: AppColors.title,
         ),
       ),
     );

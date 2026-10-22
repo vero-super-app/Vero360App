@@ -228,8 +228,7 @@ class AuthService {
   static String _firebaseEmailForIdentifier(String identifier) {
     final trimmed = identifier.trim();
     if (trimmed.contains('@')) return trimmed;
-    final digits = trimmed.replaceAll(RegExp(r'\D'), '');
-    return '$digits@phone.vero360.app';
+    return syntheticEmailForPhone(trimmed);
   }
 
   Future<User?> _ensureFirebaseMirrorForBackendUser({
@@ -456,6 +455,7 @@ class AuthService {
   }
 
   Future<String?> _lookupRecoverableEmailByPhone(String phone) async {
+    if (_firebaseAuth.currentUser == null) return null;
     for (final variant in _phoneLookupVariants(phone)) {
       try {
         final snap = await _firestore
@@ -473,6 +473,7 @@ class AuthService {
   }
 
   Future<bool> _phoneProfileExists(String phone) async {
+    if (_firebaseAuth.currentUser == null) return false;
     for (final variant in _phoneLookupVariants(phone)) {
       try {
         final snap = await _firestore
@@ -922,7 +923,8 @@ class AuthService {
   // -------------------- OTP --------------------
 
   static String syntheticEmailForPhone(String phone) {
-    final digits = phone.replaceAll(RegExp(r'\D'), '');
+    final e164 = RegistrationVerificationService.formatPhoneE164(phone);
+    final digits = e164.replaceAll(RegExp(r'\D'), '');
     if (digits.isEmpty) return '';
     return '$digits@phone.vero360.app';
   }
@@ -1038,11 +1040,10 @@ class AuthService {
     required String verificationTicket,
     Map<String, dynamic>? merchantData,
     required BuildContext context,
-    bool allowFirebaseFallback = true,
   }) async {
     final normalizedRole = role.toLowerCase();
 
-    if (verificationTicket.trim().isEmpty && !allowFirebaseFallback) {
+    if (verificationTicket.trim().isEmpty) {
       _toast(
         context,
         'Verification required before creating your account.',

@@ -182,11 +182,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
       RegExp(r'^[\w\.\-]+@([\w\-]+\.)+[\w\-]{2,}$').hasMatch(s.trim());
 
   static bool _looksLikePhone(String s) {
-    final t = s.trim();
-    if (t.isEmpty) return false;
-    final digits = t.replaceAll(RegExp(r'\D'), '');
+    final digits = s.trim().replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) return false;
     return RegExp(r'^(08|09)\d{8}$').hasMatch(digits) ||
-        RegExp(r'^\+265[89]\d{8}$').hasMatch(t);
+        RegExp(r'^265[89]\d{8}$').hasMatch(digits) ||
+        RegExp(r'^[89]\d{8}$').hasMatch(digits);
   }
 
   String get _identifierValue => _identifier.text.trim();
@@ -199,10 +199,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   String? _validateIdentifier(String? v) {
     final s = v?.trim() ?? '';
-    if (s.isEmpty) return 'Email address is required';
+    if (s.isEmpty) return 'Email or phone number is required';
     if (_looksLikeEmail(s)) return null;
     if (_looksLikePhone(s)) return null;
-    return 'Enter a valid email address';
+    return 'Enter a valid email or 10-digit Malawi mobile (08/09xxxxxxxx)';
   }
 
   String? _validatePassword(String? v) => SignupPasswordRules.validate(v);
@@ -766,6 +766,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   /// Best-effort check before OTP so users aren't sent a code for an existing account.
   Future<bool> _identifierAlreadyRegistered() async {
+    // Guests cannot query `users` (rules require sign-in). Hitting it only
+    // logs PERMISSION_DENIED; the OTP API still rejects duplicates.
+    if (_auth.currentUser == null) return false;
+
     final email = _identifierEmail.trim().toLowerCase();
     final phoneRaw = _identifierPhone.trim();
     try {
@@ -968,7 +972,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (email.isEmpty && phone.isEmpty) {
       ToastHelper.showCustomToast(
         context,
-        'Enter an email address.',
+        'Enter email or phone number.',
         isSuccess: false,
         errorMessage: '',
       );
@@ -1409,9 +1413,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               keyboardType: TextInputType.emailAddress,
                               textInputAction: TextInputAction.next,
                               decoration: _dec(
-                                label: 'Email address',
-                                hint: 'you@vero360.app',
-                                icon: Icons.mail_outline_rounded,
+                                label: 'Phone number or email',
+                                hint: '09xxxxxxxx or you@vero360.app',
+                                icon: Icons.contact_mail_outlined,
                               ),
                               validator: _validateIdentifier,
                             ),

@@ -133,6 +133,39 @@ class OrderPartyNotificationService {
     }
   }
 
+  /// Buyer: kitchen sent the food — confirm receipt in My Food Orders.
+  static Future<void> publishFoodSentToBuyer({
+    required String buyerUid,
+    required String orderNumber,
+    required String orderId,
+    required String restaurantName,
+  }) async {
+    final uid = buyerUid.trim();
+    if (uid.isEmpty) return;
+    final on = _veroOrderNo(orderNumber);
+    final kitchen =
+        restaurantName.trim().isEmpty ? 'the kitchen' : restaurantName.trim();
+    final orderSeg = on.isEmpty ? 'Your food order' : 'Order $on';
+    try {
+      await FirebaseFirestore.instance.collection(collectionName).add({
+        'toUid': uid,
+        'title': 'Your food is on the way',
+        'body':
+            '$orderSeg from $kitchen has been sent. Open My Food Orders to track it and confirm when it arrives.',
+        'payload': {
+          'type': 'food_sent',
+          'orderId': orderId,
+          'orderNumber': on,
+          'status': 'sent',
+        },
+        'createdAt': FieldValue.serverTimestamp(),
+        'consumed': false,
+      });
+    } catch (e) {
+      debugPrint('[OrderPartyNotification] publishFoodSentToBuyer: $e');
+    }
+  }
+
   /// Buyer: food order placed successfully.
   static Future<void> publishFoodOrderPlacedToBuyer({
     required String buyerUid,

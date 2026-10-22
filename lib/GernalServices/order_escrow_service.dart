@@ -216,8 +216,9 @@ class OrderEscrowService {
     );
   }
 
-  /// Food kitchen marks delivered/completed → credit the kitchen the full menu price.
-  static Future<void> releaseFoodOrderByMerchant(String orderId) async {
+  /// Kitchen taps Send food — starts the escrow clock. Does **not** pay the
+  /// merchant; the customer confirms receipt (or auto-release) to credit the wallet.
+  static Future<void> markFoodOrderSentByMerchant(String orderId) async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null || uid.isEmpty) {
       throw StateError('Sign in required.');
@@ -248,18 +249,10 @@ class OrderEscrowService {
 
     final merchantUid = (data['merchantUid'] ?? '').toString().trim();
     if (merchantUid.isEmpty || merchantUid != uid.trim()) {
-      throw StateError('Only the kitchen merchant can release this order.');
+      throw StateError('Only the kitchen can send this order.');
     }
 
-    // Stamp delivery then release (merchant fulfillment = paid).
     await markDelivered(oid);
-    await _creditAndCloseEscrow(
-      orderId: oid,
-      data: data,
-      buyerConfirmed: true,
-      releaseKind: 'merchant_delivered',
-      releaseSource: 'food_merchant',
-    );
   }
 
   /// Escrow row for a paid accommodation booking (guest checkout via PayChangu).

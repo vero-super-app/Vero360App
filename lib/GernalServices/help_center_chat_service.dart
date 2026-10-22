@@ -100,13 +100,19 @@ class HelpCenterChatService {
 
   /// Unread Help Center replies waiting for the visitor (same pattern as Messages).
   static Stream<int> watchUnreadForVisitor() async* {
+    // Guests cannot read `verochat_sessions`; a listen would PERMISSION_DENIED
+    // and must not block login/register.
+    if (FirebaseAuth.instance.currentUser == null) {
+      yield 0;
+      return;
+    }
     try {
       final id = await resolveSessionId();
       yield* _sessions.doc(id).snapshots().map((snap) {
         final raw = snap.data()?['unreadForVisitor'];
         if (raw is num) return raw.toInt().clamp(0, 999);
         return 0;
-      });
+      }).handleError((_) {});
     } catch (_) {
       yield 0;
     }

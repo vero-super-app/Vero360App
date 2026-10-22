@@ -404,9 +404,11 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
 
     if (type == 'food_order' ||
         type == 'food_order_placed' ||
+        type == 'food_sent' ||
         type == 'new_food_order' ||
         text.contains('food order') ||
-        text.contains('has ordered')) {
+        text.contains('has ordered') ||
+        text.contains('food is on the way')) {
       return _TeamAction.foodOrders;
     }
 

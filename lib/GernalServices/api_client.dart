@@ -216,8 +216,10 @@ class ApiClient {
         debugPrint('API $method ${uri.path} -> ${res.statusCode} ${res.body}');
       }
 
-      final userMsg = backendMsg ??
-          'We couldn’t process your request. Please check your details and try again.';
+      final userMsg = res.statusCode == 429
+          ? 'Too many codes for this number. Wait 10 minutes, then try once.'
+          : (backendMsg ??
+              'We couldn’t process your request. Please check your details and try again.');
 
       throw ApiException(
         message: userMsg,

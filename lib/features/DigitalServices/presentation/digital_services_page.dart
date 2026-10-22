@@ -1,13 +1,16 @@
 import 'dart:async';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
 import 'package:vero360_app/features/DigitalServices/digital_services_catalog.dart';
 import 'package:vero360_app/features/DigitalServices/chatgpt_plans.dart';
 import 'package:vero360_app/features/DigitalServices/netflix_plans.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/chatgpt_plan_picker_page.dart';
+import 'package:vero360_app/features/DigitalServices/presentation/digital_my_orders_page.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_product_amount_page.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/netflix_plan_picker_page.dart';
+import 'package:vero360_app/utils/toasthelper.dart';
 
 class DigitalServicesPage extends StatefulWidget {
   final void Function({
@@ -85,6 +88,24 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
           p.subtitle.toLowerCase().contains(_query) ||
           p.brandTag.toLowerCase().contains(_query);
     }).toList();
+  }
+
+  void _openMyOrders() {
+    final signedIn = FirebaseAuth.instance.currentUser != null;
+    if (!signedIn) {
+      ToastHelper.showCustomToast(
+        context,
+        'Sign in to view your digital orders.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const DigitalMyOrdersPage(),
+      ),
+    );
   }
 
   void _openProduct(DigitalProduct p) {
@@ -280,9 +301,26 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            IconButton(
-              onPressed: () => Navigator.of(context).maybePop(),
-              icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+            Row(
+              children: [
+                IconButton(
+                  onPressed: () => Navigator.of(context).maybePop(),
+                  icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: _openMyOrders,
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  ),
+                  icon: const Icon(Icons.receipt_long_rounded, size: 18),
+                  label: const Text(
+                    'My Orders',
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                  ),
+                ),
+              ],
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 4, 0),

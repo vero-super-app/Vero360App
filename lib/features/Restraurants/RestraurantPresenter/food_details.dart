@@ -827,7 +827,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
         : widget.foodItem.RestrauntName.trim();
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => _KitchenExplorePage(
+        builder: (_) => KitchenExplorePage(
           kitchenName: kitchen,
           items: _moreFromKitchen,
           merchantId: (widget.foodItem.merchantId ?? '').trim(),
@@ -1868,10 +1868,11 @@ class _KitchenReviewsPane extends StatelessWidget {
   }
 }
 
-class _KitchenExplorePage extends StatefulWidget {
-  const _KitchenExplorePage({
+class KitchenExplorePage extends StatefulWidget {
+  const KitchenExplorePage({
+    super.key,
     required this.kitchenName,
-    required this.items,
+    this.items = const [],
     this.merchantId = '',
     this.restaurantId = '',
   });
@@ -1882,10 +1883,10 @@ class _KitchenExplorePage extends StatefulWidget {
   final String restaurantId;
 
   @override
-  State<_KitchenExplorePage> createState() => _KitchenExplorePageState();
+  State<KitchenExplorePage> createState() => _KitchenExplorePageState();
 }
 
-class _KitchenExplorePageState extends State<_KitchenExplorePage> {
+class _KitchenExplorePageState extends State<KitchenExplorePage> {
   static const int _kMaxReportPhotos = 4;
   final ImagePicker _picker = ImagePicker();
 

@@ -71,6 +71,26 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   MerchantStoryGroup get _currentGroup => _groups[_groupIndex];
   List<MerchantStoryItem> get _items => _currentGroup.items;
 
+  /// Food stories open the kitchen menu, not the marketplace shop.
+  String? get _ownerServiceType {
+    for (final it in _items) {
+      final st = (it.serviceType ?? '').trim().toLowerCase();
+      if (st == 'food') return 'food';
+    }
+    if (_items.isEmpty) return null;
+    final i = _currentIndex.clamp(0, _items.length - 1);
+    return _items[i].serviceType;
+  }
+
+  void _openOwnerProfile() {
+    openMerchantOrDriverProfile(
+      context,
+      profileId: _currentGroup.merchantId,
+      displayName: _ownerDisplayName,
+      serviceType: _ownerServiceType,
+    );
+  }
+
   bool get _isOwnStory {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     return uid != null && uid == _currentGroup.merchantId;
@@ -737,13 +757,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
           ),
           const SizedBox(width: 8),
           GestureDetector(
-            onTap: () {
-              openMerchantOrDriverProfile(
-                context,
-                profileId: _currentGroup.merchantId,
-                displayName: _ownerDisplayName,
-              );
-            },
+            onTap: _openOwnerProfile,
             child: Container(
               width: 44,
               height: 44,
@@ -766,24 +780,28 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  _ownerDisplayName,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
+            child: GestureDetector(
+              onTap: _openOwnerProfile,
+              behavior: HitTestBehavior.opaque,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    _ownerDisplayName,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 2),
-                _timeAgoLabel(),
-              ],
+                  const SizedBox(height: 2),
+                  _timeAgoLabel(),
+                ],
+              ),
             ),
           ),
           if (_isOwnStory)
@@ -1361,11 +1379,25 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
       _replyImageBytes = null;
       _replyVideoPath = null;
 
+      final myId = BackendChatService.peekUserId() ?? 0;
+      var peerName = _ownerDisplayName.trim();
+      if (ChatParticipant.isPlaceholderName(peerName)) {
+        final fromThread =
+            BackendChatService.peerDisplayNameForThread(result.chat, myId);
+        if (!ChatParticipant.isPlaceholderName(fromThread)) {
+          peerName = fromThread;
+        }
+      }
+      final other = result.chat.otherParticipant(myId);
+      if (other != null && !ChatParticipant.isPlaceholderName(peerName)) {
+        BackendChatService.rememberPeerDisplayName(other, peerName);
+      }
+
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (_) => MessagePageBackendApi(
             peerId: result.chat.id,
-            peerName: _ownerDisplayName,
+            peerName: peerName,
             peerAvatarUrl: _currentGroup.merchantImageUrl,
             peerMerchantId: merchantId,
             peerUserId: result.sellerId,

@@ -19,6 +19,7 @@ class ShopMediaItem {
   final String url;
   final String storagePath;
   final String kind;
+  final String serviceType;
   final DateTime? createdAt;
 
   const ShopMediaItem({
@@ -27,6 +28,7 @@ class ShopMediaItem {
     required this.url,
     required this.storagePath,
     required this.kind,
+    this.serviceType = '',
     this.createdAt,
   });
 
@@ -43,6 +45,7 @@ class ShopMediaItem {
       url: (data['url'] ?? '').toString(),
       storagePath: (data['storagePath'] ?? '').toString(),
       kind: (data['kind'] ?? 'image').toString(),
+      serviceType: (data['serviceType'] ?? '').toString(),
       createdAt: created,
     );
   }
@@ -61,6 +64,12 @@ class ShopPicturesPage extends StatefulWidget {
   /// True on the merchant dashboard. Customers only browse.
   final bool canManage;
 
+  /// App bar title. Defaults to shop name, or "Restaurant pictures" for food.
+  final String? galleryTitle;
+
+  /// `food` keeps restaurant photos separate from marketplace shop photos.
+  final String? serviceType;
+
   const ShopPicturesPage({
     super.key,
     required this.merchantIds,
@@ -70,6 +79,8 @@ class ShopPicturesPage extends StatefulWidget {
     this.openingDays = const [],
     this.profileUrl,
     this.canManage = false,
+    this.galleryTitle,
+    this.serviceType,
   });
 
   @override
@@ -87,6 +98,9 @@ class _ShopPicturesPageState extends State<ShopPicturesPage> {
   String? _uploadLabel;
   double? _uploadProgress;
   String? _error;
+
+  bool get wantFoodGallery =>
+      (widget.serviceType ?? '').trim().toLowerCase() == 'food';
 
   List<String> get _ids {
     final seen = <String>{};
@@ -134,12 +148,23 @@ class _ShopPicturesPageState extends State<ShopPicturesPage> {
           byId[item.id] = item;
         }
       }
-      final items = byId.values.toList()
+      var items = byId.values.toList()
         ..sort((a, b) {
           final at = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
           final bt = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
           return bt.compareTo(at);
         });
+      final want = (widget.serviceType ?? '').trim().toLowerCase();
+      if (want.isNotEmpty) {
+        items = items
+            .where((e) => e.serviceType.trim().toLowerCase() == want)
+            .toList();
+      } else {
+        items = items.where((e) {
+          final st = e.serviceType.trim().toLowerCase();
+          return st.isEmpty || st == 'marketplace';
+        }).toList();
+      }
       if (!mounted) return;
       setState(() {
         _items = items;
@@ -150,7 +175,9 @@ class _ShopPicturesPageState extends State<ShopPicturesPage> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = 'Could not load shop pictures.';
+        _error = wantFoodGallery
+            ? 'Could not load restaurant pictures.'
+            : 'Could not load shop pictures.';
       });
     }
   }
@@ -365,6 +392,8 @@ class _ShopPicturesPageState extends State<ShopPicturesPage> {
       'url': url,
       'storagePath': path,
       'kind': kind,
+      if ((widget.serviceType ?? '').trim().isNotEmpty)
+        'serviceType': widget.serviceType!.trim().toLowerCase(),
       'createdAt': FieldValue.serverTimestamp(),
     });
   }
@@ -437,9 +466,12 @@ class _ShopPicturesPageState extends State<ShopPicturesPage> {
 
   @override
   Widget build(BuildContext context) {
-    final title = widget.shopName.trim().isEmpty
-        ? 'Shop pictures'
-        : widget.shopName.trim();
+    final custom = (widget.galleryTitle ?? '').trim();
+    final title = custom.isNotEmpty
+        ? custom
+        : widget.shopName.trim().isEmpty
+            ? (wantFoodGallery ? 'Restaurant pictures' : 'Shop pictures')
+            : widget.shopName.trim();
     return Scaffold(
       backgroundColor: const Color(0xFFF4F6FA),
       appBar: AppBar(

@@ -72,6 +72,7 @@ class NotificationStore extends ChangeNotifier {
 
   /// Quick-action / grid targets — keep in sync with UI tiles.
   static const String kBadgeMyOrders = 'quick_my_orders';
+  static const String kBadgeDigitalOrders = 'quick_digital_orders';
   static const String kBadgeShipped = 'quick_shipped';
   static const String kBadgeReceived = 'quick_received';
   static const String kBadgeRefund = 'quick_refund';
@@ -165,6 +166,9 @@ class NotificationStore extends ChangeNotifier {
     final status = (e.payload['status'] ?? '').toString().toLowerCase();
     if (type == 'refund_update' || type == 'refund_request') {
       return route == kBadgeRefund;
+    }
+    if (type == 'digital_fulfillment') {
+      return route == kBadgeDigitalOrders;
     }
     if (type != 'order_update') return false;
     switch (route) {

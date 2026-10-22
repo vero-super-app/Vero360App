@@ -97,6 +97,7 @@ class FoodOrder {
     'pending',
     'preparing',
     'ready',
+    'sent',
     'delivered',
     'cancelled',
   };
@@ -200,6 +201,7 @@ class FoodOrder {
     String normalizeStatus(dynamic v) {
       final s = str(v).trim().toLowerCase();
       if (s == 'completed') return 'delivered';
+      if (s == 'out_for_delivery' || s == 'shipped') return 'sent';
       if (statuses.contains(s)) return s;
       return 'pending';
     }
@@ -359,6 +361,19 @@ class FoodOrder {
       if (img.isNotEmpty) return img;
     }
     return null;
+  }
+
+  bool get isCancelled => status.toLowerCase() == 'cancelled';
+
+  /// Kitchen has dispatched the order (Send food). Legacy `ready` counts too.
+  bool get isSentByKitchen {
+    final s = status.toLowerCase();
+    return s == 'sent' || s == 'ready' || s == 'out_for_delivery';
+  }
+
+  bool get isReceivedByCustomer {
+    final s = status.toLowerCase();
+    return s == 'delivered' || s == 'completed';
   }
 }
 

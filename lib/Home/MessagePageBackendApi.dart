@@ -574,6 +574,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
       });
       unawaited(_loadHiddenMessages());
       _bindPeerReceiptListener(userId);
+      unawaited(_hydratePeerDisplayName());
       unawaited(_publishMyReceipts(asRead: true));
       await _hydrateOutbox();
       unawaited(_flushOutbox());
@@ -688,6 +689,10 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
           existing.contains('order:')) {
         return;
       }
+      if (existing.contains('we have received your order') &&
+          existing.contains('please confirm your details')) {
+        return;
+      }
     }
 
     try {
@@ -697,10 +702,11 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
         content: text,
         type: 'text',
         tags: product == null ? null : [product.toMessageTag()],
-        clientMessageId: const Uuid().v4(),
+        clientMessageId:
+            rawClientId.isNotEmpty ? rawClientId : const Uuid().v4(),
         metadata: {
           'source': 'orders',
-          'autoOrderShipping': true,
+          'autoOrderReceived': true,
           if (rawClientId.isNotEmpty) 'orderClientKey': rawClientId,
           if (product != null) 'productId': product.productId,
         },
@@ -954,30 +960,26 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
     unawaited(_hydratePeerAvatar());
   }
 
-  bool _isPlaceholderPeerName(String raw) {
-    final n = raw.trim().toLowerCase();
-    return n.isEmpty ||
-        n == 'chat' ||
-        n == 'chats' ||
-        n == 'someone' ||
-        n == 'contact' ||
-        n == 'new message' ||
-        n == 'vero360';
-  }
+  bool _isPlaceholderPeerName(String raw) =>
+      ChatParticipant.isPlaceholderName(raw);
 
-  /// Notification opens often arrive as "Chat" — fill the real peer name ASAP.
+  /// Story / notification opens often arrive as "Chat" — fill the real name.
   Future<void> _hydratePeerDisplayName() async {
     await BackendChatService.ensureBusinessNameCacheLoaded();
     if (!mounted) return;
-    if (!_isPlaceholderPeerName(_peerDisplayName)) return;
 
     String? next;
+    if (!_isPlaceholderPeerName(_peerDisplayName)) {
+      next = _peerDisplayName;
+    }
 
-    final cached = BackendChatService.cachedPeerLabelForChat(_chatId);
-    if (cached != null && !_isPlaceholderPeerName(cached.name)) {
-      next = cached.name;
-      if ((cached.peerUserId ?? 0) > 0 && (_peerUserId ?? 0) <= 0) {
-        _peerUserId = cached.peerUserId;
+    if (next == null || _isPlaceholderPeerName(next)) {
+      final cached = BackendChatService.cachedPeerLabelForChat(_chatId);
+      if (cached != null && !_isPlaceholderPeerName(cached.name)) {
+        next = cached.name;
+        if ((cached.peerUserId ?? 0) > 0 && (_peerUserId ?? 0) <= 0) {
+          _peerUserId = cached.peerUserId;
+        }
       }
     }
 
@@ -988,30 +990,31 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
           if (m.isMine(myId)) continue;
           final sender = m.sender;
           if (sender == null) continue;
-          for (final key in ['businessName', 'name', 'displayName', 'username']) {
+          for (final key in [
+            'businessName',
+            'name',
+            'displayName',
+            'username',
+            'fullName',
+          ]) {
             final v = (sender[key] ?? '').toString().trim();
-            if (v.isNotEmpty && !_isPlaceholderPeerName(v) && !v.contains('@')) {
+            if (v.isNotEmpty &&
+                !_isPlaceholderPeerName(v) &&
+                !v.contains('@')) {
               next = v;
               break;
             }
           }
-          if (next != null) break;
+          if (next != null && !_isPlaceholderPeerName(next)) break;
         }
       }
     }
 
-    if ((next == null || _isPlaceholderPeerName(next)) && _chatId.isNotEmpty) {
-      try {
-        final thread = await BackendChatService.getChat(_chatId);
-        final myId = _myUserId ?? await BackendChatService.getUserId();
-        final name =
-            BackendChatService.peerDisplayNameForThread(thread, myId);
-        if (!_isPlaceholderPeerName(name)) next = name;
-        final other = thread.otherParticipant(myId);
-        if (other != null && other.id > 0 && (_peerUserId ?? 0) <= 0) {
-          _peerUserId = other.id;
-        }
-      } catch (_) {}
+    if (next == null || _isPlaceholderPeerName(next)) {
+      next = await BackendChatService.resolvePeerTitle(
+        chatId: _chatId,
+        peerUserId: _peerUserId ?? widget.peerUserId,
+      );
     }
 
     if (next == null || _isPlaceholderPeerName(next)) return;
@@ -1911,6 +1914,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
         body: body,
         recipientFirebaseUid: hint.isEmpty ? null : hint,
         recipientUserId: peerUserId,
+        senderUserId: _myUserId,
       );
     } catch (_) {}
   }
@@ -3837,6 +3841,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
           body: video ? '📹 Incoming video call' : '📞 Incoming voice call',
           recipientFirebaseUid: peerUid,
           recipientUserId: widget.peerUserId ?? _peerUserId,
+          senderUserId: _myUserId,
         ),
       );
 

@@ -285,7 +285,7 @@ const createPawaPayPayout = onCall(
       wallet.ref,
       amount,
       payoutId,
-      `${label} payout via PawaPay`,
+      `${label} payout to ${phone}`,
       phone,
       provider,
     );

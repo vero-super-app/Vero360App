@@ -113,7 +113,9 @@ class OrderEscrowService {
           'merchantAmount': quote.providerPrice,
           'serviceFeeAmount': quote.commission,
           'veroShareAmount': quote.veroShare,
-          'paychanguShareAmount': quote.paychanguShare,
+          'processingFeeAmount': quote.processingFee,
+          'paychanguShareAmount': 0,
+          'pawapayShareAmount': quote.processingFee,
           'buyerPaysAmount': quote.buyerTotal,
           'commissionPayer': 'buyer',
           'feeRate': quote.rate,
@@ -193,7 +195,9 @@ class OrderEscrowService {
         'merchantAmount': quote.providerPrice,
         'serviceFeeAmount': quote.commission,
         'veroShareAmount': quote.veroShare,
-        'paychanguShareAmount': quote.paychanguShare,
+        'processingFeeAmount': quote.processingFee,
+        'paychanguShareAmount': 0,
+        'pawapayShareAmount': quote.processingFee,
         'buyerPaysAmount': quote.buyerTotal,
         'commissionPayer': 'buyer',
         'feeRate': quote.rate,
@@ -298,7 +302,9 @@ class OrderEscrowService {
         'merchantAmount': quote.providerPrice,
         'serviceFeeAmount': quote.commission,
         'veroShareAmount': quote.veroShare,
-        'paychanguShareAmount': quote.paychanguShare,
+        'processingFeeAmount': quote.processingFee,
+        'paychanguShareAmount': 0,
+        'pawapayShareAmount': quote.processingFee,
         'buyerPaysAmount': quote.buyerTotal,
         'commissionPayer': 'buyer',
         'feeRate': quote.rate,
@@ -997,7 +1003,10 @@ class OrderEscrowService {
 
     final data = Map<String, dynamic>.from(snap.data()!);
     final status = (data['status'] ?? '').toString();
-    if (status == 'released' || status == 'auto_released') {
+    if (status == 'released' ||
+        status == 'auto_released' ||
+        status == 'cleared' ||
+        data['booksCleared'] == true) {
       return;
     }
     if (status != 'held') {
@@ -1092,24 +1101,54 @@ class OrderEscrowService {
     final veroShare = veroRaw is num
         ? veroRaw.toDouble()
         : double.tryParse('$veroRaw') ?? 0.0;
-    // New buyer-paid commissions credit only Vero's 60%. Older holds that
-    // deducted the fee from the merchant credit the stored fee in full.
-    final platformCredit = veroShare > 0 ? veroShare : serviceFee;
+    final procRaw = data['processingFeeAmount'];
+    var processingFee = procRaw is num
+        ? procRaw.toDouble()
+        : double.tryParse('$procRaw') ?? 0.0;
+    if (processingFee <= 0) {
+      final buyerPaysRaw = data['buyerPaysAmount'];
+      final buyerPays = buyerPaysRaw is num
+          ? buyerPaysRaw.toDouble()
+          : double.tryParse('$buyerPaysRaw') ?? 0.0;
+      processingFee = BuyerCommission.processingFeeOn(
+        buyerTotal: buyerPays > 0 ? buyerPays : (serviceFee > 0 ? serviceFee : 0),
+        commission: serviceFee,
+      );
+    }
+    // Full buyer commission minus PawaPay processing. Older holds without
+    // veroShare credit the stored fee less processing.
+    final platformCredit = veroShare > 0
+        ? veroShare
+        : (serviceFee - processingFee).clamp(0.0, serviceFee).toDouble();
 
-    if (platformCredit > 0) {
+    if (platformCredit > 0 || processingFee > 0) {
       try {
-        await FirebaseWalletService.creditPlatformServiceFee(
-          amount: platformCredit,
-          description: isFood
-              ? 'Food buyer commission — Vero share ($txRef)'
-              : isAcc
-                  ? 'Stay buyer commission — Vero share ($txRef)'
-                  : 'Marketplace buyer commission — Vero share ($txRef)',
-          reference: txRef,
-          service: isFood ? 'food' : isAcc ? 'stay' : 'marketplace',
-        );
+        if (platformCredit > 0) {
+          await FirebaseWalletService.creditPlatformServiceFee(
+            amount: platformCredit,
+            description: isFood
+                ? 'Food buyer commission ($txRef)'
+                : isAcc
+                    ? 'Stay buyer commission ($txRef)'
+                    : 'Marketplace buyer commission ($txRef)',
+            reference: txRef,
+            service: isFood ? 'food' : isAcc ? 'stay' : 'marketplace',
+          );
+        }
+        if (processingFee > 0) {
+          await FirebaseWalletService.recordPlatformProcessingFee(
+            amount: processingFee,
+            description: isFood
+                ? 'Food PawaPay processing ($txRef)'
+                : isAcc
+                    ? 'Stay PawaPay processing ($txRef)'
+                    : 'Marketplace PawaPay processing ($txRef)',
+            reference: '$txRef-pawapay',
+          );
+        }
         await ref.set({
           'platformFeeCredited': true,
+          'pawapayFeeCredited': processingFee > 0,
           'platformFeeCreditedAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
       } catch (e) {

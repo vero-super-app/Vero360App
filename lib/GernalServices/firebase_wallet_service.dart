@@ -26,7 +26,8 @@ class FirebaseWalletService {
   static const double marketplaceServiceFeeRate = 0.10;
 
   /// Ensures the platform wallet exists and credits a service fee into it.
-  /// [service] is marketplace, food, stay, ride, digital, promotions, or homepage_ads.
+  /// [service] is marketplace, food, stay, ride, digital, promotions,
+  /// homepage_ads, or pawapay.
   static Future<void> creditPlatformServiceFee({
     required double amount,
     required String description,
@@ -46,6 +47,37 @@ class FirebaseWalletService {
       type: 'service_fee',
       service: service,
     );
+  }
+
+  /// Logs PawaPay's collection fee. Does not change the platform balance —
+  /// that fee is already withheld from the commission credit.
+  static Future<void> recordPlatformProcessingFee({
+    required double amount,
+    required String description,
+    required String reference,
+  }) async {
+    if (amount <= 0) return;
+    await getOrCreateWallet(
+      merchantId: superAdminUserId,
+      merchantName: superAdminDisplayName,
+    );
+    final walletDoc = await _findWalletDoc(superAdminUserId);
+    if (walletDoc == null) return;
+    final transactionId =
+        'TXN${DateTime.now().microsecondsSinceEpoch}_pawapay';
+    await _firestore.collection('wallet_transactions').doc(transactionId).set({
+      'transactionId': transactionId,
+      'walletId': walletDoc.id,
+      'userId': superAdminUserId,
+      'type': 'processing_fee',
+      'amount': amount,
+      'status': 'completed',
+      'description': description,
+      'reference': reference,
+      'service': 'pawapay',
+      'createdAt': Timestamp.now(),
+      'updatedAt': Timestamp.now(),
+    });
   }
 
   // Get or create wallet for merchant
@@ -161,6 +193,11 @@ class FirebaseWalletService {
     required String reference,
     bool requireKyc = true,
     bool allowNegative = false,
+    String? payoutMethod,
+    String? bankName,
+    String? accountNumber,
+    String? recipientName,
+    String? recipientPhone,
   }) async {
     try {
       if (requireKyc) {
@@ -193,6 +230,11 @@ class FirebaseWalletService {
         description: description,
         reference: reference,
         createdAt: DateTime.now(),
+        payoutMethod: payoutMethod,
+        bankName: bankName,
+        accountNumber: accountNumber,
+        recipientName: recipientName,
+        recipientPhone: recipientPhone,
       );
 
       await _firestore.runTransaction((firestoreTransaction) async {
@@ -344,7 +386,8 @@ class FirebaseWalletService {
         throw Exception('Wallet not found for merchant');
       }
 
-      final transactionId = 'TXN${DateTime.now().millisecondsSinceEpoch}';
+      final transactionId =
+          'TXN${DateTime.now().microsecondsSinceEpoch}${service.trim().isEmpty ? '' : '_${service.trim()}'}';
       final walletTransaction = WalletTransaction(
         transactionId: transactionId,
         walletId: walletDoc.id,

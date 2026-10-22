@@ -54,6 +54,7 @@ import 'package:vero360_app/utils/formatters.dart';
 // Add login screen import (using your correct path)
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/kyc_verification_screen.dart';
+import 'package:vero360_app/utils/kyc_gate.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart'
     show veroFloatingNavClearance;
 
@@ -258,7 +259,7 @@ class _MarketplaceMerchantDashboardState
   }
 
   static const String _prefsItemsCachePrefix = 'merchant_my_items_cache_v1_';
-  static const String _prefsEarningsCachePrefix = 'merchant_earnings_cache_v1_';
+  static const String _prefsEarningsCachePrefix = 'merchant_earnings_cache_v2_';
 
   // Filters (My Items)
   String _searchQuery = '';
@@ -282,9 +283,8 @@ class _MarketplaceMerchantDashboardState
   int _activeItems = 0;
   int _soldItems = 0;
   double _totalEarnings = 0;
-  /// Fresh totals from this session. Refunds can lower these; the saved
+  /// Fresh escrow total from this session. Refunds can lower this; the saved
   /// cache must not keep the old higher number.
-  double? _freshOrderEarnings;
   double? _freshEscrowEarnings;
   double _rating = 0.0;
   String _status = 'pending';
@@ -2140,17 +2140,10 @@ class _MarketplaceMerchantDashboardState
       final refunds = await _completedRefundAmounts(myFirebaseUid);
       if (!mounted) return;
       final counted = sold.where((o) => !_orderFullyRefunded(o, refunds)).toList();
-      final orderEarnings = counted.fold<double>(0, (sum, o) {
-        final line = o.lineTotal.toDouble();
-        final refund = _refundForOrder(o, refunds);
-        final left = line - refund;
-        return sum + (left < 0 ? 0 : left);
-      });
 
       setState(() {
         _soldItems = counted.length;
         _recentSalesOrders = counted.take(25).toList(growable: false);
-        _freshOrderEarnings = orderEarnings;
         _publishFreshEarnings();
       });
       unawaited(_persistEarningsCache(
@@ -2254,7 +2247,7 @@ class _MarketplaceMerchantDashboardState
     setState(() {
       _freshEscrowEarnings = escrow.gross;
       _publishFreshEarnings();
-      if (escrow.sold > _soldItems && _freshOrderEarnings == null) {
+      if (escrow.sold > _soldItems) {
         _soldItems = escrow.sold;
       }
     });
@@ -2265,14 +2258,9 @@ class _MarketplaceMerchantDashboardState
   }
 
   void _publishFreshEarnings() {
-    final parts = <double>[
-      if (_freshOrderEarnings != null) _freshOrderEarnings!,
-      if (_freshEscrowEarnings != null) _freshEscrowEarnings!,
-    ];
-    if (parts.isEmpty) return;
-    var next = parts.reduce((a, b) => a > b ? a : b);
-    if (next < 0) next = 0;
-    _totalEarnings = next;
+    final next = _freshEscrowEarnings;
+    if (next == null) return;
+    _totalEarnings = next < 0 ? 0 : next;
   }
 
   bool _refundIsDone(String status) {
@@ -2407,6 +2395,11 @@ class _MarketplaceMerchantDashboardState
       double gross = 0;
       for (final doc in snap.docs) {
         final data = doc.data();
+        if (data['booksCleared'] == true || data['platformFeeCleared'] == true) {
+          continue;
+        }
+        final status = (data['status'] ?? '').toString().trim().toLowerCase();
+        if (status == 'cleared') continue;
         if (_escrowWasRefunded(data)) continue;
         final service = (data['serviceType'] ?? '').toString().trim().toLowerCase();
         if (service.isNotEmpty && service != 'marketplace') continue;
@@ -2782,14 +2775,11 @@ class _MarketplaceMerchantDashboardState
     final uid = (_auth.currentUser?.uid ?? _uid).trim();
     if (uid.isEmpty) return;
     try {
-      final doc = await _sharedDoc('users', uid);
-      final data = doc.data() ?? {};
-      final status = (data['kycStatus'] ?? '').toString().trim().toLowerCase();
-      final reason = (data['kycRejectionReason'] ?? '').toString().trim();
+      final snap = await KycGate.loadStatus(uid: uid);
       if (!mounted) return;
       setState(() {
-        _kycStatus = status;
-        _kycRejectionReason = reason;
+        _kycStatus = snap.status;
+        _kycRejectionReason = snap.rejectionReason;
       });
     } catch (e) {
       if (kDebugMode) debugPrint('KYC status load failed: $e');
@@ -5209,8 +5199,12 @@ class _MarketplaceMerchantDashboardState
   Widget _buildKycSection() {
     final status = _kycStatus.trim().toLowerCase();
     final verified = status == 'verified' || status == 'approved';
-    final pending =
-        status == 'pending' || status == 'in_review' || status == 'submitted';
+    final pending = status == 'pending' ||
+        status == 'in_review' ||
+        status == 'submitted' ||
+        status == 'in_progress' ||
+        status == 'pending_review' ||
+        status == 'resubmitted';
     final rejected = status == 'rejected' || status == 'declined';
 
     late final String title;

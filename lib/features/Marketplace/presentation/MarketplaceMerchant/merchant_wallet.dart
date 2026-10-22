@@ -1015,12 +1015,20 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
           'PAYOUT-${widget.serviceType}-${DateTime.now().millisecondsSinceEpoch}';
 
       if (_selectedPayoutMethod == 'bank') {
+        final accountNumber = _accountNumberController.text.trim();
+        final accountName = _accountNameController.text.trim();
+        final bankName = _banks[_selectedBankIndex! - 1]['name'] ?? '';
         await _processPayChanguPayout(amount, payoutRef);
         await FirebaseWalletService.debitWallet(
           merchantId: widget.merchantId,
           amount: amount,
-          description: 'Bank Transfer Payout (${widget.serviceType})',
+          description:
+              'Bank Transfer Payout (${widget.serviceType}) to $accountNumber',
           reference: payoutRef,
+          payoutMethod: 'bank',
+          bankName: bankName,
+          accountNumber: accountNumber,
+          recipientName: accountName,
         );
         await _saveBankDetails();
         if (mounted) _forceTransactionsReload();
@@ -1170,6 +1178,8 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
               DetailRow('Amount', 'MWK ${transaction.amount.toStringAsFixed(2)}'),
               DetailRow('Type', transaction.type.toUpperCase()),
               DetailRow('Status', transaction.status.toUpperCase()),
+              if (transaction.paidToNumber.isNotEmpty)
+                DetailRow('Paid to', transaction.paidToNumber),
               DetailRow('Reference', transaction.reference),
             ],
           ),
@@ -1623,6 +1633,13 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                 ),
               ],
             ),
+            if (transaction.paidToLabel.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                transaction.paidToLabel,
+                style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+              ),
+            ],
             if (transaction.reference.isNotEmpty) ...[
               const SizedBox(height: 4),
               Text(

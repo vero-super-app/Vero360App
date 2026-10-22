@@ -1,7 +1,8 @@
 /**
  * TypeScript reference for createDiditSession.
  * Production deploy uses functions/index.js + functions/didit_webhook.js
- * (full X-Signature-V2 / raw / simple verification + event dispatch).
+ * + functions/didit_sync.js (Didit retrieve/backfill so Approved sessions
+ * are not left as pending in the app).
  */
 import { defineSecret } from 'firebase-functions/params';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';

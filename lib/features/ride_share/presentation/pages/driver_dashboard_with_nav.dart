@@ -880,12 +880,10 @@ class _MarketplaceMerchantDashboardState
         return db.compareTo(da);
       });
       final count = sold.length;
-      final earnings =
-          sold.fold<double>(0, (sum, o) => sum + o.total.toDouble());
       if (!mounted) return;
       setState(() {
         _soldItems = count;
-        _totalEarnings = earnings;
+        _totalEarnings = 0;
         _recentSalesOrders = sold;
       });
     } catch (e) {

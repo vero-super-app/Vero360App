@@ -67,6 +67,8 @@ class _MerchantWalletTransactionsPageState
               _detailRow('Amount', 'MWK ${_mwkFormat.format(transaction.amount)}'),
               _detailRow('Type', transaction.type.toUpperCase()),
               _detailRow('Status', transaction.status.toUpperCase()),
+              if (transaction.paidToNumber.isNotEmpty)
+                _detailRow('Paid to', transaction.paidToNumber),
               _detailRow('Reference', transaction.reference),
             ],
           ),
@@ -149,23 +151,35 @@ class _MerchantWalletTransactionsPageState
         overflow: TextOverflow.ellipsis,
         style: const TextStyle(fontWeight: FontWeight.w600),
       ),
-      subtitle: Row(
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(statusIcon, size: 16, color: statusColor),
-          const SizedBox(width: 6),
-          Text(
-            t.status.toUpperCase(),
-            style: TextStyle(
-              fontSize: 12,
-              color: statusColor,
-              fontWeight: FontWeight.w600,
+          Row(
+            children: [
+              Icon(statusIcon, size: 16, color: statusColor),
+              const SizedBox(width: 6),
+              Text(
+                t.status.toUpperCase(),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: statusColor,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                DateFormat('MMM dd, HH:mm').format(t.createdAt),
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+            ],
+          ),
+          if (t.paidToLabel.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              t.paidToLabel,
+              style: TextStyle(fontSize: 12, color: Colors.grey[700]),
             ),
-          ),
-          const Spacer(),
-          Text(
-            DateFormat('MMM dd, HH:mm').format(t.createdAt),
-            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-          ),
+          ],
         ],
       ),
       trailing: Text(

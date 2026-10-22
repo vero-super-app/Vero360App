@@ -120,9 +120,18 @@ function normalizeSessionStatus(status) {
   // Didit console shows APPROVED; webhooks may send Approved / approved.
   const aliases = {
     approved: 'Approved',
+    completed: 'Approved',
+    complete: 'Approved',
+    success: 'Approved',
+    verified: 'Approved',
+    done: 'Approved',
     declined: 'Declined',
+    rejected: 'Declined',
     'in review': 'In Review',
+    inreview: 'In Review',
+    'pending review': 'In Review',
     'in progress': 'In Progress',
+    inprogress: 'In Progress',
     resubmitted: 'Resubmitted',
     abandoned: 'Abandoned',
     expired: 'Expired',
@@ -144,6 +153,9 @@ function kycFieldsForStatus(status, decision, trustDecision) {
 
   switch (s) {
     case 'Approved':
+    case 'In Review':
+      // In Review still means the person finished Didit. Unlock the app;
+      // warnings (e.g. QR not detected) stay on the admin KYC page.
       return {
         ...base,
         kycStatus: 'verified',
@@ -159,13 +171,6 @@ function kycFieldsForStatus(status, decision, trustDecision) {
         kycRejectionReason: trustDecision
           ? extractRejectionReason(decision)
           : 'Verification declined',
-        ...(trustDecision && decision ? { kycDecision: decision } : {}),
-      };
-    case 'In Review':
-      return {
-        ...base,
-        kycStatus: 'pending_review',
-        kycVerified: false,
         ...(trustDecision && decision ? { kycDecision: decision } : {}),
       };
     case 'In Progress':
@@ -550,4 +555,7 @@ const diditWebhook = onRequest(
 module.exports = {
   diditWebhook,
   diditWebhookSecret,
+  kycFieldsForStatus,
+  normalizeSessionStatus,
+  applySessionEvent,
 };

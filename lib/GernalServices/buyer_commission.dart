@@ -1,8 +1,9 @@
 /// Buyer-paid commission for marketplace, food, and stays.
 ///
 /// The service provider's price is unchanged. Commission is added to the
-/// buyer's bill (not deducted from the merchant). Of that commission,
-/// Vero360 keeps 60% and PayChangu's share is 40%.
+/// buyer's bill (not deducted from the merchant). The full commission goes
+/// to the Vero platform wallet after PawaPay's collection processing fee
+/// (Malawi: 3.33% of the collected amount — 2.33% MMO + 1% PawaPay).
 ///
 /// Amount added for the customer, by the price the merchant wants to receive:
 ///   MWK 100–5,000              10%     (MWK 10–500)
@@ -21,15 +22,22 @@ class BuyerCommissionQuote {
     required this.commission,
     required this.buyerTotal,
     required this.veroShare,
-    required this.paychanguShare,
+    required this.processingFee,
+    this.paychanguShare = 0,
   });
 
   final double providerPrice;
   final double rate;
   final double commission;
   final double buyerTotal;
+  /// Commission minus PawaPay processing. This is what the platform wallet gets.
   final double veroShare;
+  /// PawaPay + MMO collection fee, taken from commission only.
+  final double processingFee;
+  /// Always 0. Kept so older callers still compile.
   final double paychanguShare;
+
+  double get pawapayShare => processingFee;
 
   String get percentLabel {
     final pct = rate * 100;
@@ -41,8 +49,8 @@ class BuyerCommissionQuote {
 class BuyerCommission {
   BuyerCommission._();
 
-  static const double veroShareRate = 0.60;
-  static const double paychanguShareRate = 0.40;
+  /// Malawi collections: 2.33% MMO pass-through + 1% PawaPay.
+  static const double pawapayCollectionFeeRate = 0.0333;
 
   static const List<({String price, String added})> merchantRanges = [
     (price: 'MWK 100 – 5,000', added: 'MWK 10 – 500'),
@@ -71,6 +79,16 @@ class BuyerCommission {
 
   static double money(double value) => (value * 100).round() / 100;
 
+  static double processingFeeOn({
+    required double buyerTotal,
+    required double commission,
+  }) {
+    if (!(buyerTotal > 0) || !(commission > 0)) return 0;
+    final fee = money(buyerTotal * pawapayCollectionFeeRate);
+    if (fee <= 0) return 0;
+    return fee > commission ? commission : fee;
+  }
+
   /// Buyer-facing unit price: the amount the seller entered plus commission.
   /// Show this anywhere a customer sees a price. Do not store it as the
   /// seller's price, or checkout will add commission twice.
@@ -81,15 +99,18 @@ class BuyerCommission {
     final price = money(providerPrice < 0 ? 0 : providerPrice);
     final rate = rateFor(price);
     final commission = money(price * rate);
-    final veroShare = money(commission * veroShareRate);
-    final paychanguShare = money(commission - veroShare);
+    final buyerTotal = money(price + commission);
+    final processingFee = processingFeeOn(
+      buyerTotal: buyerTotal,
+      commission: commission,
+    );
     return BuyerCommissionQuote(
       providerPrice: price,
       rate: rate,
       commission: commission,
-      buyerTotal: money(price + commission),
-      veroShare: veroShare,
-      paychanguShare: paychanguShare,
+      buyerTotal: buyerTotal,
+      veroShare: money(commission - processingFee),
+      processingFee: processingFee,
     );
   }
 
@@ -114,6 +135,7 @@ class BuyerCommission {
     if (positiveIndexes.isEmpty || order.commission <= 0) return out;
 
     var allocatedFee = 0.0;
+    var allocatedProc = 0.0;
     for (var n = 0; n < positiveIndexes.length; n++) {
       final i = positiveIndexes[n];
       final line = cleaned[i];
@@ -122,14 +144,21 @@ class BuyerCommission {
           ? money(order.commission - allocatedFee)
           : money(line * order.rate);
       allocatedFee = money(allocatedFee + fee);
-      final vero = money(fee * veroShareRate);
+      final safeFee = fee < 0 ? 0.0 : fee;
+      final proc = isLast
+          ? money(order.processingFee - allocatedProc)
+          : order.commission > 0
+              ? money(order.processingFee * (safeFee / order.commission))
+              : 0.0;
+      allocatedProc = money(allocatedProc + proc);
+      final safeProc = proc < 0 ? 0.0 : (proc > safeFee ? safeFee : proc);
       out[i] = BuyerCommissionQuote(
         providerPrice: line,
         rate: order.rate,
-        commission: fee < 0 ? 0 : fee,
-        buyerTotal: money(line + (fee < 0 ? 0 : fee)),
-        veroShare: vero < 0 ? 0 : vero,
-        paychanguShare: money((fee < 0 ? 0 : fee) - (vero < 0 ? 0 : vero)),
+        commission: safeFee,
+        buyerTotal: money(line + safeFee),
+        processingFee: safeProc,
+        veroShare: money(safeFee - safeProc),
       );
     }
     return out;

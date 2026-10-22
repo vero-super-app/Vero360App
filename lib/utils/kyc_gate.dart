@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/kyc_verification_screen.dart';
@@ -8,7 +9,14 @@ class KycGate {
   KycGate._();
 
   static const _verified = {'verified', 'approved'};
-  static const _pending = {'pending', 'in_review', 'submitted'};
+  static const _pending = {
+    'pending',
+    'in_review',
+    'submitted',
+    'in_progress',
+    'pending_review',
+    'resubmitted',
+  };
   static const _rejected = {'rejected', 'declined'};
 
   /// True when Firestore marks the signed-in user as KYC-complete.
@@ -17,19 +25,63 @@ class KycGate {
     return snap.verified;
   }
 
-  static Future<KycStatusSnapshot> loadStatus({String? uid}) async {
+  static KycStatusSnapshot _fromUserData(Map<String, dynamic> data) {
+    var status = (data['kycStatus'] ?? '').toString().trim().toLowerCase();
+    if (data['kycVerified'] == true && !_verified.contains(status)) {
+      status = 'approved';
+    }
+    final reason = (data['kycRejectionReason'] ?? '').toString().trim();
+    return KycStatusSnapshot(status: status, rejectionReason: reason);
+  }
+
+  /// Ask the server to copy the latest Didit status into Firestore.
+  static Future<bool> syncFromDidit({bool poll = false}) async {
+    Future<bool> once() async {
+      final result =
+          await FirebaseFunctions.instance.httpsCallable('syncDiditKyc').call();
+      final data = result.data;
+      if (data is Map && data['verified'] == true) return true;
+      return false;
+    }
+
+    try {
+      if (await once()) return true;
+      if (!poll) return false;
+      for (var i = 0; i < 6; i++) {
+        await Future<void>.delayed(const Duration(seconds: 2));
+        if (await once()) return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  static Future<KycStatusSnapshot> loadStatus({
+    String? uid,
+    bool syncRemote = true,
+  }) async {
     final id = (uid ?? FirebaseAuth.instance.currentUser?.uid ?? '').trim();
     if (id.isEmpty) return const KycStatusSnapshot();
     try {
       final doc =
           await FirebaseFirestore.instance.collection('users').doc(id).get();
       final data = doc.data() ?? {};
-      var status = (data['kycStatus'] ?? '').toString().trim().toLowerCase();
-      if (data['kycVerified'] == true && !_verified.contains(status)) {
-        status = 'approved';
+      var snap = _fromUserData(data);
+      final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+      final hasSession =
+          (data['kycSessionId'] ?? '').toString().trim().isNotEmpty;
+      final canSync = syncRemote &&
+          !snap.verified &&
+          !snap.rejected &&
+          (uid == null || uid == currentUid) &&
+          (snap.pending || hasSession);
+      if (canSync) {
+        final verified = await syncFromDidit();
+        if (verified) return const KycStatusSnapshot(status: 'verified');
+        final again =
+            await FirebaseFirestore.instance.collection('users').doc(id).get();
+        snap = _fromUserData(again.data() ?? {});
       }
-      final reason = (data['kycRejectionReason'] ?? '').toString().trim();
-      return KycStatusSnapshot(status: status, rejectionReason: reason);
+      return snap;
     } catch (_) {
       return const KycStatusSnapshot();
     }

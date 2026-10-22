@@ -144,8 +144,25 @@ class WalletTransaction {
       bankName: map['bankName'],
       accountNumber: map['accountNumber'],
       recipientName: map['recipientName'],
-      recipientPhone: map['recipientPhone'],
+      recipientPhone: map['recipientPhone'] ?? map['phone'],
       fee: (map['fee'] ?? 0.0).toDouble(),
     );
+  }
+
+  /// Phone or bank account the cash-out was sent to.
+  String get paidToNumber {
+    final phone = (recipientPhone ?? '').trim();
+    if (phone.isNotEmpty) return phone;
+    return (accountNumber ?? '').trim();
+  }
+
+  String get paidToLabel {
+    final number = paidToNumber;
+    if (number.isEmpty) return '';
+    final bank = (bankName ?? '').trim();
+    if (bank.isNotEmpty && (recipientPhone ?? '').trim().isEmpty) {
+      return 'Paid to $bank $number';
+    }
+    return 'Paid to $number';
   }
 }

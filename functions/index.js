@@ -1444,6 +1444,7 @@ async function creditMerchantWalletFromEscrow({
   description,
   reference,
   type = 'sale_escrow',
+  service = '',
 }) {
   const uid = String(merchantUid || '').trim();
   const amt = typeof amount === 'number' ? amount : Number(amount);
@@ -1506,6 +1507,7 @@ async function creditMerchantWalletFromEscrow({
     reference: String(reference || ''),
     createdAt: admin.firestore.Timestamp.now(),
   };
+  if (String(service || '').trim()) txPayload.service = String(service).trim();
 
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(walletRef);
@@ -1535,6 +1537,37 @@ async function creditMerchantWalletFromEscrow({
   return transactionId;
 }
 
+const PAWAPAY_COLLECTION_FEE_RATE = 0.0333;
+
+function pawapayProcessingFee(buyerTotal, commission) {
+  const total = Number(buyerTotal) || 0;
+  const feePool = Number(commission) || 0;
+  if (!(total > 0) || !(feePool > 0)) return 0;
+  const fee = Math.round(total * PAWAPAY_COLLECTION_FEE_RATE * 100) / 100;
+  if (!(fee > 0)) return 0;
+  return fee > feePool ? feePool : fee;
+}
+
+async function recordPlatformProcessingFee({ amount, description, reference }) {
+  const amt = typeof amount === 'number' ? amount : Number(amount);
+  if (!Number.isFinite(amt) || amt <= 0) return;
+  const db = admin.firestore();
+  const transactionId = `TXN${Date.now()}${Math.floor(Math.random() * 1000)}p`;
+  await db.collection('wallet_transactions').doc(transactionId).set({
+    transactionId,
+    walletId: PLATFORM_WALLET_USER_ID,
+    userId: PLATFORM_WALLET_USER_ID,
+    type: 'processing_fee',
+    amount: amt,
+    status: 'completed',
+    description: String(description || 'PawaPay processing'),
+    reference: String(reference || ''),
+    service: 'pawapay',
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+}
+
 /**
  * Atomically release one held escrow doc if still held and due (or force for buyer path via onUpdate notify only).
  * Returns true if this invocation credited the wallet.
@@ -1543,6 +1576,7 @@ async function releaseHeldEscrowDoc(docSnap, { source }) {
   const db = admin.firestore();
   const ref = docSnap.ref;
   const before = docSnap.data() || {};
+  if (before.booksCleared === true || before.platformFeeCleared === true) return false;
   if (String(before.status || '') !== 'held') return false;
 
   const due = before.releaseDueAt;
@@ -1598,21 +1632,65 @@ async function releaseHeldEscrowDoc(docSnap, { source }) {
           : `Marketplace sale — auto-released after ${ESCROW_AUTO_RELEASE_LABEL}`,
       reference: txRef,
     });
-    if (Number.isFinite(serviceFee) && serviceFee > 0) {
+    const veroShareRaw = before.veroShareAmount;
+    const veroShare =
+      typeof veroShareRaw === 'number' ? veroShareRaw : Number(veroShareRaw || 0);
+    const procRaw = before.processingFeeAmount;
+    let processingFee =
+      typeof procRaw === 'number' ? procRaw : Number(procRaw || 0);
+    if (!(processingFee > 0)) {
+      const buyerPays = Number(before.buyerPaysAmount || 0);
+      processingFee = pawapayProcessingFee(
+        buyerPays > 0 ? buyerPays : serviceFee,
+        serviceFee,
+      );
+    }
+    const veroCredit =
+      Number.isFinite(veroShare) && veroShare > 0
+        ? veroShare
+        : Math.max(0, serviceFee - (Number.isFinite(processingFee) ? processingFee : 0));
+    const productService =
+      serviceType === 'accommodation' || serviceType === 'stay'
+        ? 'stay'
+        : serviceType === 'food'
+          ? 'food'
+          : 'marketplace';
+    if (Number.isFinite(veroCredit) && veroCredit > 0) {
       await creditMerchantWalletFromEscrow({
         merchantUid: PLATFORM_WALLET_USER_ID,
         merchantName: PLATFORM_WALLET_NAME,
-        amount: serviceFee,
+        amount: veroCredit,
         description:
-          serviceType === 'accommodation'
-            ? `Stay service fee (${txRef})`
-            : `Marketplace service fee 10% (${txRef})`,
+          productService === 'stay'
+            ? `Stay buyer commission (${txRef})`
+            : productService === 'food'
+              ? `Food buyer commission (${txRef})`
+              : `Marketplace buyer commission (${txRef})`,
         reference: txRef,
         type: 'service_fee',
+        service: productService,
       });
+    }
+    if (Number.isFinite(processingFee) && processingFee > 0) {
+      await recordPlatformProcessingFee({
+        amount: processingFee,
+        description:
+          productService === 'stay'
+            ? `Stay PawaPay processing (${txRef})`
+            : productService === 'food'
+              ? `Food PawaPay processing (${txRef})`
+              : `Marketplace PawaPay processing (${txRef})`,
+        reference: `${txRef}-pawapay`,
+      });
+    }
+    if (
+      (Number.isFinite(veroCredit) && veroCredit > 0) ||
+      (Number.isFinite(processingFee) && processingFee > 0)
+    ) {
       await ref.set(
         {
           platformFeeCredited: true,
+          pawapayFeeCredited: Number.isFinite(processingFee) && processingFee > 0,
           platformFeeCreditedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true },
@@ -1961,16 +2039,19 @@ const axios = require('axios');
 
 const diditApiKey = defineSecret('DIDIT_API_KEY');
 const diditWorkflowId = defineSecret('DIDIT_WORKFLOW_ID');
+const { diditWebhook } = require('./didit_webhook');
+const {
+  syncUidFromDidit,
+  backfillCompletedDiditKyc,
+  firestoreAlreadyVerified,
+} = require('./didit_sync');
 
 /**
  * Creates a Didit KYC session for the signed-in user.
  * Flutter calls: FirebaseFunctions.instance.httpsCallable('createDiditSession')
  *
- * Prerequisites:
- *   firebase functions:secrets:set DIDIT_API_KEY
- *   firebase functions:secrets:set DIDIT_WORKFLOW_ID
- *   firebase functions:secrets:set DIDIT_WEBHOOK_SECRET
- *   firebase deploy --only functions:createDiditSession,functions:diditWebhook
+ * Reuses an already-Approved / In Review Didit session instead of minting a
+ * new one (which used to overwrite Firestore back to pending).
  */
 exports.createDiditSession = onCall(
   {
@@ -1982,6 +2063,53 @@ exports.createDiditSession = onCall(
     const uid = request.auth && request.auth.uid;
     if (!uid) {
       throw new HttpsError('unauthenticated', 'Sign in required.');
+    }
+
+    const apiKey = diditApiKey.value();
+    let synced = { verified: false };
+    try {
+      synced = await syncUidFromDidit(uid, apiKey);
+    } catch (err) {
+      console.warn('Didit pre-create sync failed', err && err.message);
+    }
+
+    if (synced.verified) {
+      const url =
+        synced.session_url ||
+        (synced.session_token
+          ? `https://verify.didit.me/session/${synced.session_token}`
+          : 'https://verify.didit.me/');
+      return {
+        already_verified: true,
+        verified: true,
+        session_id: synced.session_id || null,
+        session_token: synced.session_token || '',
+        url,
+      };
+    }
+
+    const reusable =
+      !!synced.session_url &&
+      ['In Progress', 'Resubmitted', 'Not Started'].includes(
+        String(synced.didit_status || ''),
+      );
+    if (reusable) {
+      try {
+        await admin.firestore().collection('users').doc(uid).set(
+          {
+            kycSessionId: synced.session_id || null,
+            kycSessionUrl: synced.session_url,
+          },
+          { merge: true },
+        );
+      } catch (err) {
+        console.warn('KYC reuse session write failed', err);
+      }
+      return {
+        session_id: synced.session_id || null,
+        session_token: synced.session_token || '',
+        url: synced.session_url,
+      };
     }
 
     const workflowId = String(diditWorkflowId.value() || '').trim();
@@ -2006,7 +2134,7 @@ exports.createDiditSession = onCall(
         {
           headers: {
             'Content-Type': 'application/json',
-            'X-Api-Key': diditApiKey.value(),
+            'X-Api-Key': apiKey,
           },
         },
       );
@@ -2042,13 +2170,27 @@ exports.createDiditSession = onCall(
       );
     }
 
+    const url =
+      data.url ||
+      data.session_url ||
+      `https://verify.didit.me/session/${sessionToken}`;
+
     try {
-      await admin.firestore().collection('users').doc(uid).set(
-        {
-          kycStatus: 'pending',
-          kycSessionId: sessionId,
-          kycVerified: false,
-        },
+      const userRef = admin.firestore().collection('users').doc(uid);
+      const userSnap = await userRef.get();
+      const keepVerified = firestoreAlreadyVerified(userSnap);
+      await userRef.set(
+        keepVerified
+          ? {
+              kycSessionId: sessionId,
+              kycSessionUrl: url,
+            }
+          : {
+              kycStatus: 'pending',
+              kycSessionId: sessionId,
+              kycVerified: false,
+              kycSessionUrl: url,
+            },
         { merge: true },
       );
     } catch (err) {
@@ -2056,17 +2198,69 @@ exports.createDiditSession = onCall(
       console.error('KYC pending status write failed', err);
     }
 
-    const url =
-      data.url ||
-      data.session_url ||
-      `https://verify.didit.me/session/${sessionToken}`;
-
     return { session_token: sessionToken, url, session_id: sessionId };
   },
 );
 
+/** Pull the signed-in user's Didit status into Firestore. */
+exports.syncDiditKyc = onCall(
+  {
+    secrets: [diditApiKey],
+    serviceAccount: FUNCTIONS_SERVICE_ACCOUNT,
+  },
+  async (request) => {
+    const uid = request.auth && request.auth.uid;
+    if (!uid) {
+      throw new HttpsError('unauthenticated', 'Sign in required.');
+    }
+    try {
+      return await syncUidFromDidit(uid, diditApiKey.value());
+    } catch (err) {
+      console.error('syncDiditKyc failed', err);
+      throw new HttpsError(
+        'unavailable',
+        'Could not refresh verification status. Try again.',
+      );
+    }
+  },
+);
+
+/** Unlock every Didit Approved / In Review user whose app is still pending. */
+exports.backfillDiditKyc = onCall(
+  {
+    secrets: [diditApiKey],
+    serviceAccount: FUNCTIONS_SERVICE_ACCOUNT,
+    timeoutSeconds: 120,
+  },
+  async (request) => {
+    if (!request.auth || !request.auth.uid) {
+      throw new HttpsError('unauthenticated', 'Sign in required.');
+    }
+    try {
+      return await backfillCompletedDiditKyc(diditApiKey.value());
+    } catch (err) {
+      console.error('backfillDiditKyc failed', err);
+      throw new HttpsError('unavailable', 'Could not sync completed verifications.');
+    }
+  },
+);
+
+exports.scheduledDiditKycBackfill = onSchedule(
+  {
+    schedule: 'every 5 minutes',
+    timeZone: 'Africa/Blantyre',
+    secrets: [diditApiKey],
+    serviceAccount: FUNCTIONS_SERVICE_ACCOUNT,
+    timeoutSeconds: 120,
+  },
+  async () => {
+    const result = await backfillCompletedDiditKyc(diditApiKey.value());
+    console.log('scheduledDiditKycBackfill', result);
+    return result;
+  },
+);
+
 /** Didit destination webhook — see ./didit_webhook.js */
-const { diditWebhook } = require('./didit_webhook');
 exports.diditWebhook = diditWebhook;
 
 /** PawaPay mobile-money payouts. Bank cash-out stays on PayChangu. */

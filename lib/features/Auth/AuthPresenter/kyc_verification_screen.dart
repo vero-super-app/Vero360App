@@ -74,6 +74,21 @@ class _KycVerificationScreenState extends State<KycVerificationScreen>
           ?.toString()
           .trim();
 
+      final alreadyVerified = map?['already_verified'] == true ||
+          map?['verified'] == true;
+
+      if (alreadyVerified) {
+        if (!mounted) return;
+        ToastHelper.showCustomToast(
+          context,
+          'Identity verified',
+          isSuccess: true,
+          errorMessage: '',
+        );
+        Navigator.of(context).pop(true);
+        return;
+      }
+
       if ((url == null || url.isEmpty) &&
           sessionToken != null &&
           sessionToken.isNotEmpty) {
@@ -95,9 +110,26 @@ class _KycVerificationScreenState extends State<KycVerificationScreen>
       if (!mounted) return;
 
       if (completed == true) {
+        var verified = false;
+        try {
+          for (var i = 0; i < 7; i++) {
+            final sync = await FirebaseFunctions.instance
+                .httpsCallable('syncDiditKyc')
+                .call();
+            final syncData = sync.data;
+            if (syncData is Map && syncData['verified'] == true) {
+              verified = true;
+              break;
+            }
+            if (i < 6) {
+              await Future<void>.delayed(const Duration(seconds: 2));
+            }
+          }
+        } catch (_) {}
+        if (!mounted) return;
         ToastHelper.showCustomToast(
           context,
-          'Verification submitted — under review',
+          verified ? 'Identity verified' : 'Verification submitted',
           isSuccess: true,
           errorMessage: '',
         );

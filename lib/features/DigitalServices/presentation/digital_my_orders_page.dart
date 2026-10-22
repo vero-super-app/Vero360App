@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_service_order_service.dart';
+import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
@@ -15,12 +16,25 @@ const Color _pageBg = Color(0xFFF7F8FA);
 
 final DateFormat _dateFmt = DateFormat('EEE, d MMM yyyy · HH:mm');
 
-class DigitalMyOrdersPage extends StatelessWidget {
+class DigitalMyOrdersPage extends StatefulWidget {
   const DigitalMyOrdersPage({super.key});
 
   @override
+  State<DigitalMyOrdersPage> createState() => _DigitalMyOrdersPageState();
+}
+
+class _DigitalMyOrdersPageState extends State<DigitalMyOrdersPage> {
+  @override
+  void initState() {
+    super.initState();
+    NotificationStore.instance
+        .markBadgeRouteAsRead(NotificationStore.kBadgeDigitalOrders);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final signedIn = FirebaseAuth.instance.currentUser != null;
+    final user = FirebaseAuth.instance.currentUser;
+    final signedIn = user != null && !user.isAnonymous;
 
     return Scaffold(
       backgroundColor: _pageBg,
@@ -287,11 +301,53 @@ class _DigitalOrderDetailSheet extends StatelessWidget {
           ),
           if (order.txRef.isNotEmpty)
             _copyRow(context, 'Payment ref', order.txRef),
+          if (order.fulfillment.hasContent) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFECFDF5),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFBBF7D0)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Your delivery',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 14,
+                      color: Color(0xFF166534),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  if (order.fulfillment.cardDetails.isNotEmpty)
+                    _copyRow(
+                      context,
+                      'Card details',
+                      order.fulfillment.cardDetails,
+                    ),
+                  if (order.fulfillment.joiningLink.isNotEmpty)
+                    _copyRow(
+                      context,
+                      'Joining link',
+                      order.fulfillment.joiningLink,
+                    ),
+                  if (order.fulfillment.notes.isNotEmpty)
+                    _row('Notes', order.fulfillment.notes),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 14),
           Text(
-            order.isPaid
-                ? 'Payment received. Vero is delivering this code or subscription. Keep this page for your records.'
-                : 'This order is waiting for payment. Complete checkout to start delivery.',
+            order.fulfillment.hasContent
+                ? 'Keep these details private. Copy them now and store them somewhere safe.'
+                : order.isPaid
+                    ? 'Payment received. Vero is delivering this code or subscription. It will show here (and in your notifications) when ready.'
+                    : 'This order is waiting for payment. Complete checkout to start delivery.',
             style: TextStyle(
               fontSize: 13,
               height: 1.4,

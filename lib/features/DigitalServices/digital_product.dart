@@ -91,6 +91,18 @@ class DigitalProduct {
     return 'USD';
   }
 
+  /// CNY / USD-TT / USDT payouts need destination + identity photos.
+  DigitalPayoutKycKind? get payoutKycKind => detectDigitalPayoutKycKind(
+        category: category,
+        key: key,
+        name: name,
+        unitLabel: unitLabel ?? '',
+        brandTag: brandTag,
+        subtitle: subtitle,
+      );
+
+  bool get needsPayoutKyc => payoutKycKind != null;
+
   /// Admin max for typed amounts. If unset, allow a high default (not a hard $500).
   double get effectiveMaxOtherAmount {
     final admin = maxOtherAmount;
@@ -343,3 +355,52 @@ enum DigitalPayMethod {
   paychangu, // mobile money + bank (MWK)
   visa, // coming soon
 }
+
+/// Destination / identity pack collected at checkout for crypto & FX cards.
+enum DigitalPayoutKycKind { cny, usdt }
+
+DigitalPayoutKycKind? detectDigitalPayoutKycKind({
+  required String category,
+  required String key,
+  String name = '',
+  String unitLabel = '',
+  String brandTag = '',
+  String subtitle = '',
+}) {
+  final blob =
+      '$key $name $subtitle $brandTag $unitLabel $category'.toLowerCase();
+  final unit = unitLabel.trim().toLowerCase();
+  final isCrypto = category.trim().toLowerCase() == 'crypto';
+
+  final isUsdt = blob.contains('usdt') ||
+      blob.contains('tether') ||
+      blob.contains('binance') ||
+      unit == 'usdt';
+  if (isUsdt) return DigitalPayoutKycKind.usdt;
+
+  final mentionsChinaRail =
+      blob.contains('cny') ||
+      blob.contains('rmb') ||
+      blob.contains('yuan') ||
+      blob.contains('alipay') ||
+      blob.contains('wechat') ||
+      blob.contains('weixin') ||
+      unit == 'cny' ||
+      unit == 'rmb';
+  final isTt = RegExp(r'\btt\b').hasMatch(blob) || blob.contains('telegraphic');
+  if (mentionsChinaRail ||
+      (isTt &&
+          (mentionsChinaRail ||
+              blob.contains('china') ||
+              isCrypto))) {
+    return DigitalPayoutKycKind.cny;
+  }
+
+  // Crypto USD (not a gift card) uses the same Alipay/WeChat + ID + face pack.
+  if (isCrypto && (unit == 'usd' || blob.contains('usd'))) {
+    return DigitalPayoutKycKind.cny;
+  }
+  if (isCrypto) return DigitalPayoutKycKind.usdt;
+  return null;
+}
+ 

@@ -1,10 +1,30 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
+import 'package:vero360_app/features/DigitalServices/presentation/digital_kyc_upload_section.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 
 /// Firestore collection for Digital Services purchases (subscriptions + gift cards).
 const String kDigitalServiceOrdersCollection = 'digital_service_orders';
+
+class DigitalOrderFulfillment {
+  final String cardDetails;
+  final String joiningLink;
+  final String notes;
+  final DateTime? sentAt;
+
+  const DigitalOrderFulfillment({
+    this.cardDetails = '',
+    this.joiningLink = '',
+    this.notes = '',
+    this.sentAt,
+  });
+
+  bool get hasContent =>
+      cardDetails.trim().isNotEmpty ||
+      joiningLink.trim().isNotEmpty ||
+      notes.trim().isNotEmpty;
+}
 
 class DigitalServiceOrder {
   final String id;
@@ -21,8 +41,11 @@ class DigitalServiceOrder {
   final String status;
   final String txRef;
   final String buyerUid;
+  final String buyerEmail;
+  final bool isGuest;
   final DateTime? createdAt;
   final DateTime? paidAt;
+  final DigitalOrderFulfillment fulfillment;
 
   const DigitalServiceOrder({
     required this.id,
@@ -39,8 +62,11 @@ class DigitalServiceOrder {
     this.status = 'pending_payment',
     this.txRef = '',
     this.buyerUid = '',
+    this.buyerEmail = '',
+    this.isGuest = false,
     this.createdAt,
     this.paidAt,
+    this.fulfillment = const DigitalOrderFulfillment(),
   });
 
   bool get isPaid {
@@ -62,7 +88,8 @@ class DigitalServiceOrder {
     if (isFailed) return 'Cancelled';
     if (status.toLowerCase() == 'fulfilled' ||
         status.toLowerCase() == 'completed' ||
-        status.toLowerCase() == 'delivered') {
+        status.toLowerCase() == 'delivered' ||
+        fulfillment.hasContent) {
       return 'Delivered';
     }
     if (isPaid) return 'Paid · processing';
@@ -88,6 +115,11 @@ class DigitalServiceOrder {
 
     String str(dynamic v) => (v ?? '').toString().trim();
 
+    final rawFulfill = d['fulfillment'];
+    final fulfillMap = rawFulfill is Map
+        ? Map<String, dynamic>.from(rawFulfill)
+        : const <String, dynamic>{};
+
     return DigitalServiceOrder(
       id: doc.id,
       productKey: str(d['productKey']),
@@ -105,8 +137,16 @@ class DigitalServiceOrder {
       status: str(d['status']).isEmpty ? 'pending_payment' : str(d['status']),
       txRef: str(d['txRef']),
       buyerUid: str(d['buyerUid']),
+      buyerEmail: str(d['buyerEmail'] ?? d['email']),
+      isGuest: d['isGuest'] == true,
       createdAt: asDate(d['createdAt']),
       paidAt: asDate(d['paidAt']),
+      fulfillment: DigitalOrderFulfillment(
+        cardDetails: str(fulfillMap['cardDetails'] ?? d['cardDetails']),
+        joiningLink: str(fulfillMap['joiningLink'] ?? d['joiningLink']),
+        notes: str(fulfillMap['notes'] ?? d['fulfillmentNotes']),
+        sentAt: asDate(fulfillMap['sentAt'] ?? d['fulfilledAt']),
+      ),
     );
   }
 }
@@ -125,12 +165,19 @@ class DigitalServiceOrderService {
     required String buyerEmail,
     required String buyerPhone,
     double? selectedUsd,
+    DigitalPayoutKycPayload? payoutKyc,
   }) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null || user.isAnonymous) {
-      throw Exception('You’re not logged in. Please sign in to continue.');
+    var user = FirebaseAuth.instance.currentUser;
+    user ??= (await FirebaseAuth.instance.signInAnonymously()).user;
+    if (user == null) {
+      throw Exception('Could not start checkout. Please try again.');
     }
+    final isGuest = user.isAnonymous;
     final isSubscription = product.fixedMwkPrice != null;
+    final isCrypto = product.category.trim().toLowerCase() == 'crypto';
+    final kind = isCrypto
+        ? 'crypto'
+        : (isSubscription ? 'subscription' : 'gift_card');
     final doc = _col.doc();
     await doc.set({
       'productKey': product.key,
@@ -138,7 +185,7 @@ class DigitalServiceOrderService {
       'productSubtitle': product.subtitle,
       'brandTag': product.brandTag,
       'category': product.category,
-      'kind': isSubscription ? 'subscription' : 'gift_card',
+      'kind': kind,
       'period': isSubscription ? 'monthly' : null,
       'periodLabel': isSubscription ? '1 month' : null,
       'selectedUsd': selectedUsd,
@@ -146,11 +193,17 @@ class DigitalServiceOrderService {
       'currency': 'MWK',
       'status': 'pending_payment',
       'txRef': txRef,
-      'buyerUid': user.uid,
+      'buyerUid': isGuest ? '' : user.uid,
+      'isGuest': isGuest,
       'buyerName': buyerName,
       'buyerEmail': buyerEmail,
       'buyerPhone': buyerPhone,
       'platformFeeCredited': false,
+      'source': 'app',
+      if (payoutKyc != null) 'payoutKyc': {
+        ...payoutKyc.toMap(),
+        'uploadedAt': FieldValue.serverTimestamp(),
+      },
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });

@@ -33,6 +33,7 @@ import 'package:vero360_app/features/Reels/reels_notification_routes.dart';
 import 'package:vero360_app/GernalScreens/vero_team_chat_page.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_my_orders_page.dart';
+import 'package:vero360_app/features/DigitalServices/presentation/digital_my_orders_page.dart';
 import 'package:vero360_app/features/Promotions/presentation/promotions_page.dart';
 import 'package:vero360_app/features/Promotions/presentation/promo_detail_page.dart';
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
@@ -970,6 +971,11 @@ class NotificationService {
           ),
         );
         return true;
+      case NotificationStore.kBadgeDigitalOrders:
+        navigator.push(
+          MaterialPageRoute(builder: (_) => const DigitalMyOrdersPage()),
+        );
+        return true;
       case NotificationStore.kBadgePromotions:
         unawaited(_openPromotionTarget(navigator, data));
         return true;
@@ -1055,6 +1061,12 @@ class NotificationService {
             MaterialPageRoute(builder: (_) => const ChatListPage()),
           );
         }
+        break;
+
+      case 'digital_fulfillment':
+        navigator.push(
+          MaterialPageRoute(builder: (_) => const DigitalMyOrdersPage()),
+        );
         break;
 
       case 'refund_request':

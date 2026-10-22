@@ -2,9 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_details.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/vero_ride_driver_profile_page.dart';
 
-/// Opens a marketplace shop **or** a public Vero Ride driver profile.
+/// Opens a marketplace shop, a restaurant kitchen, **or** a public Vero Ride
+/// driver profile.
 ///
 /// Navigates immediately (no waiting on role lookup). If the account turns out
 /// to be a driver-only profile, the route is swapped in place.
@@ -12,12 +14,30 @@ Future<void> openMerchantOrDriverProfile(
   BuildContext context, {
   required String profileId,
   required String displayName,
+  String? serviceType,
 }) async {
   final id = profileId.trim();
   if (id.isEmpty) return;
   if (!context.mounted) return;
 
   final nav = Navigator.of(context);
+  final st = (serviceType ?? '').trim().toLowerCase();
+  if (st == 'food') {
+    unawaited(
+      nav.push(
+        MaterialPageRoute<void>(
+          builder: (_) => KitchenExplorePage(
+            kitchenName: displayName.trim().isEmpty
+                ? 'Restaurant'
+                : displayName.trim(),
+            merchantId: id,
+          ),
+        ),
+      ),
+    );
+    return;
+  }
+
   // Instant open — shop is the common case from chat / marketplace.
   unawaited(
     nav.push(

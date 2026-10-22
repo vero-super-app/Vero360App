@@ -2959,7 +2959,7 @@ class AboutUsPage extends StatelessWidget {
 class PolicyPage extends StatelessWidget {
   const PolicyPage({super.key, this.focusCarHire = false});
 
-  /// Shows the car hire section first, for links from the car hire screens.
+  /// When true (car hire onboarding), the page title reflects that flow.
   final bool focusCarHire;
 
   /// Bundled PDFs under `assets/documents/` (see pubspec.yaml).
@@ -3073,119 +3073,6 @@ class PolicyPage extends StatelessWidget {
     );
   }
 
-  Widget _bullet(String title, String body) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 10),
-      child: Text.rich(
-        TextSpan(
-          style: const TextStyle(height: 1.45, color: _ink, fontSize: 14),
-          children: [
-            TextSpan(
-              text: '$title. ',
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-            TextSpan(text: body),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _carHireSection() {
-    return _sectionCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _pageTitle('Car Hire'),
-          const SizedBox(height: 4),
-          const Text(
-            'How renting a vehicle on Vero360 works.',
-            style: TextStyle(height: 1.35, color: _muted, fontSize: 13),
-          ),
-          _bullet(
-            'Quotes and pricing',
-            'Prices shown while browsing are estimates. Your final total, '
-                'fees and any deposit are calculated by Vero360 for your exact '
-                'dates and shown before you submit a booking. A quote is held '
-                'for a limited time; if it expires, request a new one to get '
-                'current pricing and availability.',
-          ),
-          _bullet(
-            'Booking holds',
-            'Submitting a booking request holds the vehicle until the hold '
-                'expiry shown on the booking. If payment is not completed in '
-                'time, the hold may expire and the dates are released.',
-          ),
-          _bullet(
-            'Deposits',
-            "Any deposit shown on your quote is collected according to the "
-                "vehicle's terms. Payment, deposit and refund progress are "
-                'shown separately on the booking.',
-          ),
-          _bullet(
-            'Cancellation and refunds',
-            'You can cancel a pending or confirmed booking before pick-up, '
-                'which releases the dates. Confirmed bookings may be subject '
-                "to the provider's cancellation policy. Refunds follow the "
-                'Refund Policy and the payment status on the booking.',
-          ),
-          _bullet(
-            'Payment confirmation',
-            'Payments are processed by our payment partner (PayChangu). '
-                'Vero360 never treats returning to the app or a browser '
-                'redirect as proof of payment. A booking is only marked paid '
-                'after Vero360 verifies the payment with the provider.',
-          ),
-          _bullet(
-            'Extensions',
-            'You can request a later return time while a booking is pending, '
-                'confirmed or active. The provider reviews each request and '
-                'any additional amount is quoted by Vero360. An extension is '
-                'not granted until it is approved and any payment is complete.',
-          ),
-          _bullet(
-            'Handover inspections',
-            'At pick-up and return, you and the provider can record the '
-                'odometer, fuel level, condition and photo references. Either '
-                "party can accept or decline the other's record. Declined "
-                'inspections can be reviewed by Vero360 support.',
-          ),
-          _bullet(
-            'Incidents and support',
-            'Report accidents, breakdowns, theft, safety problems or a '
-                'provider no-show from the booking screen. Reports and support '
-                'cases are attached to your booking so support can follow up.',
-          ),
-          const SizedBox(height: 14),
-          _pageTitle('Car Hire Privacy'),
-          _bullet(
-            'Driver verification',
-            'To rent a self-drive vehicle, Vero360 may ask for identity and '
-                'driving licence evidence. Documents are reviewed only by '
-                'authorised Vero360 support staff to confirm eligibility, and '
-                'are never shown on listings or to other renters.',
-          ),
-          _bullet(
-            'Document references',
-            'In this version of the app you submit the reference or upload ID '
-                'that support gave you, not the file itself. Files are stored '
-                'by Vero360 support.',
-          ),
-          _bullet(
-            'Vehicle data',
-            'Public listings never show registration plates or private owner '
-                'details. Maintenance and safety notes are kept internal.',
-          ),
-          _bullet(
-            'Retention',
-            'Verification records, inspections and incident reports are '
-                'handled as described in the Privacy Policy.',
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _docTile(
     BuildContext context, {
     required IconData icon,
@@ -3273,9 +3160,9 @@ class PolicyPage extends StatelessWidget {
         backgroundColor: kBrandOrange,
         foregroundColor: Colors.white,
         elevation: 0,
-        title: const Text(
-          'Terms & Privacy',
-          style: TextStyle(
+        title: Text(
+          focusCarHire ? 'Car Hire Terms & Privacy' : 'Terms & Privacy',
+          style: const TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.w900,
             color: Colors.white,
@@ -3285,10 +3172,6 @@ class PolicyPage extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
         children: [
-          if (focusCarHire) ...[
-            _carHireSection(),
-            const SizedBox(height: 14),
-          ],
           _sectionCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -3423,10 +3306,6 @@ class PolicyPage extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 14),
-          if (!focusCarHire) ...[
-            _carHireSection(),
-            const SizedBox(height: 14),
-          ],
 
           _sectionCard(
             child: Column(

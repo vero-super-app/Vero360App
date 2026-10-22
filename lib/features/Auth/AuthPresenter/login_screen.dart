@@ -494,15 +494,11 @@ class _LoginScreenState extends State<LoginScreen> {
       RegExp(r'^[\w\.\-]+@([\w\-]+\.)+[\w\-]{2,}$').hasMatch(v);
 
   static bool _looksLikePhone(String s) {
-    final t = s.trim();
-    if (t.isEmpty) return false;
-    final digits = t.replaceAll(RegExp(r'\D'), '');
+    final digits = s.trim().replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) return false;
     return RegExp(r'^(08|09)\d{8}$').hasMatch(digits) ||
-        RegExp(r'^\+265[89]\d{8}$').hasMatch(t);
-  }
-
-  static String _normalizePhoneForAuth(String raw) {
-    return raw.replaceAll(RegExp(r'\D'), '');
+        RegExp(r'^265[89]\d{8}$').hasMatch(digits) ||
+        RegExp(r'^[89]\d{8}$').hasMatch(digits);
   }
 
   Future<void> _submit() async {
@@ -532,8 +528,7 @@ class _LoginScreenState extends State<LoginScreen> {
         // Phone-only accounts created on register use Firebase with synthetic email.
         // Try signing in with that when backend doesn't know the phone.
         if (isPhone && mounted) {
-          final authEmail =
-              '${_normalizePhoneForAuth(identifier)}@phone.vero360.app';
+          final authEmail = AuthService.syntheticEmailForPhone(identifier);
           try {
             final cred = await _auth.signInWithEmailAndPassword(
               email: authEmail,
@@ -1098,18 +1093,19 @@ class _LoginScreenState extends State<LoginScreen> {
               autofillHints: const [
                 AutofillHints.username,
                 AutofillHints.email,
+                AutofillHints.telephoneNumber,
               ],
               textInputAction: TextInputAction.next,
               decoration: _fieldDecoration(
-                label: 'Email address',
-                hint: 'you@vero.com',
-                icon: Icons.mail_outline_rounded,
+                label: 'Phone number or email',
+                hint: '09xxxxxxxx or you@vero.com',
+                icon: Icons.person_outline,
               ),
               validator: (v) {
                 final val = v?.trim() ?? '';
-                if (val.isEmpty) return 'Email address is required';
+                if (val.isEmpty) return 'Email or phone is required';
                 if (!_looksLikeEmail(val) && !_looksLikePhone(val)) {
-                  return 'Enter a valid email address';
+                  return 'Enter a valid email or phone number';
                 }
                 return null;
               },

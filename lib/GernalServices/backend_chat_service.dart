@@ -50,7 +50,14 @@ bool _isPlaceholderChatName(String name) {
       n == 'user' ||
       n == 'unknown' ||
       n == 'contact' ||
-      n == 'someone';
+      n == 'someone' ||
+      n == 'chat' ||
+      n == 'chats' ||
+      n == 'new message' ||
+      n == 'vero360' ||
+      n == 'merchant' ||
+      n == 'you' ||
+      n == 'my status';
 }
 
 String? _businessNameFromProfileMap(Map<dynamic, dynamic> src) {
@@ -92,6 +99,13 @@ String _chatDisplayNameFromProfileMap(Map<dynamic, dynamic> src, String email) {
     return combined;
   }
   return 'Contact';
+}
+
+String? _usableProfileDisplayName(Map<dynamic, dynamic> src) {
+  final email = src['email']?.toString() ?? '';
+  final n = _chatDisplayNameFromProfileMap(src, email);
+  if (n.isEmpty || _isPlaceholderChatName(n)) return null;
+  return n;
 }
 
 class BackendChatThread {
@@ -1205,11 +1219,14 @@ class BackendChatService {
             : ChatParticipant(id: 0, name: 'Someone', email: ''),
       );
       var senderName = _senderDisplayNameFromMessage(message);
-      if (senderName == 'New message') {
+      if (_isPlaceholderChatName(senderName) || senderName == 'New message') {
         senderName = sender.preferredDisplayName;
         if (_isPlaceholderChatName(senderName) ||
             _chatNameLooksLikeEmailLocal(senderName, sender.email)) {
-          senderName = 'New message';
+          final memo = peekCachedBusinessName(sender.displayLookupKey);
+          senderName = (memo != null && !_isPlaceholderChatName(memo))
+              ? memo
+              : senderName;
         }
       }
 
@@ -1231,6 +1248,7 @@ class BackendChatService {
         senderName: senderName,
         body: body,
         chatId: message.chatId,
+        peerUserId: sender.id > 0 ? sender.id : message.senderId,
       );
     } catch (_) {}
   }
@@ -2309,6 +2327,48 @@ class BackendChatService {
     );
   }
 
+  /// Real name for the other person in a direct chat. Never returns "Chat".
+  static Future<String?> resolvePeerTitle({
+    String? chatId,
+    int? peerUserId,
+  }) async {
+    await ensureBusinessNameCacheLoaded();
+    final id = (chatId ?? '').trim();
+    if (id.isNotEmpty) {
+      final cached = cachedPeerLabelForChat(id);
+      if (cached != null && !_isPlaceholderChatName(cached.name)) {
+        return cached.name;
+      }
+    }
+
+    BackendChatThread? thread;
+    if (id.isNotEmpty) {
+      try {
+        thread = await getChat(id);
+      } catch (_) {}
+    }
+    var myId = peekUserId() ?? 0;
+    if (myId <= 0) {
+      try {
+        myId = await getUserId();
+      } catch (_) {}
+    }
+    if (thread != null) {
+      final fromThread = peerDisplayNameForThread(thread, myId);
+      if (!_isPlaceholderChatName(fromThread)) return fromThread;
+    }
+
+    ChatParticipant? peer = thread?.otherParticipant(myId);
+    if (peer == null && (peerUserId ?? 0) > 0) {
+      peer = ChatParticipant(id: peerUserId!, name: '', email: '');
+    }
+    if (peer == null) return null;
+    final found = await resolveBusinessNames([peer]);
+    final hit = found[peer.displayLookupKey];
+    if (hit != null && !_isPlaceholderChatName(hit)) return hit;
+    return null;
+  }
+
   /// Best-effort Firebase UID for the other person in a direct chat.
   static Future<String?> resolvePeerFirebaseUid({
     String? chatId,
@@ -3010,14 +3070,14 @@ class BackendChatService {
         .limit(1);
     try {
       final cached = await q.get(const GetOptions(source: Source.cache));
-      final fromCache = _businessNameFromProfileMap(
+      final fromCache = _usableProfileDisplayName(
         cached.docs.isEmpty ? const {} : cached.docs.first.data(),
       );
       if (fromCache != null) return fromCache;
     } catch (_) {}
     try {
       final snap = await q.get(const GetOptions(source: Source.serverAndCache));
-      return _businessNameFromProfileMap(
+      return _usableProfileDisplayName(
         snap.docs.isEmpty ? const {} : snap.docs.first.data(),
       );
     } catch (_) {
@@ -3030,12 +3090,12 @@ class BackendChatService {
     final ref = FirebaseFirestore.instance.collection(collection).doc(id);
     try {
       final cached = await ref.get(const GetOptions(source: Source.cache));
-      final fromCache = _businessNameFromProfileMap(cached.data() ?? const {});
+      final fromCache = _usableProfileDisplayName(cached.data() ?? const {});
       if (fromCache != null) return fromCache;
     } catch (_) {}
     try {
       final doc = await ref.get(const GetOptions(source: Source.serverAndCache));
-      return _businessNameFromProfileMap(doc.data() ?? const {});
+      return _usableProfileDisplayName(doc.data() ?? const {});
     } catch (_) {
       return null;
     }
@@ -3059,7 +3119,7 @@ class BackendChatService {
           ? (json['data'] is Map ? json['data'] as Map : json)
           : null;
       if (data is! Map) return null;
-      return _businessNameFromProfileMap(data);
+      return _usableProfileDisplayName(data);
     } catch (_) {
       return null;
     }

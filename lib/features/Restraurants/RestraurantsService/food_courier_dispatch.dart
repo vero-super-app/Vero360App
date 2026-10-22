@@ -154,11 +154,17 @@ class FoodCourierDispatch {
     String merchantName,
   ) {
     final stored = '${order['pickupAddress'] ?? ''}'.trim();
-    if (stored.isNotEmpty) return stored;
+    final restName = (restaurant?.businessName ?? merchantName).trim();
+    if (stored.isNotEmpty &&
+        stored.toLowerCase() != restName.toLowerCase()) {
+      return stored;
+    }
     final fromRest = (restaurant?.address ?? '').trim();
-    if (fromRest.isNotEmpty) return fromRest;
-    final name = (restaurant?.businessName ?? merchantName).trim();
-    return name.isEmpty ? '' : name;
+    if (fromRest.isNotEmpty &&
+        fromRest.toLowerCase() != restName.toLowerCase()) {
+      return fromRest;
+    }
+    return '';
   }
 
   static String _dropoffLine(Map<String, dynamic> order) {

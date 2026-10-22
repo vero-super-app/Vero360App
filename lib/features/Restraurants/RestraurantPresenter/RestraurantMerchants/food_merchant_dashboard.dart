@@ -13,6 +13,9 @@ import 'package:intl/intl.dart';
 
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet.dart';
+import 'package:vero360_app/features/Marketplace/presentation/pages/shop_pictures_page.dart';
+import 'package:vero360_app/Gernalproviders/notification_store.dart';
+import 'package:vero360_app/widgets/order_message_buyer_button.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_time.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace.service.dart';
 import 'package:vero360_app/utils/app_wallet_pin.dart';
@@ -29,6 +32,7 @@ import 'package:vero360_app/widgets/vero_coin_icon_button.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_order_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_order_number.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
+import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/GernalServices/profile_photo_cache.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_courier_dispatch.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/ride_history_screen.dart';
@@ -112,6 +116,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
   int _reviewCount = 0;
   String _status = 'pending';
   KycStatusSnapshot _kyc = const KycStatusSnapshot();
+  final Set<String> _sendingOrderIds = <String>{};
   final ImagePicker _picker = ImagePicker();
 
   static const Color _brandOrange = Color(0xFFFF8A00);
@@ -519,7 +524,10 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
         completed++;
         final amt = o['totalAmount'] ?? o['totalMwk'];
         revenue += amt is num ? amt.toDouble() : double.tryParse('$amt') ?? 0;
-      } else if (s == 'pending' || s == 'preparing' || s == 'ready') {
+      } else if (s == 'pending' ||
+          s == 'preparing' ||
+          s == 'ready' ||
+          s == 'sent') {
         pending++;
       }
     }
@@ -692,66 +700,114 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
         'status': status,
         'updatedAt': FieldValue.serverTimestamp(),
       });
-
-      final s = status.toLowerCase();
-      if (s == 'ready') {
-        Map<String, dynamic> order = {};
-        for (final o in _recentOrders) {
-          if (o is! Map) continue;
-          final map = Map<String, dynamic>.from(o);
-          final oid = '${map['id'] ?? map['orderId'] ?? ''}';
-          if (oid == orderId) {
-            order = map;
-            break;
-          }
-        }
-        final code = await FoodCourierDispatch.dispatchForReadyOrder(
-          orderId: orderId,
-          order: order,
-          merchantPhone: _merchantPhone,
-          merchantEmail: _merchantEmail,
-          merchantName: _businessName,
-          merchantUid: _uid,
+    } catch (e) {
+      debugPrint('Error updating order: $e');
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          'Could not update this order. Try again.',
+          isSuccess: false,
+          errorMessage: '',
         );
+      }
+    }
+  }
+
+  Map<String, dynamic> _orderMapById(String orderId) {
+    for (final o in _recentOrders) {
+      if (o is! Map) continue;
+      final map = Map<String, dynamic>.from(o);
+      final oid = '${map['id'] ?? map['orderId'] ?? ''}';
+      if (oid == orderId) return map;
+    }
+    return <String, dynamic>{};
+  }
+
+  /// Marketplace-style send: dispatch courier, mark sent, start escrow clock.
+  /// The customer confirms receipt in My Food Orders to release funds.
+  Future<void> _sendFood(String orderId) async {
+    final id = orderId.trim();
+    if (id.isEmpty || _sendingOrderIds.contains(id)) return;
+
+    setState(() => _sendingOrderIds.add(id));
+    try {
+      final order = _orderMapById(id);
+      final current = '${order['status'] ?? ''}'.toLowerCase();
+      if (current == 'cancelled') {
         if (mounted) {
           ToastHelper.showCustomToast(
             context,
-            code == null || code.isEmpty
-                ? 'Marked ready. Vero Courier will pick up — add a restaurant address if dispatch failed.'
-                : 'Vero Courier dispatched · $code',
-            isSuccess: code != null && code.isNotEmpty,
-            errorMessage: code == null || code.isEmpty ? 'Courier dispatch' : '',
+            'This order was cancelled.',
+            isSuccess: false,
+            errorMessage: '',
           );
         }
+        return;
+      }
+      if (current == 'delivered' || current == 'completed') {
+        if (mounted) {
+          ToastHelper.showCustomToast(
+            context,
+            'The customer already confirmed this order.',
+            isSuccess: false,
+            errorMessage: '',
+          );
+        }
+        return;
       }
 
-      // Delivered / completed → credit kitchen the full menu price.
-      if (s == 'delivered' || s == 'completed') {
-        try {
-          await OrderEscrowService.releaseFoodOrderByMerchant(orderId);
-          if (mounted) {
-            ToastHelper.showCustomToast(
-              context,
-              'Order paid out — kitchen receives the full menu price.',
-              isSuccess: true,
-              errorMessage: '',
-            );
-          }
-        } catch (e) {
-          debugPrint('Food escrow release failed: $e');
-          if (mounted) {
-            ToastHelper.showCustomToast(
-              context,
-              'Order updated, but wallet payout could not finish. Try again shortly.',
-              isSuccess: false,
-              errorMessage: '',
-            );
-          }
-        }
-        unawaited(_loadWalletBalance());
+      final code = await FoodCourierDispatch.dispatchForReadyOrder(
+        orderId: id,
+        order: order,
+        merchantPhone: _merchantPhone,
+        merchantEmail: _merchantEmail,
+        merchantName: _businessName,
+        merchantUid: _uid,
+      );
+
+      await _firestore.collection('food_orders').doc(id).update({
+        'status': 'sent',
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      await OrderEscrowService.markFoodOrderSentByMerchant(id);
+
+      final buyerUid = '${order['customerUid'] ?? ''}'.trim();
+      final orderNumber = _orderNumberLabel(order);
+      if (buyerUid.isNotEmpty) {
+        unawaited(
+          OrderPartyNotificationService.publishFoodSentToBuyer(
+            buyerUid: buyerUid,
+            orderNumber: orderNumber,
+            orderId: id,
+            restaurantName: _businessName,
+          ),
+        );
       }
+
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        code == null || code.isEmpty
+            ? 'Food sent. The customer will confirm receipt to release payment.'
+            : 'Food sent · Vero Courier $code. Customer confirms receipt to release payment.',
+        isSuccess: true,
+        errorMessage: '',
+      );
     } catch (e) {
-      debugPrint('Error updating order: $e');
+      debugPrint('Send food failed: $e');
+      if (mounted) {
+        ToastHelper.showCustomToast(
+          context,
+          'Could not send this order. Try again.',
+          isSuccess: false,
+          errorMessage: '',
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _sendingOrderIds.remove(id));
+      }
     }
   }
 
@@ -1928,8 +1984,8 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
               onTap: _openPostFood,
             ),
             _FoodQuickActionTile(
-              title: 'My orders',
-              icon: Icons.receipt_long_rounded,
+              title: 'Send food',
+              icon: Icons.delivery_dining_rounded,
               color: _brandNavy,
               onTap: () => _foodTabs.animateTo(2),
             ),
@@ -1969,6 +2025,26 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
               },
             ),
             _FoodQuickActionTile(
+              title: 'Received orders',
+              icon: Icons.move_to_inbox_outlined,
+              color: Colors.blue,
+              badgeRoute: NotificationStore.kBadgeReceived,
+              onTap: _openReceivedFoodOrders,
+            ),
+            _FoodQuickActionTile(
+              title: 'Refund',
+              icon: Icons.replay_circle_filled_outlined,
+              color: Colors.red,
+              badgeRoute: NotificationStore.kBadgeRefund,
+              onTap: _openFoodRefunds,
+            ),
+            _FoodQuickActionTile(
+              title: 'Restaurant pictures',
+              icon: Icons.photo_library_outlined,
+              color: Colors.teal,
+              onTap: _openRestaurantPictures,
+            ),
+            _FoodQuickActionTile(
               title: 'My Vero Ride',
               icon: Icons.directions_car_filled_rounded,
               color: Colors.orange,
@@ -1987,6 +2063,160 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
         builder: (_) =>
             const RideHistoryScreen(mode: RideHistoryMode.passenger),
       ),
+    );
+  }
+
+  void _openBottomSheet(Widget child) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => SizedBox(
+        height: MediaQuery.of(context).size.height * 0.88,
+        child: child,
+      ),
+    );
+  }
+
+  void _openReceivedFoodOrders() {
+    _openFilteredFoodOrders(
+      title: 'Received orders',
+      emptyLabel: 'No received orders yet',
+      match: (status) => status == 'delivered' || status == 'completed',
+    );
+  }
+
+  void _openFoodRefunds() {
+    _openFilteredFoodOrders(
+      title: 'Refund',
+      emptyLabel: 'No refunded or cancelled orders yet',
+      match: (status) => status == 'cancelled' || status == 'refunded',
+    );
+  }
+
+  void _openFilteredFoodOrders({
+    required String title,
+    required String emptyLabel,
+    required bool Function(String status) match,
+  }) {
+    final orders = <Map<String, dynamic>>[];
+    for (final raw in _recentOrders) {
+      if (raw is! Map) continue;
+      final map = Map<String, dynamic>.from(raw);
+      final status = '${map['status'] ?? ''}'.trim().toLowerCase();
+      if (match(status)) orders.add(map);
+    }
+    _openBottomSheet(
+      Scaffold(
+        backgroundColor: const Color(0xFFF3F4F7),
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          foregroundColor: _brandNavy,
+          elevation: 0,
+          surfaceTintColor: Colors.white,
+          title: Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.w900),
+          ),
+        ),
+        body: orders.isEmpty
+            ? Center(
+                child: Text(
+                  emptyLabel,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+              )
+            : ListView.builder(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+                itemCount: orders.length,
+                itemBuilder: (_, i) => _orderDetailCard(orders[i]),
+              ),
+      ),
+    );
+  }
+
+  void _openRestaurantPictures() {
+    final uid = _uid.trim().isEmpty
+        ? (_auth.currentUser?.uid ?? '')
+        : _uid.trim();
+    if (uid.isEmpty) return;
+    _openBottomSheet(
+      ShopPicturesPage(
+        merchantIds: [uid],
+        shopName: _businessName,
+        galleryTitle: 'Restaurant pictures',
+        serviceType: 'food',
+        description: _businessDescription,
+        openingHours: _openingHours,
+        openingDays: _openingDays,
+        profileUrl: _profileUrl,
+        canManage: true,
+      ),
+    );
+  }
+
+  String _orderCoverUrl(Map<String, dynamic> order) {
+    final direct = _firstNonEmpty([
+      order['foodImageUrl'],
+      order['coverImageUrl'],
+      order['foodImage'],
+    ]);
+    if (direct.isNotEmpty) return direct;
+    final raw = order['lineItems'] ?? order['items'] ?? order['cartItems'];
+    if (raw is List) {
+      for (final e in raw) {
+        if (e is! Map) continue;
+        final u = _firstNonEmpty([
+          e['imageUrl'],
+          e['image'],
+          e['FoodImage'],
+          e['photo'],
+        ]);
+        if (u.isNotEmpty) return u;
+      }
+    }
+    return '';
+  }
+
+  Future<void> _messageBuyer(Map<String, dynamic> order) {
+    final amount = order['totalAmount'] ?? order['totalMwk'] ?? order['total'];
+    final amountNum =
+        amount is num ? amount.toDouble() : double.tryParse('$amount') ?? 0;
+    final orderId = '${order['id'] ?? order['orderId'] ?? ''}'.trim();
+    final customer = _orderCustomerName(order);
+    final orderNo = _orderNumberLabel(order);
+    return OrderBuyerChat.openPeer(
+      context,
+      buyerUid: '${order['customerUid'] ?? order['userId'] ?? ''}',
+      sellerUid: _uid,
+      peerName: customer,
+      productId: orderId,
+      productName: _orderItemsSummary(order),
+      image: _orderCoverUrl(order),
+      price: amountNum,
+      description: orderNo,
+      autoSendMessage: OrderBuyerChat.receivedOrderMessage(
+        orderNumber: orderNo,
+        customerName: customer,
+        items: _orderItemsSummary(order),
+        phone: _firstNonEmpty([
+          order['customerPhone'],
+          order['phone'],
+        ]),
+        deliveryAddress: _orderDeliveryAddress(order),
+        restaurantName: _orderRestaurantName(order),
+        total: _mwk0(amountNum),
+        food: true,
+      ),
+      autoSendClientMessageId:
+          orderId.isEmpty ? null : 'food-order-received-$orderId',
     );
   }
 
@@ -2150,178 +2380,407 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     return DateFormat('dd MMM · HH:mm').format(at.toLocal());
   }
 
+  String _firstNonEmpty(Iterable<Object?> values) {
+    for (final v in values) {
+      final s = (v ?? '').toString().trim();
+      if (s.isNotEmpty) return s;
+    }
+    return '';
+  }
+
+  String _orderCustomerName(Map<String, dynamic> order) {
+    return _firstNonEmpty([order['customerName']]);
+  }
+
+  String _orderRestaurantName(Map<String, dynamic> order) {
+    return _firstNonEmpty([
+      order['restaurantName'],
+      order['businessName'],
+      order['merchantName'],
+      _businessName,
+    ]);
+  }
+
+  String _orderDeliveryAddress(Map<String, dynamic> order) {
+    return _firstNonEmpty([
+      order['deliveryAddress'],
+      order['dropoffAddress'],
+      order['address'],
+    ]);
+  }
+
+  bool _samePlaceLabel(String a, String b) {
+    final left = a.trim().toLowerCase();
+    final right = b.trim().toLowerCase();
+    if (left.isEmpty || right.isEmpty) return false;
+    return left == right;
+  }
+
+  /// Kitchen pickup address for Vero Courier — never the restaurant name.
+  String _orderKitchenLocation(Map<String, dynamic> order) {
+    final restaurant = _orderRestaurantName(order);
+    final delivery = _orderDeliveryAddress(order);
+    final candidates = [
+      order['pickupAddress'],
+      order['kitchenLocation'],
+      order['restaurantLocation'],
+      order['restaurantAddress'],
+      order['businessLocation'],
+      order['listingLocation'],
+      _businessLocation,
+    ];
+    for (final raw in candidates) {
+      final s = (raw ?? '').toString().trim();
+      if (s.isEmpty) continue;
+      if (_samePlaceLabel(s, restaurant) || _samePlaceLabel(s, _businessName)) {
+        continue;
+      }
+      if (_samePlaceLabel(s, delivery)) continue;
+      return s;
+    }
+    return '';
+  }
+
+  Future<void> _copyOrderNumber(String number) async {
+    final n = number.trim();
+    if (n.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: n));
+    if (!mounted) return;
+    ToastHelper.showCustomToast(
+      context,
+      'Order number copied',
+      isSuccess: true,
+      errorMessage: '',
+    );
+  }
+
+  Widget _orderFactRow({
+    required IconData icon,
+    required String label,
+    required String value,
+    VoidCallback? onCopy,
+  }) {
+    final v = value.trim().isEmpty ? '—' : value.trim();
+    final copyable = onCopy != null && value.trim().isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: _brandOrange),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 118,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ),
+          Expanded(
+            child: copyable
+                ? Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: onCopy,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                v,
+                                style: const TextStyle(
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w800,
+                                  color: _brandOrange,
+                                  height: 1.3,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            const Icon(
+                              Icons.copy_rounded,
+                              size: 16,
+                              color: _brandOrange,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  )
+                : Text(
+                    v,
+                    style: const TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w800,
+                      color: _brandNavy,
+                      height: 1.3,
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _orderDetailCard(Map<String, dynamic> orderMap) {
+    final parsed = FoodOrder.fromJson(orderMap);
+    final docId = (orderMap['id'] ?? orderMap['orderId'] ?? parsed.id)
+        .toString()
+        .trim();
     final orderNo = _orderNumberLabel(orderMap);
     final amount = orderMap['totalAmount'] ?? orderMap['totalMwk'] ?? orderMap['total'];
     final amountNum =
         amount is num ? amount.toDouble() : double.tryParse('$amount') ?? 0;
-    final customer = (orderMap['customerName'] ?? 'Customer').toString().trim();
-    final phone = (orderMap['customerPhone'] ?? orderMap['phone'] ?? '')
-        .toString()
-        .trim();
-    final address = (orderMap['deliveryAddress'] ??
-            orderMap['dropoffAddress'] ??
-            orderMap['address'] ??
-            '')
-        .toString()
-        .trim();
-    final track = '${orderMap['courierTrackingNumber'] ?? ''}'.trim();
+    final customer = _orderCustomerName(orderMap);
+    final restaurant = _orderRestaurantName(orderMap);
+    final location = _orderKitchenLocation(orderMap);
+    final delivery = _orderDeliveryAddress(orderMap);
     final when = _orderWhenLabel(orderMap);
     final itemsLine = _orderItemsSummary(orderMap);
-    final status = '${orderMap['status'] ?? 'pending'}';
+    final status = '${orderMap['status'] ?? parsed.status}';
+    final sending = docId.isNotEmpty && _sendingOrderIds.contains(docId);
+    final canSend = docId.isNotEmpty &&
+        !parsed.isCancelled &&
+        !parsed.isReceivedByCustomer &&
+        !parsed.isSentByKitchen;
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        onTap: () => _showMerchantOrderDetail(orderMap),
-        child: Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.04),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
-              ),
-            ],
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: _brandOrange.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(Icons.receipt_long_rounded, color: _brandOrange),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => _showMerchantOrderDetail(orderMap),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            orderNo.isEmpty ? 'Food order' : orderNo,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w900,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ),
-                        Chip(
-                          label: Text(
-                            status,
-                            style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          backgroundColor: _getStatusColor(status),
-                          visualDensity: VisualDensity.compact,
-                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          padding: EdgeInsets.zero,
-                        ),
-                      ],
-                    ),
-                    if (when.isNotEmpty) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        when,
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.grey.shade600,
-                        ),
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: _brandOrange.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                    ],
-                    const SizedBox(height: 6),
-                    Text(
-                      itemsLine,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey.shade800,
+                      child: const Icon(
+                        Icons.receipt_long_rounded,
+                        color: _brandOrange,
                       ),
                     ),
-                    const SizedBox(height: 6),
-                    Text(
-                      customer.isEmpty ? 'Customer' : customer,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w800,
-                        color: _brandNavy,
-                      ),
-                    ),
-                    if (phone.isNotEmpty)
-                      Text(
-                        phone,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey.shade700,
-                        ),
-                      ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _mwk0(amountNum),
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w900,
-                        color: Colors.green,
-                      ),
-                    ),
-                    if (address.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Row(
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(Icons.location_on_outlined,
-                              size: 14, color: Colors.grey.shade600),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: Text(
-                              address,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
+                          if (orderNo.isEmpty)
+                            const Text(
+                              'Food order',
                               style: TextStyle(
-                                fontSize: 12,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 14,
+                              ),
+                            )
+                          else
+                            Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(8),
+                                onTap: () => unawaited(_copyOrderNumber(orderNo)),
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 2),
+                                  child: Row(
+                                    children: [
+                                      Flexible(
+                                        child: Text(
+                                          orderNo,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w900,
+                                            fontSize: 14,
+                                            color: _brandOrange,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      const Icon(
+                                        Icons.copy_rounded,
+                                        size: 15,
+                                        color: _brandOrange,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          if (when.isNotEmpty)
+                            Text(
+                              when,
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
                                 color: Colors.grey.shade600,
                               ),
                             ),
-                          ),
                         ],
                       ),
-                    ],
-                    const SizedBox(height: 4),
-                    Text(
-                      track.isEmpty
-                          ? 'Vero Courier'
-                          : 'Vero Courier · $track',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: _brandOrange.withValues(alpha: 0.9),
+                    ),
+                    Chip(
+                      label: Text(
+                        status,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
+                      backgroundColor: _getStatusColor(status),
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      padding: EdgeInsets.zero,
+                    ),
+                    IconButton(
+                      tooltip: 'Message buyer',
+                      onPressed: () => unawaited(_messageBuyer(orderMap)),
+                      icon: const Icon(
+                        Icons.chat_bubble_rounded,
+                        color: _brandOrange,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.more_vert_rounded),
+                      onPressed: () => _showOrderActions(orderMap),
                     ),
                   ],
                 ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.more_vert_rounded),
-                onPressed: () => _showOrderActions(orderMap),
-              ),
-            ],
+                if (itemsLine.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    itemsLine,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey.shade800,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 4),
+                Text(
+                  _mwk0(amountNum),
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.green,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                _orderFactRow(
+                  icon: Icons.tag_rounded,
+                  label: 'Order number',
+                  value: orderNo,
+                  onCopy: orderNo.isEmpty
+                      ? null
+                      : () => unawaited(_copyOrderNumber(orderNo)),
+                ),
+                _orderFactRow(
+                  icon: Icons.person_outline_rounded,
+                  label: 'Customer name',
+                  value: customer,
+                ),
+                _orderFactRow(
+                  icon: Icons.place_outlined,
+                  label: 'Kitchen location',
+                  value: location,
+                ),
+                _orderFactRow(
+                  icon: Icons.restaurant_rounded,
+                  label: 'Restaurant name',
+                  value: restaurant,
+                ),
+                _orderFactRow(
+                  icon: Icons.local_shipping_outlined,
+                  label: 'Delivery address',
+                  value: delivery,
+                ),
+                const SizedBox(height: 4),
+                if (canSend)
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: sending
+                          ? null
+                          : () => unawaited(_sendFood(docId)),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _brandOrange,
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor:
+                            _brandOrange.withValues(alpha: 0.55),
+                        disabledForegroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: sending
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.delivery_dining_rounded),
+                      label: Text(
+                        sending ? 'Sending…' : 'Send food',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  )
+                else if (parsed.isSentByKitchen)
+                  Text(
+                    'Food sent. Waiting for the customer to confirm receipt.',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      height: 1.35,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey.shade700,
+                    ),
+                  )
+                else if (parsed.isReceivedByCustomer)
+                  Text(
+                    'Customer confirmed receipt. Payment released.',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      height: 1.35,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.green.shade700,
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
@@ -2359,12 +2818,27 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                   ),
                 ),
               ),
-              Text(
-                order.displayOrderNumber,
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w900,
-                  color: _brandNavy,
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () =>
+                      unawaited(_copyOrderNumber(order.displayOrderNumber)),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          order.displayOrderNumber,
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w900,
+                            color: _brandOrange,
+                          ),
+                        ),
+                      ),
+                      const Icon(Icons.copy_rounded, color: _brandOrange),
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(height: 4),
@@ -2377,9 +2851,19 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
               ),
               const SizedBox(height: 16),
               _merchantDetailSection('Customer', [
-                _merchantDetailRow('Name', order.customerName),
+                _merchantDetailRow('Customer name', order.customerName),
                 _merchantDetailRow('Phone', order.customerPhone),
                 _merchantDetailRow('Email', order.customerEmail),
+              ]),
+              _merchantDetailSection('Kitchen', [
+                _merchantDetailRow(
+                  'Restaurant name',
+                  _orderRestaurantName(orderMap),
+                ),
+                _merchantDetailRow(
+                  'Kitchen location',
+                  _orderKitchenLocation(orderMap),
+                ),
               ]),
               _merchantDetailSection('Order', [
                 _merchantDetailRow(
@@ -2401,9 +2885,10 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                       ? 'Pending dispatch'
                       : order.courierTrackingNumber.trim(),
                 ),
-                _merchantDetailRow('Drop-off', order.deliveryAddress),
-                if (order.pickupAddress.trim().isNotEmpty)
-                  _merchantDetailRow('Pickup', order.pickupAddress),
+                _merchantDetailRow(
+                  'Delivery address',
+                  _orderDeliveryAddress(orderMap),
+                ),
               ]),
               const SizedBox(height: 8),
               const Text(
@@ -2455,24 +2940,79 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                 );
               }),
               const SizedBox(height: 16),
-              FilledButton(
+              if (order.isSentByKitchen) ...[
+                Text(
+                  'Food sent. Payment stays in escrow until the customer confirms they received it in My Food Orders.',
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.35,
+                    color: Colors.grey.shade700,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+              OutlinedButton.icon(
                 onPressed: () {
                   Navigator.pop(ctx);
-                  _showOrderActions(orderMap);
+                  unawaited(_messageBuyer(orderMap));
                 },
-                style: FilledButton.styleFrom(
-                  backgroundColor: _brandOrange,
-                  foregroundColor: Colors.white,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _brandOrange,
+                  side: const BorderSide(color: _brandOrange, width: 1.4),
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
                   ),
                 ),
-                child: const Text(
-                  'Update status',
+                icon: const Icon(Icons.chat_bubble_rounded),
+                label: const Text(
+                  'Message buyer',
                   style: TextStyle(fontWeight: FontWeight.w800),
                 ),
               ),
+              const SizedBox(height: 10),
+              if (!order.isCancelled &&
+                  !order.isReceivedByCustomer &&
+                  !order.isSentByKitchen)
+                FilledButton.icon(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    if (order.id.isNotEmpty) unawaited(_sendFood(order.id));
+                  },
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _brandOrange,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  icon: const Icon(Icons.delivery_dining_rounded),
+                  label: const Text(
+                    'Send food',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                )
+              else
+                FilledButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _showOrderActions(orderMap);
+                  },
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _brandOrange,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: const Text(
+                    'Order actions',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
             ],
           );
         },
@@ -3173,7 +3713,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       onRefresh: _loadMerchantData,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+        padding: EdgeInsets.fromLTRB(16, 12, 16, veroFloatingNavClearance(context, extra: 32)),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -3192,7 +3732,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       onRefresh: _loadMerchantData,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        padding: EdgeInsets.fromLTRB(16, 16, 16, veroFloatingNavClearance(context, extra: 32)),
         child: _buildRecentOrders(showAll: true),
       ),
     );
@@ -3205,7 +3745,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       onRefresh: _loadMerchantData,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        padding: EdgeInsets.fromLTRB(16, 16, 16, veroFloatingNavClearance(context, extra: 32)),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -3444,7 +3984,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       onRefresh: _loadMerchantData,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+        padding: EdgeInsets.fromLTRB(16, 12, 16, veroFloatingNavClearance(context, extra: 32)),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -3543,6 +4083,9 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       case 'completed':
       case 'delivered':
         return Colors.green.shade100;
+      case 'sent':
+      case 'ready':
+        return Colors.teal.shade100;
       case 'preparing':
         return Colors.blue.shade100;
       case 'pending':
@@ -3556,6 +4099,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
 
   void _showOrderActions(Map<String, dynamic> order) {
     final docId = order['id']?.toString() ?? order['orderId']?.toString() ?? '';
+    final parsed = FoodOrder.fromJson(order);
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -3575,38 +4119,48 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.check_circle_outline_rounded),
-                title: const Text('Mark as preparing'),
+                leading: const Icon(
+                  Icons.chat_bubble_rounded,
+                  color: _brandOrange,
+                ),
+                title: const Text('Message buyer'),
                 onTap: () {
                   Navigator.pop(context);
-                  if (docId.isNotEmpty) _updateOrderStatus(docId, 'preparing');
+                  unawaited(_messageBuyer(order));
                 },
               ),
-              ListTile(
-                leading: const Icon(Icons.delivery_dining_rounded),
-                title: const Text('Mark as ready'),
-                subtitle: const Text('Dispatch Vero Courier for pickup'),
-                onTap: () {
-                  Navigator.pop(context);
-                  if (docId.isNotEmpty) _updateOrderStatus(docId, 'ready');
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.done_all_rounded),
-                title: const Text('Mark as delivered'),
-                onTap: () {
-                  Navigator.pop(context);
-                  if (docId.isNotEmpty) _updateOrderStatus(docId, 'delivered');
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.cancel_outlined),
-                title: const Text('Cancel order'),
-                onTap: () {
-                  Navigator.pop(context);
-                  if (docId.isNotEmpty) _updateOrderStatus(docId, 'cancelled');
-                },
-              ),
+              if (!parsed.isCancelled &&
+                  !parsed.isReceivedByCustomer &&
+                  !parsed.isSentByKitchen) ...[
+                ListTile(
+                  leading: const Icon(Icons.check_circle_outline_rounded),
+                  title: const Text('Mark as preparing'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    if (docId.isNotEmpty) _updateOrderStatus(docId, 'preparing');
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.delivery_dining_rounded),
+                  title: const Text('Send food'),
+                  subtitle: const Text(
+                    'Dispatch Vero Courier. Customer confirms receipt to release payment.',
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    if (docId.isNotEmpty) unawaited(_sendFood(docId));
+                  },
+                ),
+              ],
+              if (!parsed.isReceivedByCustomer)
+                ListTile(
+                  leading: const Icon(Icons.cancel_outlined),
+                  title: const Text('Cancel order'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    if (docId.isNotEmpty) _updateOrderStatus(docId, 'cancelled');
+                  },
+                ),
             ],
           ),
         );
@@ -3620,54 +4174,102 @@ class _FoodQuickActionTile extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
   final Color color;
+  final String? badgeRoute;
 
   const _FoodQuickActionTile({
     required this.title,
     required this.icon,
     required this.onTap,
     required this.color,
+    this.badgeRoute,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      elevation: 0,
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
+    return ListenableBuilder(
+      listenable: NotificationStore.instance,
+      builder: (context, _) {
+        final n = badgeRoute == null
+            ? 0
+            : NotificationStore.instance.unreadCountForBadgeRoute(badgeRoute!);
+        return Material(
+          color: Colors.white,
+          elevation: 0,
+          borderRadius: BorderRadius.circular(16),
+          child: InkWell(
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.black12),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(12),
+            onTap: () {
+              if (badgeRoute != null) {
+                unawaited(
+                  NotificationStore.instance.markBadgeRouteAsRead(badgeRoute!),
+                );
+              }
+              onTap();
+            },
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.black12),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(icon, color: color),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: const TextStyle(fontWeight: FontWeight.w900),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const Icon(
+                        Icons.chevron_right_rounded,
+                        color: Colors.black38,
+                      ),
+                    ],
+                  ),
                 ),
-                child: Icon(icon, color: color),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w900),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              const Icon(Icons.chevron_right_rounded, color: Colors.black38),
-            ],
+                if (n > 0)
+                  Positioned(
+                    top: 6,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFF8A00),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        n > 99 ? '99+' : '$n',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

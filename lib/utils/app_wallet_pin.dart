@@ -241,6 +241,23 @@ class AppWalletPin {
 
   /// Confirms parcel receipt: tries **Face ID / fingerprint** first when available,
   /// then falls back to **PIN** (create PIN on first use if needed).
+  static Future<bool> verifyFoodReceipt(BuildContext context) async {
+    if (await _tryBiometric(
+      'Confirm you received this food to release payment to the kitchen.',
+    )) {
+      return true;
+    }
+    if (!context.mounted) return false;
+    final ensured = await ensurePinExists(context);
+    if (!context.mounted) return false;
+    if (!ensured) return false;
+    return verifyPin(
+      context,
+      title: 'Confirm you received the food',
+      subtitle: 'Enter your wallet password to release payment to the kitchen.',
+    );
+  }
+
   static Future<bool> verifyParcelReceipt(BuildContext context) async {
     if (await _tryBiometric(
       'Confirm you received this parcel to release payment to the merchant.',

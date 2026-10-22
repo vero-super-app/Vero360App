@@ -602,6 +602,9 @@ class NotificationService {
           senderName: title,
           body: body,
           chatId: chatId.isEmpty ? id : chatId,
+          peerUserId: int.tryParse(
+            (data['peerUserId'] ?? data['senderId'] ?? '').toString(),
+          ),
         );
       } catch (e) {
         if (kDebugMode) debugPrint('Chat FCM notify failed: $e');
@@ -677,6 +680,9 @@ class NotificationService {
         chatId: chatId.isEmpty
             ? (message.messageId ?? 'chat')
             : chatId,
+        peerUserId: int.tryParse(
+          (data['peerUserId'] ?? data['senderId'] ?? '').toString(),
+        ),
       ));
       return;
     }
@@ -926,16 +932,8 @@ class NotificationService {
     });
   }
 
-  static bool _isPlaceholderChatPeerName(String raw) {
-    final n = raw.trim().toLowerCase();
-    return n.isEmpty ||
-        n == 'chat' ||
-        n == 'chats' ||
-        n == 'someone' ||
-        n == 'contact' ||
-        n == 'new message' ||
-        n == 'vero360';
-  }
+  static bool _isPlaceholderChatPeerName(String raw) =>
+      ChatParticipant.isPlaceholderName(raw);
 
   bool _tryNavigateFromBadgeRoute(
     NavigatorState navigator,
@@ -1095,6 +1093,7 @@ class NotificationService {
         break;
 
       case 'food_order_placed':
+      case 'food_sent':
         if (kDebugMode) debugPrint('→ Open food my orders');
         navigator.push(
           MaterialPageRoute(builder: (_) => const FoodMyOrdersPage()),
@@ -1495,6 +1494,7 @@ class NotificationService {
     required String senderName,
     required String body,
     required String chatId,
+    int? peerUserId,
   }) async {
     if (FirebaseAuth.instance.currentUser == null) return;
     final safeChatId = chatId.trim().isEmpty ? 'chat' : chatId.trim();
@@ -1509,6 +1509,7 @@ class NotificationService {
       // Keep name in payload so notification-centre / tray taps open with title.
       'senderName': safeSender,
       'title': safeSender,
+      if (peerUserId != null && peerUserId > 0) 'peerUserId': peerUserId,
     };
     final payload = jsonEncode(payloadMap);
     // Stable-enough id so rapid WS+Firestore+FCM copies collapse in the store.

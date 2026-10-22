@@ -164,7 +164,9 @@ class _FoodOrderTrackingPageState extends State<FoodOrderTrackingPage> {
     if (courier == CourierStatus.accepted) {
       return 'Courier accepted — heading to the kitchen';
     }
-    if (kitchen == 'ready') return 'Ready — waiting for Vero Courier';
+    if (kitchen == 'sent' || kitchen == 'ready') {
+      return 'Food sent — confirm receipt in My Food Orders when it arrives';
+    }
     if (kitchen == 'preparing') return 'Kitchen is preparing your order';
     return 'Order received';
   }

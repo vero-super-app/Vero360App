@@ -5,10 +5,12 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import 'package:vero360_app/GernalServices/api_exception.dart';
+import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_order_model.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_order_image_resolver.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantsService/food_review_service.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_order_tracking_page.dart';
+import 'package:vero360_app/utils/app_wallet_pin.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
@@ -28,6 +30,9 @@ Color _getStatusColor(String? status) {
     case 'completed':
     case 'delivered':
       return Colors.green.shade100;
+    case 'sent':
+    case 'ready':
+      return Colors.teal.shade100;
     case 'preparing':
       return Colors.blue.shade100;
     case 'pending':
@@ -139,7 +144,7 @@ class _FoodMyOrdersPageState extends State<FoodMyOrdersPage> {
                     final order = orders[i];
                     return _FoodOrderCard(
                       order: order,
-                      canRate: _isDelivered(order) &&
+                      canRate: order.isReceivedByCustomer &&
                           !_reviewedOrderIds.contains(order.id),
                       onTap: () => _openDetail(order),
                       onTrack: () => _openTracking(order),
@@ -697,6 +702,29 @@ class _FoodOrderCard extends StatelessWidget {
                   ],
                 ),
               ),
+              if (order.isSentByKitchen)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: onTap,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.green.shade700,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.restaurant_rounded, size: 18),
+                      label: const Text(
+                        'I received this food',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ),
+                ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
                 child: Row(
@@ -787,7 +815,9 @@ class _FoodOrderDetailSheetState extends State<_FoodOrderDetailSheet> {
   final _reviewService = FoodReviewService();
   int _rating = 5;
   bool _submitting = false;
+  bool _confirming = false;
   late bool _alreadyReviewed;
+  OrderEscrowSnapshot? _escrow;
 
   FoodOrder get order => widget.order;
 
@@ -795,6 +825,74 @@ class _FoodOrderDetailSheetState extends State<_FoodOrderDetailSheet> {
   void initState() {
     super.initState();
     _alreadyReviewed = widget.alreadyReviewed;
+    _loadEscrow();
+  }
+
+  Future<void> _loadEscrow() async {
+    try {
+      final snap = await OrderEscrowService.fetchEscrow(order.id);
+      if (!mounted) return;
+      setState(() => _escrow = snap);
+    } catch (_) {}
+  }
+
+  Future<void> _confirmReceived() async {
+    if (_confirming) return;
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    if (uid.isEmpty) {
+      ToastHelper.showCustomToast(
+        context,
+        'Sign in to confirm you received this food.',
+        isSuccess: false,
+        errorMessage: 'Not signed in',
+      );
+      return;
+    }
+
+    setState(() => _confirming = true);
+    try {
+      final ok = await AppWalletPin.verifyFoodReceipt(context);
+      if (!ok || !mounted) return;
+
+      await OrderEscrowService.releaseFunds(
+        orderId: order.id,
+        buyerConfirmed: true,
+      );
+      await FirebaseFirestore.instance
+          .collection('food_orders')
+          .doc(order.id)
+          .update({
+        'status': 'delivered',
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      if (!mounted) return;
+      await _loadEscrow();
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Thanks — payment was released to the kitchen.',
+        isSuccess: true,
+        errorMessage: '',
+      );
+    } on StateError catch (e) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        e.message,
+        isSuccess: false,
+        errorMessage: e.message,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Could not confirm receipt. Try again.',
+        isSuccess: false,
+        errorMessage: '$e',
+      );
+    } finally {
+      if (mounted) setState(() => _confirming = false);
+    }
   }
 
   @override
@@ -954,6 +1052,10 @@ class _FoodOrderDetailSheetState extends State<_FoodOrderDetailSheet> {
               )
             else
               _StatusStepper(status: order.status),
+            if (!cancelled) ...[
+              const SizedBox(height: 18),
+              _buildReceiptSection(),
+            ],
             if (_isDelivered(order)) ...[
               const SizedBox(height: 18),
               _buildRateSection(),
@@ -1080,6 +1182,114 @@ class _FoodOrderDetailSheetState extends State<_FoodOrderDetailSheet> {
           ],
         );
       },
+    );
+  }
+
+  Widget _buildReceiptSection() {
+    final escrow = _escrow;
+    final held = escrow == null || escrow.isHeld;
+    final kitchenSent = order.isSentByKitchen ||
+        (escrow != null && escrow.deliveredAt != null && escrow.isHeld);
+    final alreadyReleased = escrow?.isReleased == true ||
+        (order.isReceivedByCustomer && !held);
+
+    if (alreadyReleased || order.isReceivedByCustomer) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.green.shade50,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.green.shade100),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.verified_rounded, color: Colors.green.shade700),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text(
+                'You confirmed this food. Payment was released to the kitchen.',
+                style: TextStyle(fontWeight: FontWeight.w700, color: _ink),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (!kitchenSent) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF8E1),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _veroOrange.withValues(alpha: 0.28)),
+        ),
+        child: const Text(
+          'Payment is held until the kitchen sends your food. You will confirm receipt here to release it.',
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            height: 1.35,
+            color: _ink,
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFECFDF5),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.green.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Did you receive this food?',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 15,
+              color: _ink,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Confirming releases the held payment to the kitchen.',
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.35,
+              color: _ink.withValues(alpha: 0.65),
+            ),
+          ),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: _confirming ? null : _confirmReceived,
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.green.shade700,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            icon: _confirming
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.restaurant_rounded),
+            label: Text(
+              _confirming ? 'Confirming…' : 'I received this food',
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1267,12 +1477,14 @@ class _StatusStepper extends StatelessWidget {
 
   final String status;
 
-  static const stages = ['pending', 'preparing', 'ready', 'delivered'];
+  static const stages = ['pending', 'preparing', 'sent', 'delivered'];
 
   @override
   Widget build(BuildContext context) {
-    var idx = stages.indexOf(status.toLowerCase());
-    if (status.toLowerCase() == 'completed') idx = 3;
+    final s = status.toLowerCase();
+    var idx = stages.indexOf(s);
+    if (s == 'ready' || s == 'out_for_delivery') idx = 2;
+    if (s == 'completed') idx = 3;
     if (idx < 0) idx = 0;
 
     return Row(
@@ -1331,7 +1543,4 @@ String _lineSummary(List<FoodOrderLineItem> items) {
   return shown;
 }
 
-bool _isDelivered(FoodOrder order) {
-  final s = order.status.toLowerCase();
-  return s == 'delivered' || s == 'completed';
-}
+bool _isDelivered(FoodOrder order) => order.isReceivedByCustomer;

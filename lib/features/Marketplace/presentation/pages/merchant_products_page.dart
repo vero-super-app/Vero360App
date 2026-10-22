@@ -42,6 +42,10 @@ import 'package:vero360_app/Home/story_ring_widget.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/vero_ride_driver_profile_page.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_share_link.dart';
+import 'package:vero360_app/features/Restraurants/Models/food_model.dart';
+import 'package:vero360_app/features/Restraurants/Models/food_share_link.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_details.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantsService/food_service.dart';
 
 int? _stayListingApiId(Map<String, dynamic> d) {
   final direct = d['apiAccommodationId'];
@@ -112,11 +116,14 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   late Future<List<MarketplaceDetailModel>> _future;
   late Future<List<_MerchantStayPreview>> _staysFuture;
+  late Future<List<FoodModel>> _foodFuture;
   final CartService _cartService =
       CartService('unused', apiPrefix: ApiConfig.apiPrefix);
 
   /// null while detecting — show products immediately (common case).
   bool? _isAccommodationHost;
+  /// Food kitchens must show restaurant + menu, not marketplace store.
+  bool? _isFoodKitchen;
   /// Driver accounts must not show a merchant shop.
   bool _redirectingToDriver = false;
   /// True when the signed-in viewer has blocked this merchant.
@@ -154,6 +161,8 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   /// Instant re-open of the same shop.
   static final Map<String, List<MarketplaceDetailModel>> _itemsMemCache = {};
   static final Map<String, bool> _accommodationMemCache = {};
+  static final Map<String, bool> _foodMemCache = {};
+  static final Map<String, List<FoodModel>> _foodItemsMemCache = {};
   static final Map<String, _MerchantShopHeaderCache> _headerMemCache = {};
   static final Map<String, Set<String>> _identityMemCache = {};
   static final Map<String, Future<Set<String>>> _identityInflight = {};
@@ -161,6 +170,8 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   static void clearSessionCaches() {
     _itemsMemCache.clear();
     _accommodationMemCache.clear();
+    _foodMemCache.clear();
+    _foodItemsMemCache.clear();
     _headerMemCache.clear();
     _identityMemCache.clear();
     _identityInflight.clear();
@@ -802,7 +813,18 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     _staysFuture = memAccom == true
         ? _loadMerchantStays()
         : Future<List<_MerchantStayPreview>>.value(const []);
+    final memFood = _foodMemCache[id];
+    if (memFood != null) {
+      _isFoodKitchen = memFood;
+    }
+    final memFoodItems = _foodItemsMemCache[id];
+    _foodFuture = memFood == true
+        ? (memFoodItems != null
+            ? Future<List<FoodModel>>.value(memFoodItems)
+            : _loadKitchenFood())
+        : Future<List<FoodModel>>.value(const []);
     unawaited(_resolveAccommodationMode());
+    unawaited(_resolveFoodKitchenMode());
     unawaited(_prefetchOpeningHoursFast(id));
     unawaited(_loadMerchantHeader());
     _searchController.addListener(() {
@@ -899,6 +921,98 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       _isAccommodationHost = v;
       if (v) _staysFuture = _loadMerchantStays();
     });
+  }
+
+  bool get _isRestaurantAccount => _isFoodKitchen == true;
+
+  Future<void> _resolveFoodKitchenMode() async {
+    final v = await _detectFoodKitchen();
+    _foodMemCache[widget.merchantId.trim()] = v;
+    if (!mounted) return;
+    if (_isFoodKitchen == v) return;
+    setState(() {
+      _isFoodKitchen = v;
+      if (v) _foodFuture = _loadKitchenFood();
+    });
+  }
+
+  Future<bool> _detectFoodKitchen() async {
+    final id = widget.merchantId.trim();
+    if (id.isEmpty) return false;
+    try {
+      final doc = await _docFast(
+        _firestore.collection('food_merchants').doc(id),
+      );
+      if (doc.exists && looksLikeRealMerchantShopDoc(doc.data())) return true;
+
+      final restaurants = await _queryFast(
+        _firestore
+            .collection('restaurants')
+            .where('ownerUid', isEqualTo: id)
+            .limit(1),
+      );
+      if (restaurants.docs.isNotEmpty) return true;
+      final restaurantsByMerchant = await _queryFast(
+        _firestore
+            .collection('restaurants')
+            .where('merchantId', isEqualTo: id)
+            .limit(1),
+      );
+      if (restaurantsByMerchant.docs.isNotEmpty) return true;
+
+      final menu = await _queryFast(
+        _firestore
+            .collection('food_menu_items')
+            .where('merchantId', isEqualTo: id)
+            .limit(1),
+      );
+      if (menu.docs.isNotEmpty) return true;
+
+      if (_looksLikeFirebaseUid(id)) return false;
+      final keys = await _resolveMerchantIdentityKeys();
+      for (final key in keys.where(_looksLikeFirebaseUid).take(2)) {
+        if (key == id) continue;
+        final extraDoc = await _docFast(
+          _firestore.collection('food_merchants').doc(key),
+        );
+        if (extraDoc.exists && looksLikeRealMerchantShopDoc(extraDoc.data())) {
+          return true;
+        }
+        final extraMenu = await _queryFast(
+          _firestore
+              .collection('food_menu_items')
+              .where('merchantId', isEqualTo: key)
+              .limit(1),
+        );
+        if (extraMenu.docs.isNotEmpty) return true;
+      }
+    } catch (e) {
+      debugPrint('detect food kitchen: $e');
+    }
+    return false;
+  }
+
+  Future<List<FoodModel>> _loadKitchenFood() async {
+    final id = widget.merchantId.trim();
+    try {
+      final list = await FoodService().fetchKitchenListings(
+        merchantId: id,
+        kitchenName: _shopDisplayName,
+      );
+      _foodItemsMemCache[id] = list;
+      return list;
+    } catch (e) {
+      debugPrint('load kitchen food: $e');
+      return _foodItemsMemCache[id] ?? const [];
+    }
+  }
+
+  void _openFoodDetails(FoodModel item) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => FoodDetailsPage(foodItem: item),
+      ),
+    );
   }
 
   @override
@@ -1488,6 +1602,9 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         builder: (_) => ShopPicturesPage(
           merchantIds: ids,
           shopName: _shopDisplayName,
+          galleryTitle:
+              _isRestaurantAccount ? 'Restaurant pictures' : null,
+          serviceType: _isRestaurantAccount ? 'food' : null,
           description: _merchantBusinessDescription ?? '',
           openingHours: _merchantOpeningHours,
           openingDays: _merchantOpeningDays,
@@ -1563,14 +1680,21 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     }
   }
 
-  String get _merchantShopUrl => marketplaceShopShareUrl(
-        merchantId: widget.merchantId.trim(),
-        name: _shopDisplayName,
-        image: _merchantProfileUrl,
-      );
+  String get _merchantShopUrl => _isRestaurantAccount
+      ? foodRestaurantShareUrl(
+          merchantId: widget.merchantId.trim(),
+          name: _shopDisplayName,
+          image: _merchantProfileUrl,
+        )
+      : marketplaceShopShareUrl(
+          merchantId: widget.merchantId.trim(),
+          name: _shopDisplayName,
+          image: _merchantProfileUrl,
+        );
 
-  String get _shareMessage =>
-      'Check out this shop on Vero360 — $_shopDisplayName\n$_merchantShopUrl';
+  String get _shareMessage => _isRestaurantAccount
+      ? 'Check out this restaurant on Vero360 — $_shopDisplayName\n$_merchantShopUrl'
+      : 'Check out this shop on Vero360 — $_shopDisplayName\n$_merchantShopUrl';
 
   void _copyMerchantLink() {
     Clipboard.setData(ClipboardData(text: _merchantShopUrl));
@@ -2452,13 +2576,15 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       final mid = widget.merchantId.trim();
       final user = _auth.currentUser;
 
-      // Merchant + user profile in parallel (cache-first).
+      // Merchant + user + kitchen profile in parallel (cache-first).
       final snaps = await Future.wait([
         _docFast(_firestore.collection('marketplace_merchants').doc(mid)),
         _docFast(_firestore.collection('users').doc(mid)),
+        _docFast(_firestore.collection('food_merchants').doc(mid)),
       ]);
       final merchantDoc = snaps[0];
       final userDoc = snaps[1];
+      final foodDoc = snaps[2];
 
       String? profileUrl;
       String? email;
@@ -2574,6 +2700,68 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
               MerchantSellerLoader.cacheOpeningDays(mid, uDays);
             }
             if (backendId != null) _merchantBackendId = backendId;
+            _loadingHeader = false;
+          });
+          _persistHeaderCache();
+          _precacheMerchantProfilePhoto();
+        }
+      }
+
+      if (foodDoc.exists) {
+        final data = foodDoc.data() ?? <String, dynamic>{};
+        final liveName = _nameFromMerchantMap(data);
+        final profileUrl = (data['profilePicture'] ??
+                data['profilepicture'] ??
+                data['logoUrl'] ??
+                '')
+            .toString()
+            .trim();
+        final bizDesc =
+            (data['businessDescription'] ?? data['description'] ?? data['about'] ?? '')
+                .toString()
+                .trim();
+        final openingHours = (data['openingHours'] ?? '').toString().trim();
+        final openingDays = _parseOpeningDays(data['openingDays']);
+        final email = (data['email'] ?? data['userEmail'] ?? '').toString().trim();
+        final phone =
+            (data['phone'] ?? data['phoneNumber'] ?? '').toString().trim();
+        if (mounted) {
+          setState(() {
+            if (liveName != null &&
+                (_isRestaurantAccount || _resolvedMerchantName.trim().isEmpty)) {
+              _resolvedMerchantName = liveName;
+            }
+            if (profileUrl.isNotEmpty &&
+                (_isRestaurantAccount ||
+                    (_merchantProfileUrl?.trim().isEmpty ?? true))) {
+              _merchantProfileUrl = profileUrl;
+            }
+            if (bizDesc.isNotEmpty &&
+                (_isRestaurantAccount ||
+                    (_merchantBusinessDescription?.trim().isEmpty ?? true))) {
+              _merchantBusinessDescription = bizDesc;
+            }
+            if (openingHours.isNotEmpty &&
+                (_isRestaurantAccount ||
+                    (_merchantOpeningHours?.trim().isEmpty ?? true))) {
+              final normalized =
+                  MarketplaceShopHours.normalize(openingHours) ?? openingHours;
+              _merchantOpeningHours = normalized;
+              MerchantSellerLoader.cacheOpeningHours(mid, normalized);
+            }
+            if (openingDays.isNotEmpty &&
+                (_isRestaurantAccount || _merchantOpeningDays.isEmpty)) {
+              _merchantOpeningDays = openingDays;
+              MerchantSellerLoader.cacheOpeningDays(mid, openingDays);
+            }
+            if (email.isNotEmpty &&
+                (_merchantEmail?.trim().isEmpty ?? true)) {
+              _merchantEmail = email;
+            }
+            if (phone.isNotEmpty &&
+                (_merchantPhone?.trim().isEmpty ?? true)) {
+              _merchantPhone = phone;
+            }
             _loadingHeader = false;
           });
           _persistHeaderCache();
@@ -3075,6 +3263,145 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     );
   }
 
+  Widget _buildFoodBrowseColumn(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Menu',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.grey.shade700,
+                  letterSpacing: 0.2,
+                ),
+              ),
+              const SizedBox(height: 8),
+              _buildModernSearchBar(
+                'Search food from $_shopDisplayName...',
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: FutureBuilder<List<FoodModel>>(
+            future: _foodFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 4, 16, 20),
+                  child: AppSkeletonLatestArrivalsGrid(),
+                );
+              }
+              if (snapshot.hasError) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      'Could not load this restaurant’s food.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: Colors.grey.shade800,
+                      ),
+                    ),
+                  ),
+                );
+              }
+              final all = snapshot.data ?? const <FoodModel>[];
+              final items = _searchQuery.isEmpty
+                  ? all
+                  : all
+                      .where(
+                        (f) =>
+                            f.FoodName.toLowerCase().contains(_searchQuery) ||
+                            f.RestrauntName.toLowerCase()
+                                .contains(_searchQuery),
+                      )
+                      .toList();
+              if (items.isEmpty) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          _searchQuery.isEmpty
+                              ? Icons.restaurant_menu_rounded
+                              : Icons.search_off_rounded,
+                          size: 56,
+                          color: Colors.grey.shade400,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          _searchQuery.isEmpty
+                              ? 'No food listed yet'
+                              : 'No matching dishes',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 17,
+                            color: Colors.grey.shade800,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _searchQuery.isEmpty
+                              ? 'Check back later for dishes from this restaurant.'
+                              : 'Try a different search term.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 14,
+                            height: 1.35,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+              final width = MediaQuery.of(context).size.width;
+              final cols = width >= 1200
+                  ? 4
+                  : width >= 800
+                      ? 3
+                      : 2;
+              final ratio = width >= 1200
+                  ? 0.95
+                  : width >= 800
+                      ? 0.85
+                      : 0.72;
+              return GridView.builder(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: cols,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 10,
+                  childAspectRatio: ratio,
+                ),
+                itemCount: items.length,
+                itemBuilder: (context, index) {
+                  final item = items[index];
+                  return _MerchantFoodCard(
+                    item: item,
+                    onOpen: () => _openFoodDetails(item),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildProductsBrowseColumn(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3323,7 +3650,12 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                 color: Colors.white.withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: const Icon(Icons.storefront_rounded, size: 22),
+              child: Icon(
+                _isRestaurantAccount
+                    ? Icons.restaurant_rounded
+                    : Icons.storefront_rounded,
+                size: 22,
+              ),
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -3331,8 +3663,11 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                 builder: (context) {
                   final isAccommodation = _isAccommodationHost == true;
                   final baseName = _shopDisplayName;
-                  final title =
-                      isAccommodation ? baseName : '$baseName Store';
+                  final title = isAccommodation
+                      ? baseName
+                      : _isRestaurantAccount
+                          ? '$baseName Restaurant'
+                          : '$baseName Store';
                   return Text(
                     title,
                     maxLines: 1,
@@ -3357,7 +3692,9 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
           IconButton(
             icon: const Icon(Icons.share_rounded),
             onPressed: _shareMerchantShop,
-            tooltip: 'Share merchant shop',
+            tooltip: _isRestaurantAccount
+                ? 'Share restaurant'
+                : 'Share merchant shop',
           ),
         ],
       ),
@@ -3383,6 +3720,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             onOpenFollowers: _openMerchantFollowers,
             onViewShop: _openShopPictures,
             onViewReels: _openMerchantReels,
+            isRestaurant: _isRestaurantAccount,
           ),
           _buildRecentReviewsSection(),
           Expanded(
@@ -3424,6 +3762,9 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                       return _buildProductsBrowseColumn(context);
                     },
                   );
+                }
+                if (_isRestaurantAccount) {
+                  return _buildFoodBrowseColumn(context);
                 }
                 return _buildProductsBrowseColumn(context);
               },
@@ -3844,6 +4185,7 @@ class _MerchantProfileCard extends StatelessWidget {
   final VoidCallback onOpenFollowers;
   final VoidCallback onViewShop;
   final VoidCallback onViewReels;
+  final bool isRestaurant;
 
   const _MerchantProfileCard({
     required this.merchantId,
@@ -3865,6 +4207,7 @@ class _MerchantProfileCard extends StatelessWidget {
     required this.onOpenFollowers,
     required this.onViewShop,
     required this.onViewReels,
+    this.isRestaurant = false,
   });
 
   ImageProvider? _profileImageProvider() {
@@ -4177,10 +4520,15 @@ class _MerchantProfileCard extends StatelessWidget {
                       borderRadius: BorderRadius.circular(14),
                     ),
                   ),
-                  icon: const Icon(Icons.storefront_outlined, size: 18),
-                  label: const Text(
-                    'View shop',
-                    style: TextStyle(fontWeight: FontWeight.w800),
+                  icon: Icon(
+                    isRestaurant
+                        ? Icons.restaurant_outlined
+                        : Icons.storefront_outlined,
+                    size: 18,
+                  ),
+                  label: Text(
+                    isRestaurant ? 'View restaurant' : 'View shop',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
                   ),
                 ),
               ),
@@ -4367,6 +4715,91 @@ class _ProductImageCarouselState extends State<_ProductImageCarousel> {
             : widget.buildImageForSource(src);
         return _tappable(image);
       },
+    );
+  }
+}
+
+class _MerchantFoodCard extends StatelessWidget {
+  const _MerchantFoodCard({
+    required this.item,
+    required this.onOpen,
+  });
+
+  final FoodModel item;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final cover = item.FoodImage.trim().isNotEmpty
+        ? item.FoodImage.trim()
+        : (item.gallery.isNotEmpty ? item.gallery.first.trim() : '');
+    final price = BuyerCommission.buyerFacing(item.price);
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onOpen,
+        borderRadius: BorderRadius.circular(16),
+        child: Ink(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFE2E6EF)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: ClipRRect(
+                  borderRadius:
+                      const BorderRadius.vertical(top: Radius.circular(16)),
+                  child: cover.isEmpty
+                      ? ColoredBox(
+                          color: const Color(0xFFFFF3E5),
+                          child: Icon(
+                            Icons.restaurant_rounded,
+                            color: Colors.orange.shade400,
+                            size: 36,
+                          ),
+                        )
+                      : ResilientCachedNetworkImage(
+                          url: cover,
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          height: double.infinity,
+                        ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.FoodName,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13.5,
+                        height: 1.25,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'MWK ${NumberFormat('#,##0').format(price.round())}',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFFFF8A00),
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

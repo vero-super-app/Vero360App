@@ -28,17 +28,12 @@ class PasswordResetVerificationService {
     required String channel,
     String? email,
     String? phone,
-  }) async {
-    await ApiClient.post(
-      '/auth/otp/request',
-      body: jsonEncode({
-        'channel': channel,
-        'purpose': 'password_reset',
-        if (email != null && email.trim().isNotEmpty)
-          'email': email.trim().toLowerCase(),
-        if (phone != null && phone.trim().isNotEmpty)
-          'phone': formatPhoneE164(phone),
-      }),
+  }) {
+    return RegistrationVerificationService().requestOtp(
+      channel: channel,
+      email: email,
+      phone: phone,
+      purpose: 'password_reset',
     );
   }
 
@@ -87,6 +82,9 @@ class PasswordResetVerificationService {
     bool forSend = false,
   }) {
     if (e is ApiException) {
+      if (RegistrationVerificationService.isThrottled(e)) {
+        return 'Too many codes for this number. Wait 10 minutes, then try once.';
+      }
       final msg = e.message.trim();
       if (msg.isNotEmpty) return msg;
     }

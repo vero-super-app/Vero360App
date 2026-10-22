@@ -22,6 +22,7 @@ class ChatNotificationService {
     required String body,
     String? recipientFirebaseUid,
     int? recipientUserId,
+    int? senderUserId,
   }) async {
     final fromUid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
     if (fromUid.isEmpty) return;
@@ -74,6 +75,8 @@ class ChatNotificationService {
           'badgeRoute': 'messages',
           'senderName': safeSender,
           'title': safeSender,
+          if (senderUserId != null && senderUserId > 0)
+            'peerUserId': senderUserId,
         },
         'createdAt': FieldValue.serverTimestamp(),
         'consumed': false,

@@ -524,6 +524,20 @@ void main() {
       expect(payment.booking!.bookingStatus, BookingStatus.pending);
       expect(payment.booking!.paymentStatus, PaymentStatus.pending);
     });
+
+    test('treats a PawaPay deposit id as the transaction reference', () {
+      final payment = PaymentInitiation.fromJson(<String, dynamic>{
+        'paymentId': 9,
+        'depositId': 'dep-77',
+        'provider': 'pawapay',
+        'status': 'SUCCEEDED',
+      });
+
+      expect(payment.txRef, 'dep-77');
+      expect(payment.provider, 'pawapay');
+      expect(payment.status, 'SUCCEEDED');
+      expect(payment.checkoutUrl, isNull);
+    });
   });
 
   group('CarHireVerification.fromJson', () {

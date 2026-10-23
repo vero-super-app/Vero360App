@@ -1,5 +1,9 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet.dart';
+import 'package:vero360_app/utils/app_wallet_pin.dart';
 
 import 'package:vero360_app/features/car_hire/data/models/car_hire_company_models.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
@@ -97,6 +101,7 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
     final today = companyDateKey(DateTime.now());
     ref.invalidate(companyFleetProvider);
     ref.invalidate(companyBookingsProvider('ACTIVE'));
+    ref.invalidate(companyBookingsProvider('CONFIRMED'));
     ref.invalidate(companyDispatchProvider(today));
     ref.invalidate(companyAnalyticsProvider);
     try {
@@ -112,17 +117,23 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
     final activeAsync = widget.access.canViewBookings
         ? ref.watch(companyBookingsProvider('ACTIVE'))
         : const AsyncValue<List<CarHireBooking>>.data(<CarHireBooking>[]);
+    final upcomingAsync = widget.access.canViewBookings
+        ? ref.watch(companyBookingsProvider('CONFIRMED'))
+        : const AsyncValue<List<CarHireBooking>>.data(<CarHireBooking>[]);
     final boardAsync = widget.access.canViewBookings
         ? ref.watch(companyDispatchProvider(companyDateKey(DateTime.now())))
         : const AsyncValue<DispatchBoard>.loading();
     final analytics = ref.watch(companyAnalyticsProvider).value;
 
     final units = fleetAsync.value ?? const <FleetUnit>[];
-    final bookings = activeAsync.value ?? const <CarHireBooking>[];
+    final bookings = <CarHireBooking>[
+      ...?activeAsync.value,
+      ...?upcomingAsync.value,
+    ];
     final snapshot = _FleetSnapshot(
       units: units,
       activeByUnit: _activeByUnit(bookings),
-      bookingsKnown: activeAsync.hasValue,
+      bookingsKnown: activeAsync.hasValue && upcomingAsync.hasValue,
     );
 
     final visible = _visibleUnits(snapshot);
@@ -154,6 +165,10 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
               snapshot: snapshot,
               loading: fleetAsync.isLoading && !fleetAsync.hasValue,
             ),
+            if (widget.access.canManageWallet) ...[
+              const SizedBox(height: 12),
+              _WalletTile(companyName: widget.access.title),
+            ],
             const SizedBox(height: 14),
             ..._pulseSection(fleetAsync, activeAsync, analytics, snapshot),
             const SizedBox(height: 18),
@@ -417,10 +432,11 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
 Map<int, CarHireBooking> _activeByUnit(List<CarHireBooking> bookings) {
   final map = <int, CarHireBooking>{};
   for (final booking in bookings) {
-    final onRoad =
+    final busy =
         booking.bookingStatus == BookingStatus.active ||
-        booking.bookingStatus == BookingStatus.incidentReported;
-    if (!onRoad) continue;
+        booking.bookingStatus == BookingStatus.incidentReported ||
+        booking.bookingStatus == BookingStatus.confirmed;
+    if (!busy) continue;
     final unitId = booking.assignedCarId ?? booking.carId;
     if (unitId == null) continue;
     map.putIfAbsent(unitId, () => booking);
@@ -459,6 +475,78 @@ class _FleetSnapshot {
 // ---------------------------------------------------------------------------
 // Header
 // ---------------------------------------------------------------------------
+
+class _WalletTile extends StatelessWidget {
+  const _WalletTile({required this.companyName});
+
+  final String companyName;
+
+  Future<void> _open(BuildContext context) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    if (uid.isEmpty) return;
+    final ok = await AppWalletPin.verifyWalletUnlock(context);
+    if (!ok || !context.mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => MerchantWalletPage(
+          merchantId: uid,
+          merchantName: companyName,
+          serviceType: 'car_hire',
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: CarHirePalette.surface,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: () => _open(context),
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+          child: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: const BoxDecoration(
+                  color: CarHirePalette.accentPale,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.account_balance_wallet_rounded,
+                  size: 18,
+                  color: CarHirePalette.accent,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Wallet', style: CarHireType.title),
+                    SizedBox(height: 2),
+                    Text(
+                      'Balance, held rentals, and withdraw',
+                      style: CarHireType.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: CarHirePalette.muted,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _CompanyStrip extends StatelessWidget {
   const _CompanyStrip({
@@ -939,6 +1027,17 @@ class _NextOpsSection extends StatelessWidget {
           background: CarHirePalette.warningSoft,
           foreground: CarHirePalette.warning,
         ),
+      for (final booking in board.upcomingPickups)
+        _Operation(
+          booking: booking,
+          title: booking.startAt == null
+              ? 'Paid booking'
+              : 'Paid · pickup ${CarHireFormatters.formatDate(booking.startAt!)}',
+          action: 'Prepare',
+          icon: Icons.event_available_rounded,
+          background: CarHirePalette.accentSoft,
+          foreground: CarHirePalette.onAccentSoft,
+        ),
       for (final booking in board.overdueReturns)
         _Operation(
           booking: booking,
@@ -1242,25 +1341,38 @@ class _CarCard extends StatelessWidget {
   /// Live rentals failed to load; avoid claiming the car is ready.
   final bool statusUnknown;
 
-  bool get _onRoad => booking != null;
-  bool get _inPrep => !unit.car.isAvailable && !_onRoad;
+  bool get _onRoad =>
+      booking != null &&
+      (booking!.bookingStatus == BookingStatus.active ||
+          booking!.bookingStatus == BookingStatus.incidentReported);
+  bool get _booked =>
+      booking != null && booking!.bookingStatus == BookingStatus.confirmed;
+  bool get _busy => _onRoad || _booked;
+  bool get _inPrep => !unit.car.isAvailable && !_busy;
 
   Color get _tone {
-    if (statusUnknown && !_onRoad && !_inPrep) return CarHirePalette.muted;
+    if (statusUnknown && !_busy && !_inPrep) return CarHirePalette.muted;
     if (_onRoad) return CarHirePalette.accent;
+    if (_booked) return CarHirePalette.onAccentSoft;
     if (_inPrep) return CarHirePalette.warning;
     return CarHirePalette.success;
   }
 
   Color get _toneSoft {
-    if (statusUnknown && !_onRoad && !_inPrep) return CarHirePalette.surfaceLow;
+    if (statusUnknown && !_busy && !_inPrep) return CarHirePalette.surfaceLow;
     if (_onRoad) return CarHirePalette.accentPale;
+    if (_booked) return CarHirePalette.accentSoft;
     if (_inPrep) return CarHirePalette.warningSoft;
     return CarHirePalette.successSoft;
   }
 
   String get _statusLabel {
     if (_onRoad) return 'On road · ${_returnsLabel(booking!.endAt)}';
+    if (_booked) {
+      return booking!.startAt == null
+          ? 'Booked · paid'
+          : 'Booked · pickup ${CarHireFormatters.formatDate(booking!.startAt!)}';
+    }
     if (_inPrep) return 'In prep · unavailable';
     if (statusUnknown) return 'Status not checked';
     if (unit.car.dailyRate > 0) {
@@ -1289,18 +1401,18 @@ class _CarCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final primaryLabel = _onRoad
+    final primaryLabel = _busy
         ? 'Open booking'
         : canManage
         ? 'Block dates'
         : 'View unit';
-    final primaryIcon = _onRoad
+    final primaryIcon = _busy
         ? Icons.receipt_long_outlined
         : canManage
         ? Icons.event_busy_outlined
         : Icons.tune_rounded;
 
-    VoidCallback primaryAction = _onRoad
+    VoidCallback primaryAction = _busy
         ? () => onOpenBooking(booking!)
         : canManage
         ? onBlock
@@ -1414,7 +1526,7 @@ class _CarCard extends StatelessWidget {
               ],
             ),
           ),
-          if (_onRoad) ...[
+          if (_busy) ...[
             const SizedBox(height: 8),
             _RenterStrip(booking: booking!),
           ],
@@ -1429,11 +1541,11 @@ class _CarCard extends StatelessWidget {
                   onTap: primaryAction,
                 ),
               ),
-              if (_onRoad || (canManage && !_inPrep)) ...[
+              if (_busy || (canManage && !_inPrep)) ...[
                 const SizedBox(width: 8),
                 Expanded(
                   child: _Capsule(
-                    label: _onRoad ? 'Fleet' : 'Manage',
+                    label: _busy ? 'Fleet' : 'Manage',
                     icon: Icons.tune_rounded,
                     onTap: onOpenFleet,
                   ),

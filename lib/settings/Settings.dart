@@ -38,6 +38,7 @@ import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/become_driver_page.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_online_session.dart';
+import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 import 'package:vero360_app/Quickservices/customerservice.dart';
 import 'package:vero360_app/Quickservices/help_center_live_chat.dart';
 
@@ -2422,6 +2423,16 @@ class _SettingsPageState extends State<SettingsPage> {
                             onChanged: _onDriverModeChanged,
                           ),
                   ),
+                _SettingsTile(
+                  compact: _compactMode,
+                  icon: Icons.directions_car_outlined,
+                  title: _t('Rent out your cars', 'Bwerekani magalimoto anu'),
+                  subtitle: _t(
+                    'Apply to list cars, or check your application',
+                    'Lembani magalimoto anu, kapena onani pempho lanu',
+                  ),
+                  onTap: () => CarHireRoutes.openApplication(context),
+                ),
               ]),
               const SizedBox(height: 14),
               _sectionTitle(_t('Security', 'Chitetezo')),

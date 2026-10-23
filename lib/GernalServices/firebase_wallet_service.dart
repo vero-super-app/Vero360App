@@ -26,7 +26,7 @@ class FirebaseWalletService {
   static const double marketplaceServiceFeeRate = 0.10;
 
   /// Ensures the platform wallet exists and credits a service fee into it.
-  /// [service] is marketplace, food, stay, ride, digital, promotions,
+  /// [service] is marketplace, food, stay, car_hire, ride, digital, promotions,
   /// homepage_ads, or pawapay.
   static Future<void> creditPlatformServiceFee({
     required double amount,

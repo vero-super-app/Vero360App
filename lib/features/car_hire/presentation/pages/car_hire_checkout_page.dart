@@ -2,10 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import 'package:vero360_app/features/car_hire/data/car_hire_api.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
+import 'package:vero360_app/features/car_hire/presentation/car_hire_pawapay.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_price_breakdown.dart';
@@ -35,8 +35,7 @@ class CarHireCheckoutPage extends ConsumerStatefulWidget {
       _CarHireCheckoutPageState();
 }
 
-class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
-    with WidgetsBindingObserver {
+class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage> {
   final TextEditingController _notesController = TextEditingController();
   final TextEditingController _driverController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
@@ -44,7 +43,6 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
   bool _termsAccepted = false;
   bool _paymentLaunching = false;
   bool _refreshingStatus = false;
-  bool _awaitingPaymentReturn = false;
   String? _paymentError;
 
   Timer? _ticker;
@@ -52,7 +50,6 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
@@ -61,20 +58,11 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _ticker?.cancel();
     _notesController.dispose();
     _driverController.dispose();
     _phoneController.dispose();
     super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && _awaitingPaymentReturn) {
-      _awaitingPaymentReturn = false;
-      _refreshBookingStatus();
-    }
   }
 
   Future<void> _loadQuote() async {
@@ -124,50 +112,22 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
     });
 
     try {
-      final initiation = await ref
-          .read(carHireApiProvider)
-          .initiatePayment(booking.id, phoneNumber: _phoneController.text);
-      if (initiation.booking != null && mounted) {
+      final initiation = await confirmCarHirePawaPayPayment(
+        context: context,
+        api: ref.read(carHireApiProvider),
+        booking: booking,
+        initialPhone: _phoneController.text,
+      );
+      if (!mounted) return;
+      if (initiation == null) return;
+
+      if (initiation.booking != null) {
         ref
             .read(bookingSubmissionProvider.notifier)
             .updateBooking(initiation.booking!);
+      } else {
+        await _refreshBookingStatus();
       }
-
-      final url = initiation.checkoutUrl?.trim();
-      if (url == null || url.isEmpty) {
-        if (!mounted) return;
-        setState(() {
-          _paymentError =
-              'The payment provider did not return a checkout link. '
-              'Please try again.';
-        });
-        return;
-      }
-
-      final uri = Uri.tryParse(url);
-      if (uri == null) {
-        if (!mounted) return;
-        setState(() {
-          _paymentError = 'The payment link was not valid. Please try again.';
-        });
-        return;
-      }
-
-      final launched = await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
-      if (!mounted) return;
-
-      if (!launched) {
-        setState(() {
-          _paymentError =
-              'We could not open the payment page. Please try again.';
-        });
-        return;
-      }
-
-      setState(() => _awaitingPaymentReturn = true);
     } on CarHireApiException catch (error) {
       if (!mounted) return;
       setState(() => _paymentError = error.message);
@@ -189,7 +149,21 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
     });
 
     try {
-      final fresh = await ref.read(carHireApiProvider).getBooking(current.id);
+      final api = ref.read(carHireApiProvider);
+      CarHireBooking fresh;
+      if (current.paymentSucceeded) {
+        fresh = await api.getBooking(current.id);
+      } else {
+        try {
+          final initiation = await recoverCarHirePawaPayPayment(
+            api: api,
+            bookingId: current.id,
+          );
+          fresh = initiation.booking ?? await api.getBooking(current.id);
+        } on CarHireApiException {
+          fresh = await api.getBooking(current.id);
+        }
+      }
       ref.read(bookingSubmissionProvider.notifier).updateBooking(fresh);
       if (!mounted) return;
 
@@ -646,7 +620,7 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
           ),
           const SizedBox(height: 4),
           const Text(
-            'Pay with PayChangu to confirm your booking.',
+            'Pay with Airtel Money or TNM Mpamba. Approve the prompt on your phone to confirm this booking.',
             style: TextStyle(
               color: CarRentalColors.body,
               fontSize: 12,
@@ -658,8 +632,8 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
             controller: _phoneController,
             keyboardType: TextInputType.phone,
             decoration: carHireInputDecoration(
-              label: 'Mobile money number (optional)',
-              hint: '+265…',
+              label: 'Mobile money number',
+              hint: '088… or 099…',
             ),
           ),
           const SizedBox(height: 12),
@@ -675,7 +649,9 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage>
                     ),
                   )
                 : const Icon(Icons.payments_rounded, size: 18),
-            label: Text(_paymentLaunching ? 'Opening payment…' : 'Pay now'),
+            label: Text(
+              _paymentLaunching ? 'Waiting for phone…' : 'Pay with mobile money',
+            ),
             style: carHirePrimaryButton(),
           ),
           const SizedBox(height: 8),

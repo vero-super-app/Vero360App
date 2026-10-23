@@ -21,6 +21,7 @@ class _HeldEscrowRow {
   final DateTime? createdAt;
   final bool awaitingShipment;
   final bool isAccommodation;
+  final bool isCarHire;
 
   const _HeldEscrowRow({
     required this.itemName,
@@ -30,6 +31,7 @@ class _HeldEscrowRow {
     this.createdAt,
     this.awaitingShipment = false,
     this.isAccommodation = false,
+    this.isCarHire = false,
   });
 }
 
@@ -136,10 +138,13 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   String _escrowReleaseSummary() {
     final window = OrderEscrowService.escrowAutoReleaseLabel;
     final isAcc = widget.serviceType.toLowerCase() == 'accommodation';
+    final isCarHire = widget.serviceType.toLowerCase() == 'car_hire';
     if (_heldEscrowRows.isEmpty) {
       return isAcc
           ? 'Not withdrawable yet — waiting for guest check-in confirmation.'
-          : 'Not withdrawable yet — waiting for buyer confirmation or $window auto‑release.';
+          : isCarHire
+              ? 'Not withdrawable yet — waiting for the return inspection.'
+              : 'Not withdrawable yet — waiting for buyer confirmation or $window auto‑release.';
     }
 
     final dueNow = _heldEscrowRows.where((r) {
@@ -169,10 +174,14 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
     if (awaiting) {
       return isAcc
           ? 'Guest confirms arrival in My bookings to release stay payment.'
-          : 'Ship orders with proof to start the $window release timer.';
+          : isCarHire
+              ? 'Held until the return inspection is accepted. Then you can withdraw.'
+              : 'Ship orders with proof to start the $window release timer.';
     }
 
-    return 'Not withdrawable yet — waiting for buyer confirmation or $window auto‑release.';
+    return isCarHire
+        ? 'Held until the return inspection is accepted. Then you can withdraw.'
+        : 'Not withdrawable yet — waiting for buyer confirmation or $window auto‑release.';
   }
 
   Widget _buildHeldEscrowDetails({bool onDarkBackground = false}) {
@@ -191,7 +200,11 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
           final amountText = 'MWK ${_mwkFormat.format(row.amount.truncate())}';
           String statusText;
           if (row.awaitingShipment) {
-            if (row.isAccommodation) {
+            if (row.isCarHire) {
+              statusText = row.createdAt != null
+                  ? 'Paid ${_releaseDateFormat.format(row.createdAt!.toLocal())} · awaiting return'
+                  : 'Held until the return inspection is accepted';
+            } else if (row.isAccommodation) {
               statusText = row.createdAt != null
                   ? 'Booked ${_releaseDateFormat.format(row.createdAt!.toLocal())} · awaiting guest check-in'
                   : 'Awaiting guest check-in — guest releases payment on arrival';
@@ -211,9 +224,11 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                 : 'Releases ${_releaseDateFormat.format(row.releaseDueAt!.toLocal())} '
                     '(${OrderEscrowService.escrowAutoReleaseLabel} after shipment)';
           } else {
-            statusText = row.isAccommodation
-                ? 'Awaiting guest arrival confirmation'
-                : 'Awaiting buyer confirmation';
+            statusText = row.isCarHire
+                ? 'Awaiting return inspection'
+                : row.isAccommodation
+                    ? 'Awaiting guest arrival confirmation'
+                    : 'Awaiting buyer confirmation';
           }
 
           return Padding(
@@ -303,9 +318,10 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
         }
 
         final awaitingShipment = deliveredAt == null;
-        final isAccommodation =
-            (data['serviceType'] ?? '').toString().trim().toLowerCase() ==
-                'accommodation';
+        final serviceType =
+            (data['serviceType'] ?? '').toString().trim().toLowerCase();
+        final isAccommodation = serviceType == 'accommodation';
+        final isCarHire = serviceType == 'car_hire';
 
         rows.add(_HeldEscrowRow(
           itemName: (data['itemName'] ?? data['orderNumber'] ?? 'Sale')
@@ -316,6 +332,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
           createdAt: createdAt,
           awaitingShipment: awaitingShipment,
           isAccommodation: isAccommodation,
+          isCarHire: isCarHire,
         ));
       }
       rows.sort((a, b) {
@@ -1222,7 +1239,9 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          '${widget.serviceType.toUpperCase()} Wallet',
+          widget.serviceType.toLowerCase() == 'car_hire'
+              ? 'Car hire wallet'
+              : '${widget.serviceType.toUpperCase()} Wallet',
           style: const TextStyle(color: Colors.white),
         ),
         backgroundColor: const Color(0xFF16284C),
@@ -1394,6 +1413,19 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                           Text(
                             'Stay payments are held in escrow until the guest confirms arrival '
                             'in My bookings (biometrics or wallet password). Stays are not shipped.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.white.withOpacity(0.88),
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                        if (widget.serviceType.toLowerCase() == 'car_hire') ...[
+                          const SizedBox(height: 10),
+                          Text(
+                            'Rental payments are held until the return inspection is accepted. '
+                            'Vero360 commission is taken from the rental. The deposit is not '
+                            'withdrawable. Then you can cash out to bank or mobile money.',
                             style: TextStyle(
                               fontSize: 12,
                               color: Colors.white.withOpacity(0.88),

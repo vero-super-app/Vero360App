@@ -1421,6 +1421,7 @@ class PaymentInitiation {
     this.paymentId,
     this.txRef,
     this.checkoutUrl,
+    this.provider,
     this.status,
     this.booking,
   });
@@ -1428,6 +1429,7 @@ class PaymentInitiation {
   final int? paymentId;
   final String? txRef;
   final String? checkoutUrl;
+  final String? provider;
   final String? status;
   final CarHireBooking? booking;
 
@@ -1442,8 +1444,9 @@ class PaymentInitiation {
 
     return PaymentInitiation(
       paymentId: _asNullableInt(json['paymentId']),
-      txRef: _asStringOrNull(json['txRef']),
+      txRef: _asStringOrNull(json['txRef'] ?? json['depositId']),
       checkoutUrl: _asStringOrNull(json['checkoutUrl']),
+      provider: _asStringOrNull(json['provider']),
       status: _asStringOrNull(json['status']),
       booking: bookingRaw is Map ? CarHireBooking.fromJson(bookingRaw) : null,
     );

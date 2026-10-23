@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import 'package:vero360_app/features/car_hire/data/car_hire_api.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
+import 'package:vero360_app/features/car_hire/presentation/car_hire_pawapay.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_price_breakdown.dart';
@@ -33,34 +33,12 @@ class CarHireBookingDetailPage extends ConsumerStatefulWidget {
 }
 
 class _CarHireBookingDetailPageState
-    extends ConsumerState<CarHireBookingDetailPage>
-    with WidgetsBindingObserver {
+    extends ConsumerState<CarHireBookingDetailPage> {
   CarHireBooking? _localBooking;
   bool _cancelling = false;
   bool _paymentLaunching = false;
   bool _refreshing = false;
-  bool _awaitingPaymentReturn = false;
   String? _actionError;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && _awaitingPaymentReturn) {
-      _awaitingPaymentReturn = false;
-      _refreshStatus();
-    }
-  }
 
   Future<void> _refresh() async {
     setState(() {
@@ -179,60 +157,25 @@ class _CarHireBookingDetailPageState
   }
 
   Future<void> _startPayment(CarHireBooking booking) async {
-    final phone = await showDialog<String>(
-      context: context,
-      builder: (_) => const _PaymentPhoneDialog(),
-    );
-    if (phone == null || !mounted) return;
-
     setState(() {
       _paymentLaunching = true;
       _actionError = null;
     });
 
     try {
-      final initiation = await ref
-          .read(carHireApiProvider)
-          .initiatePayment(booking.id, phoneNumber: phone);
-      if (initiation.booking != null && mounted) {
-        setState(() => _localBooking = initiation.booking);
-      }
-
-      final rawUrl = initiation.checkoutUrl?.trim();
-      if (rawUrl == null || rawUrl.isEmpty) {
-        if (!mounted) return;
-        setState(() {
-          _actionError =
-              'The payment provider did not return a checkout link. '
-              'Please try again.';
-        });
-        return;
-      }
-
-      final uri = Uri.tryParse(rawUrl);
-      if (uri == null) {
-        if (!mounted) return;
-        setState(() {
-          _actionError = 'The payment link was not valid. Please try again.';
-        });
-        return;
-      }
-
-      final launched = await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
+      final initiation = await confirmCarHirePawaPayPayment(
+        context: context,
+        api: ref.read(carHireApiProvider),
+        booking: booking,
       );
       if (!mounted) return;
+      if (initiation == null) return;
 
-      if (!launched) {
-        setState(() {
-          _actionError =
-              'We could not open the payment page. Please try again.';
-        });
-        return;
+      if (initiation.booking != null) {
+        setState(() => _localBooking = initiation.booking);
+      } else {
+        await _refresh();
       }
-
-      setState(() => _awaitingPaymentReturn = true);
     } on CarHireApiException catch (error) {
       if (!mounted) return;
       setState(() => _actionError = error.message);
@@ -1072,7 +1015,9 @@ class _CarHireBookingDetailPageState
                     )
                   : const Icon(Icons.payments_rounded, size: 18),
               label: Text(
-                _paymentLaunching ? 'Opening payment…' : 'Complete payment',
+                _paymentLaunching
+                    ? 'Waiting for phone…'
+                    : 'Pay with mobile money',
               ),
               style: carHirePrimaryButton(),
             ),
@@ -1172,48 +1117,6 @@ class _ManageTile extends StatelessWidget {
         size: 20,
         color: CarRentalColors.grey,
       ),
-    );
-  }
-}
-
-class _PaymentPhoneDialog extends StatefulWidget {
-  const _PaymentPhoneDialog();
-
-  @override
-  State<_PaymentPhoneDialog> createState() => _PaymentPhoneDialogState();
-}
-
-class _PaymentPhoneDialogState extends State<_PaymentPhoneDialog> {
-  final TextEditingController _controller = TextEditingController();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Continue to payment'),
-      content: TextField(
-        controller: _controller,
-        keyboardType: TextInputType.phone,
-        decoration: const InputDecoration(
-          labelText: 'Mobile money number (optional)',
-          hintText: '+265…',
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
-          child: const Text('Continue'),
-        ),
-      ],
     );
   }
 }

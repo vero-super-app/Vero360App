@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -125,14 +126,14 @@ class ReelDownloadManager {
     final who = reel.ownerName;
     File? file;
     try {
-      unawaited(_notify(id, 'Preparing reel', 'Adding Vero360 watermark to $who\'s reel',
+      unawaited(_notify(id, 'Preparing reel', 'Adding watermark to $who\'s reel',
           indeterminate: true, ongoing: true));
-      final url = await ReelService.instance.brandedDownloadUrl(id);
 
-      _set(id, const ReelDownloadProgress(preparing: false, progress: 0));
       final dir = await getTemporaryDirectory();
       final name = 'vero360_reel_${id}_${DateTime.now().millisecondsSinceEpoch}.mp4';
       file = File('${dir.path}/$name');
+
+      final url = await ReelService.instance.downloadSourceUrl(reel);
       var lastPct = -1;
       await Dio().download(
         url,
@@ -149,20 +150,26 @@ class ReelDownloadManager {
           }
         },
       );
+      if (!file.existsSync() || file.lengthSync() <= 0) {
+        throw Exception('Could not download the video. Try again.');
+      }
+      _set(id, const ReelDownloadProgress(preparing: false, progress: 1));
 
       var saved = await _save(file.path, name);
-      if (!saved.isSuccess && Platform.isAndroid) {
-        // Android 9 and older need storage permission; newer versions don't.
-        final status = await Permission.storage.request();
-        if (status.isGranted) saved = await _save(file.path, name);
+      if (!saved.isSuccess) {
+        await _requestGalleryAccess();
+        saved = await _save(file.path, name);
       }
       if (saved.isSuccess) {
         await _notify(id, 'Reel saved', '$who\'s reel is in your gallery');
         _results.add(ReelDownloadResult(id, true, 'Video saved to your gallery'));
       } else {
-        await _notify(id, 'Could not save reel', 'Allow gallery access and try again');
-        _results.add(ReelDownloadResult(
-            id, false, 'Could not save video. Allow gallery access and try again.'));
+        final why = (saved.errorMessage ?? '').trim();
+        final msg = why.isEmpty
+            ? 'Could not save video. Allow gallery access and try again.'
+            : why;
+        await _notify(id, 'Could not save reel', msg);
+        _results.add(ReelDownloadResult(id, false, msg));
       }
     } on Exception catch (e) {
       final msg = e is DioException
@@ -178,12 +185,57 @@ class ReelDownloadManager {
     }
   }
 
-  Future<SaveResult> _save(String path, String name) {
-    return SaverGallery.saveFile(
-      filePath: path,
-      fileName: name,
-      androidRelativePath: 'Movies/Vero360',
-      skipIfExists: false,
-    );
+  static const _gallery = MethodChannel('vero360.app/gallery');
+
+  Future<void> _requestGalleryAccess() async {
+    try {
+      if (Platform.isIOS) {
+        var status = await Permission.photosAddOnly.request();
+        if (!status.isGranted && !status.isLimited) {
+          await Permission.photos.request();
+        }
+      } else if (Platform.isAndroid) {
+        await Permission.storage.request();
+      }
+    } catch (_) {}
+  }
+
+  bool _savedDespiteScanError(String? message) {
+    final m = (message ?? '').toLowerCase();
+    return m.contains('could not be scanned') ||
+        m.contains('could not be found') ||
+        m.contains('file null could not');
+  }
+
+  Future<SaveResult> _save(String path, String name) async {
+    if (Platform.isAndroid) {
+      try {
+        await _gallery.invokeMethod<bool>('saveVideo', {
+          'path': path,
+          'fileName': name,
+        });
+        return SaveResult(true, null);
+      } on PlatformException catch (e) {
+        if (kDebugMode) debugPrint('[Reels] native gallery save: ${e.code} ${e.message}');
+      } catch (e) {
+        if (kDebugMode) debugPrint('[Reels] native gallery save: $e');
+      }
+    }
+
+    for (final folder in const ['Movies/Vero360', 'Movies']) {
+      final saved = await SaverGallery.saveFile(
+        filePath: path,
+        fileName: name,
+        androidRelativePath: folder,
+        skipIfExists: false,
+      );
+      if (saved.isSuccess || _savedDespiteScanError(saved.errorMessage)) {
+        return SaveResult(true, null);
+      }
+      if (kDebugMode) {
+        debugPrint('[Reels] SaverGallery $folder: ${saved.errorMessage}');
+      }
+    }
+    return SaveResult(false, 'Could not save video to your gallery.');
   }
 }

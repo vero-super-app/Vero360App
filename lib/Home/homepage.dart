@@ -4455,7 +4455,7 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
     if (widget.payMethod == DigitalPayMethod.visa) {
       ToastHelper.showCustomToast(
         context,
-        'Visa payments coming soon. Use mobile money or bank for now.',
+        'Visa payments coming soon. Use mobile money or bank transfer for now.',
         isSuccess: false,
         errorMessage: '',
       );
@@ -4511,6 +4511,9 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
         buyerPhone: phone,
         selectedUsd: _isFixedPrice ? null : widget.selectedUsd,
         payoutKyc: payoutKyc,
+        paymentProvider: widget.payMethod == DigitalPayMethod.bankTransfer
+            ? 'bank_transfer'
+            : 'pawapay',
       );
 
       if (!mounted) return;
@@ -4520,6 +4523,9 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
               totalAmount:        amount,
               rootContext:        context,
               digitalProductName: widget.product.name,
+              digitalOrderId: orderId,
+              startOnBankTransfer:
+                  widget.payMethod == DigitalPayMethod.bankTransfer,
               onSuccessNavigate: (_) async {
                 try {
                   await DigitalServiceOrderService.activateAfterPayment(
@@ -4642,9 +4648,11 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                   border: Border.all(color: AppColors.brandOrangeSoft),
                 ),
                 child: Text(
-                  widget.payMethod == DigitalPayMethod.paychangu
-                      ? 'Paying with Airtel Money or TNM Mpamba'
-                      : 'Visa / card · Coming soon',
+                  widget.payMethod == DigitalPayMethod.bankTransfer
+                      ? 'Paying by bank transfer to VERO360 LIMITED'
+                      : widget.payMethod == DigitalPayMethod.paychangu
+                          ? 'Paying with Airtel Money or TNM Mpamba'
+                          : 'Visa / card · Coming soon',
                   style: const TextStyle(
                     fontWeight: FontWeight.w700,
                     fontSize: 12,

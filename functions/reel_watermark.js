@@ -1,3 +1,4 @@
+const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
 
@@ -10,7 +11,12 @@ function sharp(...args) {
   return _sharp(...args);
 }
 function ffmpegBin() {
-  if (!_ffmpegPath) _ffmpegPath = require('ffmpeg-static');
+  if (!_ffmpegPath) {
+    _ffmpegPath = require('ffmpeg-static');
+    try {
+      fs.chmodSync(_ffmpegPath, 0o755);
+    } catch (_) {}
+  }
   return _ffmpegPath;
 }
 
@@ -44,22 +50,33 @@ function handleFor(name) {
   return h ? `@${h}` : '@vero360';
 }
 
+function fontFaceCss(family, fontfile) {
+  if (!fontfile || !fs.existsSync(fontfile)) return '';
+  const b64 = fs.readFileSync(fontfile).toString('base64');
+  return `@font-face{font-family:'${family}';src:url('data:font/ttf;base64,${b64}');}`;
+}
+
 /** Single-line text as a transparent PNG; long names are ellipsised to maxWidth. */
 async function textPng(text, { size, color, fontfile, family, maxWidth }) {
-  const markup = `<span foreground="${color}">${escapeMarkup(text)}</span>`;
-  const { data, info } = await sharp({
-    text: {
-      text: markup,
-      font: `${family} ${size}`,
-      fontfile,
-      rgba: true,
-      dpi: 72,
-      width: maxWidth,
-      wrap: 'none',
-    },
-  })
-    .png()
-    .toBuffer({ resolveWithObject: true });
+  const label = String(text || '');
+  const canvasW = Math.max(maxWidth, Math.ceil([...label].length * size) + 24);
+  const canvasH = Math.ceil(size * 1.8);
+  const svg = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${canvasW}" height="${canvasH}">
+      <defs><style>
+        ${fontFaceCss(family, fontfile)}
+        .t{font-family:'${family}',sans-serif;font-size:${size}px;font-weight:700;fill:${color};}
+      </style></defs>
+      <text x="0" y="${size}" class="t">${escapeMarkup(label)}</text>
+    </svg>`,
+  );
+  let data;
+  let info;
+  try {
+    ({ data, info } = await sharp(svg).trim({ threshold: 1 }).png().toBuffer({ resolveWithObject: true }));
+  } catch (_) {
+    ({ data, info } = await sharp(svg).png().toBuffer({ resolveWithObject: true }));
+  }
   if (info.width <= maxWidth) return { data, width: info.width, height: info.height };
   const cropped = await sharp(data)
     .extract({ left: 0, top: 0, width: maxWidth, height: info.height })

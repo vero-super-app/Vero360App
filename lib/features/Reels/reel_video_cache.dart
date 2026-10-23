@@ -19,7 +19,7 @@ class ReelVideoCache {
 
   final String _folder;
   final int maxBytes;
-  static const _maxConcurrent = 2;
+  static const _maxConcurrent = 3;
 
   final _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 20),
@@ -121,6 +121,17 @@ class ReelVideoCache {
     _pump();
   }
 
+  /// Stores the next few videos while the feed is open so swipes hit disk.
+  void prefetchMany(Iterable<String> urls, {int limit = 8}) {
+    var n = 0;
+    for (final url in urls) {
+      if (n >= limit) break;
+      if (url.isEmpty) continue;
+      prefetch(url, priority: n < 2);
+      n++;
+    }
+  }
+
   /// Resolves when [url] is cached (or the download fails / is cancelled).
   Future<File?> whenCached(String url) async {
     final existing = await cached(url);
@@ -131,14 +142,11 @@ class ReelVideoCache {
     return c.future;
   }
 
-  /// Drops queued and running downloads that are no longer near the screen,
-  /// so fast scrolling doesn't burn data on reels the user skipped.
+  /// Drops queued downloads that are no longer near the screen.
+  /// In-flight files are left to finish so they stay cached for the next swipe.
   void keepOnly(Iterable<String> urls) {
     final keep = urls.where((u) => u.isNotEmpty).map(_key).toSet();
     _queue.removeWhere((u) => !keep.contains(_key(u)));
-    for (final entry in _running.entries.toList()) {
-      if (!keep.contains(entry.key)) entry.value.cancel('scrolled away');
-    }
   }
 
   void _pump() {

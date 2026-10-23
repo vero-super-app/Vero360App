@@ -352,7 +352,8 @@ const List<DigitalCategory> kDigitalCategories = [
 ];
 
 enum DigitalPayMethod {
-  paychangu, // mobile money + bank (MWK)
+  paychangu, // mobile money (MWK)
+  bankTransfer, // National Bank details from admin finance
   visa, // coming soon
 }
 

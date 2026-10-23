@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:vero360_app/GernalServices/bank_transfer_config.dart';
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
+import 'package:vero360_app/widgets/bank_transfer_details_card.dart';
 
 /// Giftsy-style amount picker: USD values + MWK at [kUsdToMwkRate].
 class DigitalProductAmountPage extends StatefulWidget {
@@ -28,6 +32,7 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
 
   late double _selectedUsd;
   DigitalPayMethod _payMethod = DigitalPayMethod.paychangu;
+  final _bank = BankTransferConfig.instance;
 
   final _customAmountCtrl = TextEditingController();
   final _customFocus = FocusNode();
@@ -51,10 +56,23 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
     super.initState();
     _selectedUsd = p.usdAmounts.isNotEmpty ? p.usdAmounts.first : 10;
     _customAmountCtrl.addListener(_onCustomAmountChanged);
+    _bank.addListener(_onBank);
+    unawaited(_bank.ensureStarted());
+  }
+
+  void _onBank() {
+    if (!mounted) return;
+    if (_payMethod == DigitalPayMethod.bankTransfer &&
+        !_bank.details.showToCustomers) {
+      setState(() => _payMethod = DigitalPayMethod.paychangu);
+      return;
+    }
+    setState(() {});
   }
 
   @override
   void dispose() {
+    _bank.removeListener(_onBank);
     _customAmountCtrl.removeListener(_onCustomAmountChanged);
     _customAmountCtrl.dispose();
     _customFocus.dispose();
@@ -498,6 +516,16 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
             subtitle: 'Approve a prompt on your phone',
             icon: Icons.phone_android_rounded,
           ),
+          if (_bank.details.showToCustomers) ...[
+            const SizedBox(height: 10),
+            _payTile(
+              method: DigitalPayMethod.bankTransfer,
+              title: 'Bank transfer',
+              subtitle:
+                  '${_bank.details.bankName} · ${_bank.details.accountNumber}',
+              icon: Icons.account_balance_rounded,
+            ),
+          ],
           const SizedBox(height: 10),
           _payTile(
             method: DigitalPayMethod.visa,
@@ -505,6 +533,14 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
             subtitle: 'Enter card details ',
             icon: Icons.credit_card_rounded,
           ),
+          if (_payMethod == DigitalPayMethod.bankTransfer &&
+              _bank.details.showToCustomers) ...[
+            const SizedBox(height: 12),
+            BankTransferDetailsCard(
+              details: _bank.details,
+              amountLabel: 'Pay ${formatMwk(_mwk)}',
+            ),
+          ],
         ],
       ),
     );

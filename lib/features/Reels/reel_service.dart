@@ -276,6 +276,9 @@ class ReelService {
       final data = res.data;
       final url = data is Map ? (data['url'] ?? '').toString() : '';
       if (url.isEmpty) throw Exception('Could not prepare the video. Try again.');
+      if (kDebugMode && data is Map && data['fallback'] == true) {
+        debugPrint('[Reels] prepareReelDownload returned original (no watermark)');
+      }
       return url;
     } on FirebaseFunctionsException catch (e) {
       if (kDebugMode) debugPrint('[Reels] prepareReelDownload ${e.code}: ${e.message}');
@@ -288,6 +291,21 @@ class ReelService {
       }
       throw Exception('Could not prepare the video. Try again.');
     }
+  }
+
+  /// Branded file when the server can render it; otherwise the original clip.
+  Future<String> downloadSourceUrl(Reel reel) async {
+    try {
+      final branded = await brandedDownloadUrl(reel.id);
+      if (branded.trim().isNotEmpty) return branded.trim();
+    } catch (e) {
+      if (kDebugMode) debugPrint('[Reels] branded download fallback: $e');
+    }
+    final original = reel.videoUrl.trim();
+    if (original.isEmpty) {
+      throw Exception('This reel has no video to save.');
+    }
+    return original;
   }
 
   // ── Posting ───────────────────────────────────────────────────────────────

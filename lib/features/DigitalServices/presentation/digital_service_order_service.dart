@@ -166,6 +166,7 @@ class DigitalServiceOrderService {
     required String buyerPhone,
     double? selectedUsd,
     DigitalPayoutKycPayload? payoutKyc,
+    String paymentProvider = 'pawapay',
   }) async {
     var user = FirebaseAuth.instance.currentUser;
     user ??= (await FirebaseAuth.instance.signInAnonymously()).user;
@@ -193,6 +194,7 @@ class DigitalServiceOrderService {
       'currency': 'MWK',
       'status': 'pending_payment',
       'txRef': txRef,
+      'paymentProvider': paymentProvider,
       'buyerUid': isGuest ? '' : user.uid,
       'isGuest': isGuest,
       'buyerName': buyerName,

@@ -75,11 +75,31 @@ class OrderEscrowService {
   static DocumentReference<Map<String, dynamic>> _doc(String orderId) =>
       _db.collection(_collection).doc(orderId);
 
+  static bool _isBankRail(String paymentRail) {
+    final rail = paymentRail.trim().toLowerCase();
+    return rail == 'bank_transfer' || rail == 'bank';
+  }
+
+  static Map<String, dynamic> _railFields({
+    required String paymentRail,
+    required double processingFee,
+  }) {
+    final bank = _isBankRail(paymentRail);
+    return {
+      'paymentRail': bank ? 'bank_transfer' : 'pawapay',
+      'paymentProvider': bank ? 'bank_transfer' : 'pawapay',
+      'processingFeeAmount': bank ? 0 : processingFee,
+      'paychanguShareAmount': 0,
+      'pawapayShareAmount': bank ? 0 : processingFee,
+    };
+  }
+
   /// Creates a hold row per marketplace order (after payment + backend order creation).
   /// Does not credit the merchant — that happens on [releaseFunds].
   static Future<void> createHoldsForOrders({
     required String txRef,
     required List<CreatedOrderRef> refs,
+    String paymentRail = 'pawapay',
   }) async {
     final buyerUid = FirebaseAuth.instance.currentUser?.uid;
     if (buyerUid == null || buyerUid.isEmpty) {
@@ -113,9 +133,10 @@ class OrderEscrowService {
           'merchantAmount': quote.providerPrice,
           'serviceFeeAmount': quote.commission,
           'veroShareAmount': quote.veroShare,
-          'processingFeeAmount': quote.processingFee,
-          'paychanguShareAmount': 0,
-          'pawapayShareAmount': quote.processingFee,
+          ..._railFields(
+            paymentRail: paymentRail,
+            processingFee: quote.processingFee,
+          ),
           'buyerPaysAmount': quote.buyerTotal,
           'commissionPayer': 'buyer',
           'feeRate': quote.rate,
@@ -170,6 +191,7 @@ class OrderEscrowService {
     required String foodName,
     required double grossAmountMwk,
     String? orderNumber,
+    String paymentRail = 'pawapay',
   }) async {
     final mid = merchantUid.trim();
     final oid = orderId.trim();
@@ -195,9 +217,10 @@ class OrderEscrowService {
         'merchantAmount': quote.providerPrice,
         'serviceFeeAmount': quote.commission,
         'veroShareAmount': quote.veroShare,
-        'processingFeeAmount': quote.processingFee,
-        'paychanguShareAmount': 0,
-        'pawapayShareAmount': quote.processingFee,
+        ..._railFields(
+          paymentRail: paymentRail,
+          processingFee: quote.processingFee,
+        ),
         'buyerPaysAmount': quote.buyerTotal,
         'commissionPayer': 'buyer',
         'feeRate': quote.rate,
@@ -261,6 +284,7 @@ class OrderEscrowService {
     required String txRef,
     required double grossAmountMwk,
     required AccommodationEscrowParams params,
+    String paymentRail = 'pawapay',
   }) async {
     final hostUid = params.hostMerchantUid.trim();
     if (hostUid.isEmpty) return;
@@ -295,9 +319,10 @@ class OrderEscrowService {
         'merchantAmount': quote.providerPrice,
         'serviceFeeAmount': quote.commission,
         'veroShareAmount': quote.veroShare,
-        'processingFeeAmount': quote.processingFee,
-        'paychanguShareAmount': 0,
-        'pawapayShareAmount': quote.processingFee,
+        ..._railFields(
+          paymentRail: paymentRail,
+          processingFee: quote.processingFee,
+        ),
         'buyerPaysAmount': quote.buyerTotal,
         'commissionPayer': 'buyer',
         'feeRate': quote.rate,
@@ -1062,6 +1087,25 @@ class OrderEscrowService {
 
     if (merchantUid.isEmpty || merchantAmount <= 0) {
       throw StateError('Invalid escrow data.');
+    }
+
+    final paymentRail = (data['paymentRail'] ?? data['paymentProvider'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    if (paymentRail == 'bank_transfer' || paymentRail == 'bank') {
+      await ref.update({
+        'status': buyerConfirmed ? 'released' : 'auto_released',
+        'releasedAt': FieldValue.serverTimestamp(),
+        'releaseKind': releaseKind,
+        'releaseSource': releaseSource,
+        'walletCreditSkipped': true,
+        'walletCreditSkipReason': 'bank_transfer',
+        'platformFeeCredited': true,
+        'pawapayFeeCredited': false,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      return;
     }
 
     await FirebaseWalletService.getOrCreateWallet(

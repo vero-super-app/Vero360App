@@ -354,7 +354,6 @@ const List<DigitalCategory> kDigitalCategories = [
 enum DigitalPayMethod {
   paychangu, // mobile money (MWK)
   bankTransfer, // National Bank details from admin finance
-  visa, // coming soon
 }
 
 /// Destination / identity pack collected at checkout for crypto & FX cards.

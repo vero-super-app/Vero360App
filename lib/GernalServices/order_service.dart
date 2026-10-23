@@ -486,12 +486,16 @@ class OrderService {
     Address? address,
     required OrderStatus status,
     String? deliveryMethod,
+    String? extraDescriptionTag,
+    String? paymentStatus,
   }) async {
     await createOrdersFromCartWithRefs(
       cartItems: cartItems,
       address: address,
       status: status,
       deliveryMethod: deliveryMethod,
+      extraDescriptionTag: extraDescriptionTag,
+      paymentStatus: paymentStatus,
     );
   }
 
@@ -501,6 +505,8 @@ class OrderService {
     Address? address,
     required OrderStatus status,
     String? deliveryMethod,
+    String? extraDescriptionTag,
+    String? paymentStatus,
   }) async {
     if (cartItems.isEmpty) return [];
 
@@ -517,6 +523,8 @@ class OrderService {
           : (item.comment ?? '');
       var description = _withDeliveryMethod(rawDescription, deliveryMethod);
       description = _withListingIdTag(description, item);
+      description = _withExtraTag(description, extraDescriptionTag);
+      final pay = (paymentStatus ?? '').trim();
       // Match backend: send merchantUid (Firebase UID) and let server resolve to numeric user.id
       final body = jsonEncode({
         'ItemName': item.name,
@@ -526,6 +534,10 @@ class OrderService {
         'Quantity': item.quantity,
         'Description': description,
         'Status': orderStatusToApi(status),
+        if (pay.isNotEmpty) 'PaymentStatus': pay,
+        if (pay.isNotEmpty) 'paymentStatus': pay,
+        if ((extraDescriptionTag ?? '').contains('BankTransfer'))
+          'paymentProvider': 'bank_transfer',
         'merchantUid': item.merchantId,
         // Helps backend / GET orders expose marketplace listing id; ignored if API strips unknown keys.
         if (item.serviceType == 'marketplace' && item.item > 0) 'ItemId': item.item,
@@ -622,6 +634,15 @@ class OrderService {
     final d = description.trim();
     if (d.isEmpty) return tag;
     return '$d $tag';
+  }
+
+  String _withExtraTag(String description, String? tag) {
+    final extra = (tag ?? '').trim();
+    if (extra.isEmpty) return description;
+    if (description.contains(extra)) return description;
+    final d = description.trim();
+    if (d.isEmpty) return extra;
+    return '$d $extra';
   }
 
   String _withDeliveryMethod(String description, String? deliveryMethod) {

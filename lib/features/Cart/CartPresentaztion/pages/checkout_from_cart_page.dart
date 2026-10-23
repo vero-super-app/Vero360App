@@ -1921,7 +1921,12 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
 
 
   /// Backend orders + Firestore escrow (merchant wallet credited after buyer confirms or 7 days).
-  Future<void> _createConfirmedOrdersAndEscrow(List<CartModel> items) async {
+  Future<List<order_svc.CreatedOrderRef>> _createConfirmedOrdersAndEscrow(
+    List<CartModel> items, {
+    String? extraDescriptionTag,
+    String? paymentStatus,
+    String paymentRail = 'pawapay',
+  }) async {
     unawaited(_recordLatestArrivalPurchases(items));
     try {
       final addressForOrder =
@@ -1931,11 +1936,15 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         address: addressForOrder,
         status: OrderStatus.confirmed,
         deliveryMethod: _deliveryTypeLabel(widget.deliveryType),
+        extraDescriptionTag: extraDescriptionTag,
+        paymentStatus: paymentStatus,
       );
       await OrderEscrowService.createHoldsForOrders(
         txRef: widget.txRef,
         refs: refs,
+        paymentRail: paymentRail,
       );
+      return refs;
     } catch (e) {
       debugPrint('[InAppPaymentPage] Failed to create orders / escrow: $e');
       final message = (e is order_svc.AuthRequiredException || e is order_svc.FriendlyApiException)
@@ -2018,12 +2027,15 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     }
   }
 
-  Future<void> _persistFoodOrderAfterPayment({
+  Future<String?> _persistFoodOrderAfterPayment({
     List<CartModel> cartFoodItems = const [],
+    String paymentStatus = 'paid',
+    String paymentProvider = 'pawapay',
+    String? bankProofUrl,
   }) async {
     final fc = widget.foodCheckout;
     final foodLines = cartFoodItems.where((e) => e.isFood).toList();
-    if (fc == null && foodLines.isEmpty) return;
+    if (fc == null && foodLines.isEmpty) return null;
 
     try {
       final ref = FirebaseFirestore.instance.collection('food_orders').doc();
@@ -2156,7 +2168,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         totalMwk: totalMwk,
         status: 'pending',
         paymentTxRef: widget.txRef,
-        paymentStatus: 'paid',
+        paymentStatus: paymentStatus,
         restaurantName: merchantName,
         deliveryMethod: FoodCourierDispatch.methodLabel,
         courierProvider: FoodCourierDispatch.provider,
@@ -2187,6 +2199,11 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
           'customerNote': customerNote.trim(),
         if (pickupLat != null) 'pickupLat': pickupLat,
         if (pickupLng != null) 'pickupLng': pickupLng,
+        'paymentProvider': paymentProvider,
+        if (bankProofUrl != null && bankProofUrl.trim().isNotEmpty) ...{
+          'bankProofUrl': bankProofUrl.trim(),
+          'bankProofUrls': [bankProofUrl.trim()],
+        },
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
@@ -2202,6 +2219,8 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         foodName: summaryName,
         grossAmountMwk: subtotalMwk,
         orderNumber: orderNumber,
+        paymentRail:
+            paymentProvider == 'bank_transfer' ? 'bank_transfer' : 'pawapay',
       );
 
       final itemsSummary = lineItems.length == 1
@@ -2228,6 +2247,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
           itemsSummary: itemsSummary,
         );
       }
+      return ref.id;
     } catch (e) {
       debugPrint('[InAppPaymentPage] food_orders write failed: $e');
       if (widget.rootContext.mounted) {
@@ -2238,6 +2258,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
           errorMessage: 'Sync failed',
         );
       }
+      return null;
     }
   }
 
@@ -2490,6 +2511,65 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     return 'Bank transfer';
   }
 
+  Future<Map<String, dynamic>> _fulfillBankTransferOrders({
+    required String proofUrl,
+  }) async {
+    final extra = <String, dynamic>{};
+    final source = _bankSource();
+    if (source == 'digital') return extra;
+
+    final food = widget.foodCheckout;
+    final cartItems = widget.cartItemsForMerchantCredit ?? const <CartModel>[];
+    final foodItems = cartItems.where((e) => e.isFood).toList();
+    final marketItems = cartItems.where((e) => !e.isFood).toList();
+    final esc = widget.accommodationEscrow;
+    final bankTag = '[BankTransfer] [TxRef: ${widget.txRef}]';
+
+    if (food != null || foodItems.isNotEmpty) {
+      final foodOrderId = await _persistFoodOrderAfterPayment(
+        cartFoodItems: foodItems,
+        paymentStatus: 'pending_bank',
+        paymentProvider: 'bank_transfer',
+        bankProofUrl: proofUrl,
+      );
+      if (foodOrderId != null && foodOrderId.isNotEmpty) {
+        extra['foodOrderId'] = foodOrderId;
+      }
+    }
+
+    if (marketItems.isNotEmpty) {
+      final refs = await _createConfirmedOrdersAndEscrow(
+        marketItems,
+        extraDescriptionTag: bankTag,
+        paymentStatus: 'PENDING',
+        paymentRail: 'bank_transfer',
+      );
+      extra['orderIds'] = refs.map((e) => e.orderId).where((e) => e.isNotEmpty).toList();
+      extra['orderNumbers'] =
+          refs.map((e) => e.orderNumber).where((e) => e.isNotEmpty).toList();
+    }
+
+    if (esc != null) {
+      extra['stayBookingRef'] = esc.bookingRef;
+      await OrderEscrowService.createHoldForAccommodationBooking(
+        txRef: widget.txRef,
+        grossAmountMwk: widget.providerAmountMwk ?? widget.totalAmount,
+        params: esc,
+        paymentRail: 'bank_transfer',
+      );
+    }
+
+    if (widget.clearCartOnSuccess) {
+      try {
+        await CartServiceProvider.getInstance().clearCart();
+      } catch (e) {
+        debugPrint('[InAppPaymentPage] Failed to clear cart after bank proof: $e');
+      }
+    }
+
+    return extra;
+  }
+
   Future<void> _reportBankTransfer() async {
     if (_bankReported || _paid || _bankBusy) return;
     final proof = _proofFile;
@@ -2530,12 +2610,22 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         'digitalOrderId': orderId,
         'status': 'pending_review',
         'paymentProvider': 'bank_transfer',
+        if ((widget.accommodationEscrow?.bookingRef ?? '').trim().isNotEmpty)
+          'stayBookingRef': widget.accommodationEscrow!.bookingRef.trim(),
         'createdAt': FieldValue.serverTimestamp(),
       };
       final proofDoc = FirebaseFirestore.instance
           .collection('bank_transfer_payments')
           .doc(orderId.isNotEmpty ? orderId : widget.txRef);
       await proofDoc.set(payload);
+      try {
+        final extra = await _fulfillBankTransferOrders(proofUrl: proofUrl);
+        if (extra.isNotEmpty) {
+          await proofDoc.set(extra, SetOptions(merge: true));
+        }
+      } catch (e) {
+        debugPrint('[InAppPaymentPage] bank order create failed: $e');
+      }
       if (orderId.isNotEmpty) {
         await FirebaseFirestore.instance
             .collection('digital_service_orders')
@@ -2560,7 +2650,10 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         isSuccess: true,
         errorMessage: '',
       );
-      Navigator.of(context).pop();
+      if (widget.onSuccessNavigate != null && _bankSource() != 'digital') {
+        widget.onSuccessNavigate!(widget.rootContext);
+      }
+      if (mounted) Navigator.of(context).pop('bank_proof');
     } catch (e) {
       if (!mounted) return;
       setState(() => _bankBusy = false);
@@ -3009,6 +3102,22 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
           ),
         ),
         const SizedBox(height: 10),
+        const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.lock_rounded, size: 14, color: Color(0xFFB08968)),
+            SizedBox(width: 6),
+            Text(
+              'Secured by Vero escrow',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFFB08968),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
         Text(
           'Transfer the exact amount, then upload the slip. We will confirm your order after checking the photo.',
           textAlign: TextAlign.center,

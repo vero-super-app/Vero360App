@@ -4452,15 +4452,6 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
   }
 
   Future<void> _payNow() async {
-    if (widget.payMethod == DigitalPayMethod.visa) {
-      ToastHelper.showCustomToast(
-        context,
-        'Visa payments coming soon. Use mobile money or bank transfer for now.',
-        isSuccess: false,
-        errorMessage: '',
-      );
-      return;
-    }
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _submitting = true);
@@ -4649,10 +4640,8 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                 ),
                 child: Text(
                   widget.payMethod == DigitalPayMethod.bankTransfer
-                      ? 'Paying by bank transfer to VERO360 LIMITED'
-                      : widget.payMethod == DigitalPayMethod.paychangu
-                          ? 'Paying with Airtel Money or TNM Mpamba'
-                          : 'Visa / card · Coming soon',
+                      ? 'Paying by bank transfer · Secured by Vero escrow'
+                      : 'Paying with Airtel Money or TNM Mpamba',
                   style: const TextStyle(
                     fontWeight: FontWeight.w700,
                     fontSize: 12,

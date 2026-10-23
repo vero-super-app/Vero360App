@@ -10,9 +10,7 @@ import 'package:vero360_app/features/DigitalServices/presentation/chatgpt_plan_p
 import 'package:vero360_app/features/DigitalServices/presentation/digital_my_orders_page.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_product_amount_page.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/netflix_plan_picker_page.dart';
-import 'package:vero360_app/GernalServices/bank_transfer_config.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
-import 'package:vero360_app/widgets/bank_transfer_details_card.dart';
 
 class DigitalServicesPage extends StatefulWidget {
   final void Function({
@@ -42,7 +40,6 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
 
   final _searchCtrl = TextEditingController();
   final _catalog = DigitalServicesCatalog.instance;
-  final _bank = BankTransferConfig.instance;
   late String _category;
   String _query = '';
   late final AnimationController _enter;
@@ -54,9 +51,7 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
         ? 'all'
         : widget.initialCategory.trim();
     _catalog.addListener(_onCatalog);
-    _bank.addListener(_onCatalog);
     unawaited(_catalog.ensureStarted());
-    unawaited(_bank.ensureStarted());
     _enter = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 700),
@@ -75,7 +70,6 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
   @override
   void dispose() {
     _catalog.removeListener(_onCatalog);
-    _bank.removeListener(_onCatalog);
     _searchCtrl.dispose();
     _enter.dispose();
     super.dispose();
@@ -208,16 +202,6 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
         slivers: [
           SliverToBoxAdapter(child: _buildHeader(top, narrow, textScale)),
           SliverToBoxAdapter(child: _buildSearch()),
-          if (_bank.details.showToCustomers)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-                child: BankTransferDetailsCard(
-                  details: _bank.details,
-                  compact: true,
-                ),
-              ),
-            ),
           const SliverToBoxAdapter(child: SizedBox(height: 4)),
           SliverToBoxAdapter(child: _buildCategories()),
           if (_category == 'all' && _query.isEmpty)

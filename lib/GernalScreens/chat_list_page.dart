@@ -365,7 +365,7 @@ class _ChatListPageState extends State<ChatListPage> {
           email: safeEmail,
           merchantUid: uid.isEmpty ? null : uid,
           embeddedInMainNav: true,
-          initialInnerTab: 3, // Profile
+          initialInnerTab: 4, // Profile
         );
         break;
       case 'accommodation':

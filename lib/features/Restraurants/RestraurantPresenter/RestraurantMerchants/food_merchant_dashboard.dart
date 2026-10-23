@@ -11,6 +11,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 
+import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/shop_pictures_page.dart';
@@ -56,7 +57,7 @@ class FoodMerchantDashboard extends StatefulWidget {
   final String? merchantUid;
   /// When [Bottomnavbar] already wraps this screen (tab 4), hide the bar to avoid duplicates.
   final bool embeddedInMainNav;
-  /// Inner TabBar: 0 Dashboard, 1 Post food, 2 Orders, 3 Profile.
+  /// Inner TabBar: 0 Dashboard, 1 Post food, 2 Orders, 3 Marketplace orders, 4 Profile.
   final int initialInnerTab;
   const FoodMerchantDashboard({
     super.key,
@@ -186,9 +187,9 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
   void initState() {
     super.initState();
     _foodTabs = TabController(
-      length: 4,
+      length: 5,
       vsync: this,
-      initialIndex: widget.initialInnerTab.clamp(0, 3),
+      initialIndex: widget.initialInnerTab.clamp(0, 4),
     );
     _bootstrapIdentityFast();
     unawaited(_loadMerchantData(showLoader: false));
@@ -2023,6 +2024,13 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                   ),
                 );
               },
+            ),
+            _FoodQuickActionTile(
+              title: 'Marketplace orders',
+              icon: Icons.storefront_outlined,
+              color: Colors.indigo,
+              badgeRoute: NotificationStore.kBadgeMyOrders,
+              onTap: () => _foodTabs.animateTo(3),
             ),
             _FoodQuickActionTile(
               title: 'Received orders',
@@ -4057,7 +4065,8 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
               tabs: const [
                 Tab(text: 'Dashboard'),
                 Tab(text: 'Post food'),
-                Tab(text: 'Orders'),
+                Tab(text: 'Food orders'),
+                Tab(text: 'Marketplace orders'),
                 Tab(text: 'Profile'),
               ],
             ),
@@ -4069,6 +4078,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                 _buildDashboardTab(),
                 _buildPostFoodTab(),
                 _buildOrdersTab(),
+                const OrdersPage(embedded: true),
                 _buildProfileTab(),
               ],
             ),

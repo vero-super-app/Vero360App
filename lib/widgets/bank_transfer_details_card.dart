@@ -91,6 +91,21 @@ class BankTransferDetailsCard extends StatelessWidget {
           _row(context, 'Branch', details.branch),
           if (reference != null && reference!.trim().isNotEmpty)
             _row(context, 'Payment reference', reference!.trim(), copyValue: reference!.trim()),
+          const SizedBox(height: 4),
+          const Row(
+            children: [
+              Icon(Icons.lock_rounded, size: 14, color: Color(0xFFB08968)),
+              SizedBox(width: 6),
+              Text(
+                'Secured by Vero escrow',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFFB08968),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );

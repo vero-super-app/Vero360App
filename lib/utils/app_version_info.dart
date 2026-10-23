@@ -7,6 +7,7 @@ class AppVersionInfo {
 
   static String version = '1.2.9';
   static String buildNumber = '10026';
+  static bool ready = false;
 
   static Future<void>? _loading;
 
@@ -22,5 +23,6 @@ class AppVersionInfo {
       if (v.isNotEmpty) version = v;
       if (b.isNotEmpty) buildNumber = b;
     } catch (_) {}
+    ready = true;
   }
 }

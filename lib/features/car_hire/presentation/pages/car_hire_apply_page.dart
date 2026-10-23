@@ -53,7 +53,7 @@ class _CarHireApplyPageState extends ConsumerState<CarHireApplyPage> {
   late final TextEditingController _idNumber;
   late bool _business;
   late Set<String> _areas;
-  String _fleetSize = '3-5';
+  String? _fleetSize;
   bool _acceptedTerms = false;
   bool _submitting = false;
   String? _error;
@@ -208,12 +208,6 @@ class _CarHireApplyPageState extends ConsumerState<CarHireApplyPage> {
       setState(() => _error = 'Select at least one service area.');
       return;
     }
-    if (_business && !_documents.containsKey('BUSINESS_REGISTRATION')) {
-      setState(
-        () => _error = 'Attach a photo of the certificate of incorporation.',
-      );
-      return;
-    }
     if (!_business && !_documents.containsKey('NATIONAL_ID')) {
       setState(() => _error = 'Attach a photo of the front of your national ID.');
       return;
@@ -340,7 +334,9 @@ class _CarHireApplyPageState extends ConsumerState<CarHireApplyPage> {
             const SizedBox(height: 18),
             _FleetSizeCard(
               value: _fleetSize,
-              onChanged: (value) => setState(() => _fleetSize = value),
+              onChanged: (value) => setState(
+                () => _fleetSize = _fleetSize == value ? null : value,
+              ),
             ),
             const SizedBox(height: 18),
             _TermsCard(
@@ -439,24 +435,6 @@ class _CarHireApplyPageState extends ConsumerState<CarHireApplyPage> {
               ),
             ),
           ],
-        ),
-        const SizedBox(height: 12),
-        _DocumentCard(
-          title: 'Certificate of incorporation',
-          requiredLabel: true,
-          document: _documents['BUSINESS_REGISTRATION'],
-          uploading: _uploadingType == 'BUSINESS_REGISTRATION',
-          onAttach: () => _pickDocument('BUSINESS_REGISTRATION'),
-          onClear: () => _clearDocument('BUSINESS_REGISTRATION'),
-        ),
-        const SizedBox(height: 12),
-        _DocumentCard(
-          title: 'Tax clearance (optional)',
-          document: _documents['TAX_CLEARANCE'],
-          uploading: _uploadingType == 'TAX_CLEARANCE',
-          onAttach: () => _pickDocument('TAX_CLEARANCE'),
-          onClear: () => _clearDocument('TAX_CLEARANCE'),
-          compact: true,
         ),
       ],
     );
@@ -570,10 +548,7 @@ class _ProgressHeader extends StatelessWidget {
               ),
             ),
             const Spacer(),
-            const Text(
-              'No payout details needed',
-              style: CarHireType.labelSmall,
-            ),
+            
           ],
         ),
         const SizedBox(height: 8),
@@ -598,7 +573,7 @@ class _ProgressHeader extends StatelessWidget {
         const SizedBox(height: 6),
         const Text(
           'List your fleet or private car on Vero360. We only need identity '
-          'and operating details for review — payout setup comes after approval.',
+          ,
           style: CarHireType.body,
         ),
       ],
@@ -676,7 +651,7 @@ class _EntityToggle extends StatelessWidget {
               selected: business,
               icon: Icons.apartment_rounded,
               title: 'Company',
-              caption: 'Multi-vehicle fleet',
+              caption: 'Registered business',
               onTap: () => onChanged(true),
             ),
           ),
@@ -947,129 +922,6 @@ class _PhoneField extends StatelessWidget {
   }
 }
 
-class _DocumentCard extends StatelessWidget {
-  const _DocumentCard({
-    required this.title,
-    required this.onAttach,
-    required this.onClear,
-    this.document,
-    this.uploading = false,
-    this.requiredLabel = false,
-    this.compact = false,
-  });
-
-  final String title;
-  final CompanyDocument? document;
-  final bool uploading;
-  final bool requiredLabel;
-  final bool compact;
-  final VoidCallback onAttach;
-  final VoidCallback onClear;
-
-  @override
-  Widget build(BuildContext context) {
-    final attached = document != null;
-    return CarHireSurface(
-      padding: const EdgeInsets.all(16),
-      shadow: true,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    color: CarHirePalette.primaryContainer,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              if (requiredLabel)
-                const Text(
-                  'Required',
-                  style: TextStyle(
-                    color: CarHirePalette.accent,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          if (attached)
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: CarHirePalette.surfaceLow,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFD4E3FF),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(
-                      Icons.description_outlined,
-                      color: CarHirePalette.primaryContainer,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _fileName(document!.url),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 13,
-                          ),
-                        ),
-                        const Text(
-                          'Attached for review',
-                          style: TextStyle(
-                            color: CarHirePalette.success,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'Replace',
-                    onPressed: uploading ? null : onAttach,
-                    icon: const Icon(Icons.sync_rounded, size: 18),
-                  ),
-                  IconButton(
-                    tooltip: 'Remove',
-                    onPressed: uploading ? null : onClear,
-                    icon: const Icon(Icons.close_rounded, size: 18),
-                  ),
-                ],
-              ),
-            )
-          else
-            _AttachButton(
-              label: compact ? 'Attach tax clearance photo' : 'Attach a photo',
-              uploading: uploading,
-              onTap: onAttach,
-            ),
-        ],
-      ),
-    );
-  }
-}
-
 class _IdPhotoCard extends StatelessWidget {
   const _IdPhotoCard({
     required this.front,
@@ -1258,52 +1110,6 @@ class _IdSlot extends StatelessWidget {
   }
 }
 
-class _AttachButton extends StatelessWidget {
-  const _AttachButton({
-    required this.label,
-    required this.uploading,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool uploading;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: CarHirePalette.surfaceLow,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: uploading ? null : onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (uploading)
-                const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              else
-                const Icon(
-                  Icons.upload_file_outlined,
-                  size: 18,
-                  color: CarHirePalette.onSurfaceVariant,
-                ),
-              const SizedBox(width: 8),
-              Text(label, style: CarHireType.label),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _ServiceAreasCard extends StatelessWidget {
   const _ServiceAreasCard({
     required this.selected,
@@ -1434,7 +1240,7 @@ class _AreaChip extends StatelessWidget {
 class _FleetSizeCard extends StatelessWidget {
   const _FleetSizeCard({required this.value, required this.onChanged});
 
-  final String value;
+  final String? value;
   final ValueChanged<String> onChanged;
 
   @override
@@ -1463,7 +1269,7 @@ class _FleetSizeCard extends StatelessWidget {
                   ),
                 ),
               ),
-              Text('For review only', style: CarHireType.labelSmall),
+              Text('Optional', style: CarHireType.labelSmall),
             ],
           ),
           const SizedBox(height: 12),
@@ -1652,10 +1458,4 @@ class _SubmitBar extends StatelessWidget {
       ),
     );
   }
-}
-
-String _fileName(String url) {
-  final path = Uri.tryParse(url)?.pathSegments;
-  if (path == null || path.isEmpty) return 'Document';
-  return path.last;
 }

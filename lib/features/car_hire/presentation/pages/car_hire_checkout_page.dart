@@ -149,7 +149,21 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage> {
     });
 
     try {
-      final fresh = await ref.read(carHireApiProvider).getBooking(current.id);
+      final api = ref.read(carHireApiProvider);
+      CarHireBooking fresh;
+      if (current.paymentSucceeded) {
+        fresh = await api.getBooking(current.id);
+      } else {
+        try {
+          final initiation = await recoverCarHirePawaPayPayment(
+            api: api,
+            bookingId: current.id,
+          );
+          fresh = initiation.booking ?? await api.getBooking(current.id);
+        } on CarHireApiException {
+          fresh = await api.getBooking(current.id);
+        }
+      }
       ref.read(bookingSubmissionProvider.notifier).updateBooking(fresh);
       if (!mounted) return;
 

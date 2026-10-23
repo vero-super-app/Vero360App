@@ -79,7 +79,21 @@ class _CarHireBookingDetailPageState
     });
 
     try {
-      final fresh = await ref.read(carHireApiProvider).getBooking(current.id);
+      final api = ref.read(carHireApiProvider);
+      CarHireBooking fresh;
+      if (current.paymentSucceeded) {
+        fresh = await api.getBooking(current.id);
+      } else {
+        try {
+          final initiation = await recoverCarHirePawaPayPayment(
+            api: api,
+            bookingId: current.id,
+          );
+          fresh = initiation.booking ?? await api.getBooking(current.id);
+        } on CarHireApiException {
+          fresh = await api.getBooking(current.id);
+        }
+      }
       if (!mounted) return;
       setState(() => _localBooking = fresh);
       ref.invalidate(myCarHireBookingsProvider);

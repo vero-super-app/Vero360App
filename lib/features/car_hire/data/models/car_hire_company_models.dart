@@ -161,14 +161,15 @@ class CompanyDocument {
     this.uploadedAt = '',
   });
 
-  /// BUSINESS_REGISTRATION | NATIONAL_ID | TAX_CLEARANCE | INSURANCE
+  /// BUSINESS_REGISTRATION | NATIONAL_ID | NATIONAL_ID_BACK | TAX_CLEARANCE | INSURANCE
   final String type;
   final String url;
   final String uploadedAt;
 
   String get label => switch (type.toUpperCase()) {
     'BUSINESS_REGISTRATION' => 'Business registration',
-    'NATIONAL_ID' => 'National ID',
+    'NATIONAL_ID' => 'National ID (front)',
+    'NATIONAL_ID_BACK' => 'National ID (back)',
     'TAX_CLEARANCE' => 'Tax clearance',
     'INSURANCE' => 'Insurance',
     _ => type.isEmpty ? 'Document' : type,

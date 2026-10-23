@@ -681,6 +681,7 @@ class DispatchBoard {
     this.latePickups = const <CarHireBooking>[],
     this.overdueReturns = const <CarHireBooking>[],
     this.awaitingResponse = const <CarHireBooking>[],
+    this.upcomingPickups = const <CarHireBooking>[],
     this.serviceDue = const <ServiceDueItem>[],
   });
 
@@ -690,12 +691,14 @@ class DispatchBoard {
   final List<CarHireBooking> latePickups;
   final List<CarHireBooking> overdueReturns;
   final List<CarHireBooking> awaitingResponse;
+  final List<CarHireBooking> upcomingPickups;
   final List<ServiceDueItem> serviceDue;
 
   bool get needsAttention =>
       latePickups.isNotEmpty ||
       overdueReturns.isNotEmpty ||
-      awaitingResponse.isNotEmpty;
+      awaitingResponse.isNotEmpty ||
+      upcomingPickups.isNotEmpty;
 
   bool get isEmpty =>
       pickups.isEmpty &&
@@ -718,6 +721,7 @@ class DispatchBoard {
       latePickups: bookings(json['latePickups']),
       overdueReturns: bookings(json['overdueReturns']),
       awaitingResponse: bookings(json['awaitingResponse']),
+      upcomingPickups: bookings(json['upcomingPickups']),
       serviceDue: _list(json['serviceDue'])
           .map((item) {
             final row = _map(item);

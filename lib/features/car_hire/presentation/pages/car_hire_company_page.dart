@@ -101,6 +101,7 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
     final today = companyDateKey(DateTime.now());
     ref.invalidate(companyFleetProvider);
     ref.invalidate(companyBookingsProvider('ACTIVE'));
+    ref.invalidate(companyBookingsProvider('CONFIRMED'));
     ref.invalidate(companyDispatchProvider(today));
     ref.invalidate(companyAnalyticsProvider);
     try {
@@ -116,17 +117,23 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
     final activeAsync = widget.access.canViewBookings
         ? ref.watch(companyBookingsProvider('ACTIVE'))
         : const AsyncValue<List<CarHireBooking>>.data(<CarHireBooking>[]);
+    final upcomingAsync = widget.access.canViewBookings
+        ? ref.watch(companyBookingsProvider('CONFIRMED'))
+        : const AsyncValue<List<CarHireBooking>>.data(<CarHireBooking>[]);
     final boardAsync = widget.access.canViewBookings
         ? ref.watch(companyDispatchProvider(companyDateKey(DateTime.now())))
         : const AsyncValue<DispatchBoard>.loading();
     final analytics = ref.watch(companyAnalyticsProvider).value;
 
     final units = fleetAsync.value ?? const <FleetUnit>[];
-    final bookings = activeAsync.value ?? const <CarHireBooking>[];
+    final bookings = <CarHireBooking>[
+      ...?activeAsync.value,
+      ...?upcomingAsync.value,
+    ];
     final snapshot = _FleetSnapshot(
       units: units,
       activeByUnit: _activeByUnit(bookings),
-      bookingsKnown: activeAsync.hasValue,
+      bookingsKnown: activeAsync.hasValue && upcomingAsync.hasValue,
     );
 
     final visible = _visibleUnits(snapshot);
@@ -425,10 +432,11 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
 Map<int, CarHireBooking> _activeByUnit(List<CarHireBooking> bookings) {
   final map = <int, CarHireBooking>{};
   for (final booking in bookings) {
-    final onRoad =
+    final busy =
         booking.bookingStatus == BookingStatus.active ||
-        booking.bookingStatus == BookingStatus.incidentReported;
-    if (!onRoad) continue;
+        booking.bookingStatus == BookingStatus.incidentReported ||
+        booking.bookingStatus == BookingStatus.confirmed;
+    if (!busy) continue;
     final unitId = booking.assignedCarId ?? booking.carId;
     if (unitId == null) continue;
     map.putIfAbsent(unitId, () => booking);
@@ -1019,6 +1027,17 @@ class _NextOpsSection extends StatelessWidget {
           background: CarHirePalette.warningSoft,
           foreground: CarHirePalette.warning,
         ),
+      for (final booking in board.upcomingPickups)
+        _Operation(
+          booking: booking,
+          title: booking.startAt == null
+              ? 'Paid booking'
+              : 'Paid · pickup ${CarHireFormatters.formatDate(booking.startAt!)}',
+          action: 'Prepare',
+          icon: Icons.event_available_rounded,
+          background: CarHirePalette.accentSoft,
+          foreground: CarHirePalette.onAccentSoft,
+        ),
       for (final booking in board.overdueReturns)
         _Operation(
           booking: booking,
@@ -1322,25 +1341,38 @@ class _CarCard extends StatelessWidget {
   /// Live rentals failed to load; avoid claiming the car is ready.
   final bool statusUnknown;
 
-  bool get _onRoad => booking != null;
-  bool get _inPrep => !unit.car.isAvailable && !_onRoad;
+  bool get _onRoad =>
+      booking != null &&
+      (booking!.bookingStatus == BookingStatus.active ||
+          booking!.bookingStatus == BookingStatus.incidentReported);
+  bool get _booked =>
+      booking != null && booking!.bookingStatus == BookingStatus.confirmed;
+  bool get _busy => _onRoad || _booked;
+  bool get _inPrep => !unit.car.isAvailable && !_busy;
 
   Color get _tone {
-    if (statusUnknown && !_onRoad && !_inPrep) return CarHirePalette.muted;
+    if (statusUnknown && !_busy && !_inPrep) return CarHirePalette.muted;
     if (_onRoad) return CarHirePalette.accent;
+    if (_booked) return CarHirePalette.onAccentSoft;
     if (_inPrep) return CarHirePalette.warning;
     return CarHirePalette.success;
   }
 
   Color get _toneSoft {
-    if (statusUnknown && !_onRoad && !_inPrep) return CarHirePalette.surfaceLow;
+    if (statusUnknown && !_busy && !_inPrep) return CarHirePalette.surfaceLow;
     if (_onRoad) return CarHirePalette.accentPale;
+    if (_booked) return CarHirePalette.accentSoft;
     if (_inPrep) return CarHirePalette.warningSoft;
     return CarHirePalette.successSoft;
   }
 
   String get _statusLabel {
     if (_onRoad) return 'On road · ${_returnsLabel(booking!.endAt)}';
+    if (_booked) {
+      return booking!.startAt == null
+          ? 'Booked · paid'
+          : 'Booked · pickup ${CarHireFormatters.formatDate(booking!.startAt!)}';
+    }
     if (_inPrep) return 'In prep · unavailable';
     if (statusUnknown) return 'Status not checked';
     if (unit.car.dailyRate > 0) {
@@ -1369,18 +1401,18 @@ class _CarCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final primaryLabel = _onRoad
+    final primaryLabel = _busy
         ? 'Open booking'
         : canManage
         ? 'Block dates'
         : 'View unit';
-    final primaryIcon = _onRoad
+    final primaryIcon = _busy
         ? Icons.receipt_long_outlined
         : canManage
         ? Icons.event_busy_outlined
         : Icons.tune_rounded;
 
-    VoidCallback primaryAction = _onRoad
+    VoidCallback primaryAction = _busy
         ? () => onOpenBooking(booking!)
         : canManage
         ? onBlock
@@ -1494,7 +1526,7 @@ class _CarCard extends StatelessWidget {
               ],
             ),
           ),
-          if (_onRoad) ...[
+          if (_busy) ...[
             const SizedBox(height: 8),
             _RenterStrip(booking: booking!),
           ],
@@ -1509,11 +1541,11 @@ class _CarCard extends StatelessWidget {
                   onTap: primaryAction,
                 ),
               ),
-              if (_onRoad || (canManage && !_inPrep)) ...[
+              if (_busy || (canManage && !_inPrep)) ...[
                 const SizedBox(width: 8),
                 Expanded(
                   child: _Capsule(
-                    label: _onRoad ? 'Fleet' : 'Manage',
+                    label: _busy ? 'Fleet' : 'Manage',
                     icon: Icons.tune_rounded,
                     onTap: onOpenFleet,
                   ),

@@ -122,6 +122,9 @@ class CompanyAccess {
 
   bool get canManageFleet => usable.any((item) => item.canManageFleet);
 
+  /// Wallet cash-out is the company owner's, not staff.
+  bool get canManageWallet => usable.any((item) => item.isOwner);
+
   String get title =>
       usable.length == 1 ? usable.first.companyName : 'Your companies';
 }

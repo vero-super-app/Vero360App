@@ -721,6 +721,10 @@ class OrderEscrowService {
 
     final esc = await fetchEscrow(docId);
     if (esc == null || !esc.isHeld) return false;
+    final raw = await _doc(docId).get();
+    final serviceType =
+        (raw.data()?['serviceType'] ?? '').toString().trim().toLowerCase();
+    if (serviceType == 'car_hire') return false;
     if (esc.deliveredAt == null || esc.releaseDueAt == null) return false;
     if (DateTime.now().isBefore(esc.releaseDueAt!)) return false;
     await releaseFunds(orderId: docId, buyerConfirmed: false);

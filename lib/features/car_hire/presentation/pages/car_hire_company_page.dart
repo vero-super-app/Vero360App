@@ -1,5 +1,9 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet.dart';
+import 'package:vero360_app/utils/app_wallet_pin.dart';
 
 import 'package:vero360_app/features/car_hire/data/models/car_hire_company_models.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
@@ -154,6 +158,10 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
               snapshot: snapshot,
               loading: fleetAsync.isLoading && !fleetAsync.hasValue,
             ),
+            if (widget.access.canManageWallet) ...[
+              const SizedBox(height: 12),
+              _WalletTile(companyName: widget.access.title),
+            ],
             const SizedBox(height: 14),
             ..._pulseSection(fleetAsync, activeAsync, analytics, snapshot),
             const SizedBox(height: 18),
@@ -459,6 +467,78 @@ class _FleetSnapshot {
 // ---------------------------------------------------------------------------
 // Header
 // ---------------------------------------------------------------------------
+
+class _WalletTile extends StatelessWidget {
+  const _WalletTile({required this.companyName});
+
+  final String companyName;
+
+  Future<void> _open(BuildContext context) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    if (uid.isEmpty) return;
+    final ok = await AppWalletPin.verifyWalletUnlock(context);
+    if (!ok || !context.mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => MerchantWalletPage(
+          merchantId: uid,
+          merchantName: companyName,
+          serviceType: 'car_hire',
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: CarHirePalette.surface,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: () => _open(context),
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+          child: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: const BoxDecoration(
+                  color: CarHirePalette.accentPale,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.account_balance_wallet_rounded,
+                  size: 18,
+                  color: CarHirePalette.accent,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Wallet', style: CarHireType.title),
+                    SizedBox(height: 2),
+                    Text(
+                      'Balance, held rentals, and withdraw',
+                      style: CarHireType.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: CarHirePalette.muted,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _CompanyStrip extends StatelessWidget {
   const _CompanyStrip({

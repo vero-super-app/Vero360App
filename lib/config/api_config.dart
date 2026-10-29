@@ -17,7 +17,7 @@ class ApiConfig {
 
     // 'https://unbigamous-unappositely-kory.ngrok-free.dev';
    
-      'http://67.211.220.69:3000';
+      'https://api-yiyudxvfrxex.vero360.app';
  
   // static const String _defaultProdRoot =
   // 'http://10.0.2.2:3000'; // Android emulator localhost

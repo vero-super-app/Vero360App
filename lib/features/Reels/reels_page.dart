@@ -234,7 +234,13 @@ class _ReelsPageState extends State<ReelsPage> {
     final me = await _service.myIdentity();
     if (!mounted) return;
     if (me == null) {
-      _post();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Text('Sign in to see your reels.'),
+        action: SnackBarAction(
+          label: 'Sign in',
+          onPressed: () => Navigator.of(context).pushNamed('/login'),
+        ),
+      ));
       return;
     }
     await _pushCovered<void>(MaterialPageRoute(

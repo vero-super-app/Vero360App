@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/GeneralModels/wallet_model.dart';
@@ -368,6 +370,60 @@ class FirebaseWalletService {
     } catch (e) {
       print('Error settling stuck payouts: $e');
       return 0;
+    }
+  }
+
+  /// Vero Coin cash-out: credit the user wallet with [FieldValue.increment]
+  /// so we never rewrite a huge `transactions` array (that hangs the spinner).
+  /// Platform treasury debit is best-effort and must not block the payout.
+  static Future<void> creditRewardCashOut({
+    required String userId,
+    required String userName,
+    required double amount,
+    required String reference,
+    required String description,
+  }) async {
+    if (amount <= 0) {
+      throw Exception('Invalid cash-out amount');
+    }
+    await getOrCreateWallet(merchantId: userId, merchantName: userName);
+    final walletDoc = await _findWalletDoc(userId);
+    if (walletDoc == null) {
+      throw Exception('Wallet not found for merchant');
+    }
+
+    await walletDoc.reference.update({
+      'balance': FieldValue.increment(amount),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    final transactionId =
+        'TXN${DateTime.now().microsecondsSinceEpoch}_vero_coin';
+    await _firestore.collection('wallet_transactions').doc(transactionId).set({
+      'transactionId': transactionId,
+      'walletId': walletDoc.id,
+      'userId': userId,
+      'type': 'credit',
+      'amount': amount,
+      'status': 'completed',
+      'description': description,
+      'reference': reference,
+      'service': 'vero_coin',
+      'createdAt': Timestamp.now(),
+      'updatedAt': Timestamp.now(),
+    });
+
+    try {
+      await getOrCreateWallet(
+        merchantId: superAdminUserId,
+        merchantName: superAdminDisplayName,
+      ).timeout(const Duration(seconds: 6));
+      await _firestore.collection('wallets').doc(platformWalletDocId).update({
+        'balance': FieldValue.increment(-amount),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }).timeout(const Duration(seconds: 6));
+    } catch (e) {
+      print('Vero Coin platform bookkeeping skipped: $e');
     }
   }
 

@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
@@ -88,7 +91,10 @@ class VeroRewardsService {
     return buf.toString();
   }
 
-  /// Wheel segments. Biased hard toward try-again; jackpot is tiny.
+  static final math.Random _spinRng = math.Random();
+
+  /// Wheel segments. Try-again is still the usual result; 1 Coin shows up
+  /// sometimes (~1 in 12) without making payouts easy. Jackpot stays rare.
   static const List<VeroSpinPrize> spinPrizes = [
     VeroSpinPrize(
       id: 'try_again',
@@ -96,7 +102,7 @@ class VeroRewardsService {
       valueLabel: 'Try tomorrow',
       colorValue: 0xFF6B7280,
       kind: VeroSpinKind.tryAgain,
-      weight: 955,
+      weight: 860,
     ),
     VeroSpinPrize(
       id: '1_coin',
@@ -105,7 +111,7 @@ class VeroRewardsService {
       colorValue: 0xFFF59E0B,
       kind: VeroSpinKind.coins,
       coins: 1,
-      weight: 28,
+      weight: 85,
     ),
     VeroSpinPrize(
       id: '1_point',
@@ -115,7 +121,7 @@ class VeroRewardsService {
       kind: VeroSpinKind.points,
       points: 1,
       coins: 1,
-      weight: 10,
+      weight: 25,
     ),
     VeroSpinPrize(
       id: '2_points',
@@ -125,7 +131,7 @@ class VeroRewardsService {
       kind: VeroSpinKind.points,
       points: 2,
       coins: 2,
-      weight: 5,
+      weight: 16,
     ),
     VeroSpinPrize(
       id: '5_points',
@@ -135,7 +141,7 @@ class VeroRewardsService {
       kind: VeroSpinKind.points,
       points: 5,
       coins: 5,
-      weight: 1,
+      weight: 9,
     ),
     VeroSpinPrize(
       id: 'jackpot',
@@ -144,7 +150,7 @@ class VeroRewardsService {
       colorValue: 0xFFB45309,
       kind: VeroSpinKind.coins,
       coins: maxSpinCoins,
-      weight: 1,
+      weight: 5,
     ),
   ];
 
@@ -414,7 +420,8 @@ class VeroRewardsService {
     }
 
     try {
-      // Spend the live balance in full once it is worth at least MWK 1,000.
+      // Spend coins first, then credit the user wallet. Do not wait on the
+      // platform treasury debit — that transaction was hanging cash-out forever.
       final spent = await _db.runTransaction((tx) async {
         final ref = _doc(uid);
         final snap = await tx.get(ref);
@@ -439,37 +446,20 @@ class VeroRewardsService {
           SetOptions(merge: true),
         );
         return (coins: coins, mwk: payout);
-      });
+      }).timeout(const Duration(seconds: 15));
       final coinsToSpend = spent.coins;
       final mwk = spent.mwk;
 
-      var platformDebited = false;
+      final reference =
+          'VERO_COIN_$uid-${DateTime.now().millisecondsSinceEpoch}';
       try {
-        await ensureUserWallet(
-          uid: uid,
-          displayName: user.displayName ?? user.email,
-        );
-
-        final reference =
-            'VERO_COIN_$uid-${DateTime.now().millisecondsSinceEpoch}';
-        // Treasury move: not a user withdrawal, so KYC and a short
-        // platform balance must not block 800 or 1,000 coin cash-outs.
-        await FirebaseWalletService.debitWallet(
-          merchantId: FirebaseWalletService.superAdminUserId,
+        await FirebaseWalletService.creditRewardCashOut(
+          userId: uid,
+          userName: (user.displayName ?? user.email ?? 'Vero360 User').trim(),
           amount: mwk,
-          description: 'Vero Coin reward payout ($coinsToSpend coins)',
           reference: reference,
-          requireKyc: false,
-          allowNegative: true,
-        );
-        platformDebited = true;
-        await FirebaseWalletService.creditWallet(
-          merchantId: uid,
-          amount: mwk,
           description: 'Vero Coin reward ($coinsToSpend coins)',
-          reference: reference,
-          type: 'credit',
-        );
+        ).timeout(const Duration(seconds: 20));
       } catch (e) {
         await _doc(uid).set(
           {
@@ -479,22 +469,6 @@ class VeroRewardsService {
           },
           SetOptions(merge: true),
         );
-        if (platformDebited) {
-          try {
-            await FirebaseWalletService.creditWallet(
-              merchantId: FirebaseWalletService.superAdminUserId,
-              amount: mwk,
-              description:
-                  'Vero Coin reward payout reversed ($coinsToSpend coins)',
-              reference: 'VERO_COIN_REV_$uid-${DateTime.now().millisecondsSinceEpoch}',
-              type: 'credit',
-            );
-          } catch (rev) {
-            if (kDebugMode) {
-              debugPrint('[VeroRewards] platform reversal failed: $rev');
-            }
-          }
-        }
         rethrow;
       }
 
@@ -505,13 +479,17 @@ class VeroRewardsService {
         coins: fresh.coins,
         mwkCredited: mwk,
       );
+    } on TimeoutException {
+      if (kDebugMode) debugPrint('[VeroRewards] redeem timed out');
+      return const VeroRedeemResult(
+        ok: false,
+        message: 'Cash-out timed out. Please try again.',
+      );
     } catch (e) {
       if (kDebugMode) debugPrint('[VeroRewards] redeem failed: $e');
-      return VeroRedeemResult(
+      return const VeroRedeemResult(
         ok: false,
-        message: e.toString().contains('Insufficient')
-            ? 'Platform wallet needs funds. Try again later.'
-            : 'Could not redeem right now. Try again.',
+        message: 'Could not cash out right now. Try again.',
       );
     }
   }
@@ -650,7 +628,8 @@ class VeroRewardsService {
   static VeroSpinPrize _pickWeightedPrize() {
     final playable = spinPrizes.where((p) => p.weight > 0).toList();
     final total = playable.fold<int>(0, (s, p) => s + p.weight);
-    var roll = DateTime.now().microsecondsSinceEpoch % total;
+    if (total <= 0) return playable.first;
+    var roll = _spinRng.nextInt(total);
     for (final p in playable) {
       if (roll < p.weight) return p;
       roll -= p.weight;

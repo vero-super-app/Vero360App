@@ -6,7 +6,7 @@ import 'package:vero360_app/features/DigitalServices/digital_product.dart';
 import 'package:vero360_app/features/DigitalServices/digital_services_catalog.dart';
 import 'package:vero360_app/features/DigitalServices/chatgpt_plans.dart';
 import 'package:vero360_app/features/DigitalServices/netflix_plans.dart';
-import 'package:vero360_app/features/DigitalServices/presentation/chatgpt_plan_picker_page.dart';
+import 'package:vero360_app/features/DigitalServices/presentation/subscription_plan_picker_page.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_my_orders_page.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_product_amount_page.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/netflix_plan_picker_page.dart';
@@ -80,7 +80,7 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
   List<DigitalProduct> get _filtered {
     return _all.where((p) {
       // Plans are chosen via the Netflix hub picker, not as separate tiles.
-      if (p.isNetflixPlan || p.isChatGptPlan) return false;
+      if (p.isChildPlan) return false;
       final catOk = _category == 'all' || p.category == _category;
       if (!catOk) return false;
       if (_query.isEmpty) return true;
@@ -109,11 +109,12 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
   }
 
   void _openProduct(DigitalProduct p) {
-    if (p.isChatGptHub || isChatGptHubKey(p.key)) {
+    if (p.isNetflixHub || isNetflixHubKey(p.key)) {
       Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => ChatGptPlanPickerPage(
+          builder: (_) => NetflixPlanPickerPage(
             onSelectPlan: (plan) {
+              // Keep plan picker under checkout so Back returns here.
               widget.onContinueCheckout(
                 product: plan,
                 selectedUsd: 0,
@@ -126,12 +127,12 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
       return;
     }
 
-    if (p.isNetflixHub || isNetflixHubKey(p.key)) {
+    if (p.isPlanHub || isChatGptHubKey(p.key)) {
       Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => NetflixPlanPickerPage(
+          builder: (_) => SubscriptionPlanPickerPage(
+            hub: p,
             onSelectPlan: (plan) {
-              // Keep plan picker under checkout so Back returns here.
               widget.onContinueCheckout(
                 product: plan,
                 selectedUsd: 0,
@@ -801,7 +802,7 @@ class _GiftCardTileState extends State<_GiftCardTile> {
                                     color: const Color(0xFFFF6B00),
                                   ),
                                 ),
-                              ] else if (p.isNetflixHub || p.isChatGptHub) ...[
+                              ] else if (p.isPlanHub) ...[
                                 const SizedBox(height: 4),
                                 Text(
                                   'Choose a plan',

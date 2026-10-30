@@ -99,6 +99,7 @@ class _VeroCoinPageState extends State<VeroCoinPage>
   void dispose() {
     _financeSub?.cancel();
     _stopCruise();
+    _clearSettleListener();
     _spinCtrl.dispose();
     _pulseCtrl.dispose();
     _enterCtrl.dispose();
@@ -110,12 +111,29 @@ class _VeroCoinPageState extends State<VeroCoinPage>
     if (_redeeming || !_cashOutEnabled) return;
     setState(() => _redeeming = true);
     try {
-      final res = await VeroRewardsService.redeemCoinsIfEligible();
+      final res = await VeroRewardsService.redeemCoinsIfEligible()
+          .timeout(const Duration(seconds: 35));
       if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
         res.message,
         isSuccess: res.ok,
+        errorMessage: '',
+      );
+    } on TimeoutException {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Cash-out timed out. Please try again.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Could not cash out right now. Try again.',
+        isSuccess: false,
         errorMessage: '',
       );
     } finally {
@@ -124,6 +142,7 @@ class _VeroCoinPageState extends State<VeroCoinPage>
   }
 
   VoidCallback? _cruiseListener;
+  VoidCallback? _settleListener;
 
   void _stopCruise() {
     final cruise = _cruiseListener;
@@ -133,10 +152,19 @@ class _VeroCoinPageState extends State<VeroCoinPage>
     if (_spinCtrl.isAnimating) _spinCtrl.stop();
   }
 
-  /// Keep the wheel moving while the prize is decided.
+  void _clearSettleListener() {
+    final settle = _settleListener;
+    if (settle == null) return;
+    _spinCtrl.removeListener(settle);
+    _settleListener = null;
+  }
+
+  /// Keep the wheel moving while Firestore decides the prize.
   void _startCruise() {
     _stopCruise();
-    _spinCtrl.duration = const Duration(milliseconds: 450);
+    _clearSettleListener();
+    _spinCtrl.duration = const Duration(milliseconds: 380);
+    _spinCtrl.reset();
     var last = _spinCtrl.value;
     void cruise() {
       if (!mounted) return;
@@ -144,12 +172,62 @@ class _VeroCoinPageState extends State<VeroCoinPage>
       var delta = v - last;
       if (delta < 0) delta += 1;
       last = v;
-      setState(() => _wheelTurns += delta * 8);
+      // ~3.7 turns/sec — matches the opening speed of the ease-out settle.
+      setState(() => _wheelTurns += delta * 1.4);
     }
 
     _cruiseListener = cruise;
     _spinCtrl.addListener(cruise);
     _spinCtrl.repeat();
+  }
+
+  /// Pointer sits at 12 o'clock. Painter draws prize 0 from the top, clockwise.
+  /// Positive [Transform.rotate] is clockwise, so the winning center lands under
+  /// the pointer when the wheel's fractional turn is `1 - (i + 0.5) / n`.
+  double _endTurnsForPrize(VeroSpinPrize target) {
+    final prizes = VeroRewardsService.spinPrizes;
+    var index = prizes.indexWhere((p) => p.id == target.id);
+    if (index < 0) index = 0;
+    final n = prizes.length;
+    final segment = 1.0 / n;
+    final centerFrac = (1.0 - (index * segment + segment / 2)) % 1.0;
+    // Stay inside the slice so a neighbour never wins the visual.
+    final jitter = (math.Random().nextDouble() - 0.5) * segment * 0.5;
+    var desiredFrac = (centerFrac + jitter) % 1.0;
+    if (desiredFrac < 0) desiredFrac += 1.0;
+
+    final current = _wheelTurns;
+    final currentFrac = current - current.floorToDouble();
+    var delta = desiredFrac - currentFrac;
+    if (delta < 0.2) delta += 1.0;
+    const extraTurns = 3;
+    return current + extraTurns + delta;
+  }
+
+  Future<void> _settleTo(double endTurns) async {
+    _clearSettleListener();
+    final begin = _wheelTurns;
+    _spinCtrl.duration = const Duration(milliseconds: 2200);
+    _spinCtrl.reset();
+    final anim = Tween<double>(begin: begin, end: endTurns).animate(
+      CurvedAnimation(parent: _spinCtrl, curve: Curves.easeOutCubic),
+    );
+    void listener() {
+      if (!mounted) return;
+      setState(() => _wheelTurns = anim.value);
+    }
+
+    _settleListener = listener;
+    anim.addListener(listener);
+    try {
+      await _spinCtrl.forward();
+    } on TickerCanceled {
+      return;
+    } finally {
+      anim.removeListener(listener);
+      if (_settleListener == listener) _settleListener = null;
+    }
+    if (mounted) setState(() => _wheelTurns = endTurns);
   }
 
   Future<void> _spin(bool canSpin) async {
@@ -164,44 +242,17 @@ class _VeroCoinPageState extends State<VeroCoinPage>
     if (!mounted) return;
     _stopCruise();
 
-    if (!res.ok) {
-      // Inline feedback under the wheel only — no toast (esp. "Try again").
-      setState(() {
-        _spinning = false;
-        _lastSpinMessage = res.message;
-      });
-      return;
-    }
-
     final prizes = VeroRewardsService.spinPrizes;
-    final target = res.displayPrize ?? res.prize ?? prizes.first;
-    final index =
-        prizes.indexWhere((p) => p.id == target.id).clamp(0, prizes.length - 1);
-    final segment = 1.0 / prizes.length;
-    final targetCenter = index * segment + segment / 2;
-    final extraTurns = 2;
-    final endTurns = _wheelTurns.floor() + extraTurns + (1 - targetCenter);
+    final target = res.ok
+        ? (res.displayPrize ?? res.prize ?? prizes.first)
+        : prizes.first;
 
-    _spinCtrl.duration = const Duration(milliseconds: 700);
-    final anim = Tween<double>(begin: _wheelTurns, end: endTurns).animate(
-      CurvedAnimation(parent: _spinCtrl, curve: Curves.easeOut),
-    );
-    void listener() {
-      setState(() => _wheelTurns = anim.value);
-    }
-
-    anim.addListener(listener);
-    _spinCtrl.forward(from: 0);
-    await Future<void>.delayed(_spinCtrl.duration!);
-    anim.removeListener(listener);
-
+    await _settleTo(_endTurnsForPrize(target));
     if (!mounted) return;
     setState(() {
       _spinning = false;
       _lastSpinMessage = res.message;
-      _wheelTurns = endTurns;
     });
-    // Result stays under the wheel — avoid a second toast (Try again looked like an error).
   }
 
   @override

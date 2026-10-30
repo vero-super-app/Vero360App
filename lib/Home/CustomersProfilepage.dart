@@ -1826,7 +1826,9 @@ class _ProfilePageState extends State<ProfilePage> {
         _fetchCurrentUser();
       }),
       _DetailItem('Notification', Icons.notifications_none, () async {
-        await _openBottomSheet(const NotificationsPage());
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const NotificationsPage()),
+        );
       }),
       _DetailItem('Settings', Icons.settings, () {
         Navigator.push(

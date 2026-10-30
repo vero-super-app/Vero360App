@@ -71,7 +71,7 @@ import 'package:vero360_app/features/DigitalServices/presentation/digital_my_ord
 import 'package:vero360_app/features/DigitalServices/presentation/digital_kyc_upload_section.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_product_amount_page.dart';
 import 'package:vero360_app/features/DigitalServices/chatgpt_plans.dart';
-import 'package:vero360_app/features/DigitalServices/presentation/chatgpt_plan_picker_page.dart';
+import 'package:vero360_app/features/DigitalServices/presentation/subscription_plan_picker_page.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/netflix_plan_picker_page.dart';
 import 'package:vero360_app/features/DigitalServices/netflix_plans.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
@@ -656,12 +656,13 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
   }
 
   Future<void> _openDigitalAmount(DigitalProduct p) async {
-    // ChatGPT hub → Basic (shared) or Plus (private) first.
-    if (p.isChatGptHub || isChatGptHubKey(p.key)) {
+    // Netflix hub → choose Mobile / Basic / Standard / Premium first.
+    if (p.isNetflixHub || isNetflixHubKey(p.key)) {
       if (!mounted) return;
       await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => ChatGptPlanPickerPage(
+        builder: (_) => NetflixPlanPickerPage(
           onSelectPlan: (plan) {
+            // Push buy on top — Back returns to Choose your plan.
             _openDigitalCheckout(
               product: plan,
               selectedUsd: 0,
@@ -673,13 +674,12 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       return;
     }
 
-    // Netflix hub → choose Mobile / Basic / Standard / Premium first.
-    if (p.isNetflixHub || isNetflixHubKey(p.key)) {
+    if (p.isPlanHub || isChatGptHubKey(p.key)) {
       if (!mounted) return;
       await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => NetflixPlanPickerPage(
+        builder: (_) => SubscriptionPlanPickerPage(
+          hub: p,
           onSelectPlan: (plan) {
-            // Push buy on top — Back returns to Choose your plan.
             _openDigitalCheckout(
               product: plan,
               selectedUsd: 0,
@@ -1231,17 +1231,38 @@ class _CollapsedBar extends StatelessWidget {
               border: Colors.white.withOpacity(0.35),
             ),
             const SizedBox(width: 8),
-            GestureDetector(
-              onTap: onNotifTap,
-              child: Container(
-                width: 34, height: 34,
-                decoration: BoxDecoration(
-                  shape:  BoxShape.circle,
-                  color:  Colors.white.withOpacity(0.20),
-                  border: Border.all(color: Colors.white.withOpacity(0.35)),
-                ),
-                child: const Icon(Icons.notifications_outlined, color: Colors.white, size: 18),
-              ),
+            ListenableBuilder(
+              listenable: NotificationStore.instance,
+              builder: (_, __) {
+                final count = NotificationStore.instance.unreadCount;
+                return Badge(
+                  isLabelVisible: count > 0,
+                  backgroundColor: Colors.red,
+                  textColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  label: Text(
+                    count > 99 ? '99+' : '$count',
+                    style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700),
+                  ),
+                  child: GestureDetector(
+                    onTap: onNotifTap,
+                    child: Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withOpacity(0.20),
+                        border: Border.all(color: Colors.white.withOpacity(0.35)),
+                      ),
+                      child: const Icon(
+                        Icons.notifications_outlined,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
           ],
         ),
@@ -2729,7 +2750,7 @@ class _DigitalTileState extends State<_DigitalTile> with SingleTickerProviderSta
                           color: AppColors.brandOrange,
                         ),
                       ),
-                    ] else if (widget.p.isNetflixHub || widget.p.isChatGptHub) ...[
+                    ] else if (widget.p.isPlanHub) ...[
                       const SizedBox(height: 2),
                       Text(
                         'Choose a plan',

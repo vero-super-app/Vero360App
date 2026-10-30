@@ -492,7 +492,7 @@ class ReelService {
 
   /// Counts one view per reel per app session.
   void recordView(String reelId) {
-    if (_uid == null || !_viewedThisSession.add(reelId)) return;
+    if (!_viewedThisSession.add(reelId)) return;
     unawaited(_reels
         .doc(reelId)
         .update({'viewCount': FieldValue.increment(1)})
@@ -558,14 +558,23 @@ class ReelService {
 
   // ── Comments ──────────────────────────────────────────────────────────────
 
+  List<ReelComment> _parseComments(QuerySnapshot<Map<String, dynamic>> snap) {
+    final list = snap.docs.map(ReelComment.fromDoc).toList();
+    list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return list;
+  }
+
   /// Comments and replies together; the sheet groups replies under their parent.
-  Stream<List<ReelComment>> watchComments(String reelId) => _reels
-      .doc(reelId)
-      .collection('comments')
-      .orderBy('createdAt', descending: true)
-      .limit(400)
-      .snapshots()
-      .map((s) => s.docs.map(ReelComment.fromDoc).toList());
+  /// Public read — guests can watch the thread. Posting still needs sign-in.
+  Stream<List<ReelComment>> watchComments(String reelId) {
+    final col = _reels.doc(reelId).collection('comments').limit(400);
+    return col.snapshots().map(_parseComments);
+  }
+
+  Future<List<ReelComment>> fetchComments(String reelId) async {
+    final snap = await _reels.doc(reelId).collection('comments').limit(400).get();
+    return _parseComments(snap);
+  }
 
   String? get myUid => _uid;
 

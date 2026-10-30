@@ -34,6 +34,7 @@ import 'package:vero360_app/GernalScreens/vero_team_chat_page.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_my_orders_page.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_my_orders_page.dart';
+import 'package:vero360_app/features/DigitalServices/presentation/digital_service_order_service.dart';
 import 'package:vero360_app/features/Promotions/presentation/promotions_page.dart';
 import 'package:vero360_app/features/Promotions/presentation/promo_detail_page.dart';
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
@@ -69,6 +70,8 @@ class NotificationService {
 
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _partyAlertSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _chatAlertSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _digitalOrderSub;
+  final Map<String, String> _digitalFulfillSeen = {};
 
   static const AndroidNotificationChannel _highPriorityChannel =
       AndroidNotificationChannel(
@@ -220,6 +223,7 @@ class NotificationService {
         await registerTokenWithBackend(retries: 4);
         _syncOrderPartyAlertListener(user);
         _syncChatAlertListener(user);
+        _syncDigitalOrderFulfillmentListener(user);
         await EngagementNotificationService.instance.syncTopicSubscription();
         // Soft keep-alive digest when there is fresh content (frequent, rate-limited).
         unawaited(
@@ -234,6 +238,7 @@ class NotificationService {
         // Full FCM unbind is done in [clearSessionOnLogout] before signOut.
         _syncOrderPartyAlertListener(null);
         _syncChatAlertListener(null);
+        _syncDigitalOrderFulfillmentListener(null);
         await NotificationStore.instance.clearForLogout();
         try {
           await _localNotifications.cancelAll();
@@ -245,6 +250,7 @@ class NotificationService {
     await NotificationStore.instance.ensureLoaded();
     _syncOrderPartyAlertListener(FirebaseAuth.instance.currentUser);
     _syncChatAlertListener(FirebaseAuth.instance.currentUser);
+    _syncDigitalOrderFulfillmentListener(FirebaseAuth.instance.currentUser);
     await EngagementNotificationService.instance.syncTopicSubscription();
     if (FirebaseAuth.instance.currentUser != null) {
       unawaited(
@@ -289,14 +295,26 @@ class NotificationService {
             );
           } catch (_) {}
         }
-        // Badge / inbox count only — message content stays in Vero360 Team chat.
+        final type = (payloadMap['type'] ?? '').toString().toLowerCase();
+        final isServiceAlert = type.contains('order') ||
+            type.contains('food') ||
+            type.contains('digital') ||
+            type.contains('courier') ||
+            type.contains('booking') ||
+            type.contains('refund') ||
+            type.contains('fulfillment') ||
+            type.contains('stay');
         await NotificationStore.instance.addNotification(
           id: 'party_${change.doc.id}',
           title: title,
-          body: body.isEmpty ? 'New message from Vero360 Team' : body,
+          body: body.isEmpty
+              ? (isServiceAlert
+                  ? 'New order update'
+                  : 'New message from Vero360 Team')
+              : body,
           payload: {
             ...payloadMap,
-            'openChat': 'vero360_team',
+            if (!isServiceAlert) 'openChat': 'vero360_team',
           },
         );
         try {
@@ -359,6 +377,70 @@ class NotificationService {
             debugPrint('[NotificationService] chat alert consume failed: $e');
           }
         }
+      }
+    });
+  }
+
+  /// When admin writes card/login details onto the buyer's digital order,
+  /// surface it in the in-app inbox (app open). Background/killed devices
+  /// get the same alert from [onDigitalServiceOrderUpdated] → order_party_alerts.
+  void _syncDigitalOrderFulfillmentListener(User? user) {
+    _digitalOrderSub?.cancel();
+    _digitalOrderSub = null;
+    _digitalFulfillSeen.clear();
+    if (user == null || user.isAnonymous) return;
+
+    _digitalOrderSub = FirebaseFirestore.instance
+        .collection(kDigitalServiceOrdersCollection)
+        .where('buyerUid', isEqualTo: user.uid)
+        .snapshots()
+        .listen((snap) async {
+      for (final change in snap.docChanges) {
+        final order = DigitalServiceOrder.fromDoc(change.doc);
+        final fp = order.fulfillment.copyAllText;
+        final prev = _digitalFulfillSeen[order.id];
+        _digitalFulfillSeen[order.id] = fp;
+        if (change.type != DocumentChangeType.modified) continue;
+        if (!order.fulfillment.hasContent) continue;
+        if (prev == fp) continue;
+
+        final title = 'Your ${order.productName} details are ready';
+        final body =
+            'Open My Digital Orders to copy your code, login, or joining link.';
+        await NotificationStore.instance.addNotification(
+          id: 'digital_fulfill_${order.id}',
+          title: title,
+          body: body,
+          payload: {
+            'type': 'digital_fulfillment',
+            'orderId': order.id,
+            'productName': order.productName,
+            NotificationStore.kPayloadBadgeRoute:
+                NotificationStore.kBadgeDigitalOrders,
+          },
+        );
+        try {
+          await _showLocalNotification(
+            id: order.id.hashCode.abs() % 100000000,
+            title: title,
+            body: body,
+            payload: jsonEncode({
+              'type': 'digital_fulfillment',
+              'orderId': order.id,
+              'productName': order.productName,
+              NotificationStore.kPayloadBadgeRoute:
+                  NotificationStore.kBadgeDigitalOrders,
+            }),
+          );
+        } catch (e) {
+          if (kDebugMode) {
+            debugPrint('[NotificationService] digital fulfill notify: $e');
+          }
+        }
+      }
+    }, onError: (e) {
+      if (kDebugMode) {
+        debugPrint('[NotificationService] digital order listener error: $e');
       }
     });
   }
@@ -489,6 +571,7 @@ class NotificationService {
 
     _syncOrderPartyAlertListener(null);
     _syncChatAlertListener(null);
+    _syncDigitalOrderFulfillmentListener(null);
 
     String? fcmToken;
     try {
@@ -972,9 +1055,7 @@ class NotificationService {
         );
         return true;
       case NotificationStore.kBadgeDigitalOrders:
-        navigator.push(
-          MaterialPageRoute(builder: (_) => const DigitalMyOrdersPage()),
-        );
+        _openDigitalMyOrders(navigator, data);
         return true;
       case NotificationStore.kBadgePromotions:
         unawaited(_openPromotionTarget(navigator, data));
@@ -995,23 +1076,66 @@ class NotificationService {
     }
   }
 
+  static bool _isDigitalServicesPayload(Map<String, dynamic> data) {
+    String s(dynamic v) => (v ?? '').toString().trim().toLowerCase();
+    final type = s(data['type']);
+    final badge = s(
+      data['badgeRoute'] ?? data[NotificationStore.kPayloadBadgeRoute],
+    );
+    if (badge == NotificationStore.kBadgeDigitalOrders) return true;
+    if (type.contains('digital')) return true;
+    if (s(data['collection']).contains('digital_service')) return true;
+    if (s(data['digitalOrderId']).isNotEmpty) return true;
+    final productKey = s(data['productKey']);
+    if (productKey.startsWith('netflix') ||
+        productKey.startsWith('chatgpt') ||
+        productKey.contains('digital')) {
+      return true;
+    }
+    final hay = '${s(data['title'])} ${s(data['body'])} ${s(data['productName'])}';
+    if (hay.contains('digital order') ||
+        hay.contains('my digital') ||
+        hay.contains('digital service')) {
+      return true;
+    }
+    return false;
+  }
+
+  void _openDigitalMyOrders(
+    NavigatorState navigator,
+    Map<String, dynamic> data,
+  ) {
+    final orderId = (data['orderId'] ?? data['digitalOrderId'] ?? '')
+        .toString()
+        .trim();
+    navigator.push(
+      MaterialPageRoute(
+        builder: (_) => DigitalMyOrdersPage(
+          initialOrderId: orderId.isEmpty ? null : orderId,
+        ),
+      ),
+    );
+  }
+
   void _navigateWithNavigator(
     NavigatorState navigator,
     Map<String, dynamic> data,
   ) {
+    final type = (data['type'] ?? '').toString().toLowerCase();
+    final badgeRoute = (data['badgeRoute'] ??
+            data[NotificationStore.kPayloadBadgeRoute] ??
+            '')
+        .toString()
+        .toLowerCase();
     final openChat = (data['openChat'] ?? '').toString().trim().toLowerCase();
-    if (openChat == 'vero360_team' || openChat == VeroTeamChatPage.threadId) {
-      navigator.push(
-        MaterialPageRoute(builder: (_) => const VeroTeamChatPage()),
-      );
+
+    if (_isDigitalServicesPayload(data)) {
+      if (kDebugMode) debugPrint('→ Open My Digital Orders');
+      _openDigitalMyOrders(navigator, data);
       return;
     }
 
-    final type = (data['type'] as String?)?.toLowerCase();
-    final badgeRoute = (data['badgeRoute'] as String?)?.toLowerCase() ??
-        (data[NotificationStore.kPayloadBadgeRoute] as String?)?.toLowerCase();
-
-    switch (type ?? '') {
+    switch (type) {
       case 'reel_live':
         unawaited(openLiveFromNotification(navigator, data));
         return;
@@ -1061,12 +1185,6 @@ class NotificationService {
             MaterialPageRoute(builder: (_) => const ChatListPage()),
           );
         }
-        break;
-
-      case 'digital_fulfillment':
-        navigator.push(
-          MaterialPageRoute(builder: (_) => const DigitalMyOrdersPage()),
-        );
         break;
 
       case 'refund_request':
@@ -1272,6 +1390,11 @@ class NotificationService {
             .trim()
             .isNotEmpty) {
           unawaited(_openMarketplaceTarget(navigator, data));
+        } else if (openChat == 'vero360_team' ||
+            openChat == VeroTeamChatPage.threadId) {
+          navigator.push(
+            MaterialPageRoute(builder: (_) => const VeroTeamChatPage()),
+          );
         } else if (kDebugMode) {
           debugPrint('→ No route for notification type=$type');
         }

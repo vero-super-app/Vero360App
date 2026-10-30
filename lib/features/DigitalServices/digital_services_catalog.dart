@@ -73,6 +73,28 @@ class DigitalServicesCatalog extends ChangeNotifier {
     }
   }
 
+  static List<String> _asStringList(dynamic raw) {
+    if (raw is List) {
+      return raw
+          .map((e) => '$e'.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
+    if (raw is String && raw.trim().isNotEmpty) {
+      return raw
+          .split(RegExp(r'[\n,]'))
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+    }
+    return const [];
+  }
+
+  static bool _asHub(dynamic value, String key) {
+    if (value == true) return true;
+    return key == 'chatgpt' || key == 'netflix';
+  }
+
   static bool _asActive(dynamic value) {
     if (value == null) return true;
     if (value is bool) return value;
@@ -132,7 +154,7 @@ class DigitalServicesCatalog extends ChangeNotifier {
       // Never show baked-in MWK — wait for admin config.
       _homepage = kDigitalProducts
           .map((p) => p.copyWith(clearFixedMwkPrice: true, active: true))
-          .where((p) => !p.isNetflixPlan && !p.isChatGptPlan)
+          .where((p) => !p.isChildPlan)
           .toList();
       _all = [
         ...kAllDigitalProducts.map(
@@ -256,6 +278,17 @@ class DigitalServicesCatalog extends ChangeNotifier {
         clearMaxOtherAmount: !isSub && maxOtherAmount == null,
         imageUrl: imageUrl.isNotEmpty ? imageUrl : null,
         active: true,
+        isHub: _asHub(cfg['isHub'], base.key) || base.isHub,
+        hubKey: (cfg['hubKey'] ?? '').toString().trim().isNotEmpty
+            ? (cfg['hubKey'] ?? '').toString().trim()
+            : base.hubKey,
+        planBadge: (cfg['planBadge'] ?? '').toString().trim().isNotEmpty
+            ? (cfg['planBadge'] ?? '').toString().trim()
+            : base.planBadge,
+        featureLines: _asStringList(cfg['featureLines']).isNotEmpty
+            ? _asStringList(cfg['featureLines'])
+            : base.featureLines,
+        recommended: cfg['recommended'] == true || base.recommended,
       );
     }
 
@@ -321,8 +354,15 @@ class DigitalServicesCatalog extends ChangeNotifier {
         unitLabel: unitLabel.isNotEmpty ? unitLabel : null,
         maxOtherAmount: isSub ? null : maxOtherAmount,
         imageUrl: imageUrl.isNotEmpty ? imageUrl : null,
-        icon: Icons.currency_exchange_rounded,
+        icon: isSub
+            ? Icons.workspace_premium_outlined
+            : Icons.currency_exchange_rounded,
         active: true,
+        isHub: _asHub(cfg['isHub'], key),
+        hubKey: (cfg['hubKey'] ?? '').toString().trim(),
+        planBadge: (cfg['planBadge'] ?? '').toString().trim(),
+        featureLines: _asStringList(cfg['featureLines']),
+        recommended: cfg['recommended'] == true,
       );
     }
 
@@ -336,7 +376,7 @@ class DigitalServicesCatalog extends ChangeNotifier {
     _homepage = kDigitalProducts
         .map(merge)
         .where((p) => p.active && !disabledKeys.contains(p.key))
-        .where((p) => !p.isNetflixPlan && !p.isChatGptPlan)
+        .where((p) => !p.isChildPlan)
         .toList();
     _all = [
       ...kAllDigitalProducts
@@ -363,8 +403,8 @@ class DigitalServicesCatalog extends ChangeNotifier {
       if (!_all.any((p) => p.key == key)) {
         _all = [..._all, remote];
       }
-      // Show crypto cards on homepage digital strip too.
-      if (!_homepage.any((p) => p.key == key)) {
+      // Hubs and gift/crypto cards on the homepage; hide child plans.
+      if (!remote.isChildPlan && !_homepage.any((p) => p.key == key)) {
         _homepage = [..._homepage, remote];
       }
     }

@@ -178,6 +178,16 @@ class _UserReelsPageState extends State<UserReelsPage> {
   }
 
   Future<void> _postReel() async {
+    if (!_service.isSignedIn) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Text('Sign in to post a reel.'),
+        action: SnackBarAction(
+          label: 'Sign in',
+          onPressed: () => Navigator.of(context).pushNamed('/login'),
+        ),
+      ));
+      return;
+    }
     final posted = await Navigator.of(context).push<bool>(
       MaterialPageRoute(builder: (_) => const PostReelPage()),
     );

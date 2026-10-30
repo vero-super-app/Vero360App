@@ -189,6 +189,56 @@ class _PostReelPageState extends State<PostReelPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_service.isSignedIn) {
+      return AnnotatedRegion<SystemUiOverlayStyle>(
+        value: SystemUiOverlayStyle.dark,
+        child: Scaffold(
+          backgroundColor: _kBg,
+          appBar: AppBar(
+            backgroundColor: _kBg,
+            foregroundColor: _kInk,
+            elevation: 0,
+            title: const Text('Post a reel'),
+          ),
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.movie_creation_outlined, size: 56, color: Color(0xFF9CA3AF)),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Sign in to post a reel',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: _kInk,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'You can watch reels without an account. Posting needs a Vero360 login.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(height: 1.4, color: Color(0xFF6B7280)),
+                  ),
+                  const SizedBox(height: 22),
+                  FilledButton(
+                    onPressed: () => Navigator.of(context).pushNamed('/login'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _kOrange,
+                      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                    ),
+                    child: const Text('Sign in', style: TextStyle(fontWeight: FontWeight.w800)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     final preview = _preview;
     final hasVideo = preview != null && preview.value.isInitialized;
     return AnnotatedRegion<SystemUiOverlayStyle>(

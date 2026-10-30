@@ -143,6 +143,12 @@ flutter_launcher_icons:
   remove_alpha_ios: true
 
 flutter:
+  # Flutter 3.44 turns on SwiftPM by default. Mixed FlutterFire pins
+  # (cloud_firestore 6.2.0 vs firebase_messaging 16.1.1) cannot resolve
+  # on SPM, and several plugins still need CocoaPods.
+  config:
+    enable-swift-package-manager: false
+
   uses-material-design: true
 
   assets:

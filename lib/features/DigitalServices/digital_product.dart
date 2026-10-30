@@ -50,6 +50,18 @@ class DigitalProduct {
   /// When false, product is hidden (admin disabled).
   final bool active;
 
+  /// Admin mapped this product to PrepaidForge SKUs (exact USD only).
+  final bool prepaidForgeEnabled;
+
+  /// Customer-facing redemption region, e.g. US.
+  final String? prepaidForgeRegion;
+
+  /// USD face value → PrepaidForge SKU.
+  final Map<String, String> prepaidForgeSkuByUsd;
+
+  /// TEXT PIN first; SCAN is an image download.
+  final String prepaidForgeCodeType;
+
   const DigitalProduct({
     required this.key,
     required this.name,
@@ -66,7 +78,31 @@ class DigitalProduct {
     this.logoAsset,
     this.imageUrl,
     this.active = true,
+    this.prepaidForgeEnabled = false,
+    this.prepaidForgeRegion,
+    this.prepaidForgeSkuByUsd = const {},
+    this.prepaidForgeCodeType = 'TEXT',
   });
+
+  /// Hide the custom USD field when instant PIN delivery is mapped.
+  bool get locksCustomAmount =>
+      prepaidForgeEnabled && prepaidForgeSkuByUsd.isNotEmpty;
+
+  String? prepaidForgeSkuForUsd(num usd) {
+    if (!prepaidForgeEnabled) return null;
+    final rounded = usd.round();
+    final keys = <String>{
+      usd.toString(),
+      rounded.toString(),
+      usd.toStringAsFixed(0),
+      usd.toStringAsFixed(2),
+    };
+    for (final k in keys) {
+      final sku = prepaidForgeSkuByUsd[k]?.trim();
+      if (sku != null && sku.isNotEmpty) return sku;
+    }
+    return null;
+  }
 
   bool get usesAmountPicker =>
       fixedMwkPrice == null && !isNetflixHub && !isChatGptHub;
@@ -159,6 +195,10 @@ class DigitalProduct {
     bool clearMaxOtherAmount = false,
     String? imageUrl,
     bool? active,
+    bool? prepaidForgeEnabled,
+    String? prepaidForgeRegion,
+    Map<String, String>? prepaidForgeSkuByUsd,
+    String? prepaidForgeCodeType,
   }) {
     return DigitalProduct(
       key: key,
@@ -179,6 +219,11 @@ class DigitalProduct {
       logoAsset: logoAsset,
       imageUrl: imageUrl ?? this.imageUrl,
       active: active ?? this.active,
+      prepaidForgeEnabled: prepaidForgeEnabled ?? this.prepaidForgeEnabled,
+      prepaidForgeRegion: prepaidForgeRegion ?? this.prepaidForgeRegion,
+      prepaidForgeSkuByUsd:
+          prepaidForgeSkuByUsd ?? this.prepaidForgeSkuByUsd,
+      prepaidForgeCodeType: prepaidForgeCodeType ?? this.prepaidForgeCodeType,
     );
   }
 }

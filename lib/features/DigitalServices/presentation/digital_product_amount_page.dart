@@ -108,6 +108,13 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
       );
       return;
     }
+    if (p.locksCustomAmount &&
+        !p.usdAmounts.any((usd) => (usd - _selectedUsd).abs() < 0.001)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Choose a listed amount for instant delivery')),
+      );
+      return;
+    }
 
     widget.onContinue(
       product: p,
@@ -132,7 +139,8 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
                 SliverToBoxAdapter(child: _header(top)),
                 SliverToBoxAdapter(child: _brandCard()),
                 SliverToBoxAdapter(child: _amountsSection()),
-                SliverToBoxAdapter(child: _customAmountField()),
+                if (!p.locksCustomAmount)
+                  SliverToBoxAdapter(child: _customAmountField()),
                 SliverToBoxAdapter(child: _payMethodsSection()),
                 const SliverToBoxAdapter(child: SizedBox(height: 24)),
               ],
@@ -282,7 +290,12 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                'Instant digital delivery · Choose or type your amount',
+                p.prepaidForgeRegion != null &&
+                        p.prepaidForgeRegion!.trim().isNotEmpty
+                    ? 'Redeemable in ${p.prepaidForgeRegion!.trim()}${p.locksCustomAmount ? ' · listed amounts only' : ''}'
+                    : (p.locksCustomAmount
+                        ? 'Instant digital delivery · Choose a listed amount'
+                        : 'Instant digital delivery · Choose or type your amount'),
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,

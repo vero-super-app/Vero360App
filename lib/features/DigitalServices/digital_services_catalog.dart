@@ -108,6 +108,21 @@ class DigitalServicesCatalog extends ChangeNotifier {
     return byKey;
   }
 
+  static Map<String, String> _skuByUsd(dynamic raw) {
+    if (raw is! Map) return const {};
+    final out = <String, String>{};
+    raw.forEach((k, v) {
+      final key = '$k'.trim();
+      final sku = '$v'.trim();
+      if (key.isNotEmpty && sku.isNotEmpty) out[key] = sku;
+    });
+    return out;
+  }
+
+  static String _codeType(dynamic raw) {
+    return '$raw'.trim().toUpperCase() == 'SCAN' ? 'SCAN' : 'TEXT';
+  }
+
   static Set<String> _parseDisabledKeys(dynamic raw, Map<String, Map<String, dynamic>> byKey) {
     final disabled = <String>{};
     if (raw is List) {
@@ -232,6 +247,19 @@ class DigitalServicesCatalog extends ChangeNotifier {
             .toList();
       }
 
+      Map<String, String>? pfSkus;
+      String? pfRegion;
+      bool? pfEnabled;
+      String? pfCodeType;
+      final pfRaw = cfg['prepaidForge'];
+      if (pfRaw is Map) {
+        pfEnabled = pfRaw['enabled'] == true;
+        final region = (pfRaw['region'] ?? '').toString().trim();
+        pfRegion = region.isEmpty ? null : region;
+        pfSkus = _skuByUsd(pfRaw['skuByUsd']);
+        pfCodeType = _codeType(pfRaw['preferredCodeType'] ?? pfRaw['codeType']);
+      }
+
       return base.copyWith(
         name: name.isEmpty ? null : name,
         subtitle: subtitle.isEmpty ||
@@ -256,6 +284,10 @@ class DigitalServicesCatalog extends ChangeNotifier {
         clearMaxOtherAmount: !isSub && maxOtherAmount == null,
         imageUrl: imageUrl.isNotEmpty ? imageUrl : null,
         active: true,
+        prepaidForgeEnabled: pfEnabled,
+        prepaidForgeRegion: pfRegion,
+        prepaidForgeSkuByUsd: pfSkus,
+        prepaidForgeCodeType: pfCodeType,
       );
     }
 
@@ -304,6 +336,18 @@ class DigitalServicesCatalog extends ChangeNotifier {
       }
 
       final isSub = category == 'streaming' || category == 'subscription';
+      Map<String, String> pfSkus = const {};
+      String? pfRegion;
+      var pfEnabled = false;
+      var pfCodeType = 'TEXT';
+      final pfRaw = cfg['prepaidForge'];
+      if (pfRaw is Map) {
+        pfEnabled = pfRaw['enabled'] == true;
+        final region = (pfRaw['region'] ?? '').toString().trim();
+        pfRegion = region.isEmpty ? null : region;
+        pfSkus = _skuByUsd(pfRaw['skuByUsd']);
+        pfCodeType = _codeType(pfRaw['preferredCodeType'] ?? pfRaw['codeType']);
+      }
       return DigitalProduct(
         key: key,
         name: name.isNotEmpty ? name : key,
@@ -323,6 +367,10 @@ class DigitalServicesCatalog extends ChangeNotifier {
         imageUrl: imageUrl.isNotEmpty ? imageUrl : null,
         icon: Icons.currency_exchange_rounded,
         active: true,
+        prepaidForgeEnabled: pfEnabled,
+        prepaidForgeRegion: pfRegion,
+        prepaidForgeSkuByUsd: pfSkus,
+        prepaidForgeCodeType: pfCodeType,
       );
     }
 

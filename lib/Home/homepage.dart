@@ -4599,6 +4599,17 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                           const SizedBox(height: 2),
                           Text(p.subtitle, maxLines: 1, overflow: TextOverflow.ellipsis,
                             style: const TextStyle(color: AppColors.body, fontWeight: FontWeight.w600)),
+                          if ((p.prepaidForgeRegion ?? '').trim().isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              'Redeemable in ${p.prepaidForgeRegion!.trim()}',
+                              style: const TextStyle(
+                                color: AppColors.brandOrange,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 6),
                           Text(
                             _isFixedPrice

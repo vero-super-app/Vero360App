@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:vero360_app/utils/app_version_info.dart';
+import 'package:vero360_app/utils/firebase_bootstrap.dart';
 
 /// Result of comparing the installed app version with the live store listing.
 class AppUpdateCheckResult {
@@ -349,6 +350,7 @@ class AppUpdateChecker {
       'https://apps.apple.com/search?term=Vero360%20Malawi';
 
   static Future<_RemoteVersionConfig?> _loadRemoteConfig() async {
+    if (!isFirebaseAppReady) return null;
     try {
       final snap = await FirebaseFirestore.instance
           .doc(firestoreConfigPath)

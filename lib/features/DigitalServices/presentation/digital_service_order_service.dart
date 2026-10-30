@@ -328,6 +328,18 @@ class DigitalServiceOrderService {
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
+    if (!isGuest) {
+      await OrderPartyNotificationService.publishDigitalOrderToBuyer(
+        buyerUid: user.uid,
+        productName: product.name,
+        orderId: doc.id,
+        title: 'Payment awaiting · ${product.name}',
+        body:
+            'Payment is awaiting confirmation for your ${product.name} order. '
+            'Approve the prompt on your phone, then we will process it.',
+        type: 'digital_pending',
+      );
+    }
     return doc.id;
   }
 
@@ -377,9 +389,9 @@ class DigitalServiceOrderService {
         buyerUid: buyerUid,
         productName: productName,
         orderId: orderId,
-        title: 'Payment received · $productName',
+        title: 'We received your order · $productName',
         body:
-            'We received your $productName payment. Open My Digital Orders — we will send your details there.',
+            'We have received your $productName payment. We are processing your order now — you will get your details in My Digital Orders.',
         type: 'digital_order',
       );
     }

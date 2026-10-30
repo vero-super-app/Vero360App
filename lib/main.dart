@@ -296,8 +296,42 @@ Future<bool> _ensureFirebaseHealthy({
 // ───────────────────────────────────────────────
 //  MAIN — paint launcher first, heal Firebase after
 // ───────────────────────────────────────────────
+bool _isFirebaseNoApp(Object error) {
+  final msg = error.toString();
+  return msg.contains('core/no-app') || msg.contains('No Firebase App');
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  FlutterError.onError = (details) {
+    if (_isFirebaseNoApp(details.exception)) return;
+    FlutterError.presentError(details);
+  };
+  WidgetsBinding.instance.platformDispatcher.onError = (error, stack) {
+    if (_isFirebaseNoApp(error)) return true;
+    return false;
+  };
+
+  // Android must have a DEFAULT app before Auth/Firestore widgets.
+  // iPadOS can stall native init — never block first paint there.
+  final isCupertino = !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.macOS);
+  if (isCupertino) {
+    unawaited(ensureFirebaseApp(
+      maxAttempts: 2,
+      attemptTimeout: const Duration(seconds: 2),
+    ));
+  } else {
+    try {
+      await ensureFirebaseApp(
+        maxAttempts: 2,
+        attemptTimeout: const Duration(seconds: 2),
+      ).timeout(const Duration(seconds: 3), onTimeout: () => false);
+    } catch (_) {}
+  }
+
   unawaited(AppVersionInfo.ensureLoaded());
   // Draw behind the system bars. Flutter then reports the insets so screens
   // can pad content. Bar colors are left unset; Android 15 ignores them.
@@ -337,7 +371,6 @@ Future<void> main() async {
       PaintingBinding.instance.imageCache.maximumSizeBytes = 48 << 20;
     }
 
-    // Start Firebase self-heal immediately, but do not block first paint.
     unawaited(_ensureFirebaseHealthy(quiet: true));
 
     runApp(
@@ -358,6 +391,7 @@ Future<void> main() async {
     runZonedGuarded(
       launchApp,
       (error, stack) {
+        if (_isFirebaseNoApp(error)) return;
         FlutterError.presentError(
           FlutterErrorDetails(exception: error, stack: stack),
         );
@@ -450,9 +484,12 @@ class _AppBootstrapState extends State<AppBootstrap> {
         } catch (_) {}
       }));
 
-      // Firebase / env are optional at first paint. Awaiting native
-      // initializeApp on iPadOS can never return, which also blocks Dart
-      // timers — so do not await it on the launch path.
+      try {
+        await ensureFirebaseApp(
+          maxAttempts: 2,
+          attemptTimeout: const Duration(seconds: 2),
+        ).timeout(const Duration(seconds: 2), onTimeout: () => false);
+      } catch (_) {}
       unawaited(_ensureFirebaseHealthy(quiet: true));
       unawaited(GoogleMapsConfig.initialize());
 
@@ -472,7 +509,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
       unawaited(Future(() async {
         try {
           if (Firebase.apps.isEmpty) return;
-          if (FirebaseAuth.instance.currentUser != null) {
+          if (tryFirebaseUser() != null) {
             await BackendMessagingCache.initialize();
             await BackendMessagingSocket.connect();
           }
@@ -563,9 +600,10 @@ class _AppBootstrapState extends State<AppBootstrap> {
               initialShell: null,
             );
         final firebaseReady = isFirebaseAppReady;
-        // Fail-open: leave splash when boot finishes OR hard deadline hits.
-        // Do not require Firebase forever (App Review Guideline 2.1 hang).
-        final ready = (!booting || _bootDeadlinePassed);
+        // Leave splash when boot is done and Firebase exists. If init hangs,
+        // the 3s deadline still fail-opens so iPad is never stuck.
+        final ready =
+            _bootDeadlinePassed || (!booting && firebaseReady);
 
         if (ready && _showLauncher) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1073,7 +1111,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         'customer';
     final email = prefs.getString('email') ?? '';
     final token = RoleSessionService.readToken(prefs);
-    final signedIn = FirebaseAuth.instance.currentUser != null ||
+    final signedIn = tryFirebaseUser() != null ||
         (token != null && token.trim().isNotEmpty);
     if (!signedIn) {
       if (_currentShell != 'customer') _pushCustomer(email);
@@ -1118,7 +1156,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     if (result == null) return;
     if (result.isUnauthorized) {
       // Keep Firebase session; only clear stale SP tokens if Firebase is gone.
-      if (FirebaseAuth.instance.currentUser == null) {
+      if (tryFirebaseUser() == null) {
         await _clearAuth(prefs);
       }
       return;
@@ -1525,7 +1563,7 @@ class AuthFlow {
     } catch (_) {}
 
     try {
-      await FirebaseAuth.instance.signOut();
+      await tryFirebaseAuth()?.signOut();
     } catch (_) {}
 
     AppShellCoordinator.markGuestHome();
@@ -1535,7 +1573,7 @@ class AuthFlow {
   static Future<bool> isLoggedIn() async {
     final p = await SharedPreferences.getInstance();
     final t = _readToken(p);
-    final fb = FirebaseAuth.instance.currentUser;
+    final fb = tryFirebaseUser();
     return (t != null && t.trim().isNotEmpty) || fb != null;
   }
 }

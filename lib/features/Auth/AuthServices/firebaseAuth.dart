@@ -11,7 +11,7 @@ import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:vero360_app/features/Auth/AuthServices/google_sign_in_helper.dart';
 
 class FirebaseAuthService {
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  FirebaseAuth get _auth => FirebaseAuth.instance;
 
   Future<User?> signupWithEmailAndPassword(String email, String password) async {
     try {

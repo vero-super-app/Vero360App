@@ -66,8 +66,8 @@ class AuthService {
   static const String supportEmail = 'support@vero360.app';
   static const Duration _reqTimeoutWarm = Duration(seconds: 18);
 
-  final FirebaseAuth _firebaseAuth = FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  FirebaseAuth get _firebaseAuth => FirebaseAuth.instance;
+  FirebaseFirestore get _firestore => FirebaseFirestore.instance;
 
   // -------------------- Helpers --------------------
 

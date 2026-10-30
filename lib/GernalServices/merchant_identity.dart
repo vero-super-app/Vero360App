@@ -1,11 +1,11 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
+import 'package:vero360_app/utils/firebase_bootstrap.dart';
 
 /// Single in-memory + prefs identity for the signed-in account.
 ///
@@ -74,7 +74,7 @@ class MerchantIdentityStore {
   }
 
   static String _currentUid({SharedPreferences? prefs}) {
-    final auth = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    final auth = tryFirebaseUser()?.uid.trim() ?? '';
     if (auth.isNotEmpty) return auth;
     return (prefs?.getString('uid') ?? '').trim();
   }
@@ -256,6 +256,10 @@ class MerchantIdentityStore {
     String? service = forceRefresh ? null : cached?.service;
 
     // 1) Authoritative: users/{uid}
+    if (!isFirebaseAppReady) {
+      return cached ??
+          MerchantIdentity(uid: id, role: role, service: service);
+    }
     try {
       final doc = await FirebaseFirestore.instance
           .collection('users')

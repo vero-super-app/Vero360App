@@ -101,6 +101,8 @@ class _BottomnavbarState extends State<Bottomnavbar>
       final auth = tryFirebaseAuth();
       if (auth != null) {
         _authSub = auth.authStateChanges().listen((_) => _refreshAuthState());
+      } else {
+        unawaited(_attachAuthWhenFirebaseReady());
       }
     } catch (_) {}
     _initialize();
@@ -108,6 +110,17 @@ class _BottomnavbarState extends State<Bottomnavbar>
       if (!mounted) return;
       unawaited(AppUpdateChecker.maybeRemindOncePerDay(context));
     });
+  }
+
+  Future<void> _attachAuthWhenFirebaseReady() async {
+    for (var i = 0; i < 20 && mounted && _authSub == null; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      final auth = tryFirebaseAuth();
+      if (auth == null) continue;
+      _authSub = auth.authStateChanges().listen((_) => _refreshAuthState());
+      unawaited(_refreshAuthState());
+      return;
+    }
   }
 
   List<Widget> _defaultPages() {

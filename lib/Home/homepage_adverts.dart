@@ -23,6 +23,7 @@ import 'package:vero360_app/GeneralPages/checkout_page.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
+import 'package:vero360_app/utils/firebase_bootstrap.dart';
 import 'package:vero360_app/utils/profile_open_helper.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
@@ -212,12 +213,12 @@ class HomepageAdvert {
 class HomepageAdvertService {
   HomepageAdvertService._();
 
-  static final _col =
+  static CollectionReference<Map<String, dynamic>> get _col =>
       FirebaseFirestore.instance.collection('homepage_adverts');
 
   /// Real account required — no anonymous advertising.
   static Future<User> requireLoggedInUser() async {
-    final user = FirebaseAuth.instance.currentUser;
+    final user = tryFirebaseUser();
     if (user == null || user.isAnonymous) {
       throw Exception('Please log in to place an advert.');
     }
@@ -228,12 +229,13 @@ class HomepageAdvertService {
   }
 
   static Future<bool> isProperlyLoggedIn() async {
-    final user = FirebaseAuth.instance.currentUser;
+    final user = tryFirebaseUser();
     if (user == null || user.isAnonymous) return false;
     return AuthHandler.isAuthenticated();
   }
 
   static Stream<List<HomepageAdvert>> watchActiveAdverts() {
+    if (!isFirebaseAppReady) return const Stream.empty();
     return _col
         .where('status', isEqualTo: 'active')
         .snapshots()

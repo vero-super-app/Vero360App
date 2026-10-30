@@ -2452,7 +2452,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
             ),
             ListTile(
               leading: const Icon(Icons.photo_library_rounded, color: Color(0xFFFF8A00)),
-              title: const Text('Choose from gallery'),
+              title: const Text('Upload from gallery'),
               onTap: () => Navigator.pop(ctx, ImageSource.gallery),
             ),
           ],
@@ -3026,7 +3026,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
                       Icon(Icons.add_a_photo_rounded, color: Color(0xFFFF8A00), size: 28),
                       SizedBox(height: 8),
                       Text(
-                        'Upload transfer slip',
+                        'Add transfer slip',
                         style: TextStyle(
                           fontWeight: FontWeight.w800,
                           color: Color(0xFF16284C),
@@ -3034,7 +3034,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
                       ),
                       SizedBox(height: 4),
                       Text(
-                        'Photo of the receipt or confirmation',
+                        'Take a photo or upload from gallery',
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,

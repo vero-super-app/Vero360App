@@ -70,14 +70,13 @@ Future<bool> ensureFirebaseApp({
   if (_ensureInFlight != null) return _ensureInFlight!;
 
   _ensureInFlight = () async {
-    // iOS AppDelegate already calls FirebaseApp.configure(). Wait briefly for
-    // the Dart plugin to see that app instead of a second initializeApp, which
-    // can hang forever if the UIScene plugin registry is not ready yet.
+    // iOS AppDelegate already calls FirebaseApp.configure(). Give the Dart
+    // plugin a brief moment to see that app so we do not start a second init.
     if (!kIsWeb &&
         (defaultTargetPlatform == TargetPlatform.iOS ||
             defaultTargetPlatform == TargetPlatform.macOS)) {
-      for (var i = 0; i < 12 && !isFirebaseAppReady; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 50));
+      for (var i = 0; i < 6 && !isFirebaseAppReady; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 40));
       }
       if (isFirebaseAppReady) return true;
     }
@@ -90,13 +89,18 @@ Future<bool> ensureFirebaseApp({
         }
         Firebase.app();
         return true;
-      } catch (_) {
+      } catch (e) {
+        final text = e.toString();
+        // Native already created DEFAULT — treat as success.
+        if (text.contains('duplicate-app') || isFirebaseAppReady) {
+          return true;
+        }
         if (attempt < maxAttempts) {
           await Future<void>.delayed(Duration(milliseconds: 160 * attempt));
         }
       }
     }
-    return false;
+    return isFirebaseAppReady;
   }();
 
   final ok = await _ensureInFlight!;

@@ -1,13 +1,11 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/GeneralModels/wallet_model.dart';
 import 'package:vero360_app/utils/kyc_gate.dart';
 
 class FirebaseWalletService {
-  static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  static final FirebaseAuth _auth = FirebaseAuth.instance;
+  static FirebaseFirestore get _firestore => FirebaseFirestore.instance;
 
   /// User ID and display name for the platform super-admin wallet (receives service fees).
   static const String superAdminUserId = 'super_admin';

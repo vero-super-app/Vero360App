@@ -51,6 +51,7 @@ import 'package:vero360_app/features/ride_share/presentation/providers/driver_on
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:vero360_app/utils/firebase_bootstrap.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -90,15 +91,20 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   void initState() {
     super.initState();
-    _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
-      if (user == null || user.isAnonymous) {
-        _profileFetchGen++;
-        _resetGuestProfile();
-      } else {
-        unawaited(_loadUserData());
-        unawaited(_fetchCurrentUser());
+    try {
+      final auth = tryFirebaseAuth();
+      if (auth != null) {
+        _authSub = auth.authStateChanges().listen((user) {
+          if (user == null || user.isAnonymous) {
+            _profileFetchGen++;
+            _resetGuestProfile();
+          } else {
+            unawaited(_loadUserData());
+            unawaited(_fetchCurrentUser());
+          }
+        });
       }
-    });
+    } catch (_) {}
     unawaited(_loadUserData());
     unawaited(_fetchCurrentUser());
   }

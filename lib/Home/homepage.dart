@@ -46,6 +46,7 @@ import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 
+import 'package:vero360_app/utils/firebase_bootstrap.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
@@ -254,12 +255,15 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
 
     _resolveGreetingName();
     try {
-      _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
-        final uid = user?.uid;
-        if (uid != _greetingUid || user == null) {
-          _resolveGreetingName(force: true);
-        }
-      });
+      final auth = tryFirebaseAuth();
+      if (auth != null) {
+        _authSub = auth.authStateChanges().listen((user) {
+          final uid = user?.uid;
+          if (uid != _greetingUid || user == null) {
+            _resolveGreetingName(force: true);
+          }
+        });
+      }
     } catch (_) {}
     _maybeShowServicesHint();
     // Retention reward: count this homepage open toward daily Vero Points.
@@ -287,7 +291,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
   Future<void> _resolveGreetingName({bool force = false}) async {
     User? authUser;
     try {
-      authUser = FirebaseAuth.instance.currentUser;
+      authUser = tryFirebaseUser();
     } catch (_) {
       authUser = null;
     }

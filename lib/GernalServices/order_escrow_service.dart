@@ -13,6 +13,7 @@ import 'package:vero360_app/GernalServices/marketplace_stock_reminder_service.da
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/utils/firebase_bootstrap.dart';
 
 /// Params for [OrderEscrowService.createHoldForAccommodationBooking] — ties PawaPay
 /// success to host escrow shown on [MerchantWalletPage].
@@ -44,7 +45,7 @@ class AccommodationEscrowParams {
 class OrderEscrowService {
   OrderEscrowService._();
 
-  static final FirebaseFirestore _db = FirebaseFirestore.instance;
+  static FirebaseFirestore get _db => FirebaseFirestore.instance;
   static const String _collection = 'order_escrow';
 
   /// Set `true` only while testing auto-release. Flip back to `false` for production (7 days).
@@ -781,7 +782,7 @@ class OrderEscrowService {
   /// App open / resume: auto-release escrow when [releaseDueAt] has passed and the
   /// buyer did not confirm receipt. Works for the signed-in user as merchant or buyer.
   static Future<int> processDueAutoReleasesForSignedInUser() async {
-    final uid = (FirebaseAuth.instance.currentUser?.uid ?? '').trim();
+    final uid = (tryFirebaseUser()?.uid ?? '').trim();
     if (uid.isEmpty) return 0;
 
     var released = 0;

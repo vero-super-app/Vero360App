@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
+import 'package:vero360_app/utils/firebase_bootstrap.dart';
 
 /// Retention rewards for **customers and merchants**: open the app → earn
 /// Vero Points → Vero Coins → MWK credited to their wallet.
@@ -19,7 +20,7 @@ import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 class VeroRewardsService {
   VeroRewardsService._();
 
-  static final _db = FirebaseFirestore.instance;
+  static FirebaseFirestore get _db => FirebaseFirestore.instance;
 
   static const String collection = 'vero_rewards';
   static const String configPath = 'app_config/vero_rewards';
@@ -216,7 +217,10 @@ class VeroRewardsService {
   /// Call once when homepage opens (signed-in users only).
   /// Returns award info when a point was just granted.
   static Future<VeroVisitResult> recordAppOpen() async {
-    final user = FirebaseAuth.instance.currentUser;
+    if (!isFirebaseAppReady) {
+      return const VeroVisitResult(skipped: true);
+    }
+    final user = tryFirebaseUser();
     if (user == null || user.isAnonymous) {
       return const VeroVisitResult(skipped: true);
     }

@@ -41,7 +41,7 @@ class DigitalPayoutKycPayload {
       };
 }
 
-/// Collects Alipay/WeChat + ID/face (CNY) or Binance ID/address (USDT).
+/// Collects payout photos: code + ID in hands + face (CNY and USDT), plus Binance text for USDT.
 class DigitalPayoutKycSection extends StatefulWidget {
   const DigitalPayoutKycSection({
     super.key,
@@ -82,17 +82,15 @@ class DigitalPayoutKycSectionState extends State<DigitalPayoutKycSection> {
       if (_codeFile == null || _idFile == null || _faceFile == null) {
         setState(() {
           _error =
-              'Upload your Alipay or WeChat code, a photo of your ID held in your hands, and a photo of your face.';
+              'Take a photo or upload your Alipay or WeChat code, a photo of your ID held in your hands, and a photo of your face.';
         });
         return null;
       }
     } else {
-      final id = _binanceIdCtrl.text.trim();
-      final addr = _binanceAddressCtrl.text.trim();
-      if (id.isEmpty && addr.isEmpty && _binanceCodeFile == null) {
+      if (_binanceCodeFile == null || _idFile == null || _faceFile == null) {
         setState(() {
           _error =
-              'Enter your Binance ID or wallet address, or upload your Binance code.';
+              'Take a photo or upload your Binance code, a photo of your ID held in your hands, and a photo of your face.';
         });
         return null;
       }
@@ -132,45 +130,43 @@ class DigitalPayoutKycSectionState extends State<DigitalPayoutKycSection> {
       );
     }
 
-    final codeUrl = _binanceCodeFile == null
-        ? ''
-        : await put(_binanceCodeFile!, 'binance');
+    final codeUrl = await put(_binanceCodeFile!, 'binance');
+    final idUrl = await put(_idFile!, 'idhand');
+    final faceUrl = await put(_faceFile!, 'face');
     return DigitalPayoutKycPayload(
       kind: kind,
       binanceId: _binanceIdCtrl.text.trim(),
       binanceAddress: _binanceAddressCtrl.text.trim(),
       binanceCodeUrl: codeUrl,
+      idInHandUrl: idUrl,
+      faceUrl: faceUrl,
     );
   }
 
   Future<void> _pick({
     required void Function(XFile file) onPicked,
-    required bool cameraOnly,
   }) async {
-    ImageSource? source = ImageSource.camera;
-    if (!cameraOnly) {
-      source = await showModalBottomSheet<ImageSource>(
-        context: context,
-        builder: (ctx) => SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.photo_camera_rounded, color: _veroOrange),
-                title: const Text('Take photo'),
-                onTap: () => Navigator.pop(ctx, ImageSource.camera),
-              ),
-              ListTile(
-                leading: const Icon(Icons.photo_library_rounded, color: _veroOrange),
-                title: const Text('Choose from gallery'),
-                onTap: () => Navigator.pop(ctx, ImageSource.gallery),
-              ),
-            ],
-          ),
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_camera_rounded, color: _veroOrange),
+              title: const Text('Take photo'),
+              onTap: () => Navigator.pop(ctx, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_rounded, color: _veroOrange),
+              title: const Text('Upload from gallery'),
+              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+            ),
+          ],
         ),
-      );
-      if (source == null) return;
-    }
+      ),
+    );
+    if (source == null) return;
     final file = await _picker.pickImage(
       source: source,
       imageQuality: 72,
@@ -211,8 +207,8 @@ class DigitalPayoutKycSectionState extends State<DigitalPayoutKycSection> {
           const SizedBox(height: 4),
           Text(
             isCny
-                ? 'For Chinese Yuan / USD TT we send to your Alipay or WeChat. Upload the code, hold your ID in your hands, and take a photo of your face.'
-                : 'For USDT we send to your Binance account. Enter your Binance ID or wallet address, and optionally upload your code.',
+                ? 'For Chinese Yuan / USD TT we send to your Alipay or WeChat. Take a photo or upload from your gallery: the code, your ID in your hands, and your face.'
+                : 'For USDT we send to your Binance account. Same as Yuan: take a photo or upload your Binance code, your ID in your hands, and your face. Also enter your Binance ID or wallet address.',
             style: TextStyle(
               fontSize: 12.5,
               height: 1.4,
@@ -224,25 +220,22 @@ class DigitalPayoutKycSectionState extends State<DigitalPayoutKycSection> {
           if (isCny) ...[
             _photoTile(
               label: 'Alipay / WeChat code',
-              hint: 'QR or payment code',
+              hint: 'Take a photo or choose from gallery',
               file: _codeFile,
-              cameraOnly: false,
               onPick: (f) => _codeFile = f,
             ),
             const SizedBox(height: 10),
             _photoTile(
               label: 'ID held in your hands',
-              hint: 'National ID visible in both hands',
+              hint: 'Take a photo or choose from gallery',
               file: _idFile,
-              cameraOnly: true,
               onPick: (f) => _idFile = f,
             ),
             const SizedBox(height: 10),
             _photoTile(
               label: 'Your face',
-              hint: 'Clear selfie showing your face',
+              hint: 'Take a photo or choose from gallery',
               file: _faceFile,
-              cameraOnly: true,
               onPick: (f) => _faceFile = f,
             ),
           ] else ...[
@@ -259,11 +252,24 @@ class DigitalPayoutKycSectionState extends State<DigitalPayoutKycSection> {
             ),
             const SizedBox(height: 10),
             _photoTile(
-              label: 'Binance code (optional)',
-              hint: 'QR or screenshot of your Binance ID',
+              label: 'Binance code',
+              hint: 'Take a photo or choose from gallery',
               file: _binanceCodeFile,
-              cameraOnly: false,
               onPick: (f) => _binanceCodeFile = f,
+            ),
+            const SizedBox(height: 10),
+            _photoTile(
+              label: 'ID held in your hands',
+              hint: 'Take a photo or choose from gallery',
+              file: _idFile,
+              onPick: (f) => _idFile = f,
+            ),
+            const SizedBox(height: 10),
+            _photoTile(
+              label: 'Your face',
+              hint: 'Take a photo or choose from gallery',
+              file: _faceFile,
+              onPick: (f) => _faceFile = f,
             ),
           ],
           if (_error != null) ...[
@@ -326,11 +332,10 @@ class DigitalPayoutKycSectionState extends State<DigitalPayoutKycSection> {
     required String label,
     required String hint,
     required XFile? file,
-    required bool cameraOnly,
     required void Function(XFile file) onPick,
   }) {
     return InkWell(
-      onTap: () => _pick(onPicked: onPick, cameraOnly: cameraOnly),
+      onTap: () => _pick(onPicked: onPick),
       borderRadius: BorderRadius.circular(12),
       child: Ink(
         padding: const EdgeInsets.all(12),
@@ -353,10 +358,8 @@ class DigitalPayoutKycSectionState extends State<DigitalPayoutKycSection> {
               ),
               clipBehavior: Clip.antiAlias,
               child: file == null
-                  ? Icon(
-                      cameraOnly
-                          ? Icons.photo_camera_rounded
-                          : Icons.add_photo_alternate_outlined,
+                  ? const Icon(
+                      Icons.add_photo_alternate_outlined,
                       color: _veroOrange,
                     )
                   : kIsWeb

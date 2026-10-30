@@ -73,6 +73,8 @@ class NotificationService {
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _chatAlertSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _digitalOrderSub;
   final Map<String, String> _digitalFulfillSeen = {};
+  final Map<String, String> _digitalStatusSeen = {};
+  bool _digitalStatusPrimed = false;
 
   static const AndroidNotificationChannel _highPriorityChannel =
       AndroidNotificationChannel(
@@ -427,6 +429,8 @@ class NotificationService {
     _digitalOrderSub?.cancel();
     _digitalOrderSub = null;
     _digitalFulfillSeen.clear();
+    _digitalStatusSeen.clear();
+    _digitalStatusPrimed = false;
     if (user == null || user.isAnonymous) return;
 
     _digitalOrderSub = FirebaseFirestore.instance
@@ -434,48 +438,100 @@ class NotificationService {
         .where('buyerUid', isEqualTo: user.uid)
         .snapshots()
         .listen((snap) async {
+      if (!_digitalStatusPrimed) {
+        for (final doc in snap.docs) {
+          final order = DigitalServiceOrder.fromDoc(doc);
+          _digitalStatusSeen[order.id] = order.status.toLowerCase();
+          _digitalFulfillSeen[order.id] = order.fulfillment.copyAllText;
+        }
+        _digitalStatusPrimed = true;
+        return;
+      }
       for (final change in snap.docChanges) {
         final order = DigitalServiceOrder.fromDoc(change.doc);
         final fp = order.fulfillment.copyAllText;
-        final prev = _digitalFulfillSeen[order.id];
+        final prevFulfill = _digitalFulfillSeen[order.id];
         _digitalFulfillSeen[order.id] = fp;
-        if (change.type != DocumentChangeType.modified) continue;
-        if (!order.fulfillment.hasContent) continue;
-        if (prev == fp) continue;
+        final status = order.status.toLowerCase();
+        final prevStatus = _digitalStatusSeen[order.id];
+        _digitalStatusSeen[order.id] = status;
 
-        final title = 'Your ${order.productName} details are ready';
-        final body =
-            'Open My Digital Orders to copy your code, login, or joining link.';
-        await NotificationStore.instance.addNotification(
-          id: 'digital_fulfill_${order.id}',
-          title: title,
-          body: body,
-          payload: {
-            'type': 'digital_fulfillment',
-            'orderId': order.id,
-            'productName': order.productName,
-            NotificationStore.kPayloadBadgeRoute:
-                NotificationStore.kBadgeDigitalOrders,
-          },
-        );
-        try {
-          await _showLocalNotification(
-            id: order.id.hashCode.abs() % 100000000,
-            title: title,
-            body: body,
-            payload: jsonEncode({
-              'type': 'digital_fulfillment',
-              'orderId': order.id,
-              'productName': order.productName,
-              NotificationStore.kPayloadBadgeRoute:
-                  NotificationStore.kBadgeDigitalOrders,
-            }),
-          );
-        } catch (e) {
-          if (kDebugMode) {
-            debugPrint('[NotificationService] digital fulfill notify: $e');
+        Future<void> banner({
+          required String id,
+          required String type,
+          required String title,
+          required String body,
+          bool addToInbox = true,
+        }) async {
+          if (addToInbox) {
+            await NotificationStore.instance.addNotification(
+              id: id,
+              title: title,
+              body: body,
+              payload: {
+                'type': type,
+                'orderId': order.id,
+                'productName': order.productName,
+                NotificationStore.kPayloadBadgeRoute:
+                    NotificationStore.kBadgeDigitalOrders,
+              },
+            );
+          }
+          try {
+            await _showLocalNotification(
+              id: id.hashCode.abs() % 100000000,
+              title: title,
+              body: body,
+              payload: jsonEncode({
+                'type': type,
+                'orderId': order.id,
+                'productName': order.productName,
+                NotificationStore.kPayloadBadgeRoute:
+                    NotificationStore.kBadgeDigitalOrders,
+              }),
+            );
+          } catch (e) {
+            if (kDebugMode) {
+              debugPrint('[NotificationService] digital status notify: $e');
+            }
           }
         }
+
+        if (change.type == DocumentChangeType.added && order.isPending) {
+          await banner(
+            id: 'digital_pending_${order.id}',
+            type: 'digital_pending',
+            title: 'Payment awaiting · ${order.productName}',
+            body:
+                'Payment is awaiting confirmation for your ${order.productName} order. Approve the prompt on your phone, then we will process it.',
+            addToInbox: false,
+          );
+        } else if (order.isPaid &&
+            prevStatus != null &&
+            prevStatus != 'paid' &&
+            prevStatus != 'fulfilled' &&
+            prevStatus != 'completed') {
+          await banner(
+            id: 'digital_paid_${order.id}',
+            type: 'digital_order',
+            title: 'We received your order · ${order.productName}',
+            body:
+                'We have received your ${order.productName} payment. We are processing your order now — you will get your details in My Digital Orders.',
+            addToInbox: false,
+          );
+        }
+
+        if (change.type != DocumentChangeType.modified) continue;
+        if (!order.fulfillment.hasContent) continue;
+        if (prevFulfill == fp) continue;
+
+        await banner(
+          id: 'digital_fulfill_${order.id}',
+          type: 'digital_fulfillment',
+          title: 'Your ${order.productName} details are ready',
+          body:
+              'Open My Digital Orders to copy your code, login, or joining link.',
+        );
       }
     }, onError: (e) {
       if (kDebugMode) {

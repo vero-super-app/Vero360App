@@ -507,7 +507,7 @@ void main() {
       final payment = PaymentInitiation.fromJson(<String, dynamic>{
         'paymentId': 123,
         'txRef': 'tx-1',
-        'checkoutUrl': 'https://checkout.paychangu.com/abc',
+        'checkoutUrl': 'https://example.com/checkout/abc',
         'status': 'INITIATED',
         'booking': <String, dynamic>{
           'id': 77,
@@ -518,7 +518,7 @@ void main() {
 
       expect(payment.paymentId, 123);
       expect(payment.txRef, 'tx-1');
-      expect(payment.checkoutUrl, 'https://checkout.paychangu.com/abc');
+      expect(payment.checkoutUrl, 'https://example.com/checkout/abc');
       expect(payment.status, 'INITIATED');
       expect(payment.booking, isNotNull);
       expect(payment.booking!.bookingStatus, BookingStatus.pending);

@@ -40,13 +40,13 @@ import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 
-/// After PayChangu success: [bookingContext] is the booking screen (under the webview).
+/// After PawaPay success: [bookingContext] is the booking screen (under the webview).
 typedef AccommodationAfterPayCallback = void Function(
   BuildContext bookingContext,
   int accommodationId,
 );
 
-/// Guest booking + PayChangu payment; escrow hold for host when [hostMerchantUid] is set.
+/// Guest booking + PawaPay payment; escrow hold for host when [hostMerchantUid] is set.
 /// [photoSources] = cover + gallery URLs/paths; [memoryHeroBytes] optional decoded cover.
 class AccommodationBookingPage extends StatefulWidget {
   final int accommodationId;

@@ -2,12 +2,15 @@ import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vero360_app/utils/firebase_bootstrap.dart';
 
 /// Single source of truth for auth: use Firebase first, then SharedPreferences.
 /// This avoids "some parts logged in, some not" when SP token is missing/expired
 /// but Firebase session is still valid (e.g. after token refresh).
 class AuthHandler {
-  static final FirebaseAuth _firebaseAuth = FirebaseAuth.instance;
+  /// Lazy — `FirebaseAuth.instance` as a static field throws `[core/no-app]`
+  /// and can freeze launch if the iOS plugin is not registered yet.
+  static FirebaseAuth? get _firebaseAuth => tryFirebaseAuth();
 
   static const List<String> _spTokenKeys = ['token', 'jwt_token', 'jwt'];
 
@@ -17,7 +20,7 @@ class AuthHandler {
   static const Duration _refreshTokenTimeout = Duration(seconds: 10);
 
   static Future<String?> getFirebaseToken({bool forceRefresh = false}) async {
-    final user = _firebaseAuth.currentUser;
+    final user = _firebaseAuth?.currentUser;
     if (user == null) return null;
     try {
       var token =
@@ -68,7 +71,7 @@ class AuthHandler {
 
   /// On HTTP 401: force-refresh Firebase ID token once and return it (or null).
   static Future<String?> refreshTokenAfterUnauthorized() async {
-    final user = _firebaseAuth.currentUser;
+    final user = _firebaseAuth?.currentUser;
     if (user == null) return null;
     try {
       final token = await user.getIdToken(true).timeout(_refreshTokenTimeout);
@@ -97,7 +100,7 @@ class AuthHandler {
   ///   while Home/cart still worked).
   /// - Else any non-empty SharedPreferences API token (same keys as [getTokenForApi]).
   static Future<bool> isAuthenticated() async {
-    final user = _firebaseAuth.currentUser;
+    final user = tryFirebaseUser();
     if (user != null && !user.isAnonymous) return true;
 
     final sp = await SharedPreferences.getInstance();
@@ -109,13 +112,15 @@ class AuthHandler {
   }
 
   static Future<void> logout() async {
-    await _firebaseAuth.signOut();
+    try {
+      await _firebaseAuth?.signOut();
+    } catch (_) {}
   }
 
   /// Refreshes Firebase ID token when a session exists (helps Firestore attach auth).
   /// Does not throw — callers should still attempt the Firestore write.
   static Future<void> refreshFirebaseTokenIfSignedIn() async {
-    final user = _firebaseAuth.currentUser;
+    final user = _firebaseAuth?.currentUser;
     if (user == null) return;
     try {
       await user.getIdToken(true);
@@ -124,7 +129,7 @@ class AuthHandler {
 
   /// Throws only when a Firebase user is required by app logic (not Firestore rules).
   static Future<User> requireUserForFirestore() async {
-    final user = _firebaseAuth.currentUser;
+    final user = _firebaseAuth?.currentUser;
     if (user == null) {
       throw StateError(
         'Not signed in to Firebase. Sign out and sign in again, then retry.',

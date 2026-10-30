@@ -35,7 +35,7 @@ class DigitalProduct {
   final List<double> usdAmounts;
 
   /// Fixed MWK price for subscription codes (Spotify / Apple Music / Netflix / ChatGPT).
-  /// When set: skip amount picker and charge this MWK amount via PayChangu.
+  /// When set: skip amount picker and charge this MWK amount via PawaPay.
   final double? fixedMwkPrice;
 
   /// Custom MWK per unit (USDT / CNY / BNB). Overrides global USD rate when set.
@@ -395,7 +395,7 @@ const List<DigitalCategory> kDigitalCategories = [
 ];
 
 enum DigitalPayMethod {
-  paychangu, // mobile money (MWK)
+  mobileMoney, // Airtel Money / TNM Mpamba via PawaPay
   bankTransfer, // National Bank details from admin finance
 }
 

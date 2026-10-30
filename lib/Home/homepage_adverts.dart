@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
+import 'package:vero360_app/GernalServices/seller_mode.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
@@ -574,18 +575,25 @@ class _HomepageAdvertsSectionState extends State<HomepageAdvertsSection> {
     );
   }
 
-  void _openSellBanner(_SellBannerSlide banner) {
+  Future<void> _openSellBanner(_SellBannerSlide banner) async {
     if (banner.isDriver) {
       _openDriverSignup();
-    } else if (banner.isAccommodation) {
-      _openMerchantSignup(serviceKey: 'accommodation');
-    } else if (banner.isFood) {
-      _openMerchantSignup(serviceKey: 'food');
-    } else if (banner.isMarketplace) {
-      _openMerchantSignup(serviceKey: 'marketplace');
-    } else {
-      _openMerchantSignup();
+      return;
     }
+    String? serviceKey;
+    if (banner.isAccommodation) {
+      serviceKey = 'accommodation';
+    } else if (banner.isFood) {
+      serviceKey = 'food';
+    } else if (banner.isMarketplace) {
+      serviceKey = 'marketplace';
+    }
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null && !user.isAnonymous) {
+      await SellerMode.enter(context, merchantService: serviceKey);
+      return;
+    }
+    _openMerchantSignup(serviceKey: serviceKey);
   }
 
   void _openAdvert(HomepageAdvert ad) {

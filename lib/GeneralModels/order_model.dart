@@ -32,7 +32,7 @@ OrderCategory orderCategoryFrom(String? v) {
 PaymentStatus paymentStatusFrom(String? v) {
   final s = (v ?? '').toLowerCase().trim();
 
-  // Treat common “success” variants (PayChangu, backend enums, etc.) as PAID
+  // Treat common “success” variants (PawaPay, backend enums, etc.) as PAID
   if (s == 'paid' ||
       s == 'success' ||
       s == 'successful' ||
@@ -66,7 +66,7 @@ class OrderItem {
   final OrderStatus status;
   final PaymentStatus paymentStatus;
 
-  /// PayChangu / payments tx_ref when the API returns it (for refunds).
+  /// PawaPay / payments tx_ref when the API returns it (for refunds).
   final String? paymentTxRef;
 
   /// Optional numeric marketplace listing id (SQL id) if backend includes it,

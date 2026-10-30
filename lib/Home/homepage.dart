@@ -253,12 +253,14 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
     });
 
     _resolveGreetingName();
-    _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
-      final uid = user?.uid;
-      if (uid != _greetingUid || user == null) {
-        _resolveGreetingName(force: true);
-      }
-    });
+    try {
+      _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
+        final uid = user?.uid;
+        if (uid != _greetingUid || user == null) {
+          _resolveGreetingName(force: true);
+        }
+      });
+    } catch (_) {}
     _maybeShowServicesHint();
     // Retention reward: count this homepage open toward daily Vero Points.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -283,7 +285,12 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
 
   /* ── data fetching ───────────────────────────── */
   Future<void> _resolveGreetingName({bool force = false}) async {
-    final authUser = FirebaseAuth.instance.currentUser;
+    User? authUser;
+    try {
+      authUser = FirebaseAuth.instance.currentUser;
+    } catch (_) {
+      authUser = null;
+    }
     final uid = authUser?.uid;
     final loggedIn = await AuthHandler.isAuthenticated();
 
@@ -666,7 +673,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
             _openDigitalCheckout(
               product: plan,
               selectedUsd: 0,
-              payMethod: DigitalPayMethod.paychangu,
+              payMethod: DigitalPayMethod.mobileMoney,
             );
           },
         ),
@@ -683,7 +690,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
             _openDigitalCheckout(
               product: plan,
               selectedUsd: 0,
-              payMethod: DigitalPayMethod.paychangu,
+              payMethod: DigitalPayMethod.mobileMoney,
             );
           },
         ),
@@ -696,7 +703,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       await _openDigitalCheckout(
         product: p,
         selectedUsd: 0,
-        payMethod: DigitalPayMethod.paychangu,
+        payMethod: DigitalPayMethod.mobileMoney,
       );
       return;
     }
@@ -4403,7 +4410,7 @@ class DigitalProductDetailPage extends StatefulWidget {
     super.key,
     required this.product,
     required this.selectedUsd,
-    this.payMethod = DigitalPayMethod.paychangu,
+    this.payMethod = DigitalPayMethod.mobileMoney,
     this.initialEmail,
     this.initialPhone,
     this.initialName,

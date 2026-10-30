@@ -1,5 +1,5 @@
 /**
- * Mobile-money payouts via PawaPay. Bank cash-out stays on PayChangu.
+ * Mobile-money deposits and payouts via PawaPay.
  *
  *   firebase functions:secrets:set PAWAPAY_API_TOKEN
  *   firebase deploy --only functions:createPawaPayPayout,functions:pawapayWebhook

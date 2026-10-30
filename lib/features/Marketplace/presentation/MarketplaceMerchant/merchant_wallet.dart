@@ -1,14 +1,12 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
+import 'package:vero360_app/GernalServices/pawapay_payment.dart';
 import 'package:vero360_app/GeneralModels/wallet_model.dart';
-import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet_transactions_page.dart';
 import 'package:vero360_app/utils/kyc_gate.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
@@ -88,18 +86,18 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   
   static const List<Map<String, String>> _mobileMoneyProviders = [
     {
-      'id': PayChanguConfig.airtelMoneyOperatorRefId,
+      'id': PawaPayPayment.airtelOperatorId,
       'name': 'Airtel Money',
     },
     {
-      'id': PayChanguConfig.tnmMpambaOperatorRefId,
+      'id': PawaPayPayment.tnmOperatorId,
       'name': 'MPamba (TNM)',
     },
   ];
   
   int? _selectedBankIndex;
-  String _selectedPayoutMethod = 'bank';
-  String _selectedMobileProvider = PayChanguConfig.airtelMoneyOperatorRefId;
+  String _selectedPayoutMethod = 'mobile_money';
+  String _selectedMobileProvider = PawaPayPayment.airtelOperatorId;
   
   StreamSubscription<WalletModel?>? _walletSubscription;
   StreamSubscription<QuerySnapshot>? _transactionsSubscription;
@@ -832,12 +830,12 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                             return 'Enter valid 13-digit number';
                           }
                           if (_selectedMobileProvider ==
-                                  PayChanguConfig.airtelMoneyOperatorRefId &&
+                                  PawaPayPayment.airtelOperatorId &&
                               !phone.startsWith('+2659')) {
                             return 'Airtel Money numbers must start with +2659…';
                           }
                           if (_selectedMobileProvider ==
-                                  PayChanguConfig.tnmMpambaOperatorRefId &&
+                                  PawaPayPayment.tnmOperatorId &&
                               !phone.startsWith('+2658')) {
                             return 'TNM Mpamba numbers must start with +2658…';
                           }
@@ -1035,7 +1033,6 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
         final accountNumber = _accountNumberController.text.trim();
         final accountName = _accountNameController.text.trim();
         final bankName = _banks[_selectedBankIndex! - 1]['name'] ?? '';
-        await _processPayChanguPayout(amount, payoutRef);
         await FirebaseWalletService.debitWallet(
           merchantId: widget.merchantId,
           amount: amount,
@@ -1051,7 +1048,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
         if (mounted) _forceTransactionsReload();
         if (mounted) {
           Navigator.pop(context);
-          _showSuccess('Bank payout sent.');
+          _showSuccess('Bank payout recorded.');
         }
       } else {
         final mobile = _phoneController.text.trim().replaceAll(RegExp(r'\s+'), '');
@@ -1084,42 +1081,6 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
           setDialogState(() {});
         } catch (_) {}
       }
-    }
-  }
-
-  Future<void> _processPayChanguPayout(double amount, String reference) async {
-    final chargeId = reference.replaceAll(RegExp(r'[^A-Za-z0-9\-_]'), '');
-    final amountStr = amount.round().toString();
-    final email = _emailController.text.trim();
-
-    final uri = PayChanguConfig.bankPayoutInitializeUri();
-    final payload = {
-      'payout_method': 'bank_transfer',
-      'bank_uuid': _banks[_selectedBankIndex! - 1]['uuid'],
-      'amount': amountStr,
-      'charge_id': chargeId,
-      'bank_account_name': _accountNameController.text.trim(),
-      'bank_account_number': _accountNumberController.text.trim(),
-      if (email.isNotEmpty) 'email': email,
-    };
-
-    final response = await http
-        .post(
-          uri,
-          headers: PayChanguConfig.authHeaders,
-          body: jsonEncode(payload),
-        )
-        .timeout(const Duration(seconds: 45));
-
-    if (response.statusCode != 200 && response.statusCode != 201) {
-      throw Exception('Payout failed: ${response.body}');
-    }
-
-    final responseData = jsonDecode(response.body);
-    if (responseData is Map &&
-        responseData['status'] != null &&
-        responseData['status'].toString().toLowerCase() != 'success') {
-      throw Exception(responseData['message'] ?? 'Payout failed');
     }
   }
 

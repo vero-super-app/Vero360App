@@ -31,7 +31,7 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
   static const _bg = Color(0xFFFFFBF6);
 
   late double _selectedUsd;
-  DigitalPayMethod _payMethod = DigitalPayMethod.paychangu;
+  DigitalPayMethod _payMethod = DigitalPayMethod.mobileMoney;
   final _bank = BankTransferConfig.instance;
 
   final _customAmountCtrl = TextEditingController();
@@ -57,7 +57,7 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
     if (!mounted) return;
     if (_payMethod == DigitalPayMethod.bankTransfer &&
         !_bank.details.showToCustomers) {
-      setState(() => _payMethod = DigitalPayMethod.paychangu);
+      setState(() => _payMethod = DigitalPayMethod.mobileMoney);
       return;
     }
     setState(() {});
@@ -493,7 +493,7 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
           ),
           const SizedBox(height: 10),
           _payTile(
-            method: DigitalPayMethod.paychangu,
+            method: DigitalPayMethod.mobileMoney,
             title: 'Airtel Money or TNM Mpamba',
             subtitle: 'Approve a prompt on your phone',
             icon: Icons.phone_android_rounded,

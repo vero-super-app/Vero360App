@@ -23,7 +23,6 @@ class BuyerCommissionQuote {
     required this.buyerTotal,
     required this.veroShare,
     required this.processingFee,
-    this.paychanguShare = 0,
   });
 
   final double providerPrice;
@@ -34,8 +33,6 @@ class BuyerCommissionQuote {
   final double veroShare;
   /// PawaPay + MMO collection fee, taken from commission only.
   final double processingFee;
-  /// Always 0. Kept so older callers still compile.
-  final double paychanguShare;
 
   double get pawapayShare => processingFee;
 

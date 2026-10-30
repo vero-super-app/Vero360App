@@ -118,7 +118,7 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
               widget.onContinueCheckout(
                 product: plan,
                 selectedUsd: 0,
-                payMethod: DigitalPayMethod.paychangu,
+                payMethod: DigitalPayMethod.mobileMoney,
               );
             },
           ),
@@ -136,7 +136,7 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
               widget.onContinueCheckout(
                 product: plan,
                 selectedUsd: 0,
-                payMethod: DigitalPayMethod.paychangu,
+                payMethod: DigitalPayMethod.mobileMoney,
               );
             },
           ),
@@ -150,7 +150,7 @@ class _DigitalServicesPageState extends State<DigitalServicesPage>
       widget.onContinueCheckout(
         product: p,
         selectedUsd: 0,
-        payMethod: DigitalPayMethod.paychangu,
+        payMethod: DigitalPayMethod.mobileMoney,
       );
       return;
     }

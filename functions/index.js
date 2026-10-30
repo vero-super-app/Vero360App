@@ -2072,7 +2072,7 @@ exports.onChatMessageAlertCreated = onDocumentCreated(
 );
 
 /**
- * New kitchen ticket: food_orders are written client-side after PayChangu
+ * New kitchen ticket: food_orders are written client-side after PawaPay
  * (checkout_from_cart_page). Push the merchant so they hear about it even
  * if the dashboard is backgrounded or killed.
  *
@@ -2377,7 +2377,7 @@ exports.scheduledDiditKycBackfill = onSchedule(
 /** Didit destination webhook — see ./didit_webhook.js */
 exports.diditWebhook = diditWebhook;
 
-/** PawaPay mobile-money payouts. Bank cash-out stays on PayChangu. */
+/** PawaPay mobile-money deposits and payouts. */
 const {
   createPawaPayPayout,
   createPawaPayDeposit,

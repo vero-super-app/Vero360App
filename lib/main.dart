@@ -63,7 +63,6 @@ import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GernalServices/vero_rewards_service.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
-import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -302,7 +301,10 @@ Future<void> main() async {
   unawaited(AppVersionInfo.ensureLoaded());
   // Draw behind the system bars. Flutter then reports the insets so screens
   // can pad content. Bar colors are left unset; Android 15 ignores them.
-  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  try {
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge)
+        .timeout(const Duration(milliseconds: 400));
+  } catch (_) {}
 
   // Release builds must not echo debug logs (PII, tokens, session JSON) to logcat.
   if (kReleaseMode) {
@@ -397,9 +399,9 @@ class _AppBootstrapState extends State<AppBootstrap> {
   Timer? _bootDeadlineTimer;
 
   /// Brand flash — keep short so home arrives in ~1s.
-  static const _minLauncher = Duration(milliseconds: 450);
-  /// Hard ceiling so App Review / cold start never sits on splash forever.
-  static const _bootDeadline = Duration(seconds: 8);
+  static const _minLauncher = Duration(milliseconds: 400);
+  /// Hard ceiling so App Review / iPad cold start never sits on splash forever.
+  static const _bootDeadline = Duration(seconds: 3);
   static const _splashBg = Color(0xFFFFF8F2);
 
   @override
@@ -414,7 +416,6 @@ class _AppBootstrapState extends State<AppBootstrap> {
     });
 
     unawaited(GoogleMapsConfig.initialize());
-    unawaited(PayChanguConfig.initialize());
 
     // Register FCM background handler as soon as Firebase is usable.
     // Must happen before process can receive background messages.
@@ -449,19 +450,11 @@ class _AppBootstrapState extends State<AppBootstrap> {
         } catch (_) {}
       }));
 
-      // Prefer a warm Firebase DEFAULT app, but never hang launch on it.
-      await _ensureFirebaseHealthy(quiet: true)
-          .timeout(const Duration(seconds: 5), onTimeout: () => false);
-      if (Firebase.apps.isEmpty) {
-        try {
-          await Firebase.initializeApp(options: _kFirebaseOptions)
-              .timeout(const Duration(seconds: 3));
-        } catch (_) {}
-      }
-
-      // Env config is optional at launch — do not block splash on it.
+      // Firebase / env are optional at first paint. Awaiting native
+      // initializeApp on iPadOS can never return, which also blocks Dart
+      // timers — so do not await it on the launch path.
+      unawaited(_ensureFirebaseHealthy(quiet: true));
       unawaited(GoogleMapsConfig.initialize());
-      unawaited(PayChanguConfig.initialize());
 
       if (mounted) {
         setState(() {
@@ -524,14 +517,6 @@ class _AppBootstrapState extends State<AppBootstrap> {
         await Future<void>.delayed(_minLauncher - elapsed);
       }
 
-      // Brief last-resort only — still capped so we never loop forever.
-      if (Firebase.apps.isEmpty) {
-        try {
-          await Firebase.initializeApp(options: _kFirebaseOptions)
-              .timeout(const Duration(seconds: 2));
-        } catch (_) {}
-      }
-
       return _BootState(
         clearedOldCache: false,
         onboardingDone: onboardingDone,
@@ -540,12 +525,6 @@ class _AppBootstrapState extends State<AppBootstrap> {
         initialShell: initialShell,
       );
     } catch (_) {
-      try {
-        if (Firebase.apps.isEmpty) {
-          await Firebase.initializeApp(options: _kFirebaseOptions)
-              .timeout(const Duration(seconds: 2));
-        }
-      } catch (_) {}
       final elapsed = DateTime.now().difference(started);
       if (elapsed < _minLauncher) {
         await Future<void>.delayed(_minLauncher - elapsed);
@@ -583,7 +562,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
               onboardingDone: true,
               initialShell: null,
             );
-        final firebaseReady = Firebase.apps.isNotEmpty;
+        final firebaseReady = isFirebaseAppReady;
         // Fail-open: leave splash when boot finishes OR hard deadline hits.
         // Do not require Firebase forever (App Review Guideline 2.1 hang).
         final ready = (!booting || _bootDeadlinePassed);
@@ -624,7 +603,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
           initialEmail: boot.email,
           onboardingDoneHint: boot.onboardingDone,
           initialShell: boot.initialShell ??
-              Bottomnavbar(email: boot.email),
+              Bottomnavbar(email: boot.email.isNotEmpty ? boot.email : ''),
         );
       },
     );
@@ -669,9 +648,14 @@ class _DriverStatusBootstrapState
       ref.read(driverSessionTickProvider.notifier).state++;
     };
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await loadDriverStatusFromPrefs();
-      await ref.read(syncDriverStatusProvider.future);
-      await loadDriverStatusFromPrefs();
+      try {
+        await loadDriverStatusFromPrefs()
+            .timeout(const Duration(seconds: 2));
+        await ref.read(syncDriverStatusProvider.future)
+            .timeout(const Duration(seconds: 4));
+        await loadDriverStatusFromPrefs()
+            .timeout(const Duration(seconds: 2));
+      } catch (_) {}
     });
   }
 

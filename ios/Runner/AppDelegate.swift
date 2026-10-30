@@ -13,8 +13,10 @@ import FirebaseMessaging
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    // Required: creating a GoogleMap (Vero Ride) without this SIGABRTs on iOS.
-    // Info.plist GMSApiKey alone is not enough — the SDK must be initialized here.
+    // Maps + Firebase must be configured before any Flutter view uses them, but
+    // both are local/synchronous (plist + API key). Never wait on the network
+    // here — a stall before super.application leaves iPad on LaunchScreen forever
+    // (App Store Guideline 2.1).
     var mapsKey = (Bundle.main.object(forInfoDictionaryKey: "GMSApiKey") as? String)?
       .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     if mapsKey.isEmpty {
@@ -25,13 +27,18 @@ import FirebaseMessaging
       FirebaseApp.configure()
     }
 
-    // iOS push: show banners while app is foregrounded; register for APNs.
+    let launched = super.application(application, didFinishLaunchingWithOptions: launchOptions)
+
+    // iOS push: show banners while app is foregrounded. Defer APNs registration
+    // so it cannot block the first Flutter frame on iPadOS 27.
     if #available(iOS 10.0, *) {
       UNUserNotificationCenter.current().delegate = self
     }
-    application.registerForRemoteNotifications()
+    DispatchQueue.main.async {
+      application.registerForRemoteNotifications()
+    }
 
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    return launched
   }
 
   // UIScene lifecycle: iOS/iPadOS 27 will not show a window for apps without a

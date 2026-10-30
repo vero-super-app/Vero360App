@@ -5,8 +5,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 class AppVersionInfo {
   AppVersionInfo._();
 
-  static String version = '1.2.9';
-  static String buildNumber = '10026';
+  static String version = '1.3.2';
+  static String buildNumber = '10029';
   static bool ready = false;
 
   static Future<void>? _loading;

@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
@@ -39,6 +40,24 @@ bool get isFirebaseAppReady {
   }
 }
 
+/// Never throw `[core/no-app]` during launch. Returns null until Firebase is up.
+FirebaseAuth? tryFirebaseAuth() {
+  if (!isFirebaseAppReady) return null;
+  try {
+    return FirebaseAuth.instance;
+  } catch (_) {
+    return null;
+  }
+}
+
+User? tryFirebaseUser() {
+  try {
+    return tryFirebaseAuth()?.currentUser;
+  } catch (_) {
+    return null;
+  }
+}
+
 Future<bool>? _ensureInFlight;
 
 /// Safe to call from services before Auth / Firestore / Storage.
@@ -51,6 +70,18 @@ Future<bool> ensureFirebaseApp({
   if (_ensureInFlight != null) return _ensureInFlight!;
 
   _ensureInFlight = () async {
+    // iOS AppDelegate already calls FirebaseApp.configure(). Wait briefly for
+    // the Dart plugin to see that app instead of a second initializeApp, which
+    // can hang forever if the UIScene plugin registry is not ready yet.
+    if (!kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.iOS ||
+            defaultTargetPlatform == TargetPlatform.macOS)) {
+      for (var i = 0; i < 12 && !isFirebaseAppReady; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      if (isFirebaseAppReady) return true;
+    }
+
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         if (Firebase.apps.isEmpty) {

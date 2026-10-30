@@ -66,7 +66,13 @@ class _AuthGuardState extends State<AuthGuard> with WidgetsBindingObserver {
   }
 
   Future<void> _checkAuthStatus() async {
-    final loggedIn = await AuthHandler.isAuthenticated();
+    var loggedIn = false;
+    try {
+      loggedIn = await AuthHandler.isAuthenticated()
+          .timeout(const Duration(seconds: 2), onTimeout: () => false);
+    } catch (_) {
+      loggedIn = false;
+    }
 
     if (!mounted) return;
 

@@ -169,7 +169,7 @@ class MyBookingService {
         .map(BookingItem.fromJson)
         .toList();
 
-    // Guests: only paid / settled stays (createBooking runs before PayChangu; unpaid rows stay hidden).
+    // Guests: only paid / settled stays (createBooking runs before PawaPay; unpaid rows stay hidden).
     if (!isMerchant) {
       all = all.where((b) => b.includeInGuestMyBookings).toList();
     }
@@ -317,7 +317,7 @@ class MyBookingService {
     if (r.statusCode < 200 || r.statusCode >= 300) _bad(r);
   }
 
-  /// Marks stay as PAID on the server after PayChangu success.
+  /// Marks stay as PAID on the server after PawaPay success.
   Future<void> markBookingPaid({
     String? bookingId,
     String? bookingNumber,

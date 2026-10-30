@@ -14,7 +14,7 @@ import 'package:vero360_app/GernalServices/order_party_notification_service.dart
 import 'package:vero360_app/GernalServices/order_service.dart';
 import 'package:vero360_app/config/api_config.dart';
 
-/// Params for [OrderEscrowService.createHoldForAccommodationBooking] — ties PayChangu
+/// Params for [OrderEscrowService.createHoldForAccommodationBooking] — ties PawaPay
 /// success to host escrow shown on [MerchantWalletPage].
 class AccommodationEscrowParams {
   final String hostMerchantUid;
@@ -89,7 +89,6 @@ class OrderEscrowService {
       'paymentRail': bank ? 'bank_transfer' : 'pawapay',
       'paymentProvider': bank ? 'bank_transfer' : 'pawapay',
       'processingFeeAmount': bank ? 0 : processingFee,
-      'paychanguShareAmount': 0,
       'pawapayShareAmount': bank ? 0 : processingFee,
     };
   }
@@ -278,7 +277,7 @@ class OrderEscrowService {
     await markDelivered(oid);
   }
 
-  /// Escrow row for a paid accommodation booking (guest checkout via PayChangu).
+  /// Escrow row for a paid accommodation booking (guest checkout via PawaPay).
   /// Document id is derived from [params.bookingRef] so retries don’t duplicate.
   static Future<void> createHoldForAccommodationBooking({
     required String txRef,
@@ -402,7 +401,7 @@ class OrderEscrowService {
     return null;
   }
 
-  /// Payment tx_ref stored on the escrow hold (used for PayChangu refunds).
+  /// Payment tx_ref stored on the escrow hold (used for PawaPay refunds).
   static Future<String?> fetchTxRefForOrder(String orderId) async {
     final escrowDocId = await _resolveEscrowDocIdAny(orderId);
     if (escrowDocId == null) return null;

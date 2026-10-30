@@ -34,9 +34,13 @@ class GoogleMapsConfig {
     // Prefer local .env; fall back to committed .env.example (CI / missing local file).
     try {
       try {
-        await dotenv.load(fileName: '.env');
+        await dotenv
+            .load(fileName: '.env')
+            .timeout(const Duration(seconds: 1));
       } catch (_) {
-        await dotenv.load(fileName: '.env.example');
+        await dotenv
+            .load(fileName: '.env.example')
+            .timeout(const Duration(seconds: 1));
       }
       _apiKey = (dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '').trim();
     } catch (e) {

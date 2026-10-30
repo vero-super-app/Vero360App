@@ -11,7 +11,7 @@ import 'package:vero360_app/GernalServices/merchant_phone_resolver.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GernalServices/order_refund_service.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
-import 'package:vero360_app/GernalServices/paychangu_service.dart';
+import 'package:vero360_app/GernalServices/payments_service.dart';
 import 'package:vero360_app/utils/merchant_contact_display.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/order_message_buyer_button.dart';

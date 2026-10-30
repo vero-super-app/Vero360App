@@ -64,6 +64,18 @@ class DigitalProduct {
 
   final bool recommended;
 
+  /// Admin mapped this product to PrepaidForge SKUs (exact USD only).
+  final bool prepaidForgeEnabled;
+
+  /// Customer-facing redemption region, e.g. US.
+  final String? prepaidForgeRegion;
+
+  /// USD face value → PrepaidForge SKU.
+  final Map<String, String> prepaidForgeSkuByUsd;
+
+  /// TEXT PIN first; SCAN is an image download.
+  final String prepaidForgeCodeType;
+
   const DigitalProduct({
     required this.key,
     required this.name,
@@ -85,7 +97,31 @@ class DigitalProduct {
     this.planBadge = '',
     this.featureLines = const [],
     this.recommended = false,
+    this.prepaidForgeEnabled = false,
+    this.prepaidForgeRegion,
+    this.prepaidForgeSkuByUsd = const {},
+    this.prepaidForgeCodeType = 'TEXT',
   });
+
+  /// Hide the custom USD field when instant PIN delivery is mapped.
+  bool get locksCustomAmount =>
+      prepaidForgeEnabled && prepaidForgeSkuByUsd.isNotEmpty;
+
+  String? prepaidForgeSkuForUsd(num usd) {
+    if (!prepaidForgeEnabled) return null;
+    final rounded = usd.round();
+    final keys = <String>{
+      usd.toString(),
+      rounded.toString(),
+      usd.toStringAsFixed(0),
+      usd.toStringAsFixed(2),
+    };
+    for (final k in keys) {
+      final sku = prepaidForgeSkuByUsd[k]?.trim();
+      if (sku != null && sku.isNotEmpty) return sku;
+    }
+    return null;
+  }
 
   bool get usesAmountPicker =>
       fixedMwkPrice == null && !isPlanHub;
@@ -195,6 +231,10 @@ class DigitalProduct {
     String? planBadge,
     List<String>? featureLines,
     bool? recommended,
+    bool? prepaidForgeEnabled,
+    String? prepaidForgeRegion,
+    Map<String, String>? prepaidForgeSkuByUsd,
+    String? prepaidForgeCodeType,
   }) {
     return DigitalProduct(
       key: key,
@@ -220,6 +260,11 @@ class DigitalProduct {
       planBadge: planBadge ?? this.planBadge,
       featureLines: featureLines ?? this.featureLines,
       recommended: recommended ?? this.recommended,
+      prepaidForgeEnabled: prepaidForgeEnabled ?? this.prepaidForgeEnabled,
+      prepaidForgeRegion: prepaidForgeRegion ?? this.prepaidForgeRegion,
+      prepaidForgeSkuByUsd:
+          prepaidForgeSkuByUsd ?? this.prepaidForgeSkuByUsd,
+      prepaidForgeCodeType: prepaidForgeCodeType ?? this.prepaidForgeCodeType,
     );
   }
 }

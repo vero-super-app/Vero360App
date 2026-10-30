@@ -298,6 +298,9 @@ class DigitalServiceOrderService {
     final kind = isCrypto
         ? 'crypto'
         : (isSubscription ? 'subscription' : 'gift_card');
+    final pfSku = selectedUsd == null
+        ? null
+        : product.prepaidForgeSkuForUsd(selectedUsd);
     final doc = _col.doc();
     await doc.set({
       'productKey': product.key,
@@ -321,6 +324,13 @@ class DigitalServiceOrderService {
       'buyerPhone': buyerPhone,
       'platformFeeCredited': false,
       'source': 'app',
+      if (pfSku != null && pfSku.isNotEmpty) ...{
+        'fulfillmentMode': 'auto',
+        'fulfillmentProvider': 'prepaidforge',
+        'prepaidForgeSku': pfSku,
+        'prepaidForgeRegion': product.prepaidForgeRegion,
+        'prepaidForgeCodeType': product.prepaidForgeCodeType,
+      },
       if (payoutKyc != null) 'payoutKyc': {
         ...payoutKyc.toMap(),
         'uploadedAt': FieldValue.serverTimestamp(),

@@ -101,6 +101,7 @@ dependencies:
   # Local Database
   hive_ce: ^2.9.0
   hive_ce_flutter: ^2.2.0
+  universal_io: ^2.2.2
 
   # WebView
   webview_flutter: ^4.10.0
@@ -130,6 +131,11 @@ dependency_overrides:
 flutter_launcher_icons:
   android: true
   ios: true
+  web:
+    generate: true
+    image_path: "assets/icons/app_icon.png"
+    background_color: "#FF8A00"
+    theme_color: "#FF8A00"
   image_path: "assets/icons/app_icon.png"
   adaptive_icon_background: "#FFFFFF"
   adaptive_icon_foreground: "assets/icons/app_icon_foreground.png"

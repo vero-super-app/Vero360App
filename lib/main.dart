@@ -16,12 +16,11 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart'
-    as local_notif;
+import 'package:vero360_app/native/local_notifications.dart' as local_notif;
 
 // HTTP + prefs
 import 'package:http/http.dart' as http;
-import 'package:local_auth/local_auth.dart';
+import 'package:vero360_app/native/biometrics.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // Pages
@@ -67,8 +66,7 @@ import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:google_maps_flutter_android/google_maps_flutter_android.dart';
-import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platform_interface.dart';
+import 'package:vero360_app/native/android_maps.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/utils/app_version_info.dart';
 import 'package:vero360_app/utils/low_ram_android.dart';
@@ -85,26 +83,7 @@ Widget _androidGpuSoftened(BuildContext context, Widget? child) {
   return child ?? const SizedBox.shrink();
 }
 
-/// Android Maps: prefer texture composition (default). Avoid forcing hybrid
-/// surface mode unless needed — hybrid + clipped parents blanks many OEM maps.
-Future<void> _configureAndroidGoogleMaps() async {
-  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
-  try {
-    final mapsImplementation = GoogleMapsFlutterPlatform.instance;
-    if (mapsImplementation is! GoogleMapsFlutterAndroid) return;
-    try {
-      await mapsImplementation.initializeWithRenderer(AndroidMapRenderer.latest);
-    } catch (_) {
-      // Already initialized or unsupported.
-    }
-    // Texture Layer Hybrid Composition (false) is the current recommended default.
-    mapsImplementation.useAndroidViewSurface = false;
-  } catch (e) {
-    if (kDebugMode) {
-      debugPrint('[GoogleMaps] Android configure failed: $e');
-    }
-  }
-}
+Future<void> _configureAndroidGoogleMaps() => configureAndroidGoogleMaps();
 
 bool _isPasswordResetDeepLink(Uri uri) {
   final oobCode = uri.queryParameters['oobCode'];
@@ -269,7 +248,7 @@ Future<bool> _ensureFirebaseHealthy({
         final _ = FirebaseAuth.instance.currentUser;
         Firebase.app();
 
-        if (!_fcmBackgroundHandlerRegistered) {
+        if (!_fcmBackgroundHandlerRegistered && !kIsWeb) {
           FirebaseMessaging.onBackgroundMessage(
             _firebaseMessagingBackgroundHandler,
           );

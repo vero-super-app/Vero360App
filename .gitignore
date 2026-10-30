@@ -37,6 +37,7 @@ uploads/
 .pub-cache/
 .pub/
 /build/
+/hosting/app/
 
 # Symbolication related
 app.*.symbols

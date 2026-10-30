@@ -1,20 +1,20 @@
-// lib/Pages/profile_page.dart
+﻿// lib/Pages/profile_page.dart
 import 'dart:async'; // <-- for FutureOr
 import 'dart:convert';
-import 'dart:io';
+import 'package:universal_io/io.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 
-// ✅ add MIME + MediaType for correct multipart content-type
+// âœ… add MIME + MediaType for correct multipart content-type
 import 'package:mime/mime.dart' as mime;
 import 'package:http_parser/http_parser.dart' as http_parser;
 import 'package:vero360_app/Home/notifications_page.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 
-// ✅ use your existing API base resolver (unchanged)
+// âœ… use your existing API base resolver (unchanged)
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 
@@ -70,7 +70,7 @@ class _ProfilePageState extends State<ProfilePage> {
   String phone = "No Phone";
   String address = "No Address";
   String profileUrl = "";
-  /// Local disk path for avatar — preferred over network when present.
+  /// Local disk path for avatar â€” preferred over network when present.
   String? _localPhotoPath;
 
   bool _loading = false;
@@ -81,7 +81,7 @@ class _ProfilePageState extends State<ProfilePage> {
   int _profileFetchGen = 0;
   final _driverService = DriverService();
 
-  // demo wallet figures – replace with real values if you have them
+  // demo wallet figures â€“ replace with real values if you have them
   double balance = 450;
   double cashback = 23;
 
@@ -1095,7 +1095,7 @@ class _ProfilePageState extends State<ProfilePage> {
                 title: const Text('Remove current photo'),
                 onTap: () async {
                   Navigator.pop(context);
-                  await _deleteProfilePicture(); // ← calls backend & clears local
+                  await _deleteProfilePicture(); // â† calls backend & clears local
                 },
               ),
           ],
@@ -1153,7 +1153,7 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   /// POST $base/users/me/profile-picture (preferred).
-  /// Fallback: POST $base/upload → PUT $base/users/me { profilepicture: url }
+  /// Fallback: POST $base/upload â†’ PUT $base/users/me { profilepicture: url }
   Future<void> _uploadProfilePicture(XFile picked) async {
     final token = await _getAuthToken();
     if (token.isEmpty) {
@@ -1442,7 +1442,7 @@ class _ProfilePageState extends State<ProfilePage> {
       ),
     );
 
-    // Navy banner card — matches merchant dashboard profile header.
+    // Navy banner card â€” matches merchant dashboard profile header.
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
       child: Container(
@@ -1896,7 +1896,7 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
             _ordersQuickActions(),
             _otherDetailsGrid(),
-            // 👉 LATEST ARRIVALS (API)
+            // ðŸ‘‰ LATEST ARRIVALS (API)
             const LatestArrivalsSection(),
             const SizedBox(height: 16),
           ],

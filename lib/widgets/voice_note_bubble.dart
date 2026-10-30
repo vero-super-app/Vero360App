@@ -1,5 +1,5 @@
-import 'dart:async';
-import 'dart:io';
+﻿import 'dart:async';
+import 'package:universal_io/io.dart';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;

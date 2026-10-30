@@ -1,6 +1,6 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'package:universal_io/io.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -143,7 +143,7 @@ class MyBookingService {
 
   /* --------------------- public API --------------------- */
 
-  // Chooses the right “me” endpoint by role.
+  // Chooses the right â€œmeâ€ endpoint by role.
   // Customer:  GET /bookings/me
   // Merchant:  GET /bookings/merchant/me   (mirror of your orders pattern)
   Future<List<BookingItem>> getMyBookings({BookingStatus? status}) async {
@@ -187,7 +187,7 @@ class MyBookingService {
     return getGuestMyBookings();
   }
 
-  /// Guest “My bookings” — always `/bookings/me`, merges local paid cache, prunes when API syncs.
+  /// Guest â€œMy bookingsâ€ â€” always `/bookings/me`, merges local paid cache, prunes when API syncs.
   Future<List<BookingItem>> getGuestMyBookings() async {
     List<BookingItem> apiRaw = [];
     try {
@@ -263,7 +263,7 @@ class MyBookingService {
   }
 
   /// Incoming stays for **this user as host** (`GET /vero/bookings/merchant/me`).
-  /// Use from the accommodation merchant dashboard — do not rely on [_isMerchant] prefs/JWT,
+  /// Use from the accommodation merchant dashboard â€” do not rely on [_isMerchant] prefs/JWT,
   /// or hosts may incorrectly hit `/bookings/me` and see an empty list.
   Future<List<BookingItem>> getMerchantIncomingBookings({BookingStatus? status}) async {
     final qp = status != null ? {'status': bookingStatusToApi(status)} : null;
@@ -291,7 +291,7 @@ class MyBookingService {
     return all;
   }
 
-  // Create, update, delete remain the same — role is typically enforced by the server.
+  // Create, update, delete remain the same â€” role is typically enforced by the server.
   Future<BookingItem> createBooking(BookingCreatePayload payload,
       {String? overridePath}) async {
     final u = await _uri(overridePath ?? '/bookings');
@@ -343,7 +343,7 @@ class MyBookingService {
     if (r.statusCode < 200 || r.statusCode >= 300) _bad(r);
   }
 
-  /// `DELETE /vero/bookings/:id` — server may return 204 No Content.
+  /// `DELETE /vero/bookings/:id` â€” server may return 204 No Content.
   Future<void> deleteBooking(String id) async {
     final u = await _uri('/bookings/$id');
     final h = await _headers();

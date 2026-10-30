@@ -1,6 +1,6 @@
-// lib/Pages/video_player_page.dart
+﻿// lib/Pages/video_player_page.dart
 import 'dart:async';
-import 'dart:io';
+import 'package:universal_io/io.dart';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';

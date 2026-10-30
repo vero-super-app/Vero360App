@@ -1,4 +1,4 @@
-// lib/services/notification_service.dart
+﻿// lib/services/notification_service.dart
 import 'dart:async';
 import 'dart:convert';
 
@@ -8,7 +8,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart'
     show kDebugMode, kIsWeb, defaultTargetPlatform, TargetPlatform, debugPrint;
 import 'package:flutter/material.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:vero360_app/native/local_notifications.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -193,7 +193,7 @@ class NotificationService {
     // 3. Foreground message handler
     FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
 
-    // 4. App opened from notification (background → foreground)
+    // 4. App opened from notification (background â†’ foreground)
     FirebaseMessaging.onMessageOpenedApp.listen(_handleMessageOpenedApp);
 
     // 5. Get initial message (app launched from terminated state via notification)
@@ -230,7 +230,7 @@ class NotificationService {
           }),
         );
       } else {
-        // Signed out elsewhere / session ended — drop in-memory list + listeners.
+        // Signed out elsewhere / session ended â€” drop in-memory list + listeners.
         // Full FCM unbind is done in [clearSessionOnLogout] before signOut.
         _syncOrderPartyAlertListener(null);
         _syncChatAlertListener(null);
@@ -289,7 +289,7 @@ class NotificationService {
             );
           } catch (_) {}
         }
-        // Badge / inbox count only — message content stays in Vero360 Team chat.
+        // Badge / inbox count only â€” message content stays in Vero360 Team chat.
         await NotificationStore.instance.addNotification(
           id: 'party_${change.doc.id}',
           title: title,
@@ -316,7 +316,7 @@ class NotificationService {
 
   /// Incoming chat messages published by [ChatNotificationService] for this user.
   ///
-  /// Consume + refresh only — do not show a second local banner here.
+  /// Consume + refresh only â€” do not show a second local banner here.
   /// Foreground banners come from WebSocket; background/killed from FCM
   /// (`onChatMessageAlertCreated`). Showing here duplicated those paths.
   void _syncChatAlertListener(User? user) {
@@ -465,20 +465,20 @@ class NotificationService {
       );
 
       if (res.statusCode >= 200 && res.statusCode < 300) {
-        // Success — no console log (avoids leaking push-registration state).
+        // Success â€” no console log (avoids leaking push-registration state).
       } else if (res.statusCode == 409) {
-        // Already registered — silent.
+        // Already registered â€” silent.
       } else if (kDebugMode) {
         debugPrint('FCM token register failed: ${res.statusCode}');
       }
     } catch (_) {
-      // Silent — avoid leaking auth/network details to logcat.
+      // Silent â€” avoid leaking auth/network details to logcat.
     }
   }
 
-  // ───────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   //  Handlers
-  // ───────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /// Call **before** FirebaseAuth.signOut so we can remove this device's FCM
   /// token from the leaving account. Prevents pushes for account A arriving
@@ -543,7 +543,7 @@ class NotificationService {
       targets.add(uidField);
     }
 
-    // No explicit Firebase recipient — accept only while store is bound to current user.
+    // No explicit Firebase recipient â€” accept only while store is bound to current user.
     if (targets.isEmpty) {
       final bound = (NotificationStore.instance.boundUid ?? '').trim();
       return bound.isEmpty || bound == current;
@@ -731,7 +731,7 @@ class NotificationService {
       }
     }
 
-    // User tapped the notification body → navigate
+    // User tapped the notification body â†’ navigate
     if (data != null) instance._navigateBasedOnPayload(data);
   }
 
@@ -759,7 +759,7 @@ class NotificationService {
       );
 
       if (res.statusCode >= 200 && res.statusCode < 300) {
-        if (kDebugMode) debugPrint("Notification reply sent ✅");
+        if (kDebugMode) debugPrint("Notification reply sent âœ…");
         _showLocalNotification(
           id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
           title: 'Reply sent',
@@ -797,7 +797,7 @@ class NotificationService {
       );
 
       if (res.statusCode >= 200 && res.statusCode < 300) {
-        if (kDebugMode) debugPrint("Notification reaction sent ✅");
+        if (kDebugMode) debugPrint("Notification reaction sent âœ…");
         _showLocalNotification(
           id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
           title: 'Liked',
@@ -812,9 +812,9 @@ class NotificationService {
     }
   }
 
-  // ───────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   //  Display local notification
-  // ───────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   Future<void> _showLocalNotification({
     required int id,
@@ -856,9 +856,9 @@ class NotificationService {
     );
   }
 
-  // ───────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   //  Navigation logic (customize based on your needs)
-  // ───────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /// Routes the user from an in-app or push notification payload.
   static void navigateFromPayload(
@@ -893,7 +893,7 @@ class NotificationService {
       (data['peerUserId'] ?? data['senderId'] ?? '').toString().trim(),
     );
 
-    // Notification-centre payloads often lack the name — resolve from inbox cache.
+    // Notification-centre payloads often lack the name â€” resolve from inbox cache.
     final cached = BackendChatService.findCachedThreadById(chatId);
     if (cached != null) {
       final resolved = BackendChatService.cachedPeerLabelForChat(chatId);
@@ -1021,7 +1021,7 @@ class NotificationService {
       case 'new_ride':
         final rideId = (data['rideId'] ?? data['id'] ?? '').toString().trim();
         if (rideId.isEmpty) {
-          if (kDebugMode) debugPrint("→ new_ride missing rideId");
+          if (kDebugMode) debugPrint("â†’ new_ride missing rideId");
           break;
         }
         if (_openedRideOfferId == rideId &&
@@ -1032,7 +1032,7 @@ class NotificationService {
         }
         _openedRideOfferId = rideId;
         _openedRideOfferAt = DateTime.now();
-        if (kDebugMode) debugPrint("→ Open driver ride accept ($rideId)");
+        if (kDebugMode) debugPrint("â†’ Open driver ride accept ($rideId)");
         navigator.push(MaterialPageRoute(
           builder: (_) => DriverIncomingRideFromNotificationPage(
             rideId: rideId,
@@ -1042,7 +1042,7 @@ class NotificationService {
         break;
 
       case 'ride_update':
-        if (kDebugMode) debugPrint("→ Open ride notifications");
+        if (kDebugMode) debugPrint("â†’ Open ride notifications");
         navigator.push(MaterialPageRoute(
           builder: (_) => const NotificationsPage(),
         ));
@@ -1053,10 +1053,10 @@ class NotificationService {
         final chatId =
             (data['chatId'] ?? data['threadId'] ?? '').toString().trim();
         if (chatId.isNotEmpty) {
-          if (kDebugMode) debugPrint('→ Open chat thread ($chatId)');
+          if (kDebugMode) debugPrint('â†’ Open chat thread ($chatId)');
           _openChatThread(navigator, data, chatId);
         } else {
-          if (kDebugMode) debugPrint('→ Open chat list');
+          if (kDebugMode) debugPrint('â†’ Open chat list');
           navigator.push(
             MaterialPageRoute(builder: (_) => const ChatListPage()),
           );
@@ -1071,7 +1071,7 @@ class NotificationService {
 
       case 'refund_request':
       case 'refund_update':
-        if (kDebugMode) debugPrint('→ Open refund');
+        if (kDebugMode) debugPrint('â†’ Open refund');
         final refundOrderId = data['orderId']?.toString();
         if (refundOrderId != null && refundOrderId.trim().isNotEmpty) {
           navigator.push(
@@ -1091,7 +1091,7 @@ class NotificationService {
         break;
 
       case 'order_update':
-        if (kDebugMode) debugPrint("→ Open order");
+        if (kDebugMode) debugPrint("â†’ Open order");
         final orderId = data['orderId']?.toString();
         final orderNumber = data['orderNumber']?.toString();
         final status = data['status']?.toString();
@@ -1106,7 +1106,7 @@ class NotificationService {
 
       case 'food_order_placed':
       case 'food_sent':
-        if (kDebugMode) debugPrint('→ Open food my orders');
+        if (kDebugMode) debugPrint('â†’ Open food my orders');
         navigator.push(
           MaterialPageRoute(builder: (_) => const FoodMyOrdersPage()),
         );
@@ -1114,26 +1114,26 @@ class NotificationService {
 
       case 'food_order':
       case 'new_food_order':
-        if (kDebugMode) debugPrint("→ Open food merchant dashboard");
+        if (kDebugMode) debugPrint("â†’ Open food merchant dashboard");
         final email = FirebaseAuth.instance.currentUser?.email ?? '';
         openVeroMainShell(navigator.context, email: email, tabIndex: 4);
         break;
 
       case 'story_posted':
       case 'story_liked':
-        if (kDebugMode) debugPrint('→ Open home for story');
+        if (kDebugMode) debugPrint('â†’ Open home for story');
         final storyEmail = FirebaseAuth.instance.currentUser?.email ?? '';
         openVeroMainShell(navigator.context, email: storyEmail, tabIndex: 0);
         break;
 
       case 'new_review':
-        if (kDebugMode) debugPrint('→ Open merchant reviews / dashboard');
+        if (kDebugMode) debugPrint('â†’ Open merchant reviews / dashboard');
         final reviewEmail = FirebaseAuth.instance.currentUser?.email ?? '';
         openVeroMainShell(navigator.context, email: reviewEmail, tabIndex: 4);
         break;
 
       case 'marketplace_moderation':
-        if (kDebugMode) debugPrint('→ Open marketplace listing (moderation)');
+        if (kDebugMode) debugPrint('â†’ Open marketplace listing (moderation)');
         final modStatus =
             (data['status'] ?? '').toString().trim().toLowerCase();
         final modTitle =
@@ -1161,7 +1161,7 @@ class NotificationService {
         break;
 
       case 'accommodation_booking':
-        if (kDebugMode) debugPrint('→ Open stay bookings');
+        if (kDebugMode) debugPrint('â†’ Open stay bookings');
         navigator.push(
           MaterialPageRoute(
             builder: (_) => const AccommodationMainPage(initialTabIndex: 1),
@@ -1172,21 +1172,21 @@ class NotificationService {
       case 'promo_digest':
       case 'promotion':
       case 'promotions':
-        if (kDebugMode) debugPrint("→ Open promotions");
+        if (kDebugMode) debugPrint("â†’ Open promotions");
         unawaited(_openPromotionTarget(navigator, data));
         break;
 
       case 'arrivals_digest':
       case 'latest_arrivals':
       case 'todays_arrivals':
-        if (kDebugMode) debugPrint("→ Open today's arrivals");
+        if (kDebugMode) debugPrint("â†’ Open today's arrivals");
         unawaited(_openArrivalTarget(navigator, data));
         break;
 
       case 'marketplace_digest':
       case 'marketplace':
       case 'new_product':
-        if (kDebugMode) debugPrint("→ Open marketplace");
+        if (kDebugMode) debugPrint("â†’ Open marketplace");
         unawaited(_openMarketplaceTarget(navigator, data));
         break;
 
@@ -1214,20 +1214,20 @@ class NotificationService {
 
       case 'app_update':
       case 'store_update':
-        if (kDebugMode) debugPrint('→ Open store for app update');
+        if (kDebugMode) debugPrint('â†’ Open store for app update');
         unawaited(_openAppStoreUpdate());
         break;
 
       case 'vero_team':
       case 'vero360_team':
-        if (kDebugMode) debugPrint('→ Open Vero360 Team chat');
+        if (kDebugMode) debugPrint('â†’ Open Vero360 Team chat');
         navigator.push(
           MaterialPageRoute(builder: (_) => const VeroTeamChatPage()),
         );
         break;
 
       case 'engagement':
-        // Generic keep-alive — route by badge / ids if present.
+        // Generic keep-alive â€” route by badge / ids if present.
         if ((data['promoId']?.toString() ?? '').trim().isNotEmpty ||
             badgeRoute == NotificationStore.kBadgePromotions) {
           unawaited(_openPromotionTarget(navigator, data));
@@ -1273,7 +1273,7 @@ class NotificationService {
             .isNotEmpty) {
           unawaited(_openMarketplaceTarget(navigator, data));
         } else if (kDebugMode) {
-          debugPrint('→ No route for notification type=$type');
+          debugPrint('â†’ No route for notification type=$type');
         }
     }
   }
@@ -1283,10 +1283,10 @@ class NotificationService {
     try {
       final ok = await AppUpdateChecker.openStoreForThisPlatform();
       if (!ok && kDebugMode) {
-        debugPrint('→ Could not open store for app update');
+        debugPrint('â†’ Could not open store for app update');
       }
     } catch (e) {
-      if (kDebugMode) debugPrint('→ openStoreForThisPlatform failed: $e');
+      if (kDebugMode) debugPrint('â†’ openStoreForThisPlatform failed: $e');
     }
   }
 
@@ -1601,11 +1601,11 @@ class NotificationService {
       title = 'Welcome to Vero accommodation, $safeName!';
       body =
           'Your merchant account is ready. List your property, manage guest bookings, '
-          'handle payments, and grow your stay business — all from this app.';
+          'handle payments, and grow your stay business â€” all from this app.';
     } else if (normalizedRole == 'merchant' && normalizedService == 'food') {
       title = 'Welcome to Vero food & restaurant, $safeName!';
       body =
-          'Set up your restaurant, post food, manage orders, and accept payments — '
+          'Set up your restaurant, post food, manage orders, and accept payments â€” '
           'all from this app.';
     } else if (normalizedRole == 'merchant') {
       title = 'Welcome to Vero360 Merchant Account, $safeName!';
@@ -1666,7 +1666,7 @@ class NotificationService {
       if (cin.isNotEmpty) 'Check-in $cin',
       if (durationLabel.isNotEmpty) durationLabel,
     ];
-    final staySeg = stayBits.isEmpty ? '' : ' ${stayBits.join(' · ')}.';
+    final staySeg = stayBits.isEmpty ? '' : ' ${stayBits.join(' Â· ')}.';
 
     await showManualNotification(
       title: 'Stay booked',
@@ -1695,7 +1695,7 @@ class NotificationService {
       );
     } else if (kDebugMode) {
       debugPrint(
-        '[NotificationService] No hostMerchantUid on listing — host will not get '
+        '[NotificationService] No hostMerchantUid on listing â€” host will not get '
         'Firestore booking alert. Expose host Firebase UID on GET /vero/accommodations.',
       );
     }

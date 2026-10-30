@@ -22,10 +22,20 @@ const FirebaseOptions kFirebaseOptionsIos = FirebaseOptions(
   iosBundleId: 'com.vero265.app',
 );
 
+/// Same project as the native apps. The PWA is an extra client, not a replacement.
+const FirebaseOptions kFirebaseOptionsWeb = FirebaseOptions(
+  apiKey: 'AIzaSyCQ5_4N2J_xwKqmY-lAa8-ifRxovoRTTYk',
+  authDomain: 'vero360app-ca423.firebaseapp.com',
+  projectId: 'vero360app-ca423',
+  storageBucket: 'vero360app-ca423.firebasestorage.app',
+  messagingSenderId: '1010595167807',
+  appId: '1:1010595167807:android:f63d7c7959bdb2891dc28a',
+);
+
 FirebaseOptions get kFirebaseOptions {
-  if (!kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.iOS ||
-          defaultTargetPlatform == TargetPlatform.macOS)) {
+  if (kIsWeb) return kFirebaseOptionsWeb;
+  if (defaultTargetPlatform == TargetPlatform.iOS ||
+      defaultTargetPlatform == TargetPlatform.macOS) {
     return kFirebaseOptionsIos;
   }
   return kFirebaseOptionsAndroid;

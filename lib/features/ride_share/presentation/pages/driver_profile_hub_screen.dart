@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'package:universal_io/io.dart';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -30,7 +30,7 @@ class DriverProfileHubScreen extends ConsumerStatefulWidget {
 
 class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     with SingleTickerProviderStateMixin {
-  // Calm HCI palette — orange only as accent / CTA.
+  // Calm HCI palette â€” orange only as accent / CTA.
   static const Color _accent = Color(0xFFFF8A00);
   static const Color _ink = Color(0xFF162033);
   static const Color _muted = Color(0xFF6B7280);
@@ -92,7 +92,7 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
 
   void _reload() => ref.invalidate(myDriverProfileProvider);
 
-  /// Strict admin-verified flag — never treat missing/1/status as verified.
+  /// Strict admin-verified flag â€” never treat missing/1/status as verified.
   bool _isTrulyVerified(Map<String, dynamic> source) {
     final v = source['isVerified'] ?? source['verified'];
     if (v == true) return true;
@@ -154,7 +154,7 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
 
   String _date(dynamic v) {
     final parsed = tryParseFleetDate(v);
-    if (parsed == null || parsed.year <= 1901) return '—';
+    if (parsed == null || parsed.year <= 1901) return 'â€”';
     return DateFormat.yMMMd().format(parsed);
   }
 
@@ -279,7 +279,7 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
             icon: Icons.badge_outlined,
             rows: [
               _InfoRow('Date of birth', _date(driver['dateOfBirth'])),
-              _InfoRow('Status', (driver['status'] ?? '—').toString()),
+              _InfoRow('Status', (driver['status'] ?? 'â€”').toString()),
             ],
           ),
           const SizedBox(height: 12),
@@ -295,7 +295,7 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
                 'Account number',
                 _maskAccount(driver['bankAccountNumber']),
               ),
-              _InfoRow('Bank code', (driver['bankCode'] ?? '—').toString()),
+              _InfoRow('Bank code', (driver['bankCode'] ?? 'â€”').toString()),
             ],
           ),
           if ((driver['bio'] ?? '').toString().trim().isNotEmpty) ...[
@@ -845,7 +845,7 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
                 _metaChip(Icons.category_outlined, taxiClass),
                 _metaChip(
                   Icons.event_seat_outlined,
-                  '${taxi['seats'] ?? '—'} seats',
+                  '${taxi['seats'] ?? 'â€”'} seats',
                 ),
                 if ((taxi['color'] ?? '').toString().isNotEmpty)
                   _metaChip(
@@ -1096,7 +1096,7 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     final s = (value ?? '').toString();
     if (s.isEmpty) return 'Not set';
     if (s.length <= 4) return s;
-    return '•••• ${s.substring(s.length - 4)}';
+    return 'â€¢â€¢â€¢â€¢ ${s.substring(s.length - 4)}';
   }
 
   Future<void> _openEditDriver(Map<String, dynamic> driver) async {

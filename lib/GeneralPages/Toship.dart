@@ -1,7 +1,7 @@
-// address.dart
+﻿// address.dart
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'package:universal_io/io.dart';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -645,7 +645,7 @@ class _ToShipPageState extends State<ToShipPage> {
         tracking: tracking ?? '',
       );
 
-      // For now we map "shipped" → delivered in the existing enum.
+      // For now we map "shipped" â†’ delivered in the existing enum.
       await _svc.updateStatus(o.id, OrderStatus.delivered);
       try {
         final esc = await OrderEscrowService.fetchEscrow(o.id);
@@ -704,7 +704,7 @@ class _ToShipPageState extends State<ToShipPage> {
       ToastHelper.showCustomToast(
         context,
         isStorage
-            ? 'Photo upload failed. Enable Firebase Storage in Console (Build → Storage → Get started) so proof can be sent to the buyer.'
+            ? 'Photo upload failed. Enable Firebase Storage in Console (Build â†’ Storage â†’ Get started) so proof can be sent to the buyer.'
             : 'Could not update order: ${e.message ?? e.code}',
         isSuccess: false,
         errorMessage: 'Order update failed',
@@ -751,7 +751,7 @@ class _ToShipPageState extends State<ToShipPage> {
     try {
       await _marketplaceService.markItemSold(itemId);
     } catch (e, st) {
-      // Listing may already be inactive, wrong id, or API 404 — delivery still succeeded.
+      // Listing may already be inactive, wrong id, or API 404 â€” delivery still succeeded.
       debugPrint('[ToShip] markItemSold failed for listing $itemId: $e\n$st');
     }
   }
@@ -806,7 +806,7 @@ class _ToShipPageState extends State<ToShipPage> {
     );
   }
 
-  /// Shown at the top of Send parcels so merchants follow courier → receipt → tracking.
+  /// Shown at the top of Send parcels so merchants follow courier â†’ receipt â†’ tracking.
   Widget _shippingInstructionsCard() {
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
@@ -885,7 +885,7 @@ class _ToShipPageState extends State<ToShipPage> {
     final addressText = [
       if ((o.addressCity ?? '').isNotEmpty) o.addressCity,
       if ((o.addressDescription ?? '').isNotEmpty) o.addressDescription,
-    ].whereType<String>().join(' — ');
+    ].whereType<String>().join(' â€” ');
     final hasAddress = addressText.isNotEmpty;
 
     return Container(
@@ -961,14 +961,14 @@ class _ToShipPageState extends State<ToShipPage> {
           _infoRow(
             icon: Icons.person_outline,
             text: (o.customerName ?? '').trim().isEmpty
-                ? 'Name: —'
+                ? 'Name: â€”'
                 : 'Name: ${o.customerName}',
           ),
           const SizedBox(height: 6),
           _infoRow(
             icon: Icons.phone_outlined,
             text: _displayBuyerPhone(o) == 'No phone number'
-                ? 'Phone: —'
+                ? 'Phone: â€”'
                 : 'Phone: ${_displayBuyerPhone(o)}',
           ),
           const SizedBox(height: 6),
@@ -1015,13 +1015,13 @@ class _ToShipPageState extends State<ToShipPage> {
           _infoRow(
             icon: Icons.store_mall_directory_outlined,
             text:
-                '${o.merchantName ?? 'Merchant'}  •  ${_displayMerchantPhone(o)}',
+                '${o.merchantName ?? 'Merchant'}  â€¢  ${_displayMerchantPhone(o)}',
           ),
           const SizedBox(height: 8),
           Row(
             children: [
               Text(
-                '${_money.format(o.price)} × ${o.quantity}',
+                '${_money.format(o.price)} Ã— ${o.quantity}',
                 style: const TextStyle(
                   color: Color(0xFF222222),
                   fontWeight: FontWeight.w600,
@@ -1200,7 +1200,7 @@ class _ToShipPageState extends State<ToShipPage> {
               onChanged: (v) => setState(() => _searchQuery = v),
               textInputAction: TextInputAction.search,
               decoration: OrderListHelpers.searchDecoration(
-                hint: 'Search by order number…',
+                hint: 'Search by order numberâ€¦',
                 hasQuery: _searchQuery.isNotEmpty,
                 onClear: () {
                   _searchController.clear();

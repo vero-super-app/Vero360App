@@ -1,4 +1,4 @@
-// lib/Pages/details_page.dart
+﻿// lib/Pages/details_page.dart
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -16,7 +16,7 @@ import 'package:jwt_decoder/jwt_decoder.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:intl/intl.dart';
 import 'package:http/http.dart' as http;
-import 'package:saver_gallery/saver_gallery.dart';
+import 'package:vero360_app/native/gallery_saver.dart';
 
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 import 'package:vero360_app/GeneralModels/chat_product_context.dart';
@@ -140,7 +140,7 @@ Widget _buildMarketplaceImage(String src, {BoxFit fit = BoxFit.cover}) {
 }
 
 class _DetailsPageState extends State<DetailsPage> {
-  // ── Brand (UI only)
+  // â”€â”€ Brand (UI only)
   static const Color _brandOrange = Color(0xFFFF8A00);
   static const Color _brandSoft = Color(0xFFFFE8CC);
   static const Color _bg = Color(0xFFF7F8FA);
@@ -225,7 +225,7 @@ class _DetailsPageState extends State<DetailsPage> {
       image: marketplaceShareImageUrl(item.image, item.gallery),
     );
     Share.share(
-      '$merchantName is selling this on Vero360 — ${item.name} — MWK $priceStr\n$url',
+      '$merchantName is selling this on Vero360 â€” ${item.name} â€” MWK $priceStr\n$url',
     );
   }
 
@@ -644,7 +644,7 @@ class _DetailsPageState extends State<DetailsPage> {
   }
 
   String _fmtRating(double? r) {
-    if (r == null) return '—';
+    if (r == null) return 'â€”';
     final whole = r.truncateToDouble();
     return r == whole ? r.toStringAsFixed(0) : r.toStringAsFixed(1);
   }
@@ -869,7 +869,7 @@ class _DetailsPageState extends State<DetailsPage> {
             ),
             const SizedBox(height: 6),
             Text(
-              (businessDesc ?? '').trim().isNotEmpty ? businessDesc!.trim() : '—',
+              (businessDesc ?? '').trim().isNotEmpty ? businessDesc!.trim() : 'â€”',
               style: const TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
@@ -1063,7 +1063,7 @@ class _DetailsPageState extends State<DetailsPage> {
         Expanded(
           flex: 3,
           child: Text(
-            (value ?? '').trim().isEmpty ? '—' : value!.trim(),
+            (value ?? '').trim().isEmpty ? 'â€”' : value!.trim(),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.right,
@@ -1138,7 +1138,7 @@ class _DetailsPageState extends State<DetailsPage> {
             merchantId: item.merchantId,
           )) {
         throw Exception(
-          'This is your own listing — you cannot chat with yourself😂😂.',
+          'This is your own listing â€” you cannot chat with yourselfðŸ˜‚ðŸ˜‚.',
         );
       }
 
@@ -1176,7 +1176,7 @@ class _DetailsPageState extends State<DetailsPage> {
         } on TimeoutException {
           // Continue into chat UI; page awaits the same in-flight future.
         } catch (e) {
-          // Hard failure before navigation — surface on details page.
+          // Hard failure before navigation â€” surface on details page.
           rethrow;
         }
       } else {
@@ -1238,7 +1238,7 @@ class _DetailsPageState extends State<DetailsPage> {
                 ? raw
                 : raw.contains('Failed to create chat') ||
                         raw.contains('User ') && raw.contains('not found')
-                    ? 'Seller chat is unavailable — this seller\'s account is not linked on the server yet. Ask them to open the merchant dashboard once while logged in.'
+                    ? 'Seller chat is unavailable â€” this seller\'s account is not linked on the server yet. Ask them to open the merchant dashboard once while logged in.'
                     : raw;
         _toast(message, Icons.error, Colors.red);
       }
@@ -1247,7 +1247,7 @@ class _DetailsPageState extends State<DetailsPage> {
     }
   }
 
-  /// Navigate to all products from this merchant (instant — no driver check).
+  /// Navigate to all products from this merchant (instant â€” no driver check).
   void _openMerchantProducts({
     required String merchantId,
     required String merchantName,
@@ -1576,7 +1576,7 @@ class _DetailsPageState extends State<DetailsPage> {
                 Expanded(
                   child: Text(
                     item.createdAt != null
-                        ? 'Posted by $merchantDisplayName • ${_formatTimeAgo(item.createdAt!)}'
+                        ? 'Posted by $merchantDisplayName â€¢ ${_formatTimeAgo(item.createdAt!)}'
                         : 'Posted by $merchantDisplayName',
                     style: TextStyle(
                       fontSize: 12,
@@ -1617,7 +1617,7 @@ class _DetailsPageState extends State<DetailsPage> {
               )
             : const Icon(Icons.chat_bubble_outline_rounded),
         label: Text(
-          _openingChat ? 'Opening chat…' : 'Chat with seller',
+          _openingChat ? 'Opening chatâ€¦' : 'Chat with seller',
           style: const TextStyle(fontWeight: FontWeight.w700),
         ),
       ),
@@ -2172,7 +2172,7 @@ class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
                           child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                         )
                       : const Icon(Icons.download_rounded),
-                  label: Text(_saving ? 'Saving…' : 'Download'),
+                  label: Text(_saving ? 'Savingâ€¦' : 'Download'),
                 ),
               ),
             ),

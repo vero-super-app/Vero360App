@@ -33,7 +33,9 @@
       { "source": "/marketplace", "destination": "/open.html" },
       { "source": "/marketplace/**", "destination": "/open.html" },
       { "source": "/food", "destination": "/open.html" },
-      { "source": "/food/**", "destination": "/open.html" }
+      { "source": "/food/**", "destination": "/open.html" },
+      { "source": "/app", "destination": "/app/index.html" },
+      { "source": "/app/**", "destination": "/app/index.html" }
     ]
   }
 }

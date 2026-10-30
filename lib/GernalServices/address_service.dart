@@ -1,7 +1,7 @@
-// lib/services/address_service.dart
+﻿// lib/services/address_service.dart
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'package:universal_io/io.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GeneralModels/address_model.dart';
@@ -138,7 +138,7 @@ class AddressService {
     }
   }
 
-  /// Fast default for checkout: memory → disk → null (never waits on API).
+  /// Fast default for checkout: memory â†’ disk â†’ null (never waits on API).
   Future<Address?> getCachedDefaultAddress() async {
     final mem = peekDefaultAddress();
     if (mem != null) return mem;

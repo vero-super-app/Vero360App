@@ -1,6 +1,6 @@
-
+﻿
 import 'dart:async';
-import 'dart:io' show File;
+import 'package:universal_io/io.dart' show File;
 import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -151,13 +151,13 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
   StreamSubscription<ChatPeerReceipt?>? _peerReceiptSub;
   ChatPeerReceipt? _peerReceipt;
   int? _boundReceiptPeerId;
-  /// Sticky watermarks — never move backwards so ticks don't flicker on poll/rebind.
+  /// Sticky watermarks â€” never move backwards so ticks don't flicker on poll/rebind.
   DateTime? _stickyPeerReadUpTo;
   DateTime? _stickyPeerDeliveredUpTo;
 
   /// Stay pinned to newest only when the user is already near the bottom.
   bool _stickToBottom = true;
-  /// Bumped to cancel in-flight “pin to latest” retries when the user scrolls away.
+  /// Bumped to cancel in-flight â€œpin to latestâ€ retries when the user scrolls away.
   int _scrollPinToken = 0;
   /// True while a finger is dragging the message list (cancels pin + eases Slidable fight).
   bool _fingerDraggingList = false;
@@ -184,7 +184,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
   String? _highlightedMessageKey;
   Timer? _highlightClearTimer;
 
-  static const _reactionEmojis = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+  static const _reactionEmojis = ['ðŸ‘', 'â¤ï¸', 'ðŸ˜‚', 'ðŸ˜®', 'ðŸ˜¢', 'ðŸ™'];
   static const _imgPrefix = 'img::';
   static const _vidPrefix = 'vid::';
   static const _audPrefix = 'aud::';
@@ -218,7 +218,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
       BackendChatService.clearThreadUnread(_chatId);
       unawaited(_loadHiddenMessages());
 
-      // Instant paint from memory/disk — never wait on auth/network for this.
+      // Instant paint from memory/disk â€” never wait on auth/network for this.
       final warm = BackendChatService.peekCachedMessages(_chatId);
       if (warm.isNotEmpty) {
         _messages = warm;
@@ -318,7 +318,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
   void _onScrollPositionChanged() {
     if (!_scroll.hasClients) return;
     final pos = _scroll.position;
-    // reverse:true — pixels ≈ 0 is the newest messages.
+    // reverse:true â€” pixels â‰ˆ 0 is the newest messages.
     final atBottom = pos.pixels <= _nearBottomPx;
     if (!atBottom && _stickToBottom) {
       _scrollPinToken++;
@@ -345,7 +345,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
       final audio = _messageAudio(msg);
       final url = audio?.url.trim() ?? '';
       if (url.isNotEmpty) unawaited(VoiceNoteBubble.warmUrl(url));
-      // Peer received our message on their device → treat as delivered locally
+      // Peer received our message on their device â†’ treat as delivered locally
       // when we are the recipient of an incoming message.
       if (!mine) {
         unawaited(_publishMyReceipts(asRead: true));
@@ -539,7 +539,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
 
       BackendChatService.setActiveChatId(_chatId);
 
-      // Chat id may have been resolved just now — paint that thread's cache.
+      // Chat id may have been resolved just now â€” paint that thread's cache.
       if (_messages.isEmpty) {
         await _paintCachedMessages();
       } else if (mounted) {
@@ -556,7 +556,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
       await authFuture;
       final userId = await BackendChatService.getUserId();
 
-      // Background refresh — UI already shows cache when available.
+      // Background refresh â€” UI already shows cache when available.
       unawaited(() async {
         await _loadMessages(silent: _messages.isNotEmpty);
         if (!mounted) return;
@@ -766,7 +766,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
       }
 
       final wasEmpty = _messages.isEmpty;
-      // Never re-force pin after the user has scrolled away — that made the
+      // Never re-force pin after the user has scrolled away â€” that made the
       // first swipe feel sticky / not smooth while messages finished loading.
       final shouldPin = _stickToBottom && !_fingerDraggingList;
 
@@ -899,7 +899,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
   void _bindPeerReceiptListener(int myUserId) {
     final peerId = _peerUserId ?? widget.peerUserId;
     if (_chatId.isEmpty || peerId == null || peerId <= 0) return;
-    // Already listening for this peer — don't cancel (kills ticks during polls).
+    // Already listening for this peer â€” don't cancel (kills ticks during polls).
     if (_peerReceiptSub != null && _boundReceiptPeerId == peerId) return;
 
     _peerReceiptSub?.cancel();
@@ -963,7 +963,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
   bool _isPlaceholderPeerName(String raw) =>
       ChatParticipant.isPlaceholderName(raw);
 
-  /// Story / notification opens often arrive as "Chat" — fill the real name.
+  /// Story / notification opens often arrive as "Chat" â€” fill the real name.
   Future<void> _hydratePeerDisplayName() async {
     await BackendChatService.ensureBusinessNameCacheLoaded();
     if (!mounted) return;
@@ -1438,7 +1438,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
     if (text.startsWith(_imgPrefix)) return 'Photo';
     if (text.startsWith(_vidPrefix)) return 'Video';
     final masked = ChatOffPlatformDetector.maskPhones(text);
-    return masked.length > 120 ? '${masked.substring(0, 120)}…' : masked;
+    return masked.length > 120 ? '${masked.substring(0, 120)}â€¦' : masked;
   }
 
   Map<String, dynamic>? _replyMetadataPayload() {
@@ -1480,7 +1480,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
       }
     }
     final content = (m.content ?? '');
-    return content.contains('↪️ Forwarded') ||
+    return content.contains('â†ªï¸ Forwarded') ||
         content.startsWith('Forwarded:');
   }
 
@@ -1489,7 +1489,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
     final lines = content.split('\n');
     final kept = lines.where((l) {
       final t = l.trim();
-      return t != '↪️ Forwarded' && t != 'Forwarded:' && t != 'Forwarded';
+      return t != 'â†ªï¸ Forwarded' && t != 'Forwarded:' && t != 'Forwarded';
     }).toList();
     return kept.join('\n').trim();
   }
@@ -1536,7 +1536,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
     return c.isEmpty ? null : c;
   }
 
-  /// User-facing reply text without the "↩️ Story reply" header.
+  /// User-facing reply text without the "â†©ï¸ Story reply" header.
   String? _storyReplyBody(BackendChatMessage m) {
     final content = (m.content ?? '').trim();
     if (content.isEmpty) return null;
@@ -1688,7 +1688,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
     }
 
     if (target == null) {
-      _toast('Original message isn’t loaded yet');
+      _toast('Original message isnâ€™t loaded yet');
       return;
     }
 
@@ -2110,7 +2110,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
         'Not signed in to Firebase. Sign out and sign in again, then retry.',
       );
     }
-    // Cached token only — force-refresh was doubling VN/image send latency.
+    // Cached token only â€” force-refresh was doubling VN/image send latency.
     try {
       await user.getIdToken(false);
     } catch (_) {}
@@ -2282,7 +2282,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
       );
     } catch (e) {
       if (kDebugMode) debugPrint('[ChatOutbox] persist VN failed: $e');
-      // Keep recording path if copy failed — retry can still use it while alive.
+      // Keep recording path if copy failed â€” retry can still use it while alive.
       if (!File(filePath).existsSync()) {
         _toast('Could not save voice note. Please record again.');
         return;
@@ -2551,11 +2551,11 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
       BackendChatService.refreshThreads();
       if (notifyPeerOnSuccess) {
         final body = entry.isAudio
-            ? '🎤 Voice message'
+            ? 'ðŸŽ¤ Voice message'
             : entry.isImage
                 ? ((entry.content ?? '').trim().isNotEmpty
                     ? entry.content!.trim()
-                    : '📷 Photo')
+                    : 'ðŸ“· Photo')
                 : (entry.content ?? '').trim();
         if (body.isNotEmpty) unawaited(_pushNotifyPeer(body: body));
       }
@@ -2592,7 +2592,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
 
   void _jumpToBottom() {
     if (!_scroll.hasClients || _fingerDraggingList) return;
-    // reverse:true — minScrollExtent is the latest message.
+    // reverse:true â€” minScrollExtent is the latest message.
     final target = _scroll.position.minScrollExtent;
     if ((_scroll.position.pixels - target).abs() > 0.5) {
       _scroll.jumpTo(target);
@@ -3230,7 +3230,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
           await BackendChatService.sendMessage(
             chatId: target.id,
             // Content marker survives backends that drop metadata.
-            content: '↪️ Forwarded\n$body',
+            content: 'â†ªï¸ Forwarded\n$body',
             type: 'text',
             metadata: meta,
           );
@@ -3784,7 +3784,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
     }
     final myUid = me.uid.trim();
 
-    // Never hint with our own shop/merchant uid — that caused "can't call yourself".
+    // Never hint with our own shop/merchant uid â€” that caused "can't call yourself".
     final rawHint = (_resolvedMerchantId() ?? '').trim();
     final hint = (rawHint.isNotEmpty && rawHint != myUid) ? rawHint : null;
 
@@ -3796,11 +3796,11 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
             ?.trim() ??
         '';
     if (peerUid.isEmpty) {
-      _toast('Calling isn’t available for this chat yet.');
+      _toast('Calling isnâ€™t available for this chat yet.');
       return;
     }
     if (peerUid == myUid) {
-      _toast('Calling isn’t available for this chat yet.');
+      _toast('Calling isnâ€™t available for this chat yet.');
       return;
     }
 
@@ -3838,7 +3838,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
         ChatNotificationService.notifyRecipientOfMessage(
           chatId: _chatId,
           senderName: actingName.isNotEmpty ? actingName : (me.displayName ?? 'Vero360'),
-          body: video ? '📹 Incoming video call' : '📞 Incoming voice call',
+          body: video ? 'ðŸ“¹ Incoming video call' : 'ðŸ“ž Incoming voice call',
           recipientFirebaseUid: peerUid,
           recipientUserId: widget.peerUserId ?? _peerUserId,
           senderUserId: _myUserId,
@@ -3850,7 +3850,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
         unawaited(
           BackendChatService.sendMessage(
             chatId: _chatId,
-            content: video ? '📹 Video call' : '📞 Voice call',
+            content: video ? 'ðŸ“¹ Video call' : 'ðŸ“ž Voice call',
             type: 'text',
             metadata: {
               'source': 'in_app_call',
@@ -3918,7 +3918,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
   Widget _buildMessageReceipt(BackendChatMessage msg, bool isLastOutgoing) {
     final read = _isMessageRead(msg);
     final delivered = _isMessageDelivered(msg);
-    // ✓ sent · ✓✓ delivered (grey) · ✓✓ seen (blue)
+    // âœ“ sent Â· âœ“âœ“ delivered (grey) Â· âœ“âœ“ seen (blue)
     final tickColor =
         read ? const Color(0xFF53BDEB) : const Color(0xFF9CA3AF);
 
@@ -4085,7 +4085,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
   }
 
   String _chatStatusLabel() {
-    if (_headerTyping) return 'typing…';
+    if (_headerTyping) return 'typingâ€¦';
     if (_roomKnown) {
       if (_roomOnline) return 'Online';
       final seen = _roomSeen;
@@ -4117,7 +4117,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
     final subtitle = status.isNotEmpty
         ? status
         : (activeProduct != null
-            ? 'View shop · ${activeProduct.name}'
+            ? 'View shop Â· ${activeProduct.name}'
             : '');
 
     return AppBar(
@@ -4255,7 +4255,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
                     size: 20,
                   ),
                   const SizedBox(width: 10),
-                  Text(_exportingChat ? 'Downloading…' : 'Download chat'),
+                  Text(_exportingChat ? 'Downloadingâ€¦' : 'Download chat'),
                 ],
               ),
             ),
@@ -4320,8 +4320,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
         : 'chat_peer:${backendId ?? merchantRef}';
   }
 
-  /// Facebook-style: only prompt after a real conversation (≥10 messages).
-  /// Only buyers rate merchants — never the reverse.
+  /// Facebook-style: only prompt after a real conversation (â‰¥10 messages).
+  /// Only buyers rate merchants â€” never the reverse.
   bool _eligibleForChatRating() {
     if (_iAmTheMerchantForRating()) return false;
 
@@ -4349,12 +4349,12 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
 
   Future<void> _promptRateSeller({required bool force}) async {
     if (_iAmTheMerchantForRating()) {
-      _toast('You can’t rate your own shop.');
+      _toast('You canâ€™t rate your own shop.');
       return;
     }
     if (!_eligibleForChatRating()) {
       if (force) {
-        _toast('Keep chatting — ratings unlock after 10 messages.');
+        _toast('Keep chatting â€” ratings unlock after 10 messages.');
       }
       return;
     }
@@ -4380,10 +4380,10 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
     );
   }
 
-  /// Leave chat immediately. Review (if any) is shown on the shell underneath —
+  /// Leave chat immediately. Review (if any) is shown on the shell underneath â€”
   /// never await network/Firestore before popping (that was locking the chat).
   Future<void> _maybePromptChatRatingThenPop() async {
-    // Second back while a leave is in flight → force pop.
+    // Second back while a leave is in flight â†’ force pop.
     if (_leaving) {
       if (mounted) {
         final nav = Navigator.of(context);
@@ -4526,7 +4526,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
               child: _messages.isEmpty
                   ? const Center(
                       child: Text(
-                        'Say hi 👋',
+                        'Say hi ðŸ‘‹',
                         style: TextStyle(
                           color: Colors.black54,
                           fontWeight: FontWeight.w800,
@@ -4573,7 +4573,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
                               ),
                               itemCount: _visibleMessages.length,
                               itemBuilder: (context, i) {
-                                // reverse:true shows index 0 at the bottom → newest first.
+                                // reverse:true shows index 0 at the bottom â†’ newest first.
                                 final visible = _visibleMessages;
                                 final index = visible.length - 1 - i;
                                 return _buildMessageTile(visible[index], index);
@@ -4987,7 +4987,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
 
   void _openProductDetails(ChatProductContext product) {
     if (!mounted) return;
-    // Open instantly with chat tag data — no network wait before navigation.
+    // Open instantly with chat tag data â€” no network wait before navigation.
     final item = _checkoutItemFromProduct(product);
     final cart = CartService('', apiPrefix: ApiConfig.apiPrefix);
     Navigator.of(context).push(
@@ -5305,8 +5305,8 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
                         ),
                         decoration: InputDecoration(
                           hintText: _pendingImage != null
-                              ? 'Add a caption…'
-                              : 'Type a message…',
+                              ? 'Add a captionâ€¦'
+                              : 'Type a messageâ€¦',
                           hintStyle: TextStyle(
                             color: Colors.grey.shade500,
                             fontSize: 15,
@@ -5417,7 +5417,7 @@ class _MessagePageBackendApiState extends State<MessagePageBackendApi>
       child: Align(
         alignment: Alignment.centerLeft,
         child: Text(
-          '$name is typing…',
+          '$name is typingâ€¦',
           style: const TextStyle(
             color: Color(0xFF16A34A),
             fontWeight: FontWeight.w700,
@@ -5698,9 +5698,9 @@ class _ChatCallScreenState extends State<ChatCallScreen> {
   String get _statusLabel {
     switch (_phase) {
       case _CallPhase.calling:
-        return 'Calling…';
+        return 'Callingâ€¦';
       case _CallPhase.ringing:
-        return 'Ringing…';
+        return 'Ringingâ€¦';
       case _CallPhase.connected:
         return _clock;
     }
@@ -5783,8 +5783,8 @@ class _ChatCallScreenState extends State<ChatCallScreen> {
               _media.mediaLive
                   ? 'Live'
                   : (_phase == _CallPhase.connected
-                      ? 'Connecting audio…'
-                      : (_peerOnline ? 'Online' : 'Ringing their device…')),
+                      ? 'Connecting audioâ€¦'
+                      : (_peerOnline ? 'Online' : 'Ringing their deviceâ€¦')),
               style: TextStyle(
                 color: _media.mediaLive ||
                         _phase == _CallPhase.connected ||

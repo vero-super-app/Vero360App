@@ -1,5 +1,5 @@
-import 'dart:async';
-import 'dart:io' show Platform;
+﻿import 'dart:async';
+import 'package:universal_io/io.dart' show Platform;
 
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb, debugPrint;
 import 'package:geolocator/geolocator.dart';

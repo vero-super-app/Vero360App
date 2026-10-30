@@ -1,12 +1,12 @@
-import 'dart:async';
-import 'dart:io';
+﻿import 'dart:async';
+import 'package:universal_io/io.dart';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:vero360_app/native/local_notifications.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:saver_gallery/saver_gallery.dart';
+import 'package:vero360_app/native/gallery_saver.dart';
 import 'package:vero360_app/features/Reels/reel_model.dart';
 import 'package:vero360_app/features/Reels/reel_service.dart';
 
@@ -14,7 +14,7 @@ class ReelDownloadProgress {
   /// Server is still adding the watermark.
   final bool preparing;
 
-  /// 0.0–1.0 once the file is downloading.
+  /// 0.0â€“1.0 once the file is downloading.
   final double progress;
 
   const ReelDownloadProgress({required this.preparing, required this.progress});

@@ -533,6 +533,9 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
+            const SliverToBoxAdapter(
+              child: CarHireAccountBanner(renterInvite: true),
+            ),
             SliverToBoxAdapter(child: _locationBar(query)),
             const SliverToBoxAdapter(child: CarHireAccountBanner()),
             SliverToBoxAdapter(child: _searchRow(filters)),
@@ -545,9 +548,6 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
             ),
             SliverToBoxAdapter(child: _activeFilterChips(filters)),
             ..._resultSlivers(browse.results, query, filters),
-            const SliverToBoxAdapter(
-              child: CarHireAccountBanner(renterInvite: true),
-            ),
             SliverToBoxAdapter(
               child: SizedBox(
                 height: MediaQuery.paddingOf(context).bottom + 28,

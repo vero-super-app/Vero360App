@@ -33,6 +33,7 @@ import 'package:vero360_app/GernalServices/incoming_call_listener.dart';
 import 'package:vero360_app/GernalServices/user_presence_service.dart';
 import 'package:vero360_app/utils/app_update_checker.dart';
 import 'package:vero360_app/utils/session_local_cache.dart';
+import 'package:vero360_app/utils/firebase_bootstrap.dart';
 import 'package:vero360_app/app_nav_key.dart';
 import 'package:vero360_app/app_shell_coordinator.dart';
 
@@ -90,14 +91,20 @@ class _BottomnavbarState extends State<Bottomnavbar>
     super.initState();
     _selectedIndex = widget.initialIndex.clamp(0, 4);
     // Optimistic: avoid flashing “Sign in required” before async refresh.
-    final bootUser = FirebaseAuth.instance.currentUser;
+    final bootUser = tryFirebaseUser();
     _isLoggedIn = bootUser != null && !bootUser.isAnonymous;
     // Paint the shell immediately — no second splash after role redirect.
     _pages = _defaultPages();
     _pagesReady = true;
     WidgetsBinding.instance.addObserver(this);
-    _authSub =
-        FirebaseAuth.instance.authStateChanges().listen((_) => _refreshAuthState());
+    try {
+      final auth = tryFirebaseAuth();
+      if (auth != null) {
+        _authSub = auth.authStateChanges().listen((_) => _refreshAuthState());
+      } else {
+        unawaited(_attachAuthWhenFirebaseReady());
+      }
+    } catch (_) {}
     _initialize();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -105,8 +112,19 @@ class _BottomnavbarState extends State<Bottomnavbar>
     });
   }
 
+  Future<void> _attachAuthWhenFirebaseReady() async {
+    for (var i = 0; i < 20 && mounted && _authSub == null; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      final auth = tryFirebaseAuth();
+      if (auth == null) continue;
+      _authSub = auth.authStateChanges().listen((_) => _refreshAuthState());
+      unawaited(_refreshAuthState());
+      return;
+    }
+  }
+
   List<Widget> _defaultPages() {
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? 'guest';
+    final uid = tryFirebaseUser()?.uid ?? 'guest';
     _shellUid = uid;
     return [
       Vero360Homepage(email: widget.email, isDriverHome: false),
@@ -142,12 +160,13 @@ class _BottomnavbarState extends State<Bottomnavbar>
   /// Unread Vero360 Team alerts count on the Messages tab even before that tab opens.
   void _listenTeamUnread() {
     _teamUnreadSub?.cancel();
-    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final uid = tryFirebaseUser()?.uid;
     if (uid == null || uid.isEmpty) {
       if (_teamUnread != 0 && mounted) setState(() => _teamUnread = 0);
       return;
     }
-    _teamUnreadSub = FirebaseFirestore.instance
+    try {
+      _teamUnreadSub = FirebaseFirestore.instance
         .collection('order_party_alerts')
         .where('toUid', isEqualTo: uid)
         .snapshots()
@@ -165,6 +184,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
       if (!mounted || n == _teamUnread) return;
       setState(() => _teamUnread = n);
     }, onError: (_) {});
+    } catch (_) {}
   }
 
   @override
@@ -214,8 +234,9 @@ class _BottomnavbarState extends State<Bottomnavbar>
   }
 
   Future<void> _refreshAuthState() async {
-    final loggedIn = await AuthHandler.isAuthenticated();
-    final uid = FirebaseAuth.instance.currentUser?.uid ?? 'guest';
+    final loggedIn = await AuthHandler.isAuthenticated()
+        .timeout(const Duration(seconds: 2), onTimeout: () => false);
+    final uid = tryFirebaseUser()?.uid ?? 'guest';
     if (!mounted) return;
 
     final uidChanged = uid != _shellUid;
@@ -316,7 +337,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
 
   Future<void> _checkUserRoleAndSetup({bool forcePagesRebuild = false}) async {
     final prefs = await SharedPreferences.getInstance();
-    final authUser = FirebaseAuth.instance.currentUser;
+    final authUser = tryFirebaseUser();
     final loggedIn = authUser != null && !authUser.isAnonymous;
     final uid = authUser?.uid ??
         (loggedIn ? (prefs.getString('uid') ?? '').trim() : '');

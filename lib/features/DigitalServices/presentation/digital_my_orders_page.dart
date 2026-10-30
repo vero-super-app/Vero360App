@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_service_order_service.dart';
@@ -17,18 +18,43 @@ const Color _pageBg = Color(0xFFF7F8FA);
 final DateFormat _dateFmt = DateFormat('EEE, d MMM yyyy · HH:mm');
 
 class DigitalMyOrdersPage extends StatefulWidget {
-  const DigitalMyOrdersPage({super.key});
+  const DigitalMyOrdersPage({super.key, this.initialOrderId});
+
+  /// When opened from a notification, jump straight into this order.
+  final String? initialOrderId;
 
   @override
   State<DigitalMyOrdersPage> createState() => _DigitalMyOrdersPageState();
 }
 
 class _DigitalMyOrdersPageState extends State<DigitalMyOrdersPage> {
+  bool _openedInitial = false;
+
   @override
   void initState() {
     super.initState();
     NotificationStore.instance
         .markBadgeRouteAsRead(NotificationStore.kBadgeDigitalOrders);
+  }
+
+  void _maybeOpenInitial(List<DigitalServiceOrder> orders) {
+    if (_openedInitial) return;
+    final want = (widget.initialOrderId ?? '').trim();
+    if (want.isEmpty) return;
+    DigitalServiceOrder? match;
+    for (final o in orders) {
+      if (o.id == want) {
+        match = o;
+        break;
+      }
+    }
+    if (match == null) return;
+    _openedInitial = true;
+    final order = match;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _openDetail(context, order);
+    });
   }
 
   @override
@@ -69,6 +95,7 @@ class _DigitalMyOrdersPageState extends State<DigitalMyOrdersPage> {
                   );
                 }
                 final orders = snap.data ?? const <DigitalServiceOrder>[];
+                _maybeOpenInitial(orders);
                 if (orders.isEmpty) {
                   return const _MessageState(
                     icon: Icons.receipt_long_rounded,
@@ -108,7 +135,23 @@ class _DigitalMyOrdersPageState extends State<DigitalMyOrdersPage> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => _DigitalOrderDetailSheet(order: order),
+      builder: (_) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: order.fulfillment.hasContent ? 0.78 : 0.55,
+        minChildSize: 0.4,
+        maxChildSize: 0.95,
+        builder: (ctx, scroll) => StreamBuilder<DigitalServiceOrder?>(
+          stream: DigitalServiceOrderService.watchById(order.id),
+          initialData: order,
+          builder: (context, snap) {
+            final live = snap.data ?? order;
+            return _DigitalOrderDetailSheet(
+              order: live,
+              scrollController: scroll,
+            );
+          },
+        ),
+      ),
     );
   }
 }
@@ -183,6 +226,17 @@ class _DigitalOrderCard extends StatelessWidget {
                           fontSize: 14,
                         ),
                       ),
+                      if (order.fulfillment.hasContent) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          'Details ready · tap to copy',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.green.shade800,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -234,9 +288,13 @@ class _StatusChip extends StatelessWidget {
 }
 
 class _DigitalOrderDetailSheet extends StatelessWidget {
-  const _DigitalOrderDetailSheet({required this.order});
+  const _DigitalOrderDetailSheet({
+    required this.order,
+    required this.scrollController,
+  });
 
   final DigitalServiceOrder order;
+  final ScrollController scrollController;
 
   Future<void> _copy(BuildContext context, String label, String value) async {
     final v = value.trim();
@@ -259,104 +317,131 @@ class _DigitalOrderDetailSheet extends StatelessWidget {
     final paid = order.paidAt == null
         ? '—'
         : _dateFmt.format(order.paidAt!.toLocal());
-    return Padding(
+    final fulfill = order.fulfillment;
+    return ListView(
+      controller: scrollController,
       padding: const EdgeInsets.fromLTRB(20, 10, 20, 28),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(
-            child: Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.only(bottom: 16),
-              decoration: BoxDecoration(
-                color: Colors.black12,
-                borderRadius: BorderRadius.circular(99),
-              ),
+      children: [
+        Center(
+          child: Container(
+            width: 40,
+            height: 4,
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(
+              color: Colors.black12,
+              borderRadius: BorderRadius.circular(99),
             ),
           ),
-          Text(
-            order.productName,
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w900,
-              color: _ink,
+        ),
+        Text(
+          order.productName,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w900,
+            color: _ink,
+          ),
+        ),
+        const SizedBox(height: 8),
+        _StatusChip(order: order),
+        const SizedBox(height: 16),
+        _row('Kind', order.kind.isEmpty ? '—' : order.kind.replaceAll('_', ' ')),
+        if (order.periodLabel.isNotEmpty) _row('Period', order.periodLabel),
+        if (order.brandTag.isNotEmpty) _row('Brand', order.brandTag),
+        _row('Amount', formatMwk(order.amountMwk)),
+        _row('Placed', when),
+        if (order.paidAt != null) _row('Paid', paid),
+        const SizedBox(height: 8),
+        _copyRow(context, 'Order ID', order.id),
+        if (order.txRef.isNotEmpty)
+          _copyRow(context, 'Payment ref', order.txRef),
+        if (fulfill.hasContent) ...[
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFECFDF5),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFBBF7D0)),
             ),
-          ),
-          const SizedBox(height: 8),
-          _StatusChip(order: order),
-          const SizedBox(height: 16),
-          _row('Kind', order.kind.isEmpty ? '—' : order.kind.replaceAll('_', ' ')),
-          if (order.periodLabel.isNotEmpty) _row('Period', order.periodLabel),
-          if (order.brandTag.isNotEmpty) _row('Brand', order.brandTag),
-          _row('Amount', formatMwk(order.amountMwk)),
-          _row('Placed', when),
-          if (order.paidAt != null) _row('Paid', paid),
-          const SizedBox(height: 8),
-          _copyRow(
-            context,
-            'Order ID',
-            order.id,
-          ),
-          if (order.txRef.isNotEmpty)
-            _copyRow(context, 'Payment ref', order.txRef),
-          if (order.fulfillment.hasContent) ...[
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: const Color(0xFFECFDF5),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFBBF7D0)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Your delivery',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 14,
+                          color: Color(0xFF166534),
+                        ),
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: () => _copy(
+                        context,
+                        'Details',
+                        fulfill.copyAllText,
+                      ),
+                      icon: const Icon(Icons.copy_all_rounded, size: 16),
+                      label: const Text('Copy all'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: const Color(0xFF166534),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                if (fulfill.cardDetails.isNotEmpty)
+                  _copyRow(context, 'Card details', fulfill.cardDetails),
+                for (final e in fulfill.extraFields.entries)
+                  _copyRow(context, e.key, e.value),
+                if (fulfill.joiningLink.isNotEmpty)
+                  _copyRow(context, 'Joining link', fulfill.joiningLink),
+                if (fulfill.notes.isNotEmpty)
+                  _copyRow(context, 'Notes', fulfill.notes),
+                if (fulfill.fileUrls.isNotEmpty) ...[
+                  const SizedBox(height: 8),
                   const Text(
-                    'Your delivery',
+                    'Files',
                     style: TextStyle(
-                      fontWeight: FontWeight.w900,
-                      fontSize: 14,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
                       color: Color(0xFF166534),
                     ),
                   ),
                   const SizedBox(height: 8),
-                  if (order.fulfillment.cardDetails.isNotEmpty)
-                    _copyRow(
-                      context,
-                      'Card details',
-                      order.fulfillment.cardDetails,
-                    ),
-                  if (order.fulfillment.joiningLink.isNotEmpty)
-                    _copyRow(
-                      context,
-                      'Joining link',
-                      order.fulfillment.joiningLink,
-                    ),
-                  if (order.fulfillment.notes.isNotEmpty)
-                    _row('Notes', order.fulfillment.notes),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final url in fulfill.fileUrls)
+                        _FulfillmentFile(url: url),
+                    ],
+                  ),
                 ],
-              ),
-            ),
-          ],
-          const SizedBox(height: 14),
-          Text(
-            order.fulfillment.hasContent
-                ? 'Keep these details private. Copy them now and store them somewhere safe.'
-                : order.isPaid
-                    ? 'Payment received. Vero is delivering this code or subscription. It will show here (and in your notifications) when ready.'
-                    : 'This order is waiting for payment. Complete checkout to start delivery.',
-            style: TextStyle(
-              fontSize: 13,
-              height: 1.4,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey.shade700,
+              ],
             ),
           ),
         ],
-      ),
+        const SizedBox(height: 14),
+        Text(
+          fulfill.hasContent
+              ? 'Tap any orange row (or Copy all) to copy. Keep these details private.'
+              : order.isPaid
+                  ? 'Payment received. Vero is delivering this code or subscription. It will show here (and in your notifications) when ready.'
+                  : 'This order is waiting for payment. Complete checkout to start delivery.',
+          style: TextStyle(
+            fontSize: 13,
+            height: 1.4,
+            fontWeight: FontWeight.w600,
+            color: Colors.grey.shade700,
+          ),
+        ),
+      ],
     );
   }
 
@@ -378,7 +463,7 @@ class _DigitalOrderDetailSheet extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: Text(
+            child: SelectableText(
               value,
               style: const TextStyle(
                 fontSize: 13.5,
@@ -410,27 +495,97 @@ class _DigitalOrderDetailSheet extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: InkWell(
-              onTap: () => _copy(context, label, value),
-              borderRadius: BorderRadius.circular(8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      value,
-                      style: const TextStyle(
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w800,
+            child: Material(
+              color: const Color(0xFFFFF7ED),
+              borderRadius: BorderRadius.circular(10),
+              child: InkWell(
+                onTap: () => _copy(context, label, value),
+                borderRadius: BorderRadius.circular(10),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: SelectableText(
+                          value,
+                          onTap: () => _copy(context, label, value),
+                          style: const TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w800,
+                            color: _veroOrange,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      const Icon(
+                        Icons.copy_rounded,
+                        size: 16,
                         color: _veroOrange,
                       ),
-                    ),
+                    ],
                   ),
-                  const Icon(Icons.copy_rounded, size: 16, color: _veroOrange),
-                ],
+                ),
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _FulfillmentFile extends StatelessWidget {
+  const _FulfillmentFile({required this.url});
+
+  final String url;
+
+  bool get _isPdf => url.toLowerCase().contains('.pdf');
+
+  Future<void> _open() async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _copy(BuildContext context) async {
+    await Clipboard.setData(ClipboardData(text: url));
+    if (!context.mounted) return;
+    ToastHelper.showCustomToast(
+      context,
+      'Link copied',
+      isSuccess: true,
+      errorMessage: '',
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isPdf) {
+      return OutlinedButton.icon(
+        onPressed: _open,
+        onLongPress: () => _copy(context),
+        icon: const Icon(Icons.picture_as_pdf_rounded, size: 18),
+        label: const Text('Open PDF'),
+      );
+    }
+    return GestureDetector(
+      onTap: _open,
+      onLongPress: () => _copy(context),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Image.network(
+          url,
+          width: 88,
+          height: 88,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => Container(
+            width: 88,
+            height: 88,
+            color: const Color(0xFFDCFCE7),
+            child: const Icon(Icons.insert_drive_file_rounded),
+          ),
+        ),
       ),
     );
   }

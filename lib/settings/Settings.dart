@@ -36,8 +36,10 @@ import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
+import 'package:vero360_app/GernalServices/seller_mode.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/become_driver_page.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_online_session.dart';
+import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 import 'package:vero360_app/Quickservices/customerservice.dart';
 import 'package:vero360_app/Quickservices/help_center_live_chat.dart';
 
@@ -73,6 +75,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _isDriver = false;
   bool _isMerchant = false;
   bool _switchingDriverMode = false;
+  bool _switchingSellerMode = false;
   final _driverService = DriverService();
 
   // cached profile
@@ -269,6 +272,40 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _remountMainShell() async {
     if (!mounted) return;
     openVeroMainShell(context, email: _email.trim());
+  }
+
+  Future<void> _onSellerModeChanged(bool enableSeller) async {
+    final user = _auth.currentUser;
+    if (user == null || user.isAnonymous) {
+      ToastHelper.showCustomToast(
+        context,
+        _t('Sign in to start selling.', 'Lowani kuti muyambe kugulitsa.'),
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    if (_switchingSellerMode || _isDriver) return;
+
+    setState(() => _switchingSellerMode = true);
+    try {
+      final ok = enableSeller
+          ? await SellerMode.enter(context)
+          : await SellerMode.exit(context);
+      if (!mounted) return;
+      if (!ok) {
+        setState(() => _switchingSellerMode = false);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _switchingSellerMode = false);
+      ToastHelper.showCustomToast(
+        context,
+        _t('Could not switch seller mode. Try again.', 'Sizinathe. Yesaninso.'),
+        isSuccess: false,
+        errorMessage: '',
+      );
+    }
   }
 
   Future<void> _onDriverModeChanged(bool enableDriver) async {
@@ -2401,6 +2438,33 @@ class _SettingsPageState extends State<SettingsPage> {
                   subtitle: _addressCountSubtitle,
                   onTap: _openAddressBottomSheet,
                 ),
+                if (!_isDriver)
+                  _SettingsTile(
+                    compact: _compactMode,
+                    icon: Icons.storefront_rounded,
+                    title: _t('Seller mode', 'Seller mode'),
+                    subtitle: _isMerchant
+                        ? _t(
+                            'On – selling from this account',
+                            'Yayatsidwa – mukugulitsa pa akaunti ino',
+                          )
+                        : _t(
+                            'Off – switch on to start selling',
+                            'Yazimitsidwa – yatsani kuti muyambe kugulitsa',
+                          ),
+                    onTap: () => _onSellerModeChanged(!_isMerchant),
+                    trailing: _switchingSellerMode
+                        ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(strokeWidth: 2.2),
+                          )
+                        : Switch.adaptive(
+                            value: _isMerchant,
+                            activeThumbColor: kBrandOrange,
+                            onChanged: _onSellerModeChanged,
+                          ),
+                  ),
                 if (!_isMerchant)
                   _SettingsTile(
                     compact: _compactMode,
@@ -2422,6 +2486,16 @@ class _SettingsPageState extends State<SettingsPage> {
                             onChanged: _onDriverModeChanged,
                           ),
                   ),
+                _SettingsTile(
+                  compact: _compactMode,
+                  icon: Icons.directions_car_outlined,
+                  title: _t('Rent out your cars', 'Bwerekani magalimoto anu'),
+                  subtitle: _t(
+                    'Apply to list cars, or check your application',
+                    'Lembani magalimoto anu, kapena onani pempho lanu',
+                  ),
+                  onTap: () => CarHireRoutes.openApplication(context),
+                ),
               ]),
               const SizedBox(height: 14),
               _sectionTitle(_t('Security', 'Chitetezo')),

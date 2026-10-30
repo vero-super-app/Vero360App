@@ -507,7 +507,7 @@ void main() {
       final payment = PaymentInitiation.fromJson(<String, dynamic>{
         'paymentId': 123,
         'txRef': 'tx-1',
-        'checkoutUrl': 'https://checkout.paychangu.com/abc',
+        'checkoutUrl': 'https://example.com/checkout/abc',
         'status': 'INITIATED',
         'booking': <String, dynamic>{
           'id': 77,
@@ -518,11 +518,25 @@ void main() {
 
       expect(payment.paymentId, 123);
       expect(payment.txRef, 'tx-1');
-      expect(payment.checkoutUrl, 'https://checkout.paychangu.com/abc');
+      expect(payment.checkoutUrl, 'https://example.com/checkout/abc');
       expect(payment.status, 'INITIATED');
       expect(payment.booking, isNotNull);
       expect(payment.booking!.bookingStatus, BookingStatus.pending);
       expect(payment.booking!.paymentStatus, PaymentStatus.pending);
+    });
+
+    test('treats a PawaPay deposit id as the transaction reference', () {
+      final payment = PaymentInitiation.fromJson(<String, dynamic>{
+        'paymentId': 9,
+        'depositId': 'dep-77',
+        'provider': 'pawapay',
+        'status': 'SUCCEEDED',
+      });
+
+      expect(payment.txRef, 'dep-77');
+      expect(payment.provider, 'pawapay');
+      expect(payment.status, 'SUCCEEDED');
+      expect(payment.checkoutUrl, isNull);
     });
   });
 

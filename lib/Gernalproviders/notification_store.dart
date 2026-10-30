@@ -167,7 +167,7 @@ class NotificationStore extends ChangeNotifier {
     if (type == 'refund_update' || type == 'refund_request') {
       return route == kBadgeRefund;
     }
-    if (type == 'digital_fulfillment') {
+    if (type.contains('digital')) {
       return route == kBadgeDigitalOrders;
     }
     if (type != 'order_update') return false;

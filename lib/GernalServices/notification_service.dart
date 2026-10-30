@@ -34,6 +34,7 @@ import 'package:vero360_app/GernalScreens/vero_team_chat_page.dart';
 import 'package:vero360_app/GernalScreens/chat_list_page.dart';
 import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_my_orders_page.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_my_orders_page.dart';
+import 'package:vero360_app/features/DigitalServices/presentation/digital_service_order_service.dart';
 import 'package:vero360_app/features/Promotions/presentation/promotions_page.dart';
 import 'package:vero360_app/features/Promotions/presentation/promo_detail_page.dart';
 import 'package:vero360_app/features/Promotions/promotion_service.dart';
@@ -50,6 +51,7 @@ import 'package:vero360_app/features/ride_share/presentation/pages/driver_incomi
 import 'package:vero360_app/features/ride_share/presentation/services/driver_ride_alert_notifications.dart';
 import 'package:vero360_app/features/ride_share/presentation/services/driver_ride_offer_inbox.dart';
 import 'package:vero360_app/utils/app_update_checker.dart';
+import 'package:vero360_app/utils/firebase_bootstrap.dart';
 
 /// Central service for handling Firebase Cloud Messaging (FCM) + local notifications
 class NotificationService {
@@ -69,6 +71,10 @@ class NotificationService {
 
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _partyAlertSub;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _chatAlertSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _digitalOrderSub;
+  final Map<String, String> _digitalFulfillSeen = {};
+  final Map<String, String> _digitalStatusSeen = {};
+  bool _digitalStatusPrimed = false;
 
   static const AndroidNotificationChannel _highPriorityChannel =
       AndroidNotificationChannel(
@@ -111,15 +117,23 @@ class NotificationService {
 
   /// Initialize everything needed for notifications
   /// Call this once early in app startup (after Firebase.initializeApp)
+  bool _initialized = false;
+
   Future<void> initialize() async {
-    // 1. Local notifications setup
+    if (_initialized) return;
+    _initialized = true;
+
+    // 1. Local notifications setup.
+    // Do NOT request iOS alert permission here. A permission sheet over the
+    // launch splash (or a sheet that never appears on iPadOS) looks like an
+    // infinite load — App Store Guideline 2.1.
     const AndroidInitializationSettings androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
 
     const DarwinInitializationSettings iosSettings = DarwinInitializationSettings(
-      requestAlertPermission: true,
-      requestBadgePermission: true,
-      requestSoundPermission: true,
+      requestAlertPermission: false,
+      requestBadgePermission: false,
+      requestSoundPermission: false,
     );
 
     const InitializationSettings settings = InitializationSettings(
@@ -127,101 +141,91 @@ class NotificationService {
       iOS: iosSettings,
     );
 
-    await _localNotifications.initialize(
-      settings,
-      onDidReceiveNotificationResponse: _onDidReceiveNotificationResponse,
-      onDidReceiveBackgroundNotificationResponse:
-          onDriverRideNotificationBackgroundAction,
-    );
+    try {
+      await _localNotifications.initialize(
+        settings,
+        onDidReceiveNotificationResponse: _onDidReceiveNotificationResponse,
+        onDidReceiveBackgroundNotificationResponse:
+            onDriverRideNotificationBackgroundAction,
+      ).timeout(const Duration(seconds: 3));
+    } catch (_) {}
 
     // Create Android notification channel (required Android 8+)
-    final androidImpl = _localNotifications
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
-    await androidImpl?.createNotificationChannel(_highPriorityChannel);
-    await androidImpl?.createNotificationChannel(_rideRequestChannel);
+    try {
+      final androidImpl = _localNotifications
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>();
+      await androidImpl?.createNotificationChannel(_highPriorityChannel);
+      await androidImpl?.createNotificationChannel(_rideRequestChannel);
+    } catch (_) {}
 
-    final launchDetails =
-        await _localNotifications.getNotificationAppLaunchDetails();
-    final launchResponse = launchDetails?.notificationResponse;
-    final launchedFromLocal = launchResponse != null &&
-        launchDetails?.didNotificationLaunchApp == true;
-    if (launchedFromLocal) {
-      _onDidReceiveNotificationResponse(launchResponse);
-    }
+    var launchedFromLocal = false;
+    try {
+      final launchDetails = await _localNotifications
+          .getNotificationAppLaunchDetails()
+          .timeout(const Duration(seconds: 2));
+      final launchResponse = launchDetails?.notificationResponse;
+      launchedFromLocal = launchResponse != null &&
+          launchDetails?.didNotificationLaunchApp == true;
+      if (launchedFromLocal && launchResponse != null) {
+        _onDidReceiveNotificationResponse(launchResponse);
+      }
+    } catch (_) {}
 
-    // Request Android 13+ notification permission (required to show notifications)
-    final androidPlugin = _localNotifications.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
-    if (androidPlugin != null) {
-      await androidPlugin.requestNotificationsPermission();
-    }
+    // Android 13+ can prompt in-app; never block iOS launch on a sheet.
+    try {
+      final androidPlugin = _localNotifications
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>();
+      unawaited(androidPlugin?.requestNotificationsPermission());
+    } catch (_) {}
 
-    // iOS local notification permission (alerts when app is open / showManualNotification)
-    final iosPlugin = _localNotifications.resolvePlatformSpecificImplementation<
-        IOSFlutterLocalNotificationsPlugin>();
-    await iosPlugin?.requestPermissions(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
+    if (!isFirebaseAppReady) return;
 
-    // 2. Request FCM notification permissions (mainly for iOS)
-    final messaging = FirebaseMessaging.instance;
-    final settingsPermission = await messaging.requestPermission(
-      alert: true,
-      announcement: false,
-      badge: true,
-      carPlay: false,
-      criticalAlert: false,
-      provisional: false,
-      sound: true,
-    );
-    if (kDebugMode) {
-      debugPrint(
-        '[NotificationService] iOS/FCM permission: ${settingsPermission.authorizationStatus}',
+    FirebaseMessaging? messaging;
+    try {
+      messaging = FirebaseMessaging.instance;
+      await messaging.setForegroundNotificationPresentationOptions(
+        alert: true,
+        badge: true,
+        sound: true,
       );
-    }
+    } catch (_) {}
 
-    // Show system banners while the app is in the foreground (iOS).
-    await messaging.setForegroundNotificationPresentationOptions(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
+    if (messaging == null) return;
 
-    // 3. Foreground message handler
     FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
-
-    // 4. App opened from notification (background â†’ foreground)
     FirebaseMessaging.onMessageOpenedApp.listen(_handleMessageOpenedApp);
 
-    // 5. Get initial message (app launched from terminated state via notification)
-    final initial = await messaging.getInitialMessage();
-    if (initial != null) {
-      _handleInitialMessage(initial);
-    } else if (!launchedFromLocal) {
-      // Background handler may have stashed a ride offer before process restart.
-      unawaited(_consumePendingDriverRideOffer());
+    try {
+      final initial = await messaging.getInitialMessage()
+          .timeout(const Duration(seconds: 2));
+      if (initial != null) {
+        _handleInitialMessage(initial);
+      } else if (!launchedFromLocal) {
+        unawaited(_consumePendingDriverRideOffer());
+      }
+    } catch (_) {
+      if (!launchedFromLocal) {
+        unawaited(_consumePendingDriverRideOffer());
+      }
     }
 
-    // 6. FCM token: register with backend (if user logged in). Never log token material.
     unawaited(registerTokenWithBackend(retries: 3));
 
     messaging.onTokenRefresh.listen((newToken) async {
       await _registerTokenWithBackend(newToken);
     });
 
-    // Register token when user signs in (handles login after app start)
-    FirebaseAuth.instance.authStateChanges().listen((user) async {
+    tryFirebaseAuth()?.authStateChanges().listen((user) async {
       if (user != null) {
-        // Always rebind store to this Firebase UID before accepting pushes.
+        unawaited(_ensurePushPermissionAfterLogin());
         await NotificationStore.instance.switchToUser(user.uid);
         await registerTokenWithBackend(retries: 4);
         _syncOrderPartyAlertListener(user);
         _syncChatAlertListener(user);
+        _syncDigitalOrderFulfillmentListener(user);
         await EngagementNotificationService.instance.syncTopicSubscription();
-        // Soft keep-alive digest when there is fresh content (frequent, rate-limited).
         unawaited(
           Future<void>.delayed(const Duration(seconds: 8), () {
             unawaited(
@@ -230,10 +234,9 @@ class NotificationService {
           }),
         );
       } else {
-        // Signed out elsewhere / session ended â€” drop in-memory list + listeners.
-        // Full FCM unbind is done in [clearSessionOnLogout] before signOut.
         _syncOrderPartyAlertListener(null);
         _syncChatAlertListener(null);
+        _syncDigitalOrderFulfillmentListener(null);
         await NotificationStore.instance.clearForLogout();
         try {
           await _localNotifications.cancelAll();
@@ -242,11 +245,19 @@ class NotificationService {
       }
     });
 
-    await NotificationStore.instance.ensureLoaded();
-    _syncOrderPartyAlertListener(FirebaseAuth.instance.currentUser);
-    _syncChatAlertListener(FirebaseAuth.instance.currentUser);
-    await EngagementNotificationService.instance.syncTopicSubscription();
-    if (FirebaseAuth.instance.currentUser != null) {
+    unawaited(
+      NotificationStore.instance.ensureLoaded().timeout(
+        const Duration(seconds: 3),
+        onTimeout: () {},
+      ),
+    );
+    final current = tryFirebaseUser();
+    _syncOrderPartyAlertListener(current);
+    _syncChatAlertListener(current);
+    _syncDigitalOrderFulfillmentListener(current);
+    unawaited(EngagementNotificationService.instance.syncTopicSubscription());
+    if (current != null) {
+      unawaited(_ensurePushPermissionAfterLogin());
       unawaited(
         Future<void>.delayed(const Duration(seconds: 12), () {
           unawaited(
@@ -255,6 +266,42 @@ class NotificationService {
         }),
       );
     }
+  }
+
+  bool _pushPermissionAsked = false;
+
+  /// Ask for notification permission after the first UI is on screen, and only
+  /// when a signed-in user actually needs push (not during App Review launch).
+  Future<void> _ensurePushPermissionAfterLogin() async {
+    if (_pushPermissionAsked) return;
+    _pushPermissionAsked = true;
+    try {
+      final iosPlugin = _localNotifications
+          .resolvePlatformSpecificImplementation<
+              IOSFlutterLocalNotificationsPlugin>();
+      await iosPlugin
+          ?.requestPermissions(alert: true, badge: true, sound: true)
+          .timeout(const Duration(seconds: 8));
+    } catch (_) {}
+    try {
+      if (!isFirebaseAppReady) return;
+      final settingsPermission = await FirebaseMessaging.instance
+          .requestPermission(
+            alert: true,
+            announcement: false,
+            badge: true,
+            carPlay: false,
+            criticalAlert: false,
+            provisional: false,
+            sound: true,
+          )
+          .timeout(const Duration(seconds: 8));
+      if (kDebugMode) {
+        debugPrint(
+          '[NotificationService] iOS/FCM permission: ${settingsPermission.authorizationStatus}',
+        );
+      }
+    } catch (_) {}
   }
 
   /// Listens for [OrderPartyNotificationService] docs. Tips appear in the
@@ -289,14 +336,26 @@ class NotificationService {
             );
           } catch (_) {}
         }
-        // Badge / inbox count only â€” message content stays in Vero360 Team chat.
+        final type = (payloadMap['type'] ?? '').toString().toLowerCase();
+        final isServiceAlert = type.contains('order') ||
+            type.contains('food') ||
+            type.contains('digital') ||
+            type.contains('courier') ||
+            type.contains('booking') ||
+            type.contains('refund') ||
+            type.contains('fulfillment') ||
+            type.contains('stay');
         await NotificationStore.instance.addNotification(
           id: 'party_${change.doc.id}',
           title: title,
-          body: body.isEmpty ? 'New message from Vero360 Team' : body,
+          body: body.isEmpty
+              ? (isServiceAlert
+                  ? 'New order update'
+                  : 'New message from Vero360 Team')
+              : body,
           payload: {
             ...payloadMap,
-            'openChat': 'vero360_team',
+            if (!isServiceAlert) 'openChat': 'vero360_team',
           },
         );
         try {
@@ -359,6 +418,124 @@ class NotificationService {
             debugPrint('[NotificationService] chat alert consume failed: $e');
           }
         }
+      }
+    });
+  }
+
+  /// When admin writes card/login details onto the buyer's digital order,
+  /// surface it in the in-app inbox (app open). Background/killed devices
+  /// get the same alert from [onDigitalServiceOrderUpdated] → order_party_alerts.
+  void _syncDigitalOrderFulfillmentListener(User? user) {
+    _digitalOrderSub?.cancel();
+    _digitalOrderSub = null;
+    _digitalFulfillSeen.clear();
+    _digitalStatusSeen.clear();
+    _digitalStatusPrimed = false;
+    if (user == null || user.isAnonymous) return;
+
+    _digitalOrderSub = FirebaseFirestore.instance
+        .collection(kDigitalServiceOrdersCollection)
+        .where('buyerUid', isEqualTo: user.uid)
+        .snapshots()
+        .listen((snap) async {
+      if (!_digitalStatusPrimed) {
+        for (final doc in snap.docs) {
+          final order = DigitalServiceOrder.fromDoc(doc);
+          _digitalStatusSeen[order.id] = order.status.toLowerCase();
+          _digitalFulfillSeen[order.id] = order.fulfillment.copyAllText;
+        }
+        _digitalStatusPrimed = true;
+        return;
+      }
+      for (final change in snap.docChanges) {
+        final order = DigitalServiceOrder.fromDoc(change.doc);
+        final fp = order.fulfillment.copyAllText;
+        final prevFulfill = _digitalFulfillSeen[order.id];
+        _digitalFulfillSeen[order.id] = fp;
+        final status = order.status.toLowerCase();
+        final prevStatus = _digitalStatusSeen[order.id];
+        _digitalStatusSeen[order.id] = status;
+
+        Future<void> banner({
+          required String id,
+          required String type,
+          required String title,
+          required String body,
+          bool addToInbox = true,
+        }) async {
+          if (addToInbox) {
+            await NotificationStore.instance.addNotification(
+              id: id,
+              title: title,
+              body: body,
+              payload: {
+                'type': type,
+                'orderId': order.id,
+                'productName': order.productName,
+                NotificationStore.kPayloadBadgeRoute:
+                    NotificationStore.kBadgeDigitalOrders,
+              },
+            );
+          }
+          try {
+            await _showLocalNotification(
+              id: id.hashCode.abs() % 100000000,
+              title: title,
+              body: body,
+              payload: jsonEncode({
+                'type': type,
+                'orderId': order.id,
+                'productName': order.productName,
+                NotificationStore.kPayloadBadgeRoute:
+                    NotificationStore.kBadgeDigitalOrders,
+              }),
+            );
+          } catch (e) {
+            if (kDebugMode) {
+              debugPrint('[NotificationService] digital status notify: $e');
+            }
+          }
+        }
+
+        if (change.type == DocumentChangeType.added && order.isPending) {
+          await banner(
+            id: 'digital_pending_${order.id}',
+            type: 'digital_pending',
+            title: 'Payment awaiting · ${order.productName}',
+            body:
+                'Payment is awaiting confirmation for your ${order.productName} order. Approve the prompt on your phone, then we will process it.',
+            addToInbox: false,
+          );
+        } else if (order.isPaid &&
+            prevStatus != null &&
+            prevStatus != 'paid' &&
+            prevStatus != 'fulfilled' &&
+            prevStatus != 'completed') {
+          await banner(
+            id: 'digital_paid_${order.id}',
+            type: 'digital_order',
+            title: 'We received your order · ${order.productName}',
+            body:
+                'We have received your ${order.productName} payment. We are processing your order now — you will get your details in My Digital Orders.',
+            addToInbox: false,
+          );
+        }
+
+        if (change.type != DocumentChangeType.modified) continue;
+        if (!order.fulfillment.hasContent) continue;
+        if (prevFulfill == fp) continue;
+
+        await banner(
+          id: 'digital_fulfill_${order.id}',
+          type: 'digital_fulfillment',
+          title: 'Your ${order.productName} details are ready',
+          body:
+              'Open My Digital Orders to copy your code, login, or joining link.',
+        );
+      }
+    }, onError: (e) {
+      if (kDebugMode) {
+        debugPrint('[NotificationService] digital order listener error: $e');
       }
     });
   }
@@ -489,6 +666,7 @@ class NotificationService {
 
     _syncOrderPartyAlertListener(null);
     _syncChatAlertListener(null);
+    _syncDigitalOrderFulfillmentListener(null);
 
     String? fcmToken;
     try {
@@ -972,9 +1150,7 @@ class NotificationService {
         );
         return true;
       case NotificationStore.kBadgeDigitalOrders:
-        navigator.push(
-          MaterialPageRoute(builder: (_) => const DigitalMyOrdersPage()),
-        );
+        _openDigitalMyOrders(navigator, data);
         return true;
       case NotificationStore.kBadgePromotions:
         unawaited(_openPromotionTarget(navigator, data));
@@ -995,23 +1171,66 @@ class NotificationService {
     }
   }
 
+  static bool _isDigitalServicesPayload(Map<String, dynamic> data) {
+    String s(dynamic v) => (v ?? '').toString().trim().toLowerCase();
+    final type = s(data['type']);
+    final badge = s(
+      data['badgeRoute'] ?? data[NotificationStore.kPayloadBadgeRoute],
+    );
+    if (badge == NotificationStore.kBadgeDigitalOrders) return true;
+    if (type.contains('digital')) return true;
+    if (s(data['collection']).contains('digital_service')) return true;
+    if (s(data['digitalOrderId']).isNotEmpty) return true;
+    final productKey = s(data['productKey']);
+    if (productKey.startsWith('netflix') ||
+        productKey.startsWith('chatgpt') ||
+        productKey.contains('digital')) {
+      return true;
+    }
+    final hay = '${s(data['title'])} ${s(data['body'])} ${s(data['productName'])}';
+    if (hay.contains('digital order') ||
+        hay.contains('my digital') ||
+        hay.contains('digital service')) {
+      return true;
+    }
+    return false;
+  }
+
+  void _openDigitalMyOrders(
+    NavigatorState navigator,
+    Map<String, dynamic> data,
+  ) {
+    final orderId = (data['orderId'] ?? data['digitalOrderId'] ?? '')
+        .toString()
+        .trim();
+    navigator.push(
+      MaterialPageRoute(
+        builder: (_) => DigitalMyOrdersPage(
+          initialOrderId: orderId.isEmpty ? null : orderId,
+        ),
+      ),
+    );
+  }
+
   void _navigateWithNavigator(
     NavigatorState navigator,
     Map<String, dynamic> data,
   ) {
+    final type = (data['type'] ?? '').toString().toLowerCase();
+    final badgeRoute = (data['badgeRoute'] ??
+            data[NotificationStore.kPayloadBadgeRoute] ??
+            '')
+        .toString()
+        .toLowerCase();
     final openChat = (data['openChat'] ?? '').toString().trim().toLowerCase();
-    if (openChat == 'vero360_team' || openChat == VeroTeamChatPage.threadId) {
-      navigator.push(
-        MaterialPageRoute(builder: (_) => const VeroTeamChatPage()),
-      );
+
+    if (_isDigitalServicesPayload(data)) {
+      if (kDebugMode) debugPrint('→ Open My Digital Orders');
+      _openDigitalMyOrders(navigator, data);
       return;
     }
 
-    final type = (data['type'] as String?)?.toLowerCase();
-    final badgeRoute = (data['badgeRoute'] as String?)?.toLowerCase() ??
-        (data[NotificationStore.kPayloadBadgeRoute] as String?)?.toLowerCase();
-
-    switch (type ?? '') {
+    switch (type) {
       case 'reel_live':
         unawaited(openLiveFromNotification(navigator, data));
         return;
@@ -1061,12 +1280,6 @@ class NotificationService {
             MaterialPageRoute(builder: (_) => const ChatListPage()),
           );
         }
-        break;
-
-      case 'digital_fulfillment':
-        navigator.push(
-          MaterialPageRoute(builder: (_) => const DigitalMyOrdersPage()),
-        );
         break;
 
       case 'refund_request':
@@ -1272,6 +1485,11 @@ class NotificationService {
             .trim()
             .isNotEmpty) {
           unawaited(_openMarketplaceTarget(navigator, data));
+        } else if (openChat == 'vero360_team' ||
+            openChat == VeroTeamChatPage.threadId) {
+          navigator.push(
+            MaterialPageRoute(builder: (_) => const VeroTeamChatPage()),
+          );
         } else if (kDebugMode) {
           debugPrint('â†’ No route for notification type=$type');
         }
@@ -1637,7 +1855,7 @@ class NotificationService {
     await prefs.setBool(key, true);
   }
 
-  /// After PayChangu success: notify the guest on this device and queue a Firestore
+  /// After PawaPay success: notify the guest on this device and queue a Firestore
   /// alert for the host (same [OrderPartyNotificationService] pipe as marketplace escrow).
   Future<void> notifyAccommodationBookingForGuestAndHost({
     required String propertyName,

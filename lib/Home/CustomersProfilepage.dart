@@ -46,10 +46,12 @@ import 'package:vero360_app/features/ride_share/presentation/pages/become_driver
 import 'package:vero360_app/Home/post_story_page.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
+import 'package:vero360_app/GernalServices/seller_mode.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_online_session.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:vero360_app/utils/firebase_bootstrap.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -77,6 +79,7 @@ class _ProfilePageState extends State<ProfilePage> {
   bool _isDriver = false;
   bool _isMerchant = false;
   bool _switchingDriverMode = false;
+  bool _switchingSellerMode = false;
   StreamSubscription<User?>? _authSub;
   int _profileFetchGen = 0;
   final _driverService = DriverService();
@@ -88,15 +91,20 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   void initState() {
     super.initState();
-    _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
-      if (user == null || user.isAnonymous) {
-        _profileFetchGen++;
-        _resetGuestProfile();
-      } else {
-        unawaited(_loadUserData());
-        unawaited(_fetchCurrentUser());
+    try {
+      final auth = tryFirebaseAuth();
+      if (auth != null) {
+        _authSub = auth.authStateChanges().listen((user) {
+          if (user == null || user.isAnonymous) {
+            _profileFetchGen++;
+            _resetGuestProfile();
+          } else {
+            unawaited(_loadUserData());
+            unawaited(_fetchCurrentUser());
+          }
+        });
       }
-    });
+    } catch (_) {}
     unawaited(_loadUserData());
     unawaited(_fetchCurrentUser());
   }
@@ -119,6 +127,7 @@ class _ProfilePageState extends State<ProfilePage> {
       _isDriver = false;
       _isMerchant = false;
       _switchingDriverMode = false;
+      _switchingSellerMode = false;
       _loading = false;
     });
   }
@@ -353,6 +362,116 @@ class _ProfilePageState extends State<ProfilePage> {
         errorMessage: '',
       );
     }
+  }
+
+  Future<void> _onSellerModeChanged(bool enableSeller) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || user.isAnonymous) {
+      ToastHelper.showCustomToast(
+        context,
+        'Sign in to start selling.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    if (_switchingSellerMode || _isDriver) return;
+
+    setState(() => _switchingSellerMode = true);
+    try {
+      final ok = enableSeller
+          ? await SellerMode.enter(context)
+          : await SellerMode.exit(context);
+      if (!mounted) return;
+      if (!ok) {
+        setState(() => _switchingSellerMode = false);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _switchingSellerMode = false);
+      ToastHelper.showCustomToast(
+        context,
+        'Could not switch seller mode. Try again.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+    }
+  }
+
+  Widget _sellerModeSwitchCard() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (_isDriver || user == null || user.isAnonymous) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(0, 0, 0, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: _cardBg,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: _veroOrange.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(
+              Icons.storefront_rounded,
+              color: _veroOrange,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Seller mode',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _isMerchant
+                      ? 'You are selling on Vero360'
+                      : 'Switch on to start selling from this account',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Colors.black54,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (_switchingSellerMode)
+            const SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(strokeWidth: 2.4),
+            )
+          else
+            Switch.adaptive(
+              value: _isMerchant,
+              activeThumbColor: _veroOrange,
+              onChanged: _onSellerModeChanged,
+            ),
+        ],
+      ),
+    );
   }
 
   Widget _driverModeSwitchCard() {
@@ -1826,7 +1945,9 @@ class _ProfilePageState extends State<ProfilePage> {
         _fetchCurrentUser();
       }),
       _DetailItem('Notification', Icons.notifications_none, () async {
-        await _openBottomSheet(const NotificationsPage());
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const NotificationsPage()),
+        );
       }),
       _DetailItem('Settings', Icons.settings, () {
         Navigator.push(
@@ -1892,7 +2013,12 @@ class _ProfilePageState extends State<ProfilePage> {
             const SizedBox(height: 12),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 0),
-              child: _driverModeSwitchCard(),
+              child: Column(
+                children: [
+                  _sellerModeSwitchCard(),
+                  _driverModeSwitchCard(),
+                ],
+              ),
             ),
             _ordersQuickActions(),
             _otherDetailsGrid(),

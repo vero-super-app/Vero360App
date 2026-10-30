@@ -1,17 +1,15 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'package:vero360_app/features/car_hire/data/car_hire_api.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_company_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_browse_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_company_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_company_providers.dart';
-import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skeletons.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
+import 'package:vero360_app/features/car_hire/utils/car_hire_invite_prefs.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
-import 'package:vero360_app/utils/user_facing_error.dart';
 
 /// Car hire entry point. A live car hire account lands on its company home;
 /// everyone else lands on the renter marketplace.
@@ -77,20 +75,7 @@ class CarHireAccountBanner extends ConsumerWidget {
 
     if (renterInvite) {
       if (account.hasProfile) return const SizedBox.shrink();
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
-        child: _BannerTap(
-          onTap: () => CarHireRoutes.openApply(context),
-          child: const CarHireInfoBanner(
-            icon: Icons.add_business_outlined,
-            title: 'Rent out your cars on Vero360',
-            message:
-                'Car hire companies and individual owners can list '
-                'cars and manage every booking from one account.',
-            tone: CarHireInfoTone.accent,
-          ),
-        ),
-      );
+      return const _RenterInviteBanner();
     }
 
     final copy = _statusCopy(account);
@@ -104,6 +89,57 @@ class CarHireAccountBanner extends ConsumerWidget {
           title: copy.title,
           message: copy.short,
           tone: copy.tone,
+        ),
+      ),
+    );
+  }
+}
+
+/// First-open "Rent out your cars" card. Shown once, then remembered.
+class _RenterInviteBanner extends StatefulWidget {
+  const _RenterInviteBanner();
+
+  @override
+  State<_RenterInviteBanner> createState() => _RenterInviteBannerState();
+}
+
+class _RenterInviteBannerState extends State<_RenterInviteBanner> {
+  bool _ready = false;
+  bool _seen = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final seen = await CarHireInvitePrefs.hasSeen();
+    if (!mounted) return;
+    if (!seen) {
+      await CarHireInvitePrefs.markSeen();
+    }
+    if (!mounted) return;
+    setState(() {
+      _ready = true;
+      _seen = seen;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_ready || _seen) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+      child: _BannerTap(
+        onTap: () => CarHireRoutes.openApply(context),
+        child: const CarHireInfoBanner(
+          icon: Icons.add_business_outlined,
+          title: 'Rent out your cars on Vero360',
+          message:
+              'Car hire companies and individual owners can list '
+              'cars and manage every booking from one account.',
+          tone: CarHireInfoTone.accent,
         ),
       ),
     );
@@ -329,7 +365,7 @@ class _DetailsCard extends StatelessWidget {
             ),
             Expanded(
               child: Text(
-                value.isEmpty ? '—' : value,
+                value.isEmpty ? 'â€”' : value,
                 style: const TextStyle(
                   color: CarHirePalette.onSurface,
                   fontSize: 13,
@@ -351,432 +387,6 @@ class _DetailsCard extends StatelessWidget {
           row('Phone', account.contactPhone ?? ''),
           row('Service areas', account.serviceAreas.join(', ')),
         ],
-      ),
-    );
-  }
-}
-
-/// Apply for a car hire account, or update an application Vero360 sent back.
-class CarHireApplyPage extends ConsumerStatefulWidget {
-  const CarHireApplyPage({super.key, this.existing});
-
-  final CarHireAccount? existing;
-
-  @override
-  ConsumerState<CarHireApplyPage> createState() => _CarHireApplyPageState();
-}
-
-class _CarHireApplyPageState extends ConsumerState<CarHireApplyPage> {
-  final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _name;
-  late final TextEditingController _phone;
-  late final TextEditingController _areas;
-  late final TextEditingController _registrationNumber;
-  late final TextEditingController _taxId;
-  late final TextEditingController _idNumber;
-  late final TextEditingController _payoutName;
-  late final TextEditingController _payoutAccount;
-  late final TextEditingController _bankName;
-  late final TextEditingController _identityDocument;
-  late final TextEditingController _insuranceDocument;
-  late bool _business;
-  late String _payoutMethod;
-  bool _submitting = false;
-  String? _error;
-
-  bool get _updating =>
-      widget.existing?.state == CarHireAccountState.needsInformation &&
-      widget.existing?.companyId != null;
-
-  /// Document type of the identity link field; individuals prove a national ID.
-  String get _identityDocumentType =>
-      _business ? 'BUSINESS_REGISTRATION' : 'NATIONAL_ID';
-
-  @override
-  void initState() {
-    super.initState();
-    final existing = widget.existing;
-    final isBusiness = existing == null || existing.isBusiness;
-    _name = TextEditingController(text: existing?.companyName ?? '');
-    _phone = TextEditingController(text: existing?.contactPhone ?? '');
-    _areas = TextEditingController(
-      text: existing?.serviceAreas.join(', ') ?? '',
-    );
-    _registrationNumber = TextEditingController(
-      text: existing?.registrationNumber ?? '',
-    );
-    _taxId = TextEditingController(text: existing?.taxId ?? '');
-    _idNumber = TextEditingController(text: existing?.idNumber ?? '');
-    _payoutName = TextEditingController(
-      text: existing?.payoutAccountName ?? '',
-    );
-    _payoutAccount = TextEditingController(
-      text: existing?.payoutAccountNumber ?? '',
-    );
-    _bankName = TextEditingController(text: existing?.payoutBankName ?? '');
-    _identityDocument = TextEditingController(
-      text:
-          existing?.documentFor(
-            isBusiness ? 'BUSINESS_REGISTRATION' : 'NATIONAL_ID',
-          ) ??
-          '',
-    );
-    _insuranceDocument = TextEditingController(
-      text: existing?.documentFor('INSURANCE') ?? '',
-    );
-    _business = isBusiness;
-    _payoutMethod = existing?.payoutMethod == 'MOBILE_MONEY'
-        ? 'MOBILE_MONEY'
-        : 'BANK';
-  }
-
-  @override
-  void dispose() {
-    _name.dispose();
-    _phone.dispose();
-    _areas.dispose();
-    _registrationNumber.dispose();
-    _taxId.dispose();
-    _idNumber.dispose();
-    _payoutName.dispose();
-    _payoutAccount.dispose();
-    _bankName.dispose();
-    _identityDocument.dispose();
-    _insuranceDocument.dispose();
-    super.dispose();
-  }
-
-  List<String> get _serviceAreas => _areas.text
-      .split(',')
-      .map((area) => area.trim())
-      .where((area) => area.isNotEmpty)
-      .toList(growable: false);
-
-  /// Merges the document links in the form with anything already on file, so
-  /// an edit never silently drops a document the owner uploaded earlier.
-  List<CompanyDocument> get _documents {
-    final byType = <String, CompanyDocument>{
-      for (final document in widget.existing?.documents ?? const <CompanyDocument>[])
-        document.type.toUpperCase(): document,
-    };
-    void put(String type, String url) {
-      final link = url.trim();
-      if (link.isEmpty) {
-        byType.remove(type);
-        return;
-      }
-      byType[type] = CompanyDocument(type: type, url: link);
-    }
-
-    put(_identityDocumentType, _identityDocument.text);
-    put('INSURANCE', _insuranceDocument.text);
-    return byType.values.toList(growable: false);
-  }
-
-  String? _required(String? value, String message) =>
-      (value ?? '').trim().isEmpty ? message : null;
-
-  String? _optionalLink(String? value) {
-    final link = (value ?? '').trim();
-    if (link.isEmpty) return null;
-    if (!link.startsWith('http://') && !link.startsWith('https://')) {
-      return 'Paste a link that starts with https://';
-    }
-    return null;
-  }
-
-  Future<void> _submit() async {
-    if (_submitting || !(_formKey.currentState?.validate() ?? false)) return;
-    setState(() {
-      _submitting = true;
-      _error = null;
-    });
-    final api = ref.read(carHireApiProvider);
-    try {
-      if (_updating) {
-        await api.updateCarHireCompany(
-          widget.existing!.companyId!,
-          displayName: _name.text,
-          contactPhone: _phone.text,
-          serviceAreas: _serviceAreas,
-          registrationNumber: _business ? _registrationNumber.text : '',
-          taxId: _business ? _taxId.text : '',
-          idNumber: _business ? '' : _idNumber.text,
-          payoutMethod: _payoutMethod,
-          payoutAccountName: _payoutName.text,
-          payoutAccountNumber: _payoutAccount.text,
-          payoutBankName: _payoutMethod == 'BANK' ? _bankName.text : '',
-          documents: _documents,
-        );
-      } else {
-        await api.applyForCarHireAccount(
-          type: _business ? 'BUSINESS' : 'INDIVIDUAL',
-          displayName: _name.text,
-          contactPhone: _phone.text,
-          serviceAreas: _serviceAreas,
-          registrationNumber: _business ? _registrationNumber.text : null,
-          taxId: _business ? _taxId.text : null,
-          idNumber: _business ? null : _idNumber.text,
-          payoutMethod: _payoutMethod,
-          payoutAccountName: _payoutName.text,
-          payoutAccountNumber: _payoutAccount.text,
-          payoutBankName: _payoutMethod == 'BANK' ? _bankName.text : null,
-          documents: _documents,
-        );
-      }
-      ref.invalidate(carHireAccountProvider);
-      ref.invalidate(companyAccessProvider);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          content: Text(
-            _updating
-                ? 'Details sent. Your application is back in review.'
-                : 'Application sent. Vero360 will review it shortly.',
-          ),
-        ),
-      );
-      Navigator.of(context).pop();
-    } on CarHireApiException catch (error) {
-      setState(() => _error = error.message);
-    } catch (error) {
-      setState(() => _error = UserFacingError.from(error));
-    } finally {
-      if (mounted) setState(() => _submitting = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: CarHirePalette.background,
-      appBar: carHireAppBar(
-        title: _updating ? 'Update application' : 'List your cars',
-      ),
-      body: Form(
-        key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-          children: [
-            const Text(
-              'One account runs everything: your cars, prices, calendar and '
-              'bookings. Vero360 reviews every application before cars go '
-              'live.',
-              style: CarHireType.bodySmall,
-            ),
-            if (!_updating) ...[
-              const SizedBox(height: 18),
-              const Text('I am a', style: CarHireType.subtitle),
-              const SizedBox(height: 8),
-              SegmentedButton<bool>(
-                segments: const [
-                  ButtonSegment(
-                    value: true,
-                    icon: Icon(Icons.business_rounded),
-                    label: Text('Car hire company'),
-                  ),
-                  ButtonSegment(
-                    value: false,
-                    icon: Icon(Icons.person_rounded),
-                    label: Text('Individual owner'),
-                  ),
-                ],
-                selected: {_business},
-                showSelectedIcon: false,
-                onSelectionChanged: (value) =>
-                    setState(() => _business = value.first),
-              ),
-            ],
-            const SizedBox(height: 18),
-            TextFormField(
-              controller: _name,
-              textCapitalization: TextCapitalization.words,
-              decoration: carHireInputDecoration(
-                label: _business ? 'Company name' : 'Your name',
-                hint: _business
-                    ? 'e.g. Lilongwe Car Rentals'
-                    : 'e.g. John Banda',
-              ),
-              validator: (value) => (value ?? '').trim().length < 2
-                  ? 'Enter a name renters will recognise'
-                  : null,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _phone,
-              keyboardType: TextInputType.phone,
-              decoration: carHireInputDecoration(
-                label: 'Contact phone',
-                hint: '+265…',
-              ),
-              validator: (value) => (value ?? '').trim().length < 7
-                  ? 'Enter a phone number renters can call'
-                  : null,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _areas,
-              textCapitalization: TextCapitalization.words,
-              decoration: carHireInputDecoration(
-                label: 'Service areas',
-                hint: 'Lilongwe, Blantyre',
-                helper: 'Separate areas with commas.',
-              ),
-            ),
-            const SizedBox(height: 22),
-            const Text('Verification', style: CarHireType.subtitle),
-            const SizedBox(height: 4),
-            const Text(
-              'Vero360 checks these details before your cars go live. '
-              'Only the review team sees them.',
-              style: CarHireType.bodySmall,
-            ),
-            const SizedBox(height: 12),
-            if (_business) ...[
-              TextFormField(
-                controller: _registrationNumber,
-                textCapitalization: TextCapitalization.characters,
-                decoration: carHireInputDecoration(
-                  label: 'Company registration number',
-                  hint: 'e.g. MBM-2024-1187',
-                ),
-                validator: (value) => _required(
-                  value,
-                  'Enter the company registration number',
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _taxId,
-                textCapitalization: TextCapitalization.characters,
-                decoration: carHireInputDecoration(
-                  label: 'TPIN (optional)',
-                  hint: 'Tax identification number',
-                ),
-              ),
-            ] else ...[
-              TextFormField(
-                controller: _idNumber,
-                textCapitalization: TextCapitalization.characters,
-                decoration: carHireInputDecoration(
-                  label: 'National ID',
-                  hint: 'e.g. MW-448291',
-                ),
-                validator: (value) =>
-                    _required(value, 'Enter your national ID number'),
-              ),
-            ],
-            const SizedBox(height: 22),
-            const Text('Payout details', style: CarHireType.subtitle),
-            const SizedBox(height: 4),
-            const Text(
-              'Where Vero360 sends your rental earnings.',
-              style: CarHireType.bodySmall,
-            ),
-            const SizedBox(height: 12),
-            SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(value: 'BANK', label: Text('Bank transfer')),
-                ButtonSegment(value: 'MOBILE_MONEY', label: Text('Mobile money')),
-              ],
-              selected: {_payoutMethod},
-              showSelectedIcon: false,
-              onSelectionChanged: (value) =>
-                  setState(() => _payoutMethod = value.first),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _payoutName,
-              textCapitalization: TextCapitalization.words,
-              decoration: carHireInputDecoration(
-                label: _business ? 'Account name' : 'Account holder name',
-                hint: _business
-                    ? 'Name on the company account'
-                    : 'Name on the account',
-              ),
-              validator: (value) =>
-                  _required(value, 'Enter the name on the payout account'),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _payoutAccount,
-              keyboardType: TextInputType.number,
-              decoration: carHireInputDecoration(
-                label: _payoutMethod == 'BANK'
-                    ? 'Account number'
-                    : 'Mobile money number',
-                hint: _payoutMethod == 'BANK' ? 'e.g. 1002345678' : '+265…',
-              ),
-              validator: (value) =>
-                  _required(value, 'Enter the payout account number'),
-            ),
-            if (_payoutMethod == 'BANK') ...[
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _bankName,
-                textCapitalization: TextCapitalization.words,
-                decoration: carHireInputDecoration(
-                  label: 'Bank name',
-                  hint: 'e.g. National Bank of Malawi',
-                ),
-                validator: (value) =>
-                    _required(value, 'Enter the bank name for this account'),
-              ),
-            ],
-            const SizedBox(height: 22),
-            const Text(
-              'Compliance documents (optional)',
-              style: CarHireType.subtitle,
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              'Paste a link to a shared file. You can add these later.',
-              style: CarHireType.bodySmall,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _identityDocument,
-              keyboardType: TextInputType.url,
-              decoration: carHireInputDecoration(
-                label: _business
-                    ? 'Business registration link'
-                    : 'National ID link',
-                hint: 'https://…',
-              ),
-              validator: _optionalLink,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _insuranceDocument,
-              keyboardType: TextInputType.url,
-              decoration: carHireInputDecoration(
-                label: 'Insurance certificate link',
-                hint: 'https://…',
-              ),
-              validator: _optionalLink,
-            ),
-            if (_error != null) ...[
-              const SizedBox(height: 14),
-              CarHireInlineError(message: _error!),
-            ],
-            const SizedBox(height: 22),
-            FilledButton(
-              onPressed: _submitting ? null : _submit,
-              style: carHirePrimaryButton(),
-              child: _submitting
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: CarHirePalette.onAccent,
-                      ),
-                    )
-                  : Text(_updating ? 'Send for review' : 'Submit application'),
-            ),
-          ],
-        ),
       ),
     );
   }

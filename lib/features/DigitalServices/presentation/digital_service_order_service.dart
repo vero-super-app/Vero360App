@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_kyc_upload_section.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
+import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 
 /// Firestore collection for Digital Services purchases (subscriptions + gift cards).
 const String kDigitalServiceOrdersCollection = 'digital_service_orders';
@@ -11,19 +12,147 @@ class DigitalOrderFulfillment {
   final String cardDetails;
   final String joiningLink;
   final String notes;
+  final List<String> fileUrls;
   final DateTime? sentAt;
+
+  /// Extra credential rows (login, password, email, pin, …) for copy buttons.
+  final Map<String, String> extraFields;
 
   const DigitalOrderFulfillment({
     this.cardDetails = '',
     this.joiningLink = '',
     this.notes = '',
+    this.fileUrls = const [],
     this.sentAt,
+    this.extraFields = const {},
   });
 
   bool get hasContent =>
       cardDetails.trim().isNotEmpty ||
       joiningLink.trim().isNotEmpty ||
-      notes.trim().isNotEmpty;
+      notes.trim().isNotEmpty ||
+      fileUrls.isNotEmpty ||
+      extraFields.values.any((v) => v.trim().isNotEmpty);
+
+  /// Plain text of every delivered field so the buyer can copy once.
+  String get copyAllText {
+    final buf = StringBuffer();
+    void line(String label, String value) {
+      final v = value.trim();
+      if (v.isEmpty) return;
+      buf.writeln('$label:');
+      buf.writeln(v);
+      buf.writeln();
+    }
+
+    line('Card details', cardDetails);
+    for (final e in extraFields.entries) {
+      line(e.key, e.value);
+    }
+    line('Joining link', joiningLink);
+    line('Notes', notes);
+    if (fileUrls.isNotEmpty) {
+      line('Files', fileUrls.join('\n'));
+    }
+    return buf.toString().trim();
+  }
+
+  static String _str(dynamic v) => (v ?? '').toString().trim();
+
+  static DateTime? _asDate(dynamic v) {
+    if (v == null) return null;
+    if (v is Timestamp) return v.toDate();
+    if (v is DateTime) return v;
+    return DateTime.tryParse(v.toString());
+  }
+
+  static List<String> _urls(dynamic raw) {
+    if (raw is! List) return const <String>[];
+    return raw
+        .map((e) => e.toString().trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+  }
+
+  /// Admin dashboards store delivery under `fulfillment` or as top-level fields.
+  factory DigitalOrderFulfillment.fromOrderData(Map<String, dynamic> d) {
+    final rawFulfill = d['fulfillment'];
+    final f = rawFulfill is Map
+        ? Map<String, dynamic>.from(rawFulfill)
+        : const <String, dynamic>{};
+
+    String pick(List<String> keys) {
+      for (final k in keys) {
+        final fromF = _str(f[k]);
+        if (fromF.isNotEmpty) return fromF;
+        final fromD = _str(d[k]);
+        if (fromD.isNotEmpty) return fromD;
+      }
+      return '';
+    }
+
+    const extraKeyLabels = <String, String>{
+      'email': 'Email',
+      'username': 'Username',
+      'userName': 'Username',
+      'login': 'Login',
+      'account': 'Account',
+      'password': 'Password',
+      'pin': 'PIN',
+      'code': 'Code',
+      'voucher': 'Voucher',
+      'giftCode': 'Gift code',
+      'phone': 'Phone',
+    };
+
+    final extras = <String, String>{};
+    final buyerEmail = _str(d['buyerEmail'] ?? d['email']);
+    for (final e in extraKeyLabels.entries) {
+      var v = _str(f[e.key]);
+      if (v.isEmpty && e.key != 'email') {
+        v = _str(d[e.key]);
+      }
+      if (v.isEmpty) continue;
+      if (e.key == 'email' && v.toLowerCase() == buyerEmail.toLowerCase()) {
+        continue;
+      }
+      extras.putIfAbsent(e.value, () => v);
+    }
+
+    final fileUrls = _urls(f['fileUrls']);
+    final topFiles = _urls(d['fileUrls']);
+
+    return DigitalOrderFulfillment(
+      cardDetails: pick([
+        'cardDetails',
+        'card',
+        'credentials',
+        'loginDetails',
+        'accountDetails',
+        'details',
+        'deliveryDetails',
+      ]),
+      joiningLink: pick([
+        'joiningLink',
+        'joinLink',
+        'inviteLink',
+        'accessLink',
+        'link',
+        'url',
+      ]),
+      notes: pick([
+        'notes',
+        'fulfillmentNotes',
+        'message',
+        'instructions',
+        'adminNote',
+        'deliveryNotes',
+      ]),
+      fileUrls: fileUrls.isNotEmpty ? fileUrls : topFiles,
+      sentAt: _asDate(f['sentAt'] ?? d['fulfilledAt'] ?? d['deliveredAt']),
+      extraFields: extras,
+    );
+  }
 }
 
 class DigitalServiceOrder {
@@ -115,11 +244,6 @@ class DigitalServiceOrder {
 
     String str(dynamic v) => (v ?? '').toString().trim();
 
-    final rawFulfill = d['fulfillment'];
-    final fulfillMap = rawFulfill is Map
-        ? Map<String, dynamic>.from(rawFulfill)
-        : const <String, dynamic>{};
-
     return DigitalServiceOrder(
       id: doc.id,
       productKey: str(d['productKey']),
@@ -141,12 +265,7 @@ class DigitalServiceOrder {
       isGuest: d['isGuest'] == true,
       createdAt: asDate(d['createdAt']),
       paidAt: asDate(d['paidAt']),
-      fulfillment: DigitalOrderFulfillment(
-        cardDetails: str(fulfillMap['cardDetails'] ?? d['cardDetails']),
-        joiningLink: str(fulfillMap['joiningLink'] ?? d['joiningLink']),
-        notes: str(fulfillMap['notes'] ?? d['fulfillmentNotes']),
-        sentAt: asDate(fulfillMap['sentAt'] ?? d['fulfilledAt']),
-      ),
+      fulfillment: DigitalOrderFulfillment.fromOrderData(d),
     );
   }
 }
@@ -166,6 +285,7 @@ class DigitalServiceOrderService {
     required String buyerPhone,
     double? selectedUsd,
     DigitalPayoutKycPayload? payoutKyc,
+    String paymentProvider = 'pawapay',
   }) async {
     var user = FirebaseAuth.instance.currentUser;
     user ??= (await FirebaseAuth.instance.signInAnonymously()).user;
@@ -193,6 +313,7 @@ class DigitalServiceOrderService {
       'currency': 'MWK',
       'status': 'pending_payment',
       'txRef': txRef,
+      'paymentProvider': paymentProvider,
       'buyerUid': isGuest ? '' : user.uid,
       'isGuest': isGuest,
       'buyerName': buyerName,
@@ -207,6 +328,18 @@ class DigitalServiceOrderService {
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
+    if (!isGuest) {
+      await OrderPartyNotificationService.publishDigitalOrderToBuyer(
+        buyerUid: user.uid,
+        productName: product.name,
+        orderId: doc.id,
+        title: 'Payment awaiting · ${product.name}',
+        body:
+            'Payment is awaiting confirmation for your ${product.name} order. '
+            'Approve the prompt on your phone, then we will process it.',
+        type: 'digital_pending',
+      );
+    }
     return doc.id;
   }
 
@@ -248,6 +381,32 @@ class DigitalServiceOrderService {
         'platformFeeCreditedAt': FieldValue.serverTimestamp(),
       },
     }, SetOptions(merge: true));
+
+    final buyerUid = (data['buyerUid'] ?? '').toString().trim();
+    final isGuest = data['isGuest'] == true;
+    if (buyerUid.isNotEmpty && !isGuest) {
+      await OrderPartyNotificationService.publishDigitalOrderToBuyer(
+        buyerUid: buyerUid,
+        productName: productName,
+        orderId: orderId,
+        title: 'We received your order · $productName',
+        body:
+            'We have received your $productName payment. We are processing your order now — you will get your details in My Digital Orders.',
+        type: 'digital_order',
+      );
+    }
+  }
+
+  /// Live list of the signed-in buyer’s digital orders (newest first).
+  static Stream<DigitalServiceOrder?> watchById(String orderId) {
+    final id = orderId.trim();
+    if (id.isEmpty) {
+      return Stream<DigitalServiceOrder?>.value(null);
+    }
+    return _col.doc(id).snapshots().map((snap) {
+      if (!snap.exists) return null;
+      return DigitalServiceOrder.fromDoc(snap);
+    });
   }
 
   /// Live list of the signed-in buyer’s digital orders (newest first).

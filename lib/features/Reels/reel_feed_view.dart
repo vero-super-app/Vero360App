@@ -65,19 +65,20 @@ class _ReelFeedViewState extends State<ReelFeedView>
     _prefetchAround(_index);
   }
 
-  /// Downloads the next reels while this one plays, like TikTok, and drops
-  /// downloads for reels that were scrolled past.
+  /// Downloads the next reels while this one plays so swipes hit the disk cache.
   void _prefetchAround(int i) {
     final reels = widget.reels;
     if (reels.isEmpty) return;
     final cache = ReelVideoCache.instance;
     final near = <String>[];
-    for (var j = i - 1; j <= i + 2; j++) {
+    for (var j = i - 1; j <= i + 5; j++) {
       if (j >= 0 && j < reels.length) near.add(reels[j].videoUrl);
     }
     cache.keepOnly(near);
-    for (var j = i; j <= i + 2 && j < reels.length; j++) {
-      cache.prefetch(reels[j].videoUrl, priority: j == i);
+    // Do not download the on-screen URL here — the player already streams it.
+    // Parallel Dio + VideoPlayer on the same file starves autoplay.
+    for (var j = i + 1; j <= i + 5 && j < reels.length; j++) {
+      cache.prefetch(reels[j].videoUrl, priority: j == i + 1);
     }
   }
 
@@ -140,7 +141,7 @@ class _ReelFeedViewState extends State<ReelFeedView>
         return _ReelTile(
           key: ValueKey(reel.id),
           reel: reel,
-          load: i >= _index - 1 && i <= _index + 2,
+          load: playing && i >= _index && i <= _index + 1,
           playing: playing && i == _index,
           bottomInset: widget.bottomInset,
           pushCovered: _pushCovered,
@@ -240,10 +241,14 @@ class _ReelTileState extends State<_ReelTile> {
     final viewType = defaultTargetPlatform == TargetPlatform.android
         ? VideoViewType.platformView
         : VideoViewType.textureView;
+    final options = VideoPlayerOptions(mixWithOthers: true);
     final controller = file != null
-        ? VideoPlayerController.file(file, viewType: viewType)
-        : VideoPlayerController.networkUrl(Uri.parse(_reel.videoUrl), viewType: viewType);
-    if (file == null) cache.prefetch(_reel.videoUrl, priority: widget.playing);
+        ? VideoPlayerController.file(file, viewType: viewType, videoPlayerOptions: options)
+        : VideoPlayerController.networkUrl(
+            Uri.parse(_reel.videoUrl),
+            viewType: viewType,
+            videoPlayerOptions: options,
+          );
     _video = controller;
     _failed = false;
     controller.addListener(_onVideoValue);
@@ -251,23 +256,21 @@ class _ReelTileState extends State<_ReelTile> {
       await controller.initialize();
       if (!mounted || _video != controller) return;
       await controller.setLooping(true);
+      await controller.setVolume(1);
       final resume = _resumeAt;
       _resumeAt = null;
-      if (resume != null && resume > Duration.zero) await controller.seekTo(resume);
-      if (!widget.playing) {
-        // Decode the first frame so the reel is on screen the moment it's swiped to.
-        await controller.setVolume(0);
-        await controller.play();
-        if (!widget.playing) {
-          await controller.pause();
-          if (resume == null) await controller.seekTo(Duration.zero);
-        }
-        await controller.setVolume(1);
-        if (!mounted || _video != controller) return;
+      if (resume != null && resume > Duration.zero) {
+        await controller.seekTo(resume);
       }
       _retries = 0;
-      setState(() => _ready = true);
-      _syncPlayback();
+      if (mounted) setState(() => _ready = true);
+      await _playIfNeeded();
+      if (widget.playing && file == null) {
+        // Cache this clip after it is already playing so the next visit is instant.
+        Future<void>.delayed(const Duration(seconds: 2), () {
+          if (mounted) ReelVideoCache.instance.prefetch(_reel.videoUrl);
+        });
+      }
     } catch (e) {
       if (kDebugMode) debugPrint('[Reels] video failed: $e');
       if (!mounted || _video != controller) return;
@@ -305,7 +308,7 @@ class _ReelTileState extends State<_ReelTile> {
   /// Videos sometimes stop on their own (buffer underrun, audio focus,
   /// platform view hiccup). While this reel should be playing, nudge it.
   void _startWatchdog() {
-    _watchdog ??= Timer.periodic(const Duration(seconds: 1), (_) {
+    _watchdog ??= Timer.periodic(const Duration(milliseconds: 400), (_) {
       final v = _video;
       if (!mounted || v == null || !v.value.isInitialized) return;
       if (!widget.playing || _userPaused) {
@@ -381,25 +384,39 @@ class _ReelTileState extends State<_ReelTile> {
     v?.dispose();
   }
 
-  void _syncPlayback() {
-    if (widget.playing) {
-      _startWatchdog();
-    } else {
-      _stopWatchdog();
-    }
+  Future<void> _playIfNeeded({bool fromStart = false}) async {
     final v = _video;
     if (v == null || !v.value.isInitialized) return;
-    final shouldPlay = widget.playing && !_userPaused;
-    if (shouldPlay && !v.value.isPlaying) {
-      v.play();
+    if (!widget.playing || _userPaused) {
+      if (v.value.isPlaying) await v.pause();
+      _stopWatchdog();
       _viewTimer?.cancel();
-      _viewTimer = Timer(const Duration(seconds: 2), () {
-        if (mounted && widget.playing) _service.recordView(_reel.id);
-      });
-    } else if (!shouldPlay && v.value.isPlaying) {
-      v.pause();
-      _viewTimer?.cancel();
+      return;
     }
+    if (fromStart) {
+      try {
+        await v.seekTo(Duration.zero);
+      } catch (_) {}
+    }
+    try {
+      await v.play();
+    } catch (_) {}
+    if (mounted && widget.playing && !_userPaused && !v.value.isPlaying) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && widget.playing && !_userPaused) {
+          _video?.play();
+        }
+      });
+    }
+    _startWatchdog();
+    _viewTimer?.cancel();
+    _viewTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted && widget.playing) _service.recordView(_reel.id);
+    });
+  }
+
+  void _syncPlayback() {
+    unawaited(_playIfNeeded());
   }
 
   @override
@@ -416,9 +433,10 @@ class _ReelTileState extends State<_ReelTile> {
         _failed = false;
         _releaseVideo();
         _initVideo();
-      } else {
-        _video?.seekTo(Duration.zero);
+        return;
       }
+      unawaited(_playIfNeeded(fromStart: true));
+      return;
     }
     _syncPlayback();
   }

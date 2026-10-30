@@ -276,6 +276,9 @@ class ReelService {
       final data = res.data;
       final url = data is Map ? (data['url'] ?? '').toString() : '';
       if (url.isEmpty) throw Exception('Could not prepare the video. Try again.');
+      if (kDebugMode && data is Map && data['fallback'] == true) {
+        debugPrint('[Reels] prepareReelDownload returned original (no watermark)');
+      }
       return url;
     } on FirebaseFunctionsException catch (e) {
       if (kDebugMode) debugPrint('[Reels] prepareReelDownload ${e.code}: ${e.message}');
@@ -290,7 +293,22 @@ class ReelService {
     }
   }
 
-  // â”€â”€ Posting â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  /// Branded file when the server can render it; otherwise the original clip.
+  Future<String> downloadSourceUrl(Reel reel) async {
+    try {
+      final branded = await brandedDownloadUrl(reel.id);
+      if (branded.trim().isNotEmpty) return branded.trim();
+    } catch (e) {
+      if (kDebugMode) debugPrint('[Reels] branded download fallback: $e');
+    }
+    final original = reel.videoUrl.trim();
+    if (original.isEmpty) {
+      throw Exception('This reel has no video to save.');
+    }
+    return original;
+  }
+
+  // ── Posting ───────────────────────────────────────────────────────────────
 
   String _contentType(String ext) => switch (ext) {
         'mov' => 'video/quicktime',
@@ -474,7 +492,7 @@ class ReelService {
 
   /// Counts one view per reel per app session.
   void recordView(String reelId) {
-    if (_uid == null || !_viewedThisSession.add(reelId)) return;
+    if (!_viewedThisSession.add(reelId)) return;
     unawaited(_reels
         .doc(reelId)
         .update({'viewCount': FieldValue.increment(1)})
@@ -540,14 +558,23 @@ class ReelService {
 
   // â”€â”€ Comments â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+  List<ReelComment> _parseComments(QuerySnapshot<Map<String, dynamic>> snap) {
+    final list = snap.docs.map(ReelComment.fromDoc).toList();
+    list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return list;
+  }
+
   /// Comments and replies together; the sheet groups replies under their parent.
-  Stream<List<ReelComment>> watchComments(String reelId) => _reels
-      .doc(reelId)
-      .collection('comments')
-      .orderBy('createdAt', descending: true)
-      .limit(400)
-      .snapshots()
-      .map((s) => s.docs.map(ReelComment.fromDoc).toList());
+  /// Public read — guests can watch the thread. Posting still needs sign-in.
+  Stream<List<ReelComment>> watchComments(String reelId) {
+    final col = _reels.doc(reelId).collection('comments').limit(400);
+    return col.snapshots().map(_parseComments);
+  }
+
+  Future<List<ReelComment>> fetchComments(String reelId) async {
+    final snap = await _reels.doc(reelId).collection('comments').limit(400).get();
+    return _parseComments(snap);
+  }
 
   String? get myUid => _uid;
 

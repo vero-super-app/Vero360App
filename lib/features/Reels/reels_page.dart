@@ -49,6 +49,7 @@ class _ReelsPageState extends State<ReelsPage> {
     super.initState();
     widget.visible.addListener(_onVisibility);
     _uploadSub = ReelUploadManager.instance.results.listen(_onUploadResult);
+    unawaited(ReelVideoCache.instance.init());
     _loadForYou(reset: true);
   }
 
@@ -80,6 +81,10 @@ class _ReelsPageState extends State<ReelsPage> {
     return [...ready, ...reels.where((r) => !cache.isCached(r.videoUrl))];
   }
 
+  void _warmVideos(List<Reel> reels) {
+    ReelVideoCache.instance.prefetchMany(reels.map((r) => r.videoUrl));
+  }
+
   Future<void> _loadForYou({bool reset = false}) async {
     if (_loading || (!reset && !_hasMore)) return;
     setState(() {
@@ -102,6 +107,7 @@ class _ReelsPageState extends State<ReelsPage> {
               _hasMore = quick.hasMore;
               _feedGeneration++;
             });
+            _warmVideos(_forYou);
             showedQuick = true;
           }
         } catch (_) {}
@@ -115,6 +121,7 @@ class _ReelsPageState extends State<ReelsPage> {
           _cursor = page.cursor;
           _hasMore = page.hasMore;
         });
+        _warmVideos(_forYou);
         return;
       }
       setState(() {
@@ -130,6 +137,7 @@ class _ReelsPageState extends State<ReelsPage> {
         _cursor = page.cursor;
         _hasMore = page.hasMore;
       });
+      _warmVideos(_forYou);
       // A page can be entirely filtered out (hidden / reported); keep going.
       if (page.reels.isEmpty && page.hasMore) {
         _loading = false;
@@ -159,6 +167,7 @@ class _ReelsPageState extends State<ReelsPage> {
         _loadedFollowing = true;
         _feedGeneration++;
       });
+      _warmVideos(_following);
     } catch (_) {
       if (mounted) setState(() => _error = 'Could not load reels. Check your connection.');
     } finally {
@@ -225,7 +234,13 @@ class _ReelsPageState extends State<ReelsPage> {
     final me = await _service.myIdentity();
     if (!mounted) return;
     if (me == null) {
-      _post();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Text('Sign in to see your reels.'),
+        action: SnackBarAction(
+          label: 'Sign in',
+          onPressed: () => Navigator.of(context).pushNamed('/login'),
+        ),
+      ));
       return;
     }
     await _pushCovered<void>(MaterialPageRoute(
@@ -247,11 +262,9 @@ class _ReelsPageState extends State<ReelsPage> {
   @override
   Widget build(BuildContext context) {
     final reels = _mode == _FeedMode.forYou ? _forYou : _following;
-    // Android builds only the selected tab, so this page existing means it is
-    // on screen. iOS keeps every tab mounted and relies on [visible].
-    final onScreen = defaultTargetPlatform == TargetPlatform.android
-        ? TickerMode.of(context)
-        : widget.visible.value;
+    // Android remounts this tab; iOS keeps it in an IndexedStack.
+    // Either signal is enough so autoplay is not held back a frame.
+    final onScreen = widget.visible.value || TickerMode.of(context);
     final active = onScreen && !_covered;
     final navClearance = veroFloatingNavClearance(context, extra: 0);
     return AnnotatedRegion<SystemUiOverlayStyle>(

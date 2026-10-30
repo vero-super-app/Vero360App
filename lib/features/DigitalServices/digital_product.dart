@@ -35,7 +35,7 @@ class DigitalProduct {
   final List<double> usdAmounts;
 
   /// Fixed MWK price for subscription codes (Spotify / Apple Music / Netflix / ChatGPT).
-  /// When set: skip amount picker and charge this MWK amount via PayChangu.
+  /// When set: skip amount picker and charge this MWK amount via PawaPay.
   final double? fixedMwkPrice;
 
   /// Custom MWK per unit (USDT / CNY / BNB). Overrides global USD rate when set.
@@ -49,6 +49,20 @@ class DigitalProduct {
 
   /// When false, product is hidden (admin disabled).
   final bool active;
+
+  /// Hub tile (ChatGPT / Claude) — opens a plan picker, not checkout.
+  final bool isHub;
+
+  /// Plan products point at their hub key (e.g. chatgpt, claude).
+  final String hubKey;
+
+  /// Badge on the plan card, e.g. Students / Private.
+  final String planBadge;
+
+  /// ChatGPT-style feature steps on the plan picker.
+  final List<String> featureLines;
+
+  final bool recommended;
 
   const DigitalProduct({
     required this.key,
@@ -66,20 +80,37 @@ class DigitalProduct {
     this.logoAsset,
     this.imageUrl,
     this.active = true,
+    this.isHub = false,
+    this.hubKey = '',
+    this.planBadge = '',
+    this.featureLines = const [],
+    this.recommended = false,
   });
 
   bool get usesAmountPicker =>
-      fixedMwkPrice == null && !isNetflixHub && !isChatGptHub;
+      fixedMwkPrice == null && !isPlanHub;
 
   /// Homepage Netflix tile — opens plan picker instead of checkout.
-  bool get isNetflixHub => key == 'netflix';
+  bool get isNetflixHub => key == 'netflix' || (isHub && key == 'netflix');
 
-  bool get isNetflixPlan => key.startsWith('netflix_');
+  bool get isNetflixPlan =>
+      key.startsWith('netflix_') || hubKey == 'netflix';
 
   /// Homepage ChatGPT tile — opens plan picker instead of checkout.
   bool get isChatGptHub => key == 'chatgpt';
 
-  bool get isChatGptPlan => key == 'chatgpt_basic' || key == 'chatgpt_plus';
+  bool get isChatGptPlan =>
+      key == 'chatgpt_basic' || key == 'chatgpt_plus' || hubKey == 'chatgpt';
+
+  /// Any admin-created subscription hub (Claude, Canva, ChatGPT, Netflix).
+  bool get isPlanHub => isHub || isChatGptHub || isNetflixHub;
+
+  /// Child plan — hidden on homepage, shown in the hub picker.
+  bool get isChildPlan =>
+      hubKey.trim().isNotEmpty ||
+      key.startsWith('netflix_') ||
+      key == 'chatgpt_basic' ||
+      key == 'chatgpt_plus';
 
   double get startingUsd =>
       usdAmounts.isEmpty ? 0 : usdAmounts.reduce((a, b) => a < b ? a : b);
@@ -135,7 +166,7 @@ class DigitalProduct {
   }
 
   String get priceLabel {
-    if (isNetflixHub || isChatGptHub) return 'Choose a plan';
+    if (isPlanHub) return 'Choose a plan';
     if (fixedMwkPrice != null && fixedMwkPrice! > 0) {
       return formatMwk(fixedMwkPrice!);
     }
@@ -159,6 +190,11 @@ class DigitalProduct {
     bool clearMaxOtherAmount = false,
     String? imageUrl,
     bool? active,
+    bool? isHub,
+    String? hubKey,
+    String? planBadge,
+    List<String>? featureLines,
+    bool? recommended,
   }) {
     return DigitalProduct(
       key: key,
@@ -179,6 +215,11 @@ class DigitalProduct {
       logoAsset: logoAsset,
       imageUrl: imageUrl ?? this.imageUrl,
       active: active ?? this.active,
+      isHub: isHub ?? this.isHub,
+      hubKey: hubKey ?? this.hubKey,
+      planBadge: planBadge ?? this.planBadge,
+      featureLines: featureLines ?? this.featureLines,
+      recommended: recommended ?? this.recommended,
     );
   }
 }
@@ -214,6 +255,7 @@ const List<DigitalProduct> kDigitalProducts = [
     brandTag: 'Netflix',
     logoAsset: 'assets/brands/netflix.png',
     icon: Icons.movie_creation_outlined,
+    isHub: true,
     // Hub only — prices live on netflix_* plan products (admin).
   ),
   DigitalProduct(
@@ -225,6 +267,7 @@ const List<DigitalProduct> kDigitalProducts = [
     brandTag: 'GPT',
     logoAsset: 'assets/brands/chatgpt.png',
     icon: Icons.chat_bubble_outline_rounded,
+    isHub: true,
   ),
 ];
 
@@ -352,8 +395,8 @@ const List<DigitalCategory> kDigitalCategories = [
 ];
 
 enum DigitalPayMethod {
-  paychangu, // mobile money + bank (MWK)
-  visa, // coming soon
+  mobileMoney, // Airtel Money / TNM Mpamba via PawaPay
+  bankTransfer, // National Bank details from admin finance
 }
 
 /// Destination / identity pack collected at checkout for crypto & FX cards.

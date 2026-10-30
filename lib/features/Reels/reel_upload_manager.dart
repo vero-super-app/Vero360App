@@ -85,6 +85,7 @@ class ReelUploadManager {
     ReelMusic? music,
   }) {
     if (isUploading) return false;
+    if (!ReelService.instance.isSignedIn) return false;
     current.value = ReelUpload(
       filePath: filePath,
       caption: caption,

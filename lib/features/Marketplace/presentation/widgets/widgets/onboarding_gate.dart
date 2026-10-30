@@ -66,8 +66,11 @@ class _OnboardingGateState extends State<OnboardingGate> {
   }
 
   Future<void> _finishOnboarding() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('onboarding_completed_v1', true);
+    try {
+      final prefs = await SharedPreferences.getInstance()
+          .timeout(const Duration(seconds: 1));
+      await prefs.setBool('onboarding_completed_v1', true);
+    } catch (_) {}
     if (!mounted) return;
     setState(() => _onboardingDone = true);
     widget.onCompleted?.call();

@@ -1922,6 +1922,120 @@ exports.onOrderPartyAlertCreated = onDocumentCreated(
   },
 );
 
+function digitalFulfillmentText(data) {
+  const f =
+    data && data.fulfillment && typeof data.fulfillment === 'object'
+      ? data.fulfillment
+      : {};
+  const pick = (...keys) => {
+    for (const k of keys) {
+      const a = String((f && f[k]) || '').trim();
+      if (a) return a;
+      const b = String((data && data[k]) || '').trim();
+      if (b) return b;
+    }
+    return '';
+  };
+  const files = Array.isArray(f.fileUrls)
+    ? f.fileUrls
+    : Array.isArray(data.fileUrls)
+      ? data.fileUrls
+      : [];
+  const filePart = files
+    .map((u) => String(u || '').trim())
+    .filter(Boolean)
+    .join('\n');
+  return [
+    pick('cardDetails', 'card', 'credentials', 'details', 'deliveryDetails'),
+    pick('joiningLink', 'joinLink', 'inviteLink', 'accessLink', 'link', 'url'),
+    pick('notes', 'fulfillmentNotes', 'message', 'instructions', 'adminNote'),
+    pick('email', 'username', 'login', 'password', 'pin', 'code', 'voucher', 'giftCode'),
+    filePart,
+  ].join('\n');
+}
+
+/**
+ * Admin wrote card / login / joining-link details onto a digital order.
+ * Queue an in-app + FCM alert so the buyer can open My Digital Orders.
+ * Do not put secrets in the notification body.
+ *
+ * Deploy: firebase deploy --only functions:onDigitalServiceOrderUpdated
+ */
+exports.onDigitalServiceOrderUpdated = onDocumentUpdated(
+  {
+    document: 'digital_service_orders/{orderId}',
+    serviceAccount: FUNCTIONS_SERVICE_ACCOUNT,
+  },
+  async (event) => {
+    const before = event.data?.before?.data() || {};
+    const after = event.data?.after?.data() || {};
+    const afterSnap = event.data?.after;
+    if (!afterSnap) return;
+
+    const beforeText = digitalFulfillmentText(before);
+    const afterText = digitalFulfillmentText(after);
+    if (!afterText.trim()) return;
+    if (afterText === beforeText) return;
+
+    let buyerUid = String(after.buyerUid || '').trim();
+    if (!buyerUid) {
+      const email = String(after.buyerEmail || after.email || '')
+        .trim()
+        .toLowerCase();
+      if (email) {
+        try {
+          const users = await admin
+            .firestore()
+            .collection('users')
+            .where('email', '==', email)
+            .limit(1)
+            .get();
+          if (!users.empty) buyerUid = users.docs[0].id;
+        } catch (err) {
+          console.warn('onDigitalServiceOrderUpdated email lookup failed', err);
+        }
+      }
+    }
+    if (!buyerUid) {
+      console.warn(
+        `onDigitalServiceOrderUpdated ${event.params.orderId}: no buyerUid`,
+      );
+      return;
+    }
+
+    const productName =
+      String(after.productName || 'digital order').trim() || 'digital order';
+    const title = `Your ${productName} details are ready`;
+    const body =
+      'Open My Digital Orders to copy your code, login, or joining link.';
+
+    try {
+      await admin.firestore().collection(ORDER_PARTY_ALERTS).add({
+        toUid: buyerUid,
+        title,
+        body,
+        payload: {
+          type: 'digital_fulfillment',
+          orderId: String(event.params.orderId || afterSnap.id || ''),
+          productName,
+          badgeRoute: 'quick_digital_orders',
+        },
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        consumed: false,
+        read: false,
+      });
+      console.log(
+        `onDigitalServiceOrderUpdated alert queued for ${buyerUid} order=${event.params.orderId}`,
+      );
+    } catch (err) {
+      console.error(
+        `onDigitalServiceOrderUpdated alert failed for ${event.params.orderId}`,
+        err,
+      );
+    }
+  },
+);
+
 /**
  * Chat alerts are written client-side when the recipient may be backgrounded.
  * Mirror them to FCM so iOS/Android show a tray notification while the app is closed.
@@ -1958,7 +2072,7 @@ exports.onChatMessageAlertCreated = onDocumentCreated(
 );
 
 /**
- * New kitchen ticket: food_orders are written client-side after PayChangu
+ * New kitchen ticket: food_orders are written client-side after PawaPay
  * (checkout_from_cart_page). Push the merchant so they hear about it even
  * if the dashboard is backgrounded or killed.
  *
@@ -2263,7 +2377,7 @@ exports.scheduledDiditKycBackfill = onSchedule(
 /** Didit destination webhook — see ./didit_webhook.js */
 exports.diditWebhook = diditWebhook;
 
-/** PawaPay mobile-money payouts. Bank cash-out stays on PayChangu. */
+/** PawaPay mobile-money deposits and payouts. */
 const {
   createPawaPayPayout,
   createPawaPayDeposit,

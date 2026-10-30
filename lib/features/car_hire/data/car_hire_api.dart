@@ -613,11 +613,16 @@ class CarHireApi {
   Future<PaymentInitiation> initiatePayment(
     int bookingId, {
     String? phoneNumber,
+    String? depositId,
   }) async {
     final body = <String, dynamic>{};
     final phone = phoneNumber?.trim();
     if (phone != null && phone.isNotEmpty) {
       body['phoneNumber'] = phone;
+    }
+    final deposit = depositId?.trim();
+    if (deposit != null && deposit.isNotEmpty) {
+      body['depositId'] = deposit;
     }
 
     final response = await _send(

@@ -14,7 +14,8 @@ import 'package:vero360_app/utils/app_version_info.dart';
 
 /// Plain text crawl in the orange hero.
 /// Fed by admin `homepage_crawls` plus live promotions.
-/// Admin `linkType: app_update` scrolls with an Update chip when a newer version is posted.
+/// Admin `linkType: app_update` scrolls on home only when this install is
+/// older than the posted version, with the title + what's-new copy.
 class HomepageCrawlTicker extends StatefulWidget {
   const HomepageCrawlTicker({super.key});
 
@@ -28,6 +29,8 @@ class _CrawlItem {
   final String linkType;
   final String linkId;
   final String latestVersion;
+  final String title;
+  final String whatsNew;
 
   const _CrawlItem({
     required this.id,
@@ -35,6 +38,8 @@ class _CrawlItem {
     required this.linkType,
     this.linkId = '',
     this.latestVersion = '',
+    this.title = '',
+    this.whatsNew = '',
   });
 
   bool get isAppUpdate => linkType.toLowerCase().trim() == 'app_update';
@@ -42,6 +47,12 @@ class _CrawlItem {
   bool get hasAction {
     final t = linkType.toLowerCase().trim();
     return t.isNotEmpty && t != 'none';
+  }
+
+  bool get updateIsNewer {
+    final target = versionLabel;
+    if (target.isEmpty) return true;
+    return AppUpdateChecker.isNewerVersion(target, AppVersionInfo.version);
   }
 
   /// Short CTA on the crawl chip.
@@ -108,6 +119,11 @@ class _HomepageCrawlTickerState extends State<HomepageCrawlTicker>
       }
       // Promotions are merged with live promos separately.
       if (t == 'promotion' || t == 'promotions') continue;
+      // App-update notices stay as their own crawl line (title + what's new).
+      if (t == 'app_update') {
+        noneOrPlain.add(item);
+        continue;
+      }
       (byType[t] ??= []).add(item);
     }
 
@@ -143,7 +159,25 @@ class _HomepageCrawlTickerState extends State<HomepageCrawlTicker>
     return [...noneOrPlain, ...grouped];
   }
 
-  /// Crawl stream: pending app update first, then grouped admin crawls, then one promos line.
+  static String _updateCrawlText(_CrawlItem item) {
+    final title = item.title.trim();
+    final news = item.whatsNew.trim();
+    final v = item.versionLabel;
+    final bits = <String>[];
+    if (title.isNotEmpty) bits.add(title);
+    if (news.isNotEmpty && news.toLowerCase() != title.toLowerCase()) {
+      bits.add(news);
+    }
+    if (v.isNotEmpty) bits.add('Latest: v$v');
+    if (bits.isEmpty) {
+      return v.isEmpty
+          ? 'New Vero360 update is ready'
+          : 'Update to latest version v$v';
+    }
+    return bits.join(' · ');
+  }
+
+  /// Crawl stream: app update first (older installs only), then other crawls, then promos.
   List<_CrawlItem> get _items {
     final updates = <_CrawlItem>[];
     final others = <_CrawlItem>[];
@@ -151,18 +185,19 @@ class _HomepageCrawlTickerState extends State<HomepageCrawlTicker>
 
     for (final item in _adminItems) {
       if (item.isAppUpdate) {
-        final target = item.versionLabel;
-        if (target.isEmpty) continue;
-        if (!AppUpdateChecker.isNewerVersion(target, AppVersionInfo.version)) {
-          continue;
-        }
+        // Wait until PackageInfo is loaded so current builds never flash the notice.
+        if (!AppVersionInfo.ready) continue;
+        if (item.versionLabel.isEmpty) continue;
+        if (!item.updateIsNewer) continue;
         updates.add(
           _CrawlItem(
             id: item.id,
-            text: 'Update to latest version v$target',
+            text: _updateCrawlText(item),
             linkType: item.linkType,
             linkId: item.linkId,
             latestVersion: item.latestVersion,
+            title: item.title,
+            whatsNew: item.whatsNew,
           ),
         );
         continue;
@@ -251,6 +286,8 @@ class _HomepageCrawlTickerState extends State<HomepageCrawlTicker>
                 linkType: linkType,
                 linkId: (data['linkId'] ?? '').toString(),
                 latestVersion: latestVersion,
+                title: title,
+                whatsNew: subtitle,
               ),
             );
           })
@@ -302,28 +339,71 @@ class _HomepageCrawlTickerState extends State<HomepageCrawlTicker>
   Future<void> _openStoreUpdate(_CrawlItem item) async {
     final target = item.versionLabel;
     final installed = AppVersionInfo.version;
+    final needsUpdate = item.updateIsNewer;
+    final heading = item.title.trim().isEmpty
+        ? (needsUpdate ? 'Update available' : 'Latest update')
+        : item.title.trim();
+    final news = item.whatsNew.trim();
 
     if (!mounted) return;
     final go = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Update available'),
-        content: Text(
-          'Latest version: ${target.isEmpty ? 'new build' : 'v$target'}\n'
-          'Your version: v$installed\n\n'
-          'Update Vero360 from the store to get the latest features and fixes.',
+        title: Text(heading),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (news.isNotEmpty) ...[
+                Text(
+                  news,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    height: 1.45,
+                    color: Color(0xFF111827),
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
+              Text(
+                'Latest version: ${target.isEmpty ? 'new build' : 'v$target'}',
+                style: const TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF374151),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Your version: v$installed',
+                style: const TextStyle(fontSize: 13.5, color: Color(0xFF6B7280)),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                needsUpdate
+                    ? 'Update Vero360 from the store to get these changes.'
+                    : 'You already have this version.',
+                style: const TextStyle(
+                  fontSize: 13.5,
+                  height: 1.4,
+                  color: Color(0xFF4B5563),
+                ),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Later'),
+            child: Text(needsUpdate ? 'Later' : 'Close'),
           ),
           FilledButton(
             onPressed: () => Navigator.of(ctx).pop(true),
             style: FilledButton.styleFrom(
               backgroundColor: const Color(0xFFFF8A00),
             ),
-            child: const Text('Update'),
+            child: Text(needsUpdate ? 'Update' : 'Open store'),
           ),
         ],
       ),
@@ -378,7 +458,7 @@ class _HomepageCrawlTickerState extends State<HomepageCrawlTicker>
     final needsChipHeight = items.any((i) => i.hasAction);
 
     return SizedBox(
-      height: needsChipHeight ? 22 : 18,
+      height: needsChipHeight ? 26 : 18,
       width: double.infinity,
       child: ClipRect(
         child: AnimatedBuilder(

@@ -68,6 +68,14 @@ const List<DigitalProduct> kChatGptPlanProducts = [
     brandTag: 'Students',
     logoAsset: 'assets/brands/chatgpt.png',
     icon: Icons.chat_bubble_outline_rounded,
+    hubKey: 'chatgpt',
+    planBadge: 'For students',
+    recommended: true,
+    featureLines: [
+      'Shared account for up to 15 students',
+      'Best for assignments and school work',
+      'One shared login, so chats are not private',
+    ],
     fixedMwkPrice: 10000,
   ),
   DigitalProduct(
@@ -79,6 +87,13 @@ const List<DigitalProduct> kChatGptPlanProducts = [
     brandTag: 'Private',
     logoAsset: 'assets/brands/chatgpt.png',
     icon: Icons.chat_bubble_outline_rounded,
+    hubKey: 'chatgpt',
+    planBadge: 'Private',
+    featureLines: [
+      'Your own account. Not shared with anyone',
+      'Best for work and personal use',
+      'Your chats stay private',
+    ],
     fixedMwkPrice: 65000,
   ),
 ];

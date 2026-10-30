@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:vero360_app/features/Auth/AuthPresenter/login_screen.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/register_screen.dart';
+import 'package:vero360_app/GernalServices/seller_mode.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
@@ -22,6 +23,7 @@ import 'package:vero360_app/GeneralPages/checkout_page.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
+import 'package:vero360_app/utils/firebase_bootstrap.dart';
 import 'package:vero360_app/utils/profile_open_helper.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
@@ -211,12 +213,12 @@ class HomepageAdvert {
 class HomepageAdvertService {
   HomepageAdvertService._();
 
-  static final _col =
+  static CollectionReference<Map<String, dynamic>> get _col =>
       FirebaseFirestore.instance.collection('homepage_adverts');
 
   /// Real account required — no anonymous advertising.
   static Future<User> requireLoggedInUser() async {
-    final user = FirebaseAuth.instance.currentUser;
+    final user = tryFirebaseUser();
     if (user == null || user.isAnonymous) {
       throw Exception('Please log in to place an advert.');
     }
@@ -227,12 +229,13 @@ class HomepageAdvertService {
   }
 
   static Future<bool> isProperlyLoggedIn() async {
-    final user = FirebaseAuth.instance.currentUser;
+    final user = tryFirebaseUser();
     if (user == null || user.isAnonymous) return false;
     return AuthHandler.isAuthenticated();
   }
 
   static Stream<List<HomepageAdvert>> watchActiveAdverts() {
+    if (!isFirebaseAppReady) return const Stream.empty();
     return _col
         .where('status', isEqualTo: 'active')
         .snapshots()
@@ -574,18 +577,25 @@ class _HomepageAdvertsSectionState extends State<HomepageAdvertsSection> {
     );
   }
 
-  void _openSellBanner(_SellBannerSlide banner) {
+  Future<void> _openSellBanner(_SellBannerSlide banner) async {
     if (banner.isDriver) {
       _openDriverSignup();
-    } else if (banner.isAccommodation) {
-      _openMerchantSignup(serviceKey: 'accommodation');
-    } else if (banner.isFood) {
-      _openMerchantSignup(serviceKey: 'food');
-    } else if (banner.isMarketplace) {
-      _openMerchantSignup(serviceKey: 'marketplace');
-    } else {
-      _openMerchantSignup();
+      return;
     }
+    String? serviceKey;
+    if (banner.isAccommodation) {
+      serviceKey = 'accommodation';
+    } else if (banner.isFood) {
+      serviceKey = 'food';
+    } else if (banner.isMarketplace) {
+      serviceKey = 'marketplace';
+    }
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null && !user.isAnonymous) {
+      await SellerMode.enter(context, merchantService: serviceKey);
+      return;
+    }
+    _openMerchantSignup(serviceKey: serviceKey);
   }
 
   void _openAdvert(HomepageAdvert ad) {

@@ -62,7 +62,6 @@ import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GernalServices/vero_rewards_service.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/config/google_maps_config.dart';
-import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -276,12 +275,49 @@ Future<bool> _ensureFirebaseHealthy({
 // ───────────────────────────────────────────────
 //  MAIN — paint launcher first, heal Firebase after
 // ───────────────────────────────────────────────
+bool _isFirebaseNoApp(Object error) {
+  final msg = error.toString();
+  return msg.contains('core/no-app') || msg.contains('No Firebase App');
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  FlutterError.onError = (details) {
+    if (_isFirebaseNoApp(details.exception)) return;
+    FlutterError.presentError(details);
+  };
+  WidgetsBinding.instance.platformDispatcher.onError = (error, stack) {
+    if (_isFirebaseNoApp(error)) return true;
+    return false;
+  };
+
+  // Android must have a DEFAULT app before Auth/Firestore widgets.
+  // iPadOS can stall native init — never block first paint there.
+  final isCupertino = !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.macOS);
+  if (isCupertino) {
+    unawaited(ensureFirebaseApp(
+      maxAttempts: 2,
+      attemptTimeout: const Duration(seconds: 2),
+    ));
+  } else {
+    try {
+      await ensureFirebaseApp(
+        maxAttempts: 2,
+        attemptTimeout: const Duration(seconds: 2),
+      ).timeout(const Duration(seconds: 3), onTimeout: () => false);
+    } catch (_) {}
+  }
+
   unawaited(AppVersionInfo.ensureLoaded());
   // Draw behind the system bars. Flutter then reports the insets so screens
   // can pad content. Bar colors are left unset; Android 15 ignores them.
-  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  try {
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge)
+        .timeout(const Duration(milliseconds: 400));
+  } catch (_) {}
 
   // Release builds must not echo debug logs (PII, tokens, session JSON) to logcat.
   if (kReleaseMode) {
@@ -314,7 +350,6 @@ Future<void> main() async {
       PaintingBinding.instance.imageCache.maximumSizeBytes = 48 << 20;
     }
 
-    // Start Firebase self-heal immediately, but do not block first paint.
     unawaited(_ensureFirebaseHealthy(quiet: true));
 
     runApp(
@@ -335,6 +370,7 @@ Future<void> main() async {
     runZonedGuarded(
       launchApp,
       (error, stack) {
+        if (_isFirebaseNoApp(error)) return;
         FlutterError.presentError(
           FlutterErrorDetails(exception: error, stack: stack),
         );
@@ -376,9 +412,9 @@ class _AppBootstrapState extends State<AppBootstrap> {
   Timer? _bootDeadlineTimer;
 
   /// Brand flash — keep short so home arrives in ~1s.
-  static const _minLauncher = Duration(milliseconds: 450);
-  /// Hard ceiling so App Review / cold start never sits on splash forever.
-  static const _bootDeadline = Duration(seconds: 8);
+  static const _minLauncher = Duration(milliseconds: 400);
+  /// Hard ceiling so App Review / iPad cold start never sits on splash forever.
+  static const _bootDeadline = Duration(seconds: 3);
   static const _splashBg = Color(0xFFFFF8F2);
 
   @override
@@ -393,7 +429,6 @@ class _AppBootstrapState extends State<AppBootstrap> {
     });
 
     unawaited(GoogleMapsConfig.initialize());
-    unawaited(PayChanguConfig.initialize());
 
     // Register FCM background handler as soon as Firebase is usable.
     // Must happen before process can receive background messages.
@@ -428,19 +463,14 @@ class _AppBootstrapState extends State<AppBootstrap> {
         } catch (_) {}
       }));
 
-      // Prefer a warm Firebase DEFAULT app, but never hang launch on it.
-      await _ensureFirebaseHealthy(quiet: true)
-          .timeout(const Duration(seconds: 5), onTimeout: () => false);
-      if (Firebase.apps.isEmpty) {
-        try {
-          await Firebase.initializeApp(options: _kFirebaseOptions)
-              .timeout(const Duration(seconds: 3));
-        } catch (_) {}
-      }
-
-      // Env config is optional at launch — do not block splash on it.
+      try {
+        await ensureFirebaseApp(
+          maxAttempts: 2,
+          attemptTimeout: const Duration(seconds: 2),
+        ).timeout(const Duration(seconds: 2), onTimeout: () => false);
+      } catch (_) {}
+      unawaited(_ensureFirebaseHealthy(quiet: true));
       unawaited(GoogleMapsConfig.initialize());
-      unawaited(PayChanguConfig.initialize());
 
       if (mounted) {
         setState(() {
@@ -458,7 +488,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
       unawaited(Future(() async {
         try {
           if (Firebase.apps.isEmpty) return;
-          if (FirebaseAuth.instance.currentUser != null) {
+          if (tryFirebaseUser() != null) {
             await BackendMessagingCache.initialize();
             await BackendMessagingSocket.connect();
           }
@@ -503,14 +533,6 @@ class _AppBootstrapState extends State<AppBootstrap> {
         await Future<void>.delayed(_minLauncher - elapsed);
       }
 
-      // Brief last-resort only — still capped so we never loop forever.
-      if (Firebase.apps.isEmpty) {
-        try {
-          await Firebase.initializeApp(options: _kFirebaseOptions)
-              .timeout(const Duration(seconds: 2));
-        } catch (_) {}
-      }
-
       return _BootState(
         clearedOldCache: false,
         onboardingDone: onboardingDone,
@@ -519,12 +541,6 @@ class _AppBootstrapState extends State<AppBootstrap> {
         initialShell: initialShell,
       );
     } catch (_) {
-      try {
-        if (Firebase.apps.isEmpty) {
-          await Firebase.initializeApp(options: _kFirebaseOptions)
-              .timeout(const Duration(seconds: 2));
-        }
-      } catch (_) {}
       final elapsed = DateTime.now().difference(started);
       if (elapsed < _minLauncher) {
         await Future<void>.delayed(_minLauncher - elapsed);
@@ -562,10 +578,11 @@ class _AppBootstrapState extends State<AppBootstrap> {
               onboardingDone: true,
               initialShell: null,
             );
-        final firebaseReady = Firebase.apps.isNotEmpty;
-        // Fail-open: leave splash when boot finishes OR hard deadline hits.
-        // Do not require Firebase forever (App Review Guideline 2.1 hang).
-        final ready = (!booting || _bootDeadlinePassed);
+        final firebaseReady = isFirebaseAppReady;
+        // Leave splash when boot is done and Firebase exists. If init hangs,
+        // the 3s deadline still fail-opens so iPad is never stuck.
+        final ready =
+            _bootDeadlinePassed || (!booting && firebaseReady);
 
         if (ready && _showLauncher) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -603,7 +620,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
           initialEmail: boot.email,
           onboardingDoneHint: boot.onboardingDone,
           initialShell: boot.initialShell ??
-              Bottomnavbar(email: boot.email),
+              Bottomnavbar(email: boot.email.isNotEmpty ? boot.email : ''),
         );
       },
     );
@@ -648,9 +665,14 @@ class _DriverStatusBootstrapState
       ref.read(driverSessionTickProvider.notifier).state++;
     };
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await loadDriverStatusFromPrefs();
-      await ref.read(syncDriverStatusProvider.future);
-      await loadDriverStatusFromPrefs();
+      try {
+        await loadDriverStatusFromPrefs()
+            .timeout(const Duration(seconds: 2));
+        await ref.read(syncDriverStatusProvider.future)
+            .timeout(const Duration(seconds: 4));
+        await loadDriverStatusFromPrefs()
+            .timeout(const Duration(seconds: 2));
+      } catch (_) {}
     });
   }
 
@@ -1068,7 +1090,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         'customer';
     final email = prefs.getString('email') ?? '';
     final token = RoleSessionService.readToken(prefs);
-    final signedIn = FirebaseAuth.instance.currentUser != null ||
+    final signedIn = tryFirebaseUser() != null ||
         (token != null && token.trim().isNotEmpty);
     if (!signedIn) {
       if (_currentShell != 'customer') _pushCustomer(email);
@@ -1113,7 +1135,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     if (result == null) return;
     if (result.isUnauthorized) {
       // Keep Firebase session; only clear stale SP tokens if Firebase is gone.
-      if (FirebaseAuth.instance.currentUser == null) {
+      if (tryFirebaseUser() == null) {
         await _clearAuth(prefs);
       }
       return;
@@ -1520,7 +1542,7 @@ class AuthFlow {
     } catch (_) {}
 
     try {
-      await FirebaseAuth.instance.signOut();
+      await tryFirebaseAuth()?.signOut();
     } catch (_) {}
 
     AppShellCoordinator.markGuestHome();
@@ -1530,7 +1552,7 @@ class AuthFlow {
   static Future<bool> isLoggedIn() async {
     final p = await SharedPreferences.getInstance();
     final t = _readToken(p);
-    final fb = FirebaseAuth.instance.currentUser;
+    final fb = tryFirebaseUser();
     return (t != null && t.trim().isNotEmpty) || fb != null;
   }
 }

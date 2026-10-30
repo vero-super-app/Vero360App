@@ -1,11 +1,11 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:vero360_app/GeneralModels/wallet_model.dart';
 import 'package:vero360_app/utils/kyc_gate.dart';
 
 class FirebaseWalletService {
-  static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  static final FirebaseAuth _auth = FirebaseAuth.instance;
+  static FirebaseFirestore get _firestore => FirebaseFirestore.instance;
 
   /// User ID and display name for the platform super-admin wallet (receives service fees).
   static const String superAdminUserId = 'super_admin';
@@ -26,7 +26,7 @@ class FirebaseWalletService {
   static const double marketplaceServiceFeeRate = 0.10;
 
   /// Ensures the platform wallet exists and credits a service fee into it.
-  /// [service] is marketplace, food, stay, ride, digital, promotions,
+  /// [service] is marketplace, food, stay, car_hire, ride, digital, promotions,
   /// homepage_ads, or pawapay.
   static Future<void> creditPlatformServiceFee({
     required double amount,
@@ -368,6 +368,60 @@ class FirebaseWalletService {
     } catch (e) {
       print('Error settling stuck payouts: $e');
       return 0;
+    }
+  }
+
+  /// Vero Coin cash-out: credit the user wallet with [FieldValue.increment]
+  /// so we never rewrite a huge `transactions` array (that hangs the spinner).
+  /// Platform treasury debit is best-effort and must not block the payout.
+  static Future<void> creditRewardCashOut({
+    required String userId,
+    required String userName,
+    required double amount,
+    required String reference,
+    required String description,
+  }) async {
+    if (amount <= 0) {
+      throw Exception('Invalid cash-out amount');
+    }
+    await getOrCreateWallet(merchantId: userId, merchantName: userName);
+    final walletDoc = await _findWalletDoc(userId);
+    if (walletDoc == null) {
+      throw Exception('Wallet not found for merchant');
+    }
+
+    await walletDoc.reference.update({
+      'balance': FieldValue.increment(amount),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    final transactionId =
+        'TXN${DateTime.now().microsecondsSinceEpoch}_vero_coin';
+    await _firestore.collection('wallet_transactions').doc(transactionId).set({
+      'transactionId': transactionId,
+      'walletId': walletDoc.id,
+      'userId': userId,
+      'type': 'credit',
+      'amount': amount,
+      'status': 'completed',
+      'description': description,
+      'reference': reference,
+      'service': 'vero_coin',
+      'createdAt': Timestamp.now(),
+      'updatedAt': Timestamp.now(),
+    });
+
+    try {
+      await getOrCreateWallet(
+        merchantId: superAdminUserId,
+        merchantName: superAdminDisplayName,
+      ).timeout(const Duration(seconds: 6));
+      await _firestore.collection('wallets').doc(platformWalletDocId).update({
+        'balance': FieldValue.increment(-amount),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }).timeout(const Duration(seconds: 6));
+    } catch (e) {
+      print('Vero Coin platform bookkeeping skipped: $e');
     }
   }
 

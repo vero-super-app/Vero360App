@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:vero360_app/GernalServices/bank_transfer_config.dart';
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
+import 'package:vero360_app/widgets/bank_transfer_details_card.dart';
 
 /// Giftsy-style amount picker: USD values + MWK at [kUsdToMwkRate].
 class DigitalProductAmountPage extends StatefulWidget {
@@ -27,18 +31,12 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
   static const _bg = Color(0xFFFFFBF6);
 
   late double _selectedUsd;
-  DigitalPayMethod _payMethod = DigitalPayMethod.paychangu;
+  DigitalPayMethod _payMethod = DigitalPayMethod.mobileMoney;
+  final _bank = BankTransferConfig.instance;
 
   final _customAmountCtrl = TextEditingController();
   final _customFocus = FocusNode();
   bool _usingCustom = false;
-
-  // Dummy Visa fields (UI only until card charging is wired).
-  final _cardNameCtrl = TextEditingController();
-  final _cardNumberCtrl = TextEditingController();
-  final _cardExpiryCtrl = TextEditingController();
-  final _cardCvvCtrl = TextEditingController();
-  final _visaFormKey = GlobalKey<FormState>();
 
   DigitalProduct get p => widget.product;
 
@@ -51,17 +49,26 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
     super.initState();
     _selectedUsd = p.usdAmounts.isNotEmpty ? p.usdAmounts.first : 10;
     _customAmountCtrl.addListener(_onCustomAmountChanged);
+    _bank.addListener(_onBank);
+    unawaited(_bank.ensureStarted());
+  }
+
+  void _onBank() {
+    if (!mounted) return;
+    if (_payMethod == DigitalPayMethod.bankTransfer &&
+        !_bank.details.showToCustomers) {
+      setState(() => _payMethod = DigitalPayMethod.mobileMoney);
+      return;
+    }
+    setState(() {});
   }
 
   @override
   void dispose() {
+    _bank.removeListener(_onBank);
     _customAmountCtrl.removeListener(_onCustomAmountChanged);
     _customAmountCtrl.dispose();
     _customFocus.dispose();
-    _cardNameCtrl.dispose();
-    _cardNumberCtrl.dispose();
-    _cardExpiryCtrl.dispose();
-    _cardCvvCtrl.dispose();
     super.dispose();
   }
 
@@ -102,11 +109,6 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
       return;
     }
 
-    if (_payMethod == DigitalPayMethod.visa) {
-      if (!(_visaFormKey.currentState?.validate() ?? false)) return;
-      // Card details collected for later Visa integration — continue as demo.
-    }
-
     widget.onContinue(
       product: p,
       selectedUsd: _selectedUsd,
@@ -132,8 +134,6 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
                 SliverToBoxAdapter(child: _amountsSection()),
                 SliverToBoxAdapter(child: _customAmountField()),
                 SliverToBoxAdapter(child: _payMethodsSection()),
-                if (_payMethod == DigitalPayMethod.visa)
-                  SliverToBoxAdapter(child: _visaFields()),
                 const SliverToBoxAdapter(child: SizedBox(height: 24)),
               ],
             ),
@@ -493,18 +493,28 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
           ),
           const SizedBox(height: 10),
           _payTile(
-            method: DigitalPayMethod.paychangu,
+            method: DigitalPayMethod.mobileMoney,
             title: 'Airtel Money or TNM Mpamba',
             subtitle: 'Approve a prompt on your phone',
             icon: Icons.phone_android_rounded,
           ),
-          const SizedBox(height: 10),
-          _payTile(
-            method: DigitalPayMethod.visa,
-            title: 'Visa / card',
-            subtitle: 'Enter card details ',
-            icon: Icons.credit_card_rounded,
-          ),
+          if (_bank.details.showToCustomers) ...[
+            const SizedBox(height: 10),
+            _payTile(
+              method: DigitalPayMethod.bankTransfer,
+              title: 'Bank transfer',
+              subtitle: 'Secured by Vero escrow',
+              icon: Icons.account_balance_rounded,
+            ),
+          ],
+          if (_payMethod == DigitalPayMethod.bankTransfer &&
+              _bank.details.showToCustomers) ...[
+            const SizedBox(height: 12),
+            BankTransferDetailsCard(
+              details: _bank.details,
+              amountLabel: 'Pay ${formatMwk(_mwk)}',
+            ),
+          ],
         ],
       ),
     );
@@ -577,200 +587,6 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
     );
   }
 
-  Widget _visaFields() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-      child: Form(
-        key: _visaFormKey,
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFE8E8E8)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Icon(Icons.credit_card_rounded, color: _orange, size: 18),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      'Card details',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 14,
-                        color: Color(0xFF111111),
-                      ),
-                    ),
-                  ),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFF4E6),
-                      borderRadius: BorderRadius.circular(99),
-                    ),
-                    child: const Text(
-                      'coming soon',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w800,
-                        color: _orange,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'coming soon',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey.shade600,
-                ),
-              ),
-              const SizedBox(height: 12),
-              _field(
-                controller: _cardNameCtrl,
-                label: 'Name on card',
-                hint: 'vero360',
-                keyboardType: TextInputType.name,
-                textCapitalization: TextCapitalization.words,
-                validator: (v) {
-                  if ((v ?? '').trim().length < 2) return 'Enter name on card';
-                  return null;
-                },
-              ),
-              const SizedBox(height: 10),
-              _field(
-                controller: _cardNumberCtrl,
-                label: 'Card number',
-                hint: '4242 4242 4242 4242',
-                keyboardType: TextInputType.number,
-                inputFormatters: [
-                  FilteringTextInputFormatter.digitsOnly,
-                  LengthLimitingTextInputFormatter(16),
-                  _CardNumberFormatter(),
-                ],
-                validator: (v) {
-                  final digits = (v ?? '').replaceAll(RegExp(r'\D'), '');
-                  if (digits.length < 13) return 'Enter a valid card number';
-                  return null;
-                },
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: _field(
-                      controller: _cardExpiryCtrl,
-                      label: 'Expiry',
-                      hint: 'MM/YY',
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                        LengthLimitingTextInputFormatter(4),
-                        _ExpiryFormatter(),
-                      ],
-                      validator: (v) {
-                        final t = (v ?? '').trim();
-                        if (!RegExp(r'^\d{2}/\d{2}$').hasMatch(t)) {
-                          return 'MM/YY';
-                        }
-                        return null;
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _field(
-                      controller: _cardCvvCtrl,
-                      label: 'CVV',
-                      hint: '123',
-                      keyboardType: TextInputType.number,
-                      obscureText: true,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                        LengthLimitingTextInputFormatter(4),
-                      ],
-                      validator: (v) {
-                        final t = (v ?? '').trim();
-                        if (t.length < 3) return 'CVV';
-                        return null;
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _field({
-    required TextEditingController controller,
-    required String label,
-    required String hint,
-    TextInputType? keyboardType,
-    List<TextInputFormatter>? inputFormatters,
-    String? Function(String?)? validator,
-    bool obscureText = false,
-    TextCapitalization textCapitalization = TextCapitalization.none,
-  }) {
-    return TextFormField(
-      controller: controller,
-      keyboardType: keyboardType,
-      inputFormatters: inputFormatters,
-      validator: validator,
-      obscureText: obscureText,
-      textCapitalization: textCapitalization,
-      style: const TextStyle(
-        fontWeight: FontWeight.w700,
-        fontSize: 14,
-        color: Color(0xFF111111),
-      ),
-      decoration: InputDecoration(
-        labelText: label,
-        hintText: hint,
-        labelStyle: TextStyle(
-          fontWeight: FontWeight.w700,
-          color: Colors.grey.shade700,
-          fontSize: 13,
-        ),
-        hintStyle: TextStyle(
-          color: Colors.grey.shade400,
-          fontWeight: FontWeight.w600,
-        ),
-        filled: true,
-        fillColor: const Color(0xFFFFFBF6),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Color(0xFFE8E8E8)),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Color(0xFFE8E8E8)),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: _orange, width: 1.4),
-        ),
-        errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.redAccent),
-        ),
-      ),
-    );
-  }
-
   Widget _bottomBar() {
     return SafeArea(
       top: false,
@@ -832,44 +648,6 @@ class _DigitalProductAmountPageState extends State<DigitalProductAmountPage> {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _CardNumberFormatter extends TextInputFormatter {
-  @override
-  TextEditingValue formatEditUpdate(
-    TextEditingValue oldValue,
-    TextEditingValue newValue,
-  ) {
-    final digits = newValue.text.replaceAll(RegExp(r'\D'), '');
-    final buf = StringBuffer();
-    for (var i = 0; i < digits.length; i++) {
-      if (i > 0 && i % 4 == 0) buf.write(' ');
-      buf.write(digits[i]);
-    }
-    final formatted = buf.toString();
-    return TextEditingValue(
-      text: formatted,
-      selection: TextSelection.collapsed(offset: formatted.length),
-    );
-  }
-}
-
-class _ExpiryFormatter extends TextInputFormatter {
-  @override
-  TextEditingValue formatEditUpdate(
-    TextEditingValue oldValue,
-    TextEditingValue newValue,
-  ) {
-    final digits = newValue.text.replaceAll(RegExp(r'\D'), '');
-    var text = digits;
-    if (digits.length >= 3) {
-      text = '${digits.substring(0, 2)}/${digits.substring(2)}';
-    }
-    return TextEditingValue(
-      text: text,
-      selection: TextSelection.collapsed(offset: text.length),
     );
   }
 }

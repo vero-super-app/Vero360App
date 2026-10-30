@@ -6,7 +6,7 @@ import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/GernalServices/order_service.dart';
-import 'package:vero360_app/GernalServices/paychangu_service.dart';
+import 'package:vero360_app/GernalServices/payments_service.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationModel/my_Accodation_bookingdata_model.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/accommodation_occupancy_service.dart';
 import 'package:vero360_app/features/Accomodation/AccomodationService/guest_booking_local_cache.dart';
@@ -192,7 +192,7 @@ class OrderRefundService {
 
   /// Submit a refund for [order].
   ///
-  /// 1) Calls `POST /payments/refund` (PayChangu via backend)
+  /// 1) Calls `POST /payments/refund` (PawaPay via backend)
   /// 2) Queues a Firestore [collectionName] row (status pending, 3-day SLA)
   /// 3) Voids escrow so the merchant is not paid
   /// 4) Cancels the order for cancel / return flows
@@ -369,7 +369,7 @@ class OrderRefundService {
 
   /// Guest cancelled a paid stay before check-in / arrival confirmation.
   ///
-  /// Voids host escrow, queues PayChangu refund (typically 3 days), and
+  /// Voids host escrow, queues a PawaPay refund (typically 3 days), and
   /// cancels the booking so those nights are free again.
   static Future<PaymentRefundResponse> submitStayCancellation({
     required BookingItem booking,

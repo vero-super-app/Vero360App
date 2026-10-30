@@ -61,7 +61,7 @@ String bookingStatusToApi(BookingStatus s) {
   }
 }
 
-/// Guest PayChangu / notifications often use `vero…`; merchant UI + host alerts use **VERO** prefix.
+/// Guest PawaPay / notifications often use `vero…`; merchant UI + host alerts use **VERO** prefix.
 String formatVeroAccommodationBookingRef(String? raw) {
   final s = (raw ?? '').trim();
   if (s.isEmpty) return '';
@@ -98,7 +98,7 @@ class BookingItem {
   final String? guestUid;
   final int? guestBackendUserId;
 
-  /// PayChangu / customer-facing ref when API sends it separately from numeric [id].
+  /// PawaPay / customer-facing ref when API sends it separately from numeric [id].
   final String? bookingNumber;
 
   /// Guest “My bookings” only lists rows where payment succeeded (or API marks paid).
@@ -516,7 +516,7 @@ class BookingItem {
 
   /// True when this row should appear under the guest “My bookings” tab.
   ///
-  /// Most backends set `status` to `confirmed` or `completed` after PayChangu/webhook,
+  /// Most backends set `status` to `confirmed` or `completed` after PawaPay/webhook,
   /// without a separate `paymentStatus` field — those must still appear here.
   /// Rows stay hidden while `pending` (created at POST /bookings before payment) unless
   /// the payload explicitly marks paid. **Price / pricePerNight are not payment proof.**

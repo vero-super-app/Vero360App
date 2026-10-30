@@ -1,14 +1,12 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
+import 'package:vero360_app/GernalServices/pawapay_payment.dart';
 import 'package:vero360_app/GeneralModels/wallet_model.dart';
-import 'package:vero360_app/config/paychangu_config.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet_transactions_page.dart';
 import 'package:vero360_app/utils/kyc_gate.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
@@ -21,6 +19,7 @@ class _HeldEscrowRow {
   final DateTime? createdAt;
   final bool awaitingShipment;
   final bool isAccommodation;
+  final bool isCarHire;
 
   const _HeldEscrowRow({
     required this.itemName,
@@ -30,6 +29,7 @@ class _HeldEscrowRow {
     this.createdAt,
     this.awaitingShipment = false,
     this.isAccommodation = false,
+    this.isCarHire = false,
   });
 }
 
@@ -86,18 +86,18 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   
   static const List<Map<String, String>> _mobileMoneyProviders = [
     {
-      'id': PayChanguConfig.airtelMoneyOperatorRefId,
+      'id': PawaPayPayment.airtelOperatorId,
       'name': 'Airtel Money',
     },
     {
-      'id': PayChanguConfig.tnmMpambaOperatorRefId,
+      'id': PawaPayPayment.tnmOperatorId,
       'name': 'MPamba (TNM)',
     },
   ];
   
   int? _selectedBankIndex;
-  String _selectedPayoutMethod = 'bank';
-  String _selectedMobileProvider = PayChanguConfig.airtelMoneyOperatorRefId;
+  String _selectedPayoutMethod = 'mobile_money';
+  String _selectedMobileProvider = PawaPayPayment.airtelOperatorId;
   
   StreamSubscription<WalletModel?>? _walletSubscription;
   StreamSubscription<QuerySnapshot>? _transactionsSubscription;
@@ -136,10 +136,13 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
   String _escrowReleaseSummary() {
     final window = OrderEscrowService.escrowAutoReleaseLabel;
     final isAcc = widget.serviceType.toLowerCase() == 'accommodation';
+    final isCarHire = widget.serviceType.toLowerCase() == 'car_hire';
     if (_heldEscrowRows.isEmpty) {
       return isAcc
           ? 'Not withdrawable yet — waiting for guest check-in confirmation.'
-          : 'Not withdrawable yet — waiting for buyer confirmation or $window auto‑release.';
+          : isCarHire
+              ? 'Not withdrawable yet — waiting for the return inspection.'
+              : 'Not withdrawable yet — waiting for buyer confirmation or $window auto‑release.';
     }
 
     final dueNow = _heldEscrowRows.where((r) {
@@ -169,10 +172,14 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
     if (awaiting) {
       return isAcc
           ? 'Guest confirms arrival in My bookings to release stay payment.'
-          : 'Ship orders with proof to start the $window release timer.';
+          : isCarHire
+              ? 'Held until the return inspection is accepted. Then you can withdraw.'
+              : 'Ship orders with proof to start the $window release timer.';
     }
 
-    return 'Not withdrawable yet — waiting for buyer confirmation or $window auto‑release.';
+    return isCarHire
+        ? 'Held until the return inspection is accepted. Then you can withdraw.'
+        : 'Not withdrawable yet — waiting for buyer confirmation or $window auto‑release.';
   }
 
   Widget _buildHeldEscrowDetails({bool onDarkBackground = false}) {
@@ -191,7 +198,11 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
           final amountText = 'MWK ${_mwkFormat.format(row.amount.truncate())}';
           String statusText;
           if (row.awaitingShipment) {
-            if (row.isAccommodation) {
+            if (row.isCarHire) {
+              statusText = row.createdAt != null
+                  ? 'Paid ${_releaseDateFormat.format(row.createdAt!.toLocal())} · awaiting return'
+                  : 'Held until the return inspection is accepted';
+            } else if (row.isAccommodation) {
               statusText = row.createdAt != null
                   ? 'Booked ${_releaseDateFormat.format(row.createdAt!.toLocal())} · awaiting guest check-in'
                   : 'Awaiting guest check-in — guest releases payment on arrival';
@@ -211,9 +222,11 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                 : 'Releases ${_releaseDateFormat.format(row.releaseDueAt!.toLocal())} '
                     '(${OrderEscrowService.escrowAutoReleaseLabel} after shipment)';
           } else {
-            statusText = row.isAccommodation
-                ? 'Awaiting guest arrival confirmation'
-                : 'Awaiting buyer confirmation';
+            statusText = row.isCarHire
+                ? 'Awaiting return inspection'
+                : row.isAccommodation
+                    ? 'Awaiting guest arrival confirmation'
+                    : 'Awaiting buyer confirmation';
           }
 
           return Padding(
@@ -303,9 +316,10 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
         }
 
         final awaitingShipment = deliveredAt == null;
-        final isAccommodation =
-            (data['serviceType'] ?? '').toString().trim().toLowerCase() ==
-                'accommodation';
+        final serviceType =
+            (data['serviceType'] ?? '').toString().trim().toLowerCase();
+        final isAccommodation = serviceType == 'accommodation';
+        final isCarHire = serviceType == 'car_hire';
 
         rows.add(_HeldEscrowRow(
           itemName: (data['itemName'] ?? data['orderNumber'] ?? 'Sale')
@@ -316,6 +330,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
           createdAt: createdAt,
           awaitingShipment: awaitingShipment,
           isAccommodation: isAccommodation,
+          isCarHire: isCarHire,
         ));
       }
       rows.sort((a, b) {
@@ -815,12 +830,12 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                             return 'Enter valid 13-digit number';
                           }
                           if (_selectedMobileProvider ==
-                                  PayChanguConfig.airtelMoneyOperatorRefId &&
+                                  PawaPayPayment.airtelOperatorId &&
                               !phone.startsWith('+2659')) {
                             return 'Airtel Money numbers must start with +2659…';
                           }
                           if (_selectedMobileProvider ==
-                                  PayChanguConfig.tnmMpambaOperatorRefId &&
+                                  PawaPayPayment.tnmOperatorId &&
                               !phone.startsWith('+2658')) {
                             return 'TNM Mpamba numbers must start with +2658…';
                           }
@@ -1018,7 +1033,6 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
         final accountNumber = _accountNumberController.text.trim();
         final accountName = _accountNameController.text.trim();
         final bankName = _banks[_selectedBankIndex! - 1]['name'] ?? '';
-        await _processPayChanguPayout(amount, payoutRef);
         await FirebaseWalletService.debitWallet(
           merchantId: widget.merchantId,
           amount: amount,
@@ -1034,7 +1048,7 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
         if (mounted) _forceTransactionsReload();
         if (mounted) {
           Navigator.pop(context);
-          _showSuccess('Bank payout sent.');
+          _showSuccess('Bank payout recorded.');
         }
       } else {
         final mobile = _phoneController.text.trim().replaceAll(RegExp(r'\s+'), '');
@@ -1067,42 +1081,6 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
           setDialogState(() {});
         } catch (_) {}
       }
-    }
-  }
-
-  Future<void> _processPayChanguPayout(double amount, String reference) async {
-    final chargeId = reference.replaceAll(RegExp(r'[^A-Za-z0-9\-_]'), '');
-    final amountStr = amount.round().toString();
-    final email = _emailController.text.trim();
-
-    final uri = PayChanguConfig.bankPayoutInitializeUri();
-    final payload = {
-      'payout_method': 'bank_transfer',
-      'bank_uuid': _banks[_selectedBankIndex! - 1]['uuid'],
-      'amount': amountStr,
-      'charge_id': chargeId,
-      'bank_account_name': _accountNameController.text.trim(),
-      'bank_account_number': _accountNumberController.text.trim(),
-      if (email.isNotEmpty) 'email': email,
-    };
-
-    final response = await http
-        .post(
-          uri,
-          headers: PayChanguConfig.authHeaders,
-          body: jsonEncode(payload),
-        )
-        .timeout(const Duration(seconds: 45));
-
-    if (response.statusCode != 200 && response.statusCode != 201) {
-      throw Exception('Payout failed: ${response.body}');
-    }
-
-    final responseData = jsonDecode(response.body);
-    if (responseData is Map &&
-        responseData['status'] != null &&
-        responseData['status'].toString().toLowerCase() != 'success') {
-      throw Exception(responseData['message'] ?? 'Payout failed');
     }
   }
 
@@ -1222,7 +1200,9 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          '${widget.serviceType.toUpperCase()} Wallet',
+          widget.serviceType.toLowerCase() == 'car_hire'
+              ? 'Car hire wallet'
+              : '${widget.serviceType.toUpperCase()} Wallet',
           style: const TextStyle(color: Colors.white),
         ),
         backgroundColor: const Color(0xFF16284C),
@@ -1394,6 +1374,19 @@ class _MerchantWalletPageState extends State<MerchantWalletPage> {
                           Text(
                             'Stay payments are held in escrow until the guest confirms arrival '
                             'in My bookings (biometrics or wallet password). Stays are not shipped.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.white.withOpacity(0.88),
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                        if (widget.serviceType.toLowerCase() == 'car_hire') ...[
+                          const SizedBox(height: 10),
+                          Text(
+                            'Rental payments are held until the return inspection is accepted. '
+                            'Vero360 commission is taken from the rental. The deposit is not '
+                            'withdrawable. Then you can cash out to bank or mobile money.',
                             style: TextStyle(
                               fontSize: 12,
                               color: Colors.white.withOpacity(0.88),

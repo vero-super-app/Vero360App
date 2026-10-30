@@ -22,6 +22,40 @@ class OrderPartyNotificationService {
     return 'Vero$clean';
   }
 
+  static Future<void> publishDigitalOrderToBuyer({
+    required String buyerUid,
+    required String productName,
+    required String orderId,
+    required String title,
+    required String body,
+    String type = 'digital_order',
+  }) async {
+    final uid = buyerUid.trim();
+    if (uid.isEmpty) return;
+    final name = productName.trim().isEmpty ? 'digital order' : productName.trim();
+    try {
+      await FirebaseFirestore.instance.collection(collectionName).add({
+        'toUid': uid,
+        'title': title.trim().isEmpty ? 'Digital order update' : title.trim(),
+        'body': body.trim().isEmpty
+            ? 'Open My Digital Orders for $name.'
+            : body.trim(),
+        'payload': {
+          'type': type,
+          'orderId': orderId,
+          'productName': name,
+          NotificationStore.kPayloadBadgeRoute:
+              NotificationStore.kBadgeDigitalOrders,
+        },
+        'createdAt': FieldValue.serverTimestamp(),
+        'consumed': false,
+        'read': false,
+      });
+    } catch (e) {
+      debugPrint('[OrderPartyNotification] publishDigitalOrderToBuyer: $e');
+    }
+  }
+
   static Future<void> publishShippedToBuyer({
     required String buyerUid,
     required String orderNumber,

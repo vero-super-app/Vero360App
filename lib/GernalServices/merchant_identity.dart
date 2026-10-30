@@ -1,11 +1,11 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
+import 'package:vero360_app/utils/firebase_bootstrap.dart';
 
 /// Single in-memory + prefs identity for the signed-in account.
 ///
@@ -74,7 +74,7 @@ class MerchantIdentityStore {
   }
 
   static String _currentUid({SharedPreferences? prefs}) {
-    final auth = FirebaseAuth.instance.currentUser?.uid.trim() ?? '';
+    final auth = tryFirebaseUser()?.uid.trim() ?? '';
     if (auth.isNotEmpty) return auth;
     return (prefs?.getString('uid') ?? '').trim();
   }
@@ -106,6 +106,11 @@ class MerchantIdentityStore {
         ) ??
         RoleHelper.customer;
     final intendedUid = (prefs.getString('session_intended_uid') ?? '').trim();
+    final intendedRole = RoleHelper.normalizeAccountRole(
+      prefs.getString('session_intended_role'),
+    );
+    final shoppingThisUid =
+        intendedRole == RoleHelper.customer && intendedUid == id;
     final intendedService = intendedUid == id
         ? normalizeMerchantServiceKey(
             prefs.getString('session_intended_merchant_service'),
@@ -116,9 +121,12 @@ class MerchantIdentityStore {
         normalizeMerchantServiceKey(prefs.getString(prefsServiceKeyForUid(id))) ??
         normalizeMerchantServiceKey(prefs.getString('merchant_service'));
 
-    final effectiveRole = isKnownMerchantServiceKey(service)
-        ? RoleHelper.merchant
-        : role;
+    // A cached shop vertical must not freeze someone who chose "shop as customer".
+    final effectiveRole = shoppingThisUid
+        ? RoleHelper.customer
+        : (isKnownMerchantServiceKey(service) && role != RoleHelper.driver
+            ? RoleHelper.merchant
+            : role);
 
     final identity = MerchantIdentity(
       uid: id,
@@ -136,13 +144,14 @@ class MerchantIdentityStore {
     String? service,
     SharedPreferences? prefs,
     bool writeFirestore = false,
+    bool keepVerticalCache = false,
   }) async {
     final id = uid.trim();
     if (id.isEmpty) {
       throw ArgumentError('uid required');
     }
     final r = RoleHelper.normalizeAccountRole(role) ?? RoleHelper.customer;
-    final s = isKnownMerchantServiceKey(service)
+    var s = isKnownMerchantServiceKey(service)
         ? normalizeMerchantServiceKey(service)
         : null;
 
@@ -157,10 +166,20 @@ class MerchantIdentityStore {
       await sp.setString(prefsServiceKeyForUid(id), s);
     } else if (r != RoleHelper.merchant) {
       await sp.remove('merchant_service');
-      await sp.remove(prefsServiceKeyForUid(id));
+      if (keepVerticalCache) {
+        s ??= normalizeMerchantServiceKey(
+          sp.getString(prefsServiceKeyForUid(id)),
+        );
+      } else {
+        await sp.remove(prefsServiceKeyForUid(id));
+      }
     }
 
-    final identity = MerchantIdentity(uid: id, role: r, service: s);
+    final identity = MerchantIdentity(
+      uid: id,
+      role: r,
+      service: isKnownMerchantServiceKey(s) ? s : null,
+    );
     _memory = identity;
 
     if (writeFirestore) {
@@ -205,6 +224,20 @@ class MerchantIdentityStore {
       return const MerchantIdentity(uid: '', role: RoleHelper.customer);
     }
 
+    final intendedUid = (sp.getString('session_intended_uid') ?? '').trim();
+    final intendedRole = RoleHelper.normalizeAccountRole(
+      sp.getString('session_intended_role'),
+    );
+    if (intendedRole == RoleHelper.customer && intendedUid == id) {
+      return stamp(
+        uid: id,
+        role: RoleHelper.customer,
+        prefs: sp,
+        keepVerticalCache: true,
+        writeFirestore: false,
+      );
+    }
+
     final cached = readCached(prefs: sp, uid: id);
     if (!forceRefresh &&
         cached != null &&
@@ -223,6 +256,10 @@ class MerchantIdentityStore {
     String? service = forceRefresh ? null : cached?.service;
 
     // 1) Authoritative: users/{uid}
+    if (!isFirebaseAppReady) {
+      return cached ??
+          MerchantIdentity(uid: id, role: role, service: service);
+    }
     try {
       final doc = await FirebaseFirestore.instance
           .collection('users')
@@ -247,9 +284,13 @@ class MerchantIdentityStore {
           data['merchantService']?.toString() ??
               data['merchant_service']?.toString(),
         );
-      if (isKnownMerchantServiceKey(fromService)) {
+        if (isKnownMerchantServiceKey(fromService)) {
           service = fromService;
-          role = RoleHelper.merchant;
+          // Keep last vertical, but do not promote a customer shopping session.
+          if (fromDoc != RoleHelper.customer &&
+              fromDoc != RoleHelper.driver) {
+            role = RoleHelper.merchant;
+          }
         }
       }
     } catch (e) {
@@ -264,7 +305,6 @@ class MerchantIdentityStore {
     }
 
     // 2) Signup intended vertical for this uid only.
-    final intendedUid = (sp.getString('session_intended_uid') ?? '').trim();
     final intendedService = intendedUid == id
         ? normalizeMerchantServiceKey(
             sp.getString('session_intended_merchant_service'),
@@ -275,7 +315,10 @@ class MerchantIdentityStore {
       if (!isKnownMerchantServiceKey(service) || service == 'marketplace') {
         service = intendedService;
       }
-      if (role == RoleHelper.customer) role = RoleHelper.merchant;
+      if (intendedRole == RoleHelper.merchant ||
+          (role != RoleHelper.customer && role != RoleHelper.driver)) {
+        role = RoleHelper.merchant;
+      }
     }
 
     // 3) Probe shops when vertical unknown, or when refresh still looks like
@@ -292,8 +335,10 @@ class MerchantIdentityStore {
             probed == service) {
           service = probed;
         }
-        role = RoleHelper.merchant;
-        unawaited(_writeServiceToUsers(id, probed!));
+        if (role != RoleHelper.customer && role != RoleHelper.driver) {
+          role = RoleHelper.merchant;
+          unawaited(_writeServiceToUsers(id, probed!));
+        }
       }
     }
 
@@ -305,12 +350,11 @@ class MerchantIdentityStore {
           (forceRefresh
               ? null
               : normalizeMerchantServiceKey(sp.getString('merchant_service')));
-      if (isKnownMerchantServiceKey(service) && role != RoleHelper.merchant) {
-        role = RoleHelper.merchant;
-      }
     }
 
-    if (isKnownMerchantServiceKey(service)) {
+    if (isKnownMerchantServiceKey(service) &&
+        role != RoleHelper.customer &&
+        role != RoleHelper.driver) {
       role = RoleHelper.merchant;
     }
 

@@ -50,7 +50,7 @@ class BookingService {
     }
   }
 
-  /// Picks a stable reference for PayChangu / escrow from common API shapes.
+  /// Picks a stable reference for PawaPay / escrow from common API shapes.
   static String? _extractBookingRef(Map<String, dynamic> m) {
     String? pick(Map<String, dynamic> map) {
       for (final k in [

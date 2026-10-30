@@ -102,6 +102,7 @@ const List<DigitalProduct> kNetflixPlanProducts = [
     brandTag: 'Netflix',
     logoAsset: 'assets/brands/netflix.png',
     icon: Icons.movie_creation_outlined,
+    hubKey: 'netflix',
   ),
   DigitalProduct(
     key: 'netflix_basic',
@@ -112,6 +113,7 @@ const List<DigitalProduct> kNetflixPlanProducts = [
     brandTag: 'Netflix',
     logoAsset: 'assets/brands/netflix.png',
     icon: Icons.movie_creation_outlined,
+    hubKey: 'netflix',
   ),
   DigitalProduct(
     key: 'netflix_standard',
@@ -122,6 +124,7 @@ const List<DigitalProduct> kNetflixPlanProducts = [
     brandTag: 'Netflix',
     logoAsset: 'assets/brands/netflix.png',
     icon: Icons.movie_creation_outlined,
+    hubKey: 'netflix',
   ),
   DigitalProduct(
     key: 'netflix_premium',
@@ -132,6 +135,7 @@ const List<DigitalProduct> kNetflixPlanProducts = [
     brandTag: 'Popular',
     logoAsset: 'assets/brands/netflix.png',
     icon: Icons.movie_creation_outlined,
+    hubKey: 'netflix',
   ),
 ];
 

@@ -111,9 +111,9 @@
 		<string>fetch</string>
 		<string>remote-notification</string>
 	</array>
-	<!-- Saving QR image to Photos -->
+	<!-- Saving QR image / reels to Photos -->
 	 <key>NSPhotoLibraryAddUsageDescription</key>
-<string>We save the QR image to your Photos.</string>
+<string>Vero360 saves photos and videos you choose to keep, such as reels, to your Photos.</string>
 <key>NSPhotoLibraryUsageDescription</key>
 <string>We need access to your Photos to save the QR image.</string>
 

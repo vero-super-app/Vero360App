@@ -40,13 +40,13 @@ import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 
-/// After PayChangu success: [bookingContext] is the booking screen (under the webview).
+/// After PawaPay success: [bookingContext] is the booking screen (under the webview).
 typedef AccommodationAfterPayCallback = void Function(
   BuildContext bookingContext,
   int accommodationId,
 );
 
-/// Guest booking + PayChangu payment; escrow hold for host when [hostMerchantUid] is set.
+/// Guest booking + PawaPay payment; escrow hold for host when [hostMerchantUid] is set.
 /// [photoSources] = cover + gallery URLs/paths; [memoryHeroBytes] optional decoded cover.
 class AccommodationBookingPage extends StatefulWidget {
   final int accommodationId;
@@ -1655,8 +1655,8 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
 
       if (!mounted) return;
       setState(() => _submitting = false);
-      await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
+      final payResult = await Navigator.of(context).push<Object?>(
+        MaterialPageRoute<Object?>(
           builder: (_) => InAppPaymentPage(
             txRef: txRef,
             totalAmount: _buyerPaysMwk,
@@ -1711,6 +1711,13 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
           ),
         ),
       );
+
+      if (payResult == 'bank_proof') {
+        _paymentSucceeded = true;
+        if (!paymentSuccessGate.isCompleted) {
+          paymentSuccessGate.complete();
+        }
+      }
 
       // Wait for success callback (post-frame) before freeing a reservation.
       // Do NOT release on a short frame race â€” that wiped inventory after paid stays.

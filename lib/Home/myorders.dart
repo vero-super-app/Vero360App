@@ -31,12 +31,15 @@ class OrdersPage extends StatefulWidget {
   final String? initialOrderId;
   final String? initialOrderNumber;
   final String? initialStatus;
+  /// When true, hide the outer AppBar so this can sit inside another dashboard tab.
+  final bool embedded;
 
   const OrdersPage({
     super.key,
     this.initialOrderId,
     this.initialOrderNumber,
     this.initialStatus,
+    this.embedded = false,
   });
 
   @override
@@ -133,7 +136,10 @@ class _ProofViewerPage extends StatelessWidget {
   }
 }
 
-class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateMixin {
+class _OrdersPageState extends State<OrdersPage>
+    with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => widget.embedded;
   final _svc = OrderService();
   final Color _brand = const Color(0xFFFF8A00);
   final _money = NumberFormat.currency(symbol: 'MK ', decimalDigits: 0);
@@ -1593,6 +1599,86 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
+    final statusTabs = TabBar(
+      controller: _tab,
+      isScrollable: true,
+      tabAlignment: TabAlignment.start,
+      labelPadding: const EdgeInsets.symmetric(horizontal: 18),
+      labelColor: _brand,
+      unselectedLabelColor: const Color(0xFF6B778C),
+      indicatorColor: _brand,
+      labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+      unselectedLabelStyle: const TextStyle(
+        fontWeight: FontWeight.w600,
+        fontSize: 14,
+      ),
+      tabs: const [
+        Tab(text: 'All'),
+        Tab(text: 'Confirmed'),
+        Tab(text: 'Pending'),
+        Tab(text: 'Delivered'),
+        Tab(text: 'Cancelled'),
+      ],
+    );
+
+    final list = Column(
+      children: [
+        if (_refreshing && _orders.isNotEmpty)
+          LinearProgressIndicator(
+            minHeight: 2,
+            color: _brand,
+            backgroundColor: _brand.withValues(alpha: 0.18),
+          ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          child: TextField(
+            controller: _searchController,
+            onChanged: (v) => setState(() => _searchQuery = v),
+            decoration: OrderListHelpers.searchDecoration(
+              hint: 'Search by order number…',
+              hasQuery: _searchQuery.isNotEmpty,
+              onClear: () {
+                _searchController.clear();
+                setState(() => _searchQuery = '');
+              },
+            ),
+          ),
+        ),
+        Expanded(
+          child: TabBarView(
+            controller: _tab,
+            children: _statuses.map(_tabBody).toList(),
+          ),
+        ),
+      ],
+    );
+
+    if (widget.embedded) {
+      return Material(
+        color: const Color(0xFFF6F7FB),
+        child: Column(
+          children: [
+            ColoredBox(
+              color: Colors.white,
+              child: Row(
+                children: [
+                  Expanded(child: statusTabs),
+                  IconButton(
+                    icon: const Icon(Icons.refresh),
+                    tooltip: 'Refresh orders',
+                    color: const Color(0xFF222222),
+                    onPressed: _reloadCurrent,
+                  ),
+                ],
+              ),
+            ),
+            Expanded(child: list),
+          ],
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF6F7FB),
       appBar: AppBar(
@@ -1608,52 +1694,12 @@ class _OrdersPageState extends State<OrdersPage> with SingleTickerProviderStateM
           ),
         ],
         centerTitle: true,
-        bottom: TabBar(
-          controller: _tab,
-          isScrollable: true,
-          labelColor: _brand,
-          unselectedLabelColor: const Color(0xFF6B778C),
-          indicatorColor: _brand,
-          tabs: const [
-            Tab(text: 'All'),
-            Tab(text: 'Confirmed'),
-            Tab(text: 'Pending'),
-            Tab(text: 'Delivered'),
-            Tab(text: 'Cancelled'),
-          ],
+        bottom: PreferredSize(
+          preferredSize: statusTabs.preferredSize,
+          child: statusTabs,
         ),
       ),
-      body: Column(
-        children: [
-          if (_refreshing && _orders.isNotEmpty)
-            LinearProgressIndicator(
-              minHeight: 2,
-              color: _brand,
-              backgroundColor: _brand.withValues(alpha: 0.18),
-            ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: TextField(
-              controller: _searchController,
-              onChanged: (v) => setState(() => _searchQuery = v),
-              decoration: OrderListHelpers.searchDecoration(
-                hint: 'Search by order numberâ€¦',
-                hasQuery: _searchQuery.isNotEmpty,
-                onClear: () {
-                  _searchController.clear();
-                  setState(() => _searchQuery = '');
-                },
-              ),
-            ),
-          ),
-          Expanded(
-            child: TabBarView(
-              controller: _tab,
-              children: _statuses.map(_tabBody).toList(),
-            ),
-          ),
-        ],
-      ),
+      body: list,
     );
   }
 }

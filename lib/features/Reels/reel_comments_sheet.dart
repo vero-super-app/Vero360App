@@ -73,6 +73,8 @@ class _ReelCommentsSheetState extends State<_ReelCommentsSheet> {
   int? _lastCount;
   String _myPhoto = '';
   String _myName = '';
+  List<ReelComment>? _fallback;
+  bool _loadingFallback = false;
 
   static const _quickEmojis = ['❤️', '😂', '🔥', '😍', '👏', '😮', '🙌'];
 
@@ -98,6 +100,21 @@ class _ReelCommentsSheetState extends State<_ReelCommentsSheet> {
 
   void _toast(String msg) =>
       ToastHelper.showCustomToast(context, msg, isSuccess: false, errorMessage: '');
+
+  Future<void> _loadFallback() async {
+    if (_loadingFallback) return;
+    setState(() => _loadingFallback = true);
+    try {
+      final list = await _service.fetchComments(widget.reel.id);
+      if (!mounted) return;
+      setState(() => _fallback = list);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _fallback = _fallback ?? const []);
+    } finally {
+      if (mounted) setState(() => _loadingFallback = false);
+    }
+  }
 
   void _startReply(ReelComment c) {
     if (!_service.isSignedIn) {
@@ -234,7 +251,12 @@ class _ReelCommentsSheetState extends State<_ReelCommentsSheet> {
         child: StreamBuilder<List<ReelComment>>(
           stream: _stream,
           builder: (context, snap) {
-            final all = snap.data ?? const <ReelComment>[];
+            if (snap.hasError && _fallback == null && !_loadingFallback) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) _loadFallback();
+              });
+            }
+            final all = snap.data ?? _fallback ?? const <ReelComment>[];
             final visibleCount = all.where((c) => !c.deleted).length;
             if (snap.hasData && _lastCount != visibleCount) {
               _lastCount = visibleCount;
@@ -251,7 +273,7 @@ class _ReelCommentsSheetState extends State<_ReelCommentsSheet> {
                   child: Row(
                     children: [
                       Text(
-                        snap.hasData
+                        snap.hasData || _fallback != null
                             ? '${_count(visibleCount)} ${visibleCount == 1 ? 'comment' : 'comments'}'
                             : 'Comments',
                         style: const TextStyle(
@@ -279,12 +301,28 @@ class _ReelCommentsSheetState extends State<_ReelCommentsSheet> {
   }
 
   Widget _body(AsyncSnapshot<List<ReelComment>> snap, List<ReelComment> all) {
-    if (snap.hasError) {
-      return const Center(
-        child: Text('Could not load comments', style: TextStyle(color: _kMuted)),
+    if (snap.hasError && all.isEmpty) {
+      if (_loadingFallback) {
+        return const Center(child: CircularProgressIndicator(color: _kOrange));
+      }
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Could not load comments', style: TextStyle(color: _kMuted)),
+              const SizedBox(height: 12),
+              TextButton(
+                onPressed: _loadFallback,
+                child: const Text('Retry', style: TextStyle(color: _kOrange, fontWeight: FontWeight.w800)),
+              ),
+            ],
+          ),
+        ),
       );
     }
-    if (!snap.hasData) {
+    if (!snap.hasData && _fallback == null) {
       return const Center(child: CircularProgressIndicator(color: _kOrange));
     }
     final top = all.where((c) => !c.isReply).toList();
@@ -322,7 +360,12 @@ class _ReelCommentsSheetState extends State<_ReelCommentsSheet> {
             const Text('No comments yet',
                 style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: _kInk)),
             const SizedBox(height: 4),
-            const Text('Start the conversation.', style: TextStyle(color: _kMuted)),
+            Text(
+              _service.isSignedIn
+                  ? 'Start the conversation.'
+                  : 'Sign in to add a comment.',
+              style: const TextStyle(color: _kMuted),
+            ),
           ],
         ),
       );

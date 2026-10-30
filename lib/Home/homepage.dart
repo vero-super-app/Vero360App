@@ -46,6 +46,7 @@ import 'package:vero360_app/GeneralModels/chat_product_context.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 
+import 'package:vero360_app/utils/firebase_bootstrap.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
@@ -71,7 +72,7 @@ import 'package:vero360_app/features/DigitalServices/presentation/digital_my_ord
 import 'package:vero360_app/features/DigitalServices/presentation/digital_kyc_upload_section.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_product_amount_page.dart';
 import 'package:vero360_app/features/DigitalServices/chatgpt_plans.dart';
-import 'package:vero360_app/features/DigitalServices/presentation/chatgpt_plan_picker_page.dart';
+import 'package:vero360_app/features/DigitalServices/presentation/subscription_plan_picker_page.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/netflix_plan_picker_page.dart';
 import 'package:vero360_app/features/DigitalServices/netflix_plans.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
@@ -253,12 +254,17 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
     });
 
     _resolveGreetingName();
-    _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
-      final uid = user?.uid;
-      if (uid != _greetingUid || user == null) {
-        _resolveGreetingName(force: true);
+    try {
+      final auth = tryFirebaseAuth();
+      if (auth != null) {
+        _authSub = auth.authStateChanges().listen((user) {
+          final uid = user?.uid;
+          if (uid != _greetingUid || user == null) {
+            _resolveGreetingName(force: true);
+          }
+        });
       }
-    });
+    } catch (_) {}
     _maybeShowServicesHint();
     // Retention reward: count this homepage open toward daily Vero Points.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -283,7 +289,12 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
 
   /* â”€â”€ data fetching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   Future<void> _resolveGreetingName({bool force = false}) async {
-    final authUser = FirebaseAuth.instance.currentUser;
+    User? authUser;
+    try {
+      authUser = tryFirebaseUser();
+    } catch (_) {
+      authUser = null;
+    }
     final uid = authUser?.uid;
     final loggedIn = await AuthHandler.isAuthenticated();
 
@@ -656,24 +667,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
   }
 
   Future<void> _openDigitalAmount(DigitalProduct p) async {
-    // ChatGPT hub â†’ Basic (shared) or Plus (private) first.
-    if (p.isChatGptHub || isChatGptHubKey(p.key)) {
-      if (!mounted) return;
-      await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => ChatGptPlanPickerPage(
-          onSelectPlan: (plan) {
-            _openDigitalCheckout(
-              product: plan,
-              selectedUsd: 0,
-              payMethod: DigitalPayMethod.paychangu,
-            );
-          },
-        ),
-      ));
-      return;
-    }
-
-    // Netflix hub â†’ choose Mobile / Basic / Standard / Premium first.
+    // Netflix hub → choose Mobile / Basic / Standard / Premium first.
     if (p.isNetflixHub || isNetflixHubKey(p.key)) {
       if (!mounted) return;
       await Navigator.of(context).push(MaterialPageRoute(
@@ -683,7 +677,24 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
             _openDigitalCheckout(
               product: plan,
               selectedUsd: 0,
-              payMethod: DigitalPayMethod.paychangu,
+              payMethod: DigitalPayMethod.mobileMoney,
+            );
+          },
+        ),
+      ));
+      return;
+    }
+
+    if (p.isPlanHub || isChatGptHubKey(p.key)) {
+      if (!mounted) return;
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => SubscriptionPlanPickerPage(
+          hub: p,
+          onSelectPlan: (plan) {
+            _openDigitalCheckout(
+              product: plan,
+              selectedUsd: 0,
+              payMethod: DigitalPayMethod.mobileMoney,
             );
           },
         ),
@@ -696,7 +707,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       await _openDigitalCheckout(
         product: p,
         selectedUsd: 0,
-        payMethod: DigitalPayMethod.paychangu,
+        payMethod: DigitalPayMethod.mobileMoney,
       );
       return;
     }
@@ -1231,17 +1242,38 @@ class _CollapsedBar extends StatelessWidget {
               border: Colors.white.withOpacity(0.35),
             ),
             const SizedBox(width: 8),
-            GestureDetector(
-              onTap: onNotifTap,
-              child: Container(
-                width: 34, height: 34,
-                decoration: BoxDecoration(
-                  shape:  BoxShape.circle,
-                  color:  Colors.white.withOpacity(0.20),
-                  border: Border.all(color: Colors.white.withOpacity(0.35)),
-                ),
-                child: const Icon(Icons.notifications_outlined, color: Colors.white, size: 18),
-              ),
+            ListenableBuilder(
+              listenable: NotificationStore.instance,
+              builder: (_, __) {
+                final count = NotificationStore.instance.unreadCount;
+                return Badge(
+                  isLabelVisible: count > 0,
+                  backgroundColor: Colors.red,
+                  textColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  label: Text(
+                    count > 99 ? '99+' : '$count',
+                    style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700),
+                  ),
+                  child: GestureDetector(
+                    onTap: onNotifTap,
+                    child: Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withOpacity(0.20),
+                        border: Border.all(color: Colors.white.withOpacity(0.35)),
+                      ),
+                      child: const Icon(
+                        Icons.notifications_outlined,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
           ],
         ),
@@ -2729,7 +2761,7 @@ class _DigitalTileState extends State<_DigitalTile> with SingleTickerProviderSta
                           color: AppColors.brandOrange,
                         ),
                       ),
-                    ] else if (widget.p.isNetflixHub || widget.p.isChatGptHub) ...[
+                    ] else if (widget.p.isPlanHub) ...[
                       const SizedBox(height: 2),
                       Text(
                         'Choose a plan',
@@ -4382,7 +4414,7 @@ class DigitalProductDetailPage extends StatefulWidget {
     super.key,
     required this.product,
     required this.selectedUsd,
-    this.payMethod = DigitalPayMethod.paychangu,
+    this.payMethod = DigitalPayMethod.mobileMoney,
     this.initialEmail,
     this.initialPhone,
     this.initialName,
@@ -4452,15 +4484,6 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
   }
 
   Future<void> _payNow() async {
-    if (widget.payMethod == DigitalPayMethod.visa) {
-      ToastHelper.showCustomToast(
-        context,
-        'Visa payments coming soon. Use mobile money or bank for now.',
-        isSuccess: false,
-        errorMessage: '',
-      );
-      return;
-    }
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _submitting = true);
@@ -4511,6 +4534,9 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
         buyerPhone: phone,
         selectedUsd: _isFixedPrice ? null : widget.selectedUsd,
         payoutKyc: payoutKyc,
+        paymentProvider: widget.payMethod == DigitalPayMethod.bankTransfer
+            ? 'bank_transfer'
+            : 'pawapay',
       );
 
       if (!mounted) return;
@@ -4520,6 +4546,9 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
               totalAmount:        amount,
               rootContext:        context,
               digitalProductName: widget.product.name,
+              digitalOrderId: orderId,
+              startOnBankTransfer:
+                  widget.payMethod == DigitalPayMethod.bankTransfer,
               onSuccessNavigate: (_) async {
                 try {
                   await DigitalServiceOrderService.activateAfterPayment(
@@ -4642,9 +4671,9 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                   border: Border.all(color: AppColors.brandOrangeSoft),
                 ),
                 child: Text(
-                  widget.payMethod == DigitalPayMethod.paychangu
-                      ? 'Paying with Airtel Money or TNM Mpamba'
-                      : 'Visa / card Â· Coming soon',
+                  widget.payMethod == DigitalPayMethod.bankTransfer
+                      ? 'Paying by bank transfer · Secured by Vero escrow'
+                      : 'Paying with Airtel Money or TNM Mpamba',
                   style: const TextStyle(
                     fontWeight: FontWeight.w700,
                     fontSize: 12,

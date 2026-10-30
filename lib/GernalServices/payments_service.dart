@@ -1,4 +1,3 @@
-﻿// lib/services/payments_service.dart
 import 'dart:async';
 import 'dart:convert';
 import 'package:universal_io/io.dart';
@@ -88,6 +87,7 @@ extension PaymentRefundTypeApi on PaymentRefundType {
       };
 }
 
+/// Nest refund / payment helpers. Customer collections use PawaPay.
 class PaymentsService {
   PaymentsService._();
 

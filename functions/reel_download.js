@@ -15,12 +15,13 @@ if (!admin.apps.length) {
 }
 
 /** Bump when the watermark or end card design changes so old cached files are not reused. */
-const DESIGN_VERSION = 2;
+const DESIGN_VERSION = 3;
 const MAX_INPUT_BYTES = 80 * 1024 * 1024;
 /** A render that hasn't finished in this long is assumed dead and may be retried. */
 const LOCK_TTL_MS = 4 * 60 * 1000;
 const SERVICE_ACCOUNT = 'vero360app-ca423@appspot.gserviceaccount.com';
 const RENDER_OPTIONS = {
+  region: 'us-central1',
   memory: '4GiB',
   cpu: 4,
   timeoutSeconds: 300,
@@ -151,7 +152,7 @@ async function ensureBrandedReel(reelId, reel) {
       await fetchToFile(videoUrl, inputPath, MAX_INPUT_BYTES);
     } catch (e) {
       console.error('brandedReel: fetch failed', reelId, e.message);
-      throw new HttpsError('unavailable', 'Could not fetch the video. Try again.');
+      return { url: videoUrl, cached: false, fallback: true };
     }
     const ownerPhoto = await fetchBuffer(ownerPhotoUrl);
     const tFetched = Date.now();
@@ -159,7 +160,7 @@ async function ensureBrandedReel(reelId, reel) {
       await renderBrandedReel({ inputPath, outputPath, workDir, ownerName, ownerPhoto, isMerchant });
     } catch (e) {
       console.error('brandedReel: render failed', reelId, e.message, e.stderr);
-      throw new HttpsError('internal', 'Could not prepare the video.');
+      return { url: videoUrl, cached: false, fallback: true };
     }
     const tRendered = Date.now();
     const token = crypto.randomUUID();
@@ -204,7 +205,18 @@ exports.prepareReelDownload = onCall(RENDER_OPTIONS, async (request) => {
   if (!snap.exists || snap.data()?.hidden === true) {
     throw new HttpsError('not-found', 'This reel is no longer available.');
   }
-  return ensureBrandedReel(reelId, snap.data() || {});
+  const reel = snap.data() || {};
+  try {
+    return await ensureBrandedReel(reelId, reel);
+  } catch (e) {
+    if (e instanceof HttpsError) throw e;
+    console.error('prepareReelDownload', reelId, e);
+    const videoUrl = String(reel.videoUrl || '').trim();
+    if (/^https?:\/\//i.test(videoUrl)) {
+      return { url: videoUrl, fallback: true };
+    }
+    throw new HttpsError('internal', 'Could not prepare this reel.');
+  }
 });
 
 /** Renders the branded copy as soon as a reel is posted so downloads are instant. */

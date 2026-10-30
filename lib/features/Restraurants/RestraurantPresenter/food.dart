@@ -33,6 +33,7 @@ import 'package:vero360_app/GernalServices/blocked_merchant_service.dart';
 import 'package:vero360_app/Home/CustomersProfilepage.dart';
 import 'package:vero360_app/Home/MessagePageBackendApi.dart';
 import 'package:vero360_app/Home/notifications_page.dart';
+import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
@@ -1419,19 +1420,34 @@ class _FoodPageState extends State<FoodPage> {
               ),
             ),
           ),
-          IconButton(
-            tooltip: 'Notifications',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const NotificationsPage()),
+          ListenableBuilder(
+            listenable: NotificationStore.instance,
+            builder: (_, __) {
+              final count = NotificationStore.instance.unreadCount;
+              return IconButton(
+                tooltip: 'Notifications',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const NotificationsPage()),
+                  );
+                },
+                icon: Badge(
+                  isLabelVisible: count > 0,
+                  backgroundColor: Colors.red,
+                  textColor: Colors.white,
+                  label: Text(
+                    count > 99 ? '99+' : '$count',
+                    style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
+                  ),
+                  child: const Icon(
+                    Icons.notifications_none_rounded,
+                    color: _veroOrange,
+                    size: 28,
+                  ),
+                ),
               );
             },
-            icon: const Icon(
-              Icons.notifications_none_rounded,
-              color: _veroOrange,
-              size: 28,
-            ),
           ),
         ],
       ),

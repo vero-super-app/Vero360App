@@ -3,6 +3,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_company_models.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_account_pages.dart';
+import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_apply_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_booking_detail_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_bookings_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_browse_page.dart';
@@ -54,6 +55,11 @@ class CarHireRoutes {
         builder: (_) => const CarHireAccountStatusPage(),
       ),
     );
+  }
+
+  /// Settings entry for listing cars: apply, check review, or open the company.
+  static Future<void> openApplication(BuildContext context) {
+    return openAccountStatus(context);
   }
 
   static Future<void> openDetail(

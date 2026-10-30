@@ -8,8 +8,10 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/GeneralPages/address.dart';
@@ -27,6 +29,7 @@ import 'package:vero360_app/features/Restraurants/RestraurantsService/restaurant
 import 'package:vero360_app/GernalServices/address_service.dart';
 import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
+import 'package:vero360_app/GernalServices/bank_transfer_config.dart';
 import 'package:vero360_app/GernalServices/pawapay_payment.dart';
 import 'package:vero360_app/GernalServices/order_party_notification_service.dart';
 import 'package:vero360_app/GernalServices/order_service.dart' as order_svc;
@@ -36,6 +39,7 @@ import 'package:vero360_app/Home/myorders.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierService/courier_city.dart';
 import 'package:vero360_app/utils/merchant_contact_display.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/bank_transfer_details_card.dart';
 import 'package:vero360_app/widgets/modern_confirm_dialog.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:vero360_app/widgets/vero_spin_reward_prompt.dart';
@@ -1777,6 +1781,12 @@ class InAppPaymentPage extends StatefulWidget {
   /// Single-item food: after verified payment, writes `food_orders` for the merchant dashboard.
   final FoodCheckoutContext? foodCheckout;
 
+  /// Digital order to mark as bank-transfer when the buyer reports they sent money.
+  final String? digitalOrderId;
+
+  /// Open the National Bank details first (Digital Services bank-transfer path).
+  final bool startOnBankTransfer;
+
   const InAppPaymentPage({
     super.key,
     required this.txRef,
@@ -1792,6 +1802,8 @@ class InAppPaymentPage extends StatefulWidget {
     this.accommodationEscrow,
     this.foodCheckout,
     this.providerAmountMwk,
+    this.digitalOrderId,
+    this.startOnBankTransfer = false,
   });
 
   @override
@@ -1810,11 +1822,29 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   String _orderSyncWarning = '';
   String _momoMessage = '';
   int _payGen = 0;
+  bool _useBank = false;
+  bool _bankReported = false;
+  bool _bankBusy = false;
+  XFile? _proofFile;
+  final _bank = BankTransferConfig.instance;
+  final _picker = ImagePicker();
 
   @override
   void initState() {
     super.initState();
+    _useBank = widget.startOnBankTransfer;
+    _bank.addListener(_onBank);
+    unawaited(_bank.ensureStarted());
     _prefillMomoPhone();
+  }
+
+  void _onBank() {
+    if (!mounted) return;
+    if (_useBank && !_bank.details.showToCustomers) {
+      setState(() => _useBank = false);
+      return;
+    }
+    setState(() {});
   }
 
   Future<void> _prefillMomoPhone() async {
@@ -1891,7 +1921,12 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
 
 
   /// Backend orders + Firestore escrow (merchant wallet credited after buyer confirms or 7 days).
-  Future<void> _createConfirmedOrdersAndEscrow(List<CartModel> items) async {
+  Future<List<order_svc.CreatedOrderRef>> _createConfirmedOrdersAndEscrow(
+    List<CartModel> items, {
+    String? extraDescriptionTag,
+    String? paymentStatus,
+    String paymentRail = 'pawapay',
+  }) async {
     unawaited(_recordLatestArrivalPurchases(items));
     try {
       final addressForOrder =
@@ -1901,11 +1936,15 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         address: addressForOrder,
         status: OrderStatus.confirmed,
         deliveryMethod: _deliveryTypeLabel(widget.deliveryType),
+        extraDescriptionTag: extraDescriptionTag,
+        paymentStatus: paymentStatus,
       );
       await OrderEscrowService.createHoldsForOrders(
         txRef: widget.txRef,
         refs: refs,
+        paymentRail: paymentRail,
       );
+      return refs;
     } catch (e) {
       debugPrint('[InAppPaymentPage] Failed to create orders / escrow: $e');
       final message = (e is order_svc.AuthRequiredException || e is order_svc.FriendlyApiException)
@@ -1988,12 +2027,15 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     }
   }
 
-  Future<void> _persistFoodOrderAfterPayment({
+  Future<String?> _persistFoodOrderAfterPayment({
     List<CartModel> cartFoodItems = const [],
+    String paymentStatus = 'paid',
+    String paymentProvider = 'pawapay',
+    String? bankProofUrl,
   }) async {
     final fc = widget.foodCheckout;
     final foodLines = cartFoodItems.where((e) => e.isFood).toList();
-    if (fc == null && foodLines.isEmpty) return;
+    if (fc == null && foodLines.isEmpty) return null;
 
     try {
       final ref = FirebaseFirestore.instance.collection('food_orders').doc();
@@ -2126,7 +2168,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         totalMwk: totalMwk,
         status: 'pending',
         paymentTxRef: widget.txRef,
-        paymentStatus: 'paid',
+        paymentStatus: paymentStatus,
         restaurantName: merchantName,
         deliveryMethod: FoodCourierDispatch.methodLabel,
         courierProvider: FoodCourierDispatch.provider,
@@ -2157,6 +2199,11 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
           'customerNote': customerNote.trim(),
         if (pickupLat != null) 'pickupLat': pickupLat,
         if (pickupLng != null) 'pickupLng': pickupLng,
+        'paymentProvider': paymentProvider,
+        if (bankProofUrl != null && bankProofUrl.trim().isNotEmpty) ...{
+          'bankProofUrl': bankProofUrl.trim(),
+          'bankProofUrls': [bankProofUrl.trim()],
+        },
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
@@ -2172,6 +2219,8 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         foodName: summaryName,
         grossAmountMwk: subtotalMwk,
         orderNumber: orderNumber,
+        paymentRail:
+            paymentProvider == 'bank_transfer' ? 'bank_transfer' : 'pawapay',
       );
 
       final itemsSummary = lineItems.length == 1
@@ -2198,6 +2247,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
           itemsSummary: itemsSummary,
         );
       }
+      return ref.id;
     } catch (e) {
       debugPrint('[InAppPaymentPage] food_orders write failed: $e');
       if (widget.rootContext.mounted) {
@@ -2208,6 +2258,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
           errorMessage: 'Sync failed',
         );
       }
+      return null;
     }
   }
 
@@ -2382,8 +2433,237 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
   @override
   void dispose() {
     _payGen++;
+    _bank.removeListener(_onBank);
     _momoPhone.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickProof() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_camera_rounded, color: Color(0xFFFF8A00)),
+              title: const Text('Take photo'),
+              onTap: () => Navigator.pop(ctx, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_rounded, color: Color(0xFFFF8A00)),
+              title: const Text('Upload from gallery'),
+              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (source == null) return;
+    final file = await _picker.pickImage(
+      source: source,
+      imageQuality: 72,
+      maxWidth: 1600,
+    );
+    if (file == null || !mounted) return;
+    setState(() => _proofFile = file);
+  }
+
+  Future<String> _uploadProof(XFile file) async {
+    var user = FirebaseAuth.instance.currentUser;
+    user ??= (await FirebaseAuth.instance.signInAnonymously()).user;
+    if (user == null) {
+      throw Exception('Could not start a secure upload.');
+    }
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    final path = 'profile_photos/${user.uid}_bankproof_$stamp.jpg';
+    final ref = FirebaseStorage.instance.ref(path);
+    final meta = SettableMetadata(contentType: 'image/jpeg');
+    if (!kIsWeb && file.path.isNotEmpty) {
+      await ref.putFile(File(file.path), meta);
+    } else {
+      await ref.putData(await file.readAsBytes(), meta);
+    }
+    return ref.getDownloadURL();
+  }
+
+  String _bankSource() {
+    if ((widget.digitalOrderId ?? '').trim().isNotEmpty ||
+        (widget.digitalProductName ?? '').trim().isNotEmpty) {
+      return 'digital';
+    }
+    if (widget.foodCheckout != null) return 'food';
+    if (widget.accommodationEscrow != null) return 'stay';
+    if (widget.cartItemsForMerchantCredit != null &&
+        widget.cartItemsForMerchantCredit!.isNotEmpty) {
+      return 'marketplace';
+    }
+    return 'checkout';
+  }
+
+  String _bankTitle() {
+    final digital = (widget.digitalProductName ?? '').trim();
+    if (digital.isNotEmpty) return digital;
+    final food = widget.foodCheckout?.foodName.trim() ?? '';
+    if (food.isNotEmpty) return food;
+    final items = widget.cartItemsForMerchantCredit ?? const <CartModel>[];
+    if (items.isNotEmpty) return items.first.name;
+    return 'Bank transfer';
+  }
+
+  Future<Map<String, dynamic>> _fulfillBankTransferOrders({
+    required String proofUrl,
+  }) async {
+    final extra = <String, dynamic>{};
+    final source = _bankSource();
+    if (source == 'digital') return extra;
+
+    final food = widget.foodCheckout;
+    final cartItems = widget.cartItemsForMerchantCredit ?? const <CartModel>[];
+    final foodItems = cartItems.where((e) => e.isFood).toList();
+    final marketItems = cartItems.where((e) => !e.isFood).toList();
+    final esc = widget.accommodationEscrow;
+    final bankTag = '[BankTransfer] [TxRef: ${widget.txRef}]';
+
+    if (food != null || foodItems.isNotEmpty) {
+      final foodOrderId = await _persistFoodOrderAfterPayment(
+        cartFoodItems: foodItems,
+        paymentStatus: 'pending_bank',
+        paymentProvider: 'bank_transfer',
+        bankProofUrl: proofUrl,
+      );
+      if (foodOrderId != null && foodOrderId.isNotEmpty) {
+        extra['foodOrderId'] = foodOrderId;
+      }
+    }
+
+    if (marketItems.isNotEmpty) {
+      final refs = await _createConfirmedOrdersAndEscrow(
+        marketItems,
+        extraDescriptionTag: bankTag,
+        paymentStatus: 'PENDING',
+        paymentRail: 'bank_transfer',
+      );
+      extra['orderIds'] = refs.map((e) => e.orderId).where((e) => e.isNotEmpty).toList();
+      extra['orderNumbers'] =
+          refs.map((e) => e.orderNumber).where((e) => e.isNotEmpty).toList();
+    }
+
+    if (esc != null) {
+      extra['stayBookingRef'] = esc.bookingRef;
+      await OrderEscrowService.createHoldForAccommodationBooking(
+        txRef: widget.txRef,
+        grossAmountMwk: widget.providerAmountMwk ?? widget.totalAmount,
+        params: esc,
+        paymentRail: 'bank_transfer',
+      );
+    }
+
+    if (widget.clearCartOnSuccess) {
+      try {
+        await CartServiceProvider.getInstance().clearCart();
+      } catch (e) {
+        debugPrint('[InAppPaymentPage] Failed to clear cart after bank proof: $e');
+      }
+    }
+
+    return extra;
+  }
+
+  Future<void> _reportBankTransfer() async {
+    if (_bankReported || _paid || _bankBusy) return;
+    final proof = _proofFile;
+    if (proof == null) {
+      ToastHelper.showCustomToast(
+        context,
+        'Upload a photo of your transfer slip first.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    setState(() => _bankBusy = true);
+    try {
+      final proofUrl = await _uploadProof(proof);
+      var user = FirebaseAuth.instance.currentUser;
+      user ??= FirebaseAuth.instance.currentUser;
+      final prefs = await SharedPreferences.getInstance();
+      final buyerName = (prefs.getString('name') ?? '').trim();
+      final buyerEmail = (prefs.getString('email') ?? '').trim();
+      final buyerPhone = (prefs.getString('phone') ??
+              prefs.getString('user_phone') ??
+              user?.phoneNumber ??
+              '')
+          .trim();
+      final orderId = widget.digitalOrderId?.trim() ?? '';
+      final payload = <String, dynamic>{
+        'txRef': widget.txRef,
+        'amountMwk': widget.totalAmount.round(),
+        'proofUrl': proofUrl,
+        'proofUrls': [proofUrl],
+        'buyerUid': user?.uid ?? '',
+        'buyerName': buyerName,
+        'buyerEmail': buyerEmail,
+        'buyerPhone': buyerPhone,
+        'source': _bankSource(),
+        'title': _bankTitle(),
+        'digitalOrderId': orderId,
+        'status': 'pending_review',
+        'paymentProvider': 'bank_transfer',
+        if ((widget.accommodationEscrow?.bookingRef ?? '').trim().isNotEmpty)
+          'stayBookingRef': widget.accommodationEscrow!.bookingRef.trim(),
+        'createdAt': FieldValue.serverTimestamp(),
+      };
+      final proofDoc = FirebaseFirestore.instance
+          .collection('bank_transfer_payments')
+          .doc(orderId.isNotEmpty ? orderId : widget.txRef);
+      await proofDoc.set(payload);
+      try {
+        final extra = await _fulfillBankTransferOrders(proofUrl: proofUrl);
+        if (extra.isNotEmpty) {
+          await proofDoc.set(extra, SetOptions(merge: true));
+        }
+      } catch (e) {
+        debugPrint('[InAppPaymentPage] bank order create failed: $e');
+      }
+      if (orderId.isNotEmpty) {
+        await FirebaseFirestore.instance
+            .collection('digital_service_orders')
+            .doc(orderId)
+            .set({
+          'paymentProvider': 'bank_transfer',
+          'status': 'pending_payment',
+          'bankProofUrl': proofUrl,
+          'bankProofUrls': [proofUrl],
+          'bankTransferReportedAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
+      if (!mounted) return;
+      setState(() {
+        _bankReported = true;
+        _bankBusy = false;
+      });
+      ToastHelper.showCustomToast(
+        context,
+        'Proof sent. We’ll confirm as soon as the transfer lands.',
+        isSuccess: true,
+        errorMessage: '',
+      );
+      if (widget.onSuccessNavigate != null && _bankSource() != 'digital') {
+        widget.onSuccessNavigate!(widget.rootContext);
+      }
+      if (mounted) Navigator.of(context).pop('bank_proof');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _bankBusy = false);
+      ToastHelper.showCustomToast(
+        context,
+        'Could not send the proof. Try again.',
+        isSuccess: false,
+        errorMessage: e.toString(),
+      );
+    }
   }
 
   void _openOrders() {
@@ -2706,6 +2986,196 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
     );
   }
 
+  Widget _bankBody() {
+    final details = _bank.details;
+    final proof = _proofFile;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+      children: [
+        BankTransferDetailsCard(
+          details: details,
+          amountLabel:
+              'Pay MWK ${PawaPayPayment.formatMwk(widget.totalAmount.round())}',
+          reference: widget.txRef,
+        ),
+        const SizedBox(height: 14),
+        const Text(
+          'Proof of payment',
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            fontSize: 15,
+            color: Color(0xFF16284C),
+          ),
+        ),
+        const SizedBox(height: 8),
+        GestureDetector(
+          onTap: _bankBusy || _bankReported ? null : _pickProof,
+          child: Container(
+            width: double.infinity,
+            height: proof == null ? 120 : 180,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFFFE0B8)),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: proof == null
+                ? const Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.add_a_photo_rounded, color: Color(0xFFFF8A00), size: 28),
+                      SizedBox(height: 8),
+                      Text(
+                        'Add transfer slip',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF16284C),
+                        ),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        'Take a photo or upload from gallery',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF8A847C),
+                        ),
+                      ),
+                    ],
+                  )
+                : Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      kIsWeb
+                          ? Image.network(proof.path, fit: BoxFit.cover)
+                          : Image.file(File(proof.path), fit: BoxFit.cover),
+                      const Positioned(
+                        right: 10,
+                        bottom: 10,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Color(0xCC16284C),
+                            borderRadius: BorderRadius.all(Radius.circular(99)),
+                          ),
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            child: Text(
+                              'Change photo',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        SizedBox(
+          width: double.infinity,
+          height: 52,
+          child: FilledButton(
+            onPressed: _bankReported || _bankBusy ? null : _reportBankTransfer,
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFFF8A00),
+              foregroundColor: Colors.white,
+              disabledBackgroundColor: const Color(0xFFFFD9A8),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              textStyle: const TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 15,
+              ),
+            ),
+            child: Text(
+              _bankBusy
+                  ? 'Sending proof…'
+                  : _bankReported
+                      ? 'Proof sent'
+                      : 'Pay & send proof',
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.lock_rounded, size: 14, color: Color(0xFFB08968)),
+            SizedBox(width: 6),
+            Text(
+              'Secured by Vero escrow',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFFB08968),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Transfer the exact amount, then upload the slip. We will confirm your order after checking the photo.',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 12,
+            height: 1.45,
+            fontWeight: FontWeight.w600,
+            color: Colors.grey.shade700,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _payMethodSwitch() {
+    if (!_bank.details.showToCustomers) return const SizedBox.shrink();
+    Widget chip(String label, bool selected, VoidCallback onTap) {
+      return Expanded(
+        child: GestureDetector(
+          onTap: _momoBusy || _bankBusy || _bankReported ? null : onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            decoration: BoxDecoration(
+              color: selected ? const Color(0xFFFFF4E6) : Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: selected ? const Color(0xFFFF8A00) : const Color(0xFFE8E8E8),
+                width: selected ? 1.6 : 1,
+              ),
+            ),
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 13,
+                color: selected
+                    ? const Color(0xFF16284C)
+                    : Colors.grey.shade700,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+      child: Row(
+        children: [
+          chip('Mobile money', !_useBank, () => setState(() => _useBank = false)),
+          const SizedBox(width: 10),
+          chip('Bank transfer', _useBank, () => setState(() => _useBank = true)),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -2742,7 +3212,18 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
             tooltip: 'Back to checkout',
           ),
         ),
-        body: _paid ? _paidBody() : _pawaPayBody(),
+        body: _paid
+            ? _paidBody()
+            : Column(
+                children: [
+                  _payMethodSwitch(),
+                  Expanded(
+                    child: _useBank && _bank.details.showToCustomers
+                        ? _bankBody()
+                        : _pawaPayBody(),
+                  ),
+                ],
+              ),
       ),
     );
   }

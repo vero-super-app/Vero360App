@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/utils/formatters.dart';
+import 'package:vero360_app/widgets/merchant_verified_badge.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 /// Public vehicle card. The public model never carries a registration plate,
@@ -97,10 +98,12 @@ class CarHireListingCard extends StatelessWidget {
                 ),
                 if (car.provider != null) ...[
                   const SizedBox(height: 1),
-                  Text(
-                    car.provider!.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  MerchantNameWithBadge(
+                    name: car.provider!.name,
+                    verified: car.provider!.verified,
+                    showLabel: false,
+                    badgeSize: 14,
+                    tooltip: 'Verified car hire',
                     style: CarHireType.bodySmall.copyWith(
                       color: CarHirePalette.onSurfaceVariant,
                       fontWeight: FontWeight.w600,

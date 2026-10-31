@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:vero360_app/GernalServices/driver_service.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
+import 'package:vero360_app/widgets/merchant_verified_badge.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 /// Public Vero Ride profile: ratings + taxi / business details (not a merchant shop).
@@ -190,8 +191,8 @@ class _VeroRideDriverProfilePageState extends State<VeroRideDriverProfilePage> {
   }
 
   bool get _verified {
-    final v = _driver?['isVerified'] ?? _driver?['verified'] ?? _userDoc?['isVerified'];
-    return v == true || v?.toString().toLowerCase() == 'true';
+    return MerchantVerification.isVerifiedFromData(_driver) ||
+        MerchantVerification.isVerifiedFromData(_userDoc);
   }
 
   String get _businessName {
@@ -300,8 +301,12 @@ class _VeroRideDriverProfilePageState extends State<VeroRideDriverProfilePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  _name,
+                MerchantNameWithBadge(
+                  name: _name,
+                  verified: _verified,
+                  showLabel: false,
+                  badgeSize: 18,
+                  tooltip: 'Verified Vero Ride driver',
                   style: const TextStyle(
                     fontWeight: FontWeight.w900,
                     fontSize: 18,

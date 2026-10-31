@@ -15,6 +15,7 @@ import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skel
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 import 'package:vero360_app/utils/formatters.dart';
+import 'package:vero360_app/widgets/merchant_verified_badge.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 /// Company home: one glanceable dashboard instead of a wall of tables.
@@ -587,10 +588,12 @@ class _CompanyStrip extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                access.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+              MerchantNameWithBadge(
+                name: access.title,
+                verified: access.hasCompany,
+                showLabel: false,
+                badgeSize: 16,
+                tooltip: 'Verified car hire',
                 style: CarHireType.title.copyWith(fontSize: 16.5),
               ),
               const SizedBox(height: 3),

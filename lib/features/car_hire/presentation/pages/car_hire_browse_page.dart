@@ -17,6 +17,7 @@ import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_sect
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skeletons.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
+import 'package:vero360_app/widgets/merchant_verified_badge.dart';
 
 /// Vehicle categories shown as the horizontal chip rail.
 enum _VehicleCategory { all, suv, luxury, budget, sevenSeater }
@@ -1327,35 +1328,50 @@ class _CompanyAvatar extends StatelessWidget {
           width: 70,
           child: Column(
             children: [
-              AnimatedContainer(
-                duration: CarHireShape.fast,
-                width: 56,
-                height: 56,
-                padding: const EdgeInsets.all(2.5),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: selected
-                        ? CarHirePalette.accent
-                        : CarHirePalette.hairline,
-                    width: selected ? 2.5 : 1,
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  AnimatedContainer(
+                    duration: CarHireShape.fast,
+                    width: 56,
+                    height: 56,
+                    padding: const EdgeInsets.all(2.5),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: selected
+                            ? CarHirePalette.accent
+                            : CarHirePalette.hairline,
+                        width: selected ? 2.5 : 1,
+                      ),
+                    ),
+                    child: ClipOval(
+                      child: Container(
+                        color: CarHirePalette.surfaceLow,
+                        alignment: Alignment.center,
+                        child: logo.isEmpty
+                            ? initials
+                            : Image.network(
+                                logo,
+                                fit: BoxFit.cover,
+                                width: 56,
+                                height: 56,
+                                errorBuilder: (_, _, _) => initials,
+                              ),
+                      ),
+                    ),
                   ),
-                ),
-                child: ClipOval(
-                  child: Container(
-                    color: CarHirePalette.surfaceLow,
-                    alignment: Alignment.center,
-                    child: logo.isEmpty
-                        ? initials
-                        : Image.network(
-                            logo,
-                            fit: BoxFit.cover,
-                            width: 56,
-                            height: 56,
-                            errorBuilder: (_, _, _) => initials,
-                          ),
-                  ),
-                ),
+                  if (company.verified)
+                    const Positioned(
+                      right: -2,
+                      bottom: -2,
+                      child: MerchantVerifiedBadge(
+                        showLabel: false,
+                        size: 16,
+                        tooltip: 'Verified car hire',
+                      ),
+                    ),
+                ],
               ),
               const SizedBox(height: 6),
               Text(

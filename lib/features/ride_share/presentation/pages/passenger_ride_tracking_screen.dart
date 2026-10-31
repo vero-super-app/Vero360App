@@ -455,6 +455,7 @@ class _PassengerRideTrackingScreenState
             const SizedBox(height: 20),
             RidePersonCard(
               name: driver.fullName,
+              verified: driver.isVerified,
               subtitle: ride.taxi != null
                   ? [
                       if (ride.taxi!.model.isNotEmpty) ride.taxi!.model,

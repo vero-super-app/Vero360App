@@ -14,6 +14,7 @@ import 'package:vero360_app/widgets/vero_spin_reward_prompt.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
+import 'package:vero360_app/widgets/merchant_verified_badge.dart';
 
 class RideCompletionScreen extends ConsumerStatefulWidget {
   final Ride ride;
@@ -363,6 +364,14 @@ class _RideCompletionScreenState extends ConsumerState<RideCompletionScreen>
                       'Thanks to $_driverName',
                       style: TextStyle(fontSize: 16, color: Colors.grey[600]),
                     ),
+                    if (widget.ride.driver?.isVerified == true) ...[
+                      const SizedBox(width: 4),
+                      const MerchantVerifiedBadge(
+                        showLabel: false,
+                        size: 16,
+                        tooltip: 'Verified Vero Ride driver',
+                      ),
+                    ],
                     const SizedBox(width: 8),
                     Icon(Icons.star_rounded, size: 16, color: Colors.amber[600]),
                     Text(

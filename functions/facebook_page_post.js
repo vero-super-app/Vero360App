@@ -37,7 +37,7 @@
  *        &access_token=APP_ID|APP_SECRET
  * 6) Save + redeploy:
  *      firebase functions:secrets:set FACEBOOK_PAGE_ACCESS_TOKEN
- *      firebase deploy --only functions:onMarketplaceItemFacebookPost,functions:onFoodMenuItemFacebookPost,functions:onAccommodationFacebookPost,functions:onAccommodationRoomFacebookPost,functions:onMarketplacePromotionFacebookPost,functions:onLatestArrivalFacebookPost,functions:onMerchantPromotionFacebookPost,functions:onMarketplaceItemCreated,functions:onMarketplaceItemUpdated
+ *      firebase deploy --only functions:onMarketplaceItemFacebookPost,functions:onFoodMenuItemFacebookPost,functions:onAccommodationFacebookPost,functions:onAccommodationRoomFacebookPost,functions:onCarHireListingFacebookPost,functions:onMarketplacePromotionFacebookPost,functions:onLatestArrivalFacebookPost,functions:onMerchantPromotionFacebookPost,functions:onMarketplaceItemCreated,functions:onMarketplaceItemUpdated
  *
  * Failed attempts write `facebookPostError` on the Firestore listing doc.
  */
@@ -179,6 +179,53 @@ function foodShareUrl(id, data) {
   if (img) params.set('img', img);
   const qs = params.toString();
   return `https://vero360.app/food/${encodeURIComponent(id)}${qs ? `?${qs}` : ''}`;
+}
+
+function carHireShareUrl(id, data) {
+  const params = new URLSearchParams();
+  const name = listingTitle(data);
+  const loc = String(data.location || data.pickupArea || '').trim();
+  const price = rawPriceParam(
+    data.dailyRate != null ? data.dailyRate : data.price,
+  );
+  const merchant = String(
+    data.merchantName || data.companyName || data.operatorName || '',
+  ).trim();
+  const img = firstHttpImage(data);
+  if (name) params.set('name', name);
+  if (loc) params.set('loc', loc);
+  if (price) params.set('price', price);
+  if (merchant) params.set('merchant', merchant);
+  if (img) params.set('img', img);
+  const q = [name, loc].filter(Boolean).join(' ');
+  if (q) params.set('q', q);
+  const qs = params.toString();
+  return `https://vero360.app/car-hire/${encodeURIComponent(id)}${qs ? `?${qs}` : ''}`;
+}
+
+function isPublicCarHire(data) {
+  if (data.isActive === false) return false;
+  if (data.hidden === true || data.deleted === true) return false;
+  const status = String(data.listingStatus || data.status || '')
+    .trim()
+    .toLowerCase();
+  if (
+    status === 'draft' ||
+    status === 'pending' ||
+    status === 'pending_review' ||
+    status === 'pendingreview' ||
+    status === 'rejected'
+  ) {
+    return false;
+  }
+  if (status === 'published') return true;
+  return data.isAvailable === true;
+}
+
+function becamePublicCarHire(before, after) {
+  if (!isPublicCarHire(after)) return false;
+  if (after.facebookPostId || after.facebookPostedAt) return false;
+  return !isPublicCarHire(before || {});
 }
 
 function accommodationShareUrl(id, data) {
@@ -644,6 +691,16 @@ async function handleFacebookPost({
         needsFacebookRetry(after, isPublicAccommodation);
     link = accommodationShareUrl(docId, after);
     message = `New stay on Vero360: ${listingTitle(after)}`;
+  } else if (kind === 'car_hire') {
+    shouldPost = isCreate
+      ? isPublicCarHire(after) &&
+        !after.facebookPostId &&
+        !after.facebookPostedAt
+      : becamePublicCarHire(before, after) ||
+        needsFacebookRetry(after, isPublicCarHire);
+    link = carHireShareUrl(docId, after);
+    const rate = buyerPriceLabel(after.dailyRate != null ? after.dailyRate : after.price);
+    message = `New car for hire on Vero360: ${listingTitle(after)}${rate ? `${rate} / day` : ''}`;
   }
 
   if (!shouldPost) {
@@ -864,6 +921,37 @@ exports.onAccommodationFacebookPost = onDocumentWritten(
   },
 );
 
+exports.onCarHireListingFacebookPost = onDocumentWritten(
+  {
+    document: 'car_hire_listings/{id}',
+    ...firestoreOpts,
+  },
+  async (event) => {
+    const isCreate = !event.data?.before?.exists;
+    const before = event.data?.before?.exists
+      ? event.data.before.data() || {}
+      : {};
+    const after = event.data?.after?.data() || {};
+    const afterSnap = event.data?.after;
+    if (!afterSnap || !afterSnap.exists) return;
+    try {
+      const { token, pageId } = resolvePageCredentials();
+      await handleFacebookPost({
+        before,
+        after,
+        afterSnap,
+        docId: String(event.params.id || after.carId || '').trim(),
+        kind: 'car_hire',
+        token,
+        pageId,
+        isCreate,
+      });
+    } catch (err) {
+      console.error('onCarHireListingFacebookPost failed', err);
+    }
+  },
+);
+
 /** Merchant app writes stays to `accommodation_rooms`. */
 exports.onAccommodationRoomFacebookPost = onDocumentWritten(
   {
@@ -926,6 +1014,7 @@ function listingOwnerId(data) {
       data.ownerId ||
       data.userId ||
       data.hostUid ||
+      data.operatorId ||
       '',
   ).trim();
 }

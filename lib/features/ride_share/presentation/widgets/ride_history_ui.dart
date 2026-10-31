@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
+import 'package:vero360_app/widgets/merchant_verified_badge.dart';
 
 bool ridePaymentPending(Ride ride) => ride.needsPayment;
 
@@ -446,15 +447,29 @@ class RideHistoryTripCard extends StatelessWidget {
                   ),
                   const SizedBox(width: 4),
                   Expanded(
-                    child: Text(
-                      '${formatRideWhen(when)} · $counterpart',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey.shade700,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            '${formatRideWhen(when)} · $counterpart',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey.shade700,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (ride.driver?.isVerified == true) ...[
+                          const SizedBox(width: 4),
+                          const MerchantVerifiedBadge(
+                            showLabel: false,
+                            size: 14,
+                            tooltip: 'Verified Vero Ride driver',
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                   Container(
@@ -615,15 +630,17 @@ class RideHistoryTripCard extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          counterpart,
+                        MerchantNameWithBadge(
+                          name: counterpart,
+                          verified: !isDriver && ride.driver?.isVerified == true,
+                          showLabel: false,
+                          badgeSize: 16,
+                          tooltip: 'Verified Vero Ride driver',
                           style: const TextStyle(
                             fontWeight: FontWeight.w800,
                             fontSize: 17,
                             color: RideShareColors.titleText,
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
                         ),
                         Text(
                           formatRideWhen(when),

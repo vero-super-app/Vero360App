@@ -17,6 +17,7 @@ import 'package:vero360_app/features/ride_share/presentation/services/driver_onl
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_skeleton_loaders.dart';
+import 'package:vero360_app/widgets/merchant_verified_badge.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 /// Central place for drivers to manage profile, documents, payout info and vehicles.
@@ -94,10 +95,7 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
 
   /// Strict admin-verified flag — never treat missing/1/status as verified.
   bool _isTrulyVerified(Map<String, dynamic> source) {
-    final v = source['isVerified'] ?? source['verified'];
-    if (v == true) return true;
-    if (v is String && v.toLowerCase().trim() == 'true') return true;
-    return false;
+    return MerchantVerification.isVerifiedFromData(source);
   }
 
   bool _bool(dynamic v) {
@@ -254,7 +252,8 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
     final user = driver['user'] is Map
         ? Map<String, dynamic>.from(driver['user'] as Map)
         : <String, dynamic>{};
-    final isVerified = _isTrulyVerified(driver);
+    final isVerified =
+        _isTrulyVerified(driver) || _isTrulyVerified(user);
     final taxis = _taxisFromDriver(driver);
     final chip = _verificationChip(driver, isVerified: isVerified);
     final looksVerified = chip.label == 'Verified';
@@ -558,8 +557,12 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  name.isEmpty ? 'Driver' : name,
+                MerchantNameWithBadge(
+                  name: name.isEmpty ? 'Driver' : name,
+                  verified: isVerified,
+                  showLabel: false,
+                  badgeSize: 18,
+                  tooltip: 'Verified Vero Ride driver',
                   style: const TextStyle(
                     fontWeight: FontWeight.w800,
                     fontSize: 18,

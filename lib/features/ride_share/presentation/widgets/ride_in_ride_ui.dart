@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
+import 'package:vero360_app/widgets/merchant_verified_badge.dart';
 
 /// Progress 0–1 for in-ride UI (shared passenger/driver).
 double rideStatusProgress(String status) {
@@ -534,6 +535,7 @@ class RidePersonCard extends StatelessWidget {
   final String? avatarUrl;
   final String? initials;
   final List<Widget>? actions;
+  final bool verified;
 
   const RidePersonCard({
     required this.name,
@@ -543,6 +545,7 @@ class RidePersonCard extends StatelessWidget {
     this.avatarUrl,
     this.initials,
     this.actions,
+    this.verified = false,
     super.key,
   });
 
@@ -639,13 +642,29 @@ class RidePersonCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  name,
-                  style: const TextStyle(
-                    color: RideShareColors.titleText,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                  ),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: RideShareColors.titleText,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    if (verified) ...[
+                      const SizedBox(width: 6),
+                      const MerchantVerifiedBadge(
+                        showLabel: false,
+                        size: 18,
+                        tooltip: 'Verified Vero Ride driver',
+                      ),
+                    ],
+                  ],
                 ),
                 if (subtitle != null)
                   Text(

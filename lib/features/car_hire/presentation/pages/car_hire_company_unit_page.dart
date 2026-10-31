@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:vero360_app/features/car_hire/data/car_hire_api.dart';
+import 'package:vero360_app/features/car_hire/data/car_hire_facebook.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_company_models.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_company_providers.dart';
@@ -2722,6 +2723,19 @@ class _ListingSheetState extends ConsumerState<_ListingSheet> {
           'listingStatus': status,
           'isAvailable': status == 'PUBLISHED',
         },
+      );
+      final access = ref.read(companyAccessProvider).value;
+      final fallbackOp =
+          (access != null && access.usable.isNotEmpty)
+              ? access.usable.first.operatorId
+              : '';
+      await CarHireFacebookQueue.syncListing(
+        unit: widget.unit,
+        operatorId: (widget.unit.operatorId ?? '').trim().isNotEmpty
+            ? widget.unit.operatorId!.trim()
+            : fallbackOp,
+        companyName: access?.title ?? '',
+        published: status == 'PUBLISHED',
       );
       ref.invalidate(companyFleetProvider);
       ref.invalidate(companyAnalyticsProvider);

@@ -11,6 +11,7 @@ import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skel
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 import 'package:vero360_app/utils/formatters.dart';
+import 'package:vero360_app/widgets/merchant_verified_badge.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 class CarHireDetailPage extends ConsumerStatefulWidget {
@@ -841,22 +842,36 @@ class _ProviderRow extends StatelessWidget {
         ),
         const SizedBox(width: 8),
         Expanded(
-          child: Text.rich(
-            TextSpan(
-              children: [
-                const TextSpan(text: 'Provided by '),
-                TextSpan(
-                  text: provider.name,
-                  style: const TextStyle(
-                    color: CarHirePalette.onSurface,
-                    fontWeight: FontWeight.w700,
+          child: Row(
+            children: [
+              Flexible(
+                child: Text.rich(
+                  TextSpan(
+                    children: [
+                      const TextSpan(text: 'Provided by '),
+                      TextSpan(
+                        text: provider.name,
+                        style: const TextStyle(
+                          color: CarHirePalette.onSurface,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                   ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: CarHireType.bodySmall.copyWith(fontSize: 12.5),
+                ),
+              ),
+              if (provider.verified) ...[
+                const SizedBox(width: 6),
+                const MerchantVerifiedBadge(
+                  showLabel: false,
+                  size: 15,
+                  tooltip: 'Verified car hire',
                 ),
               ],
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: CarHireType.bodySmall.copyWith(fontSize: 12.5),
+            ],
           ),
         ),
       ],

@@ -130,6 +130,7 @@ class DriverInfo {
   final double? latitude;
   final double? longitude;
   final String avatar;
+  final bool isVerified;
 
   DriverInfo({
     required this.id,
@@ -143,6 +144,7 @@ class DriverInfo {
     this.latitude,
     this.longitude,
     this.avatar = '',
+    this.isVerified = false,
   });
 
   factory DriverInfo.fromJson(Map<String, dynamic> json) {
@@ -194,7 +196,27 @@ class DriverInfo {
       avatar: userData['avatar'] as String? ??
           userData['profilepicture'] as String? ??
           '',
+      isVerified: _driverVerified(userData, json),
     );
+  }
+
+  static bool _driverVerified(
+    Map<String, dynamic> userData,
+    Map<String, dynamic> json,
+  ) {
+    bool flag(dynamic v) =>
+        v == true || v?.toString().trim().toLowerCase() == 'true';
+    if (flag(userData['isVerified']) ||
+        flag(userData['verified']) ||
+        flag(userData['kycVerified']) ||
+        flag(json['isVerified']) ||
+        flag(json['verified'])) {
+      return true;
+    }
+    final status = '${userData['kycStatus'] ?? userData['verificationStatus'] ?? json['status'] ?? ''}'
+        .trim()
+        .toLowerCase();
+    return status == 'verified' || status == 'approved';
   }
 
   String get fullName => '$firstName $lastName';
@@ -212,6 +234,7 @@ class DriverInfo {
         'latitude': latitude,
         'longitude': longitude,
         'avatar': avatar,
+        'isVerified': isVerified,
       };
 }
 

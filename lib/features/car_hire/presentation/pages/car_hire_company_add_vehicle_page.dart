@@ -4,12 +4,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:vero360_app/features/car_hire/data/car_hire_api.dart';
+import 'package:vero360_app/features/car_hire/data/car_hire_facebook.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_company_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_company_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_company_widgets.dart';
 import 'package:vero360_app/utils/formatters.dart';
+import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 /// Three quiet steps for putting a car on the road: identify it, attach the
@@ -82,6 +84,7 @@ class _CarHireCompanyAddVehiclePageState
   final List<String> _photos = <String>[];
   bool _uploadingPhoto = false;
   bool _saving = false;
+  bool _postToFacebook = true;
   String? _saveError;
 
   String get _operatorId => widget.access.usable.first.operatorId;
@@ -299,6 +302,13 @@ class _CarHireCompanyAddVehiclePageState
           documentFailures.add('insurance document');
         }
       }
+
+      await CarHireFacebookQueue.syncListing(
+        unit: created,
+        operatorId: created.operatorId ?? _operatorId,
+        companyName: widget.access.usable.first.companyName,
+        postToFacebook: _postToFacebook,
+      );
 
       ref.invalidate(companyFleetProvider);
       ref.invalidate(companyAnalyticsProvider);
@@ -714,6 +724,38 @@ class _CarHireCompanyAddVehiclePageState
               decoration: carHireInputDecoration(hint: '+265 …'),
             ),
           ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      _FormCard(
+        icon: Icons.public_rounded,
+        title: 'Share',
+        trailing: 'Vero360 Page',
+        children: [
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            value: _postToFacebook,
+            activeThumbColor: CarHirePalette.accent,
+            secondary: const FacebookLogoMark(size: 22),
+            title: const Text(
+              'Also post on Facebook',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+            ),
+            subtitle: Text(
+              'Share on the Vero360 Facebook Page once this car is live.',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+            ),
+            onChanged: _saving
+                ? null
+                : (v) => setState(() => _postToFacebook = v),
+          ),
+          if (_postToFacebook) ...[
+            const SizedBox(height: 4),
+            const FacebookShareHint(
+              message:
+                  'When you publish, we also share this car on the Vero360 Facebook Page so more renters can find it.',
+            ),
+          ],
         ],
       ),
       const SizedBox(height: 12),

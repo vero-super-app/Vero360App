@@ -2654,6 +2654,8 @@ exports.onLatestArrivalFacebookPost =
   facebookPagePost.onLatestArrivalFacebookPost;
 exports.onMerchantPromotionFacebookPost =
   facebookPagePost.onMerchantPromotionFacebookPost;
+exports.onCarHireListingFacebookPost =
+  facebookPagePost.onCarHireListingFacebookPost;
 
 /** PawaPay-verified promote activation — see ./activate_marketplace_promotion.js */
 const activateMarketplacePromotion = require('./activate_marketplace_promotion');

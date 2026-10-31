@@ -13,7 +13,7 @@ class MerchantVerification {
         data['isVerified'] == true) {
       return true;
     }
-    for (final key in ['kycStatus', 'verificationStatus']) {
+    for (final key in ['kycStatus', 'verificationStatus', 'status']) {
       final v = (data[key] ?? '').toString().trim().toLowerCase();
       if (_ok.contains(v)) return true;
     }
@@ -27,10 +27,12 @@ class MerchantVerifiedBadge extends StatelessWidget {
     super.key,
     this.showLabel = true,
     this.size = 16,
+    this.tooltip = 'Verified',
   });
 
   final bool showLabel;
   final double size;
+  final String tooltip;
 
   static const Color green = Color(0xFF16A34A);
   static const Color soft = Color(0xFFDCFCE7);
@@ -39,7 +41,7 @@ class MerchantVerifiedBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final icon = Icon(Icons.verified_rounded, size: size, color: green);
     if (!showLabel) {
-      return Tooltip(message: 'Verified merchant', child: icon);
+      return Tooltip(message: tooltip, child: icon);
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
@@ -77,6 +79,7 @@ class MerchantNameWithBadge extends StatelessWidget {
     this.maxLines = 1,
     this.showLabel = true,
     this.badgeSize = 16,
+    this.tooltip = 'Verified',
   });
 
   final String name;
@@ -85,6 +88,7 @@ class MerchantNameWithBadge extends StatelessWidget {
   final int maxLines;
   final bool showLabel;
   final double badgeSize;
+  final String tooltip;
 
   @override
   Widget build(BuildContext context) {
@@ -100,7 +104,11 @@ class MerchantNameWithBadge extends StatelessWidget {
         ),
         if (verified) ...[
           const SizedBox(width: 6),
-          MerchantVerifiedBadge(showLabel: showLabel, size: badgeSize),
+          MerchantVerifiedBadge(
+            showLabel: showLabel,
+            size: badgeSize,
+            tooltip: tooltip,
+          ),
         ],
       ],
     );

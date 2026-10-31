@@ -77,6 +77,20 @@ dynamic _pick(Map<String, dynamic> json, List<String> keys) {
   return null;
 }
 
+bool _isVerifiedPayload(Map<String, dynamic> json) {
+  if (_asBool(json['verified']) ||
+      _asBool(json['isVerified']) ||
+      _asBool(json['kycVerified'])) {
+    return true;
+  }
+  final status = _asString(
+    json['verificationStatus'] ?? json['kycStatus'] ?? json['status'],
+  ).toLowerCase();
+  return status == 'verified' ||
+      status == 'approved' ||
+      status == 'active';
+}
+
 bool _asBool(dynamic value, {bool fallback = false}) {
   if (value is bool) return value;
   if (value is num) return value != 0;
@@ -524,12 +538,14 @@ class CarHireProvider {
     required this.name,
     this.type = '',
     this.logoUrl,
+    this.verified = false,
   });
 
   final String id;
   final String name;
   final String type;
   final String? logoUrl;
+  final bool verified;
 
   bool get isBusiness => type.toUpperCase() == 'BUSINESS';
 
@@ -544,6 +560,7 @@ class CarHireProvider {
       name: name,
       type: _asString(json['type']),
       logoUrl: _asStringOrNull(json['logoUrl']),
+      verified: _isVerifiedPayload(json),
     );
   }
 }
@@ -556,6 +573,7 @@ class CarHireCompanyOption {
     this.logoUrl,
     this.listings = 0,
     this.instantBook = true,
+    this.verified = false,
   });
 
   final String id;
@@ -563,6 +581,7 @@ class CarHireCompanyOption {
   final String? logoUrl;
   final int listings;
   final bool instantBook;
+  final bool verified;
 
   String get initials {
     final words = name
@@ -586,6 +605,7 @@ class CarHireCompanyOption {
       logoUrl: _asStringOrNull(json['logoUrl']),
       listings: _asInt(json['listings']),
       instantBook: _asBool(json['instantBook'], fallback: true),
+      verified: _isVerifiedPayload(json),
     );
   }
 }

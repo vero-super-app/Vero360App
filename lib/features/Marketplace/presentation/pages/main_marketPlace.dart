@@ -368,15 +368,7 @@ class MarketplaceDetailModel {
   factory MarketplaceDetailModel.fromFirestore(DocumentSnapshot doc) {
     final data = (doc.data() as Map<String, dynamic>?) ?? {};
     final rawImage = (data['image'] ?? data['imageUrl'] ?? data['photo'] ?? data['picture'] ?? '').toString().trim();
-    bool looksLikeBase64(String s) {
-      final x = s.contains(',') ? s.split(',').last.trim() : s.trim();
-      if (x.length < 150) return false;
-      return RegExp(r'^[A-Za-z0-9+/=\s]+$').hasMatch(x);
-    }
-    Uint8List? bytes;
-    if (rawImage.isNotEmpty && looksLikeBase64(rawImage)) {
-      try { final bp = rawImage.contains(',') ? rawImage.split(',').last : rawImage; bytes = base64Decode(bp); } catch (_) { bytes = null; }
-    }
+    // Decode lazily in the tile. Doing it here freezes the UI on a shop load.
     DateTime? created = MarketplaceTime.parseCreatedAt(data['createdAt']);
     DateTime? promotedUntil;
     final rawPromo = data['promotedUntil'];
@@ -420,7 +412,7 @@ class MarketplaceDetailModel {
     else if (rc != null) sellerReviewCount = int.tryParse(rc.toString()) ?? 0;
     return MarketplaceDetailModel(
       id: doc.id, name: (data['name'] ?? '').toString(), category: cat, price: price,
-      image: rawImage, imageBytes: bytes, description: data['description']?.toString(),
+      image: rawImage, imageBytes: null, description: data['description']?.toString(),
       location: data['location']?.toString(),
       latitude: parseDouble(data['latitude'] ?? data['lat']),
       longitude: parseDouble(data['longitude'] ?? data['lng']),
@@ -1687,14 +1679,6 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
 
       final mergeVerticals = _hubVertical == MarketplaceHubVertical.all;
 
-      // Start food/stays immediately so they finish while products paint.
-      final verticalsFuture = mergeVerticals
-          ? MarketplaceHubLoader.loadFoodAndStays(
-              latitude: _userLat,
-              longitude: _userLng,
-            )
-          : null;
-
       // 1) Memory cache — instant paint
       if (_productCacheFresh) {
         final ranked = await _finishFeed(
@@ -1710,21 +1694,6 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
             _loading = false;
           });
         }
-        unawaited(_enrichHubInBackground(
-          productRaw: _filterCachedProducts(category),
-          shops: const [],
-          query: '',
-          mergeVerticals: mergeVerticals,
-          loadGen: gen,
-          verticalsFuture: verticalsFuture,
-          needRerank: true,
-        ));
-        // Soft server refresh in background (does not block UI).
-        unawaited(_refreshHubFromServer(
-          category: category,
-          mergeVerticals: mergeVerticals,
-          loadGen: gen,
-        ));
         return quick;
       }
 
@@ -1739,8 +1708,8 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
             mergeVerticals: mergeVerticals,
             attachSocial: false,
             fast: true,
+            scheduleEnrich: false,
             loadGen: gen,
-            verticalsFuture: verticalsFuture,
           );
           if (mounted && gen == _loadGen) {
             setState(() {
@@ -1752,12 +1721,6 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
               _loading = false;
             });
           }
-          unawaited(_refreshHubFromServer(
-            category: category,
-            mergeVerticals: mergeVerticals,
-            loadGen: gen,
-            verticalsFuture: verticalsFuture,
-          ));
           return quick;
         }
       } catch (_) {}
@@ -1772,8 +1735,8 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
           mergeVerticals: mergeVerticals,
           attachSocial: false,
           fast: true,
+          scheduleEnrich: false,
           loadGen: gen,
-          verticalsFuture: verticalsFuture,
         );
         if (mounted && gen == _loadGen) {
           setState(() {
@@ -1801,12 +1764,10 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
           ));
         }
         if (_hubVertical == MarketplaceHubVertical.all) {
-          final fut = verticalsFuture ??
-              MarketplaceHubLoader.loadFoodAndStays(
-                latitude: _userLat,
-                longitude: _userLng,
-              );
-          final (food, stays) = await fut;
+          final (food, stays) = await MarketplaceHubLoader.loadFoodAndStays(
+            latitude: _userLat,
+            longitude: _userLng,
+          );
           return MarketplaceHubSnapshot(
             items: MarketplaceHubLoader.mergeMixed([food, stays]),
           );
@@ -1816,54 +1777,6 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
-  }
-
-  Future<void> _refreshHubFromServer({
-    required String? category,
-    required bool mergeVerticals,
-    required int loadGen,
-    Future<(List<MarketplaceFeedItem>, List<MarketplaceFeedItem>)>?
-        verticalsFuture,
-  }) async {
-    try {
-      final snapshot = await _marketplaceItemsQuery()
-          .get(const GetOptions(source: Source.server));
-      if (!mounted || loadGen != _loadGen) return;
-      final products = await _productsFromDocs(
-        snapshot.docs,
-        category: category,
-        attachSocial: true,
-        fast: false,
-      );
-      if (!mounted || loadGen != _loadGen || _lastQuery.trim().isNotEmpty) {
-        return;
-      }
-      final productItems = products.map(_feedFromProduct).toList();
-      final existingOther = _lastGridItems
-          .where((e) => e.kind != MarketplaceFeedKind.product)
-          .toList();
-      final items = mergeVerticals && existingOther.isNotEmpty
-          ? MarketplaceHubLoader.mergeMixed([productItems, existingOther])
-          : productItems;
-      setState(() {
-        _future = Future.value(
-          MarketplaceHubSnapshot(items: items, shops: _lastShopHits),
-        );
-        _lastGridItems = items;
-      });
-      // If All feed and food/stays not in yet, keep enrichment going.
-      if (mergeVerticals && existingOther.isEmpty) {
-        unawaited(_enrichHubInBackground(
-          productRaw: _filterCachedProducts(category),
-          shops: _lastShopHits,
-          query: '',
-          mergeVerticals: true,
-          loadGen: loadGen,
-          verticalsFuture: verticalsFuture,
-          needRerank: false,
-        ));
-      }
-    } catch (_) {}
   }
 
   String _productSearchHaystack(MarketplaceDetailModel item) {
@@ -2003,15 +1916,6 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
         if (cached.docs.isNotEmpty) {
           final all = await _parseProductDocs(cached.docs);
           _storeProductCache(all);
-          // Refresh server quietly.
-          unawaited(() async {
-            try {
-              final server = await _marketplaceItemsQuery()
-                  .get(const GetOptions(source: Source.server));
-              final parsed = await _parseProductDocs(server.docs);
-              _storeProductCache(parsed);
-            } catch (_) {}
-          }());
           return _filterCachedProducts(category);
         }
       } catch (_) {}

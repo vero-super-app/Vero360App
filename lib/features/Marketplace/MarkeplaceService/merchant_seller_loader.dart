@@ -13,6 +13,7 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_revi
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/serviceprovider_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/serviceprovider_model.dart';
+import 'package:vero360_app/widgets/merchant_verified_badge.dart';
 
 /// Seller profile + reviews bundle (same data path as marketplace product details).
 class MerchantSellerInfo {
@@ -28,6 +29,7 @@ class MerchantSellerInfo {
   String merchantRef;
   String? sellerUserId;
   List<MerchantReview> recentReviews;
+  bool verified;
 
   MerchantSellerInfo({
     this.businessName,
@@ -42,6 +44,7 @@ class MerchantSellerInfo {
     this.merchantRef = '',
     this.sellerUserId,
     this.recentReviews = const [],
+    this.verified = false,
   });
 
   String get displayName {
@@ -62,11 +65,13 @@ class MerchantSellerLoader {
   /// merchantId → weekday ints (1=Mon … 7=Sun). Empty/missing = every day.
   static final Map<String, List<int>> _openingDaysByMerchantId = {};
   static final Map<String, String> _businessNameByMerchantId = {};
+  static final Map<String, bool> _verifiedByMerchantId = {};
 
   static void clearSessionCaches() {
     _openingHoursByMerchantId.clear();
     _openingDaysByMerchantId.clear();
     _businessNameByMerchantId.clear();
+    _verifiedByMerchantId.clear();
   }
 
   static String? peekOpeningHours(String? merchantId) {
@@ -103,6 +108,68 @@ class MerchantSellerLoader {
     SharedPreferences.getInstance().then((p) {
       p.setString('$_kDaysPrefsPrefix$id', cleaned.join(','));
     }).catchError((_) {});
+  }
+
+  static bool? peekVerified(String? merchantId) {
+    final id = (merchantId ?? '').trim();
+    if (id.isEmpty) return null;
+    return _verifiedByMerchantId[id];
+  }
+
+  static void cacheVerified(String? merchantId, bool verified) {
+    final id = (merchantId ?? '').trim();
+    if (id.isEmpty) return;
+    _verifiedByMerchantId[id] = verified;
+  }
+
+  static void _applyVerified(
+    MerchantSellerInfo info,
+    Map<String, dynamic>? data, [
+    String? id,
+  ]) {
+    if (info.verified) return;
+    if (!MerchantVerification.isVerifiedFromData(data)) return;
+    info.verified = true;
+    cacheVerified(id ?? info.merchantRef, true);
+    cacheVerified(info.sellerUserId, true);
+  }
+
+  /// KYC / admin-verified flag for shop, product, and ratings UIs.
+  static Future<bool> resolveVerified({
+    String? merchantId,
+    String? sellerUserId,
+  }) async {
+    final candidates = <String>{
+      if ((merchantId ?? '').trim().isNotEmpty) merchantId!.trim(),
+      if ((sellerUserId ?? '').trim().isNotEmpty) sellerUserId!.trim(),
+    };
+    for (final id in candidates) {
+      if (peekVerified(id) == true) return true;
+    }
+    for (final id in candidates) {
+      if (!_looksLikeFirebaseUid(id)) continue;
+      try {
+        final user = await _docCacheFirst(
+          FirebaseFirestore.instance.collection('users').doc(id),
+        );
+        if (MerchantVerification.isVerifiedFromData(user.data())) {
+          cacheVerified(id, true);
+          return true;
+        }
+      } catch (_) {}
+      try {
+        final shop = await _docCacheFirst(
+          FirebaseFirestore.instance
+              .collection('marketplace_merchants')
+              .doc(id),
+        );
+        if (MerchantVerification.isVerifiedFromData(shop.data())) {
+          cacheVerified(id, true);
+          return true;
+        }
+      } catch (_) {}
+    }
+    return false;
   }
 
   static String? peekBusinessName(String? merchantId) {
@@ -365,15 +432,8 @@ class MerchantSellerLoader {
 
   static Future<DocumentSnapshot<Map<String, dynamic>>> _docCacheFirst(
     DocumentReference<Map<String, dynamic>> ref,
-  ) async {
-    try {
-      final cached = await ref.get(const GetOptions(source: Source.cache));
-      if (cached.exists) {
-        unawaited(ref.get(const GetOptions(source: Source.serverAndCache)));
-        return cached;
-      }
-    } catch (_) {}
-    return ref.get(const GetOptions(source: Source.serverAndCache));
+  ) {
+    return ref.get();
   }
 
   /// Promo API returns numeric `merchantId`; Firestore shops use Firebase UID doc ids.
@@ -506,6 +566,7 @@ class MerchantSellerLoader {
     if (userId != null) {
       info.sellerUserId ??= userId.toString();
     }
+    _applyVerified(info, user);
   }
 
   static void _applyFirestoreMerchantData(
@@ -564,6 +625,7 @@ class MerchantSellerLoader {
       }
     }
     if (spRecordId != null) info.backendMerchantId ??= spRecordId;
+    _applyVerified(info, m, docId);
   }
 
   static Future<void> _applyFirestoreUserData(
@@ -718,6 +780,8 @@ class MerchantSellerLoader {
       merchantRef: merchantRef,
       sellerUserId: sellerUid,
       backendMerchantId: backendUserIdHint,
+      verified: peekVerified(merchantRef) == true ||
+          peekVerified(sellerUid) == true,
     );
 
     void ping() {

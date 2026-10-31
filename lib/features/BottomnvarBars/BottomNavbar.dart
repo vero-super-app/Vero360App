@@ -307,7 +307,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
         token: token,
         timeout: const Duration(seconds: 6),
       );
-      // Offline / timeout: keep the cached merchant food dashboard.
+      // Offline / timeout: keep the cached merchant dashboard.
       if (result == null || result.isUnauthorized || !result.hasUser) {
         if (cachedRole == RoleHelper.merchant &&
             !isKnownMerchantServiceKey(cachedService) &&
@@ -384,10 +384,11 @@ class _BottomnavbarState extends State<Bottomnavbar>
       _selectedIndex = 0;
     }
     if (!roleChanged && !forcePagesRebuild) {
-      // Still resolve missing vertical in background.
+      // Still resolve missing / leftover-food vertical in background.
       if (_isMerchant &&
-          !isKnownMerchantServiceKey(_merchantService) &&
-          uid.isNotEmpty) {
+          uid.isNotEmpty &&
+          (!isKnownMerchantServiceKey(_merchantService) ||
+              _merchantService == 'food')) {
         unawaited(_resolveMerchantVerticalFast(uid));
       }
       return;
@@ -425,8 +426,11 @@ class _BottomnavbarState extends State<Bottomnavbar>
     _pagesReady = true;
 
     if (_isMerchant &&
-        !isKnownMerchantServiceKey(_merchantService) &&
-        uid.isNotEmpty) {
+        uid.isNotEmpty &&
+        (!isKnownMerchantServiceKey(_merchantService) ||
+            _merchantService == 'food')) {
+      // Re-check kitchen vs marketplace. A leftover food_merchants stub
+      // used to open the restaurant dashboard for product sellers.
       unawaited(_resolveMerchantVerticalFast(uid));
     }
     // Merchants stay in this shell (Dashboard = tab 4). Do not pushAndRemoveUntil
@@ -468,7 +472,18 @@ class _BottomnavbarState extends State<Bottomnavbar>
         normalizeMerchantServiceKey(
           prefs.getString('session_intended_merchant_service'),
         );
+    final foodConfirmed =
+        MerchantIdentityStore.peekListingConfirmedService(uid) == 'food';
     return switch (key) {
+      // A leftover food cache must not open the kitchen before listings confirm.
+      'food' when !foodConfirmed => _MerchantVerticalRecoveringTab(
+          email: email,
+          merchantUid: uid,
+          onServiceCached: () async {
+            await _checkUserRoleAndSetup(forcePagesRebuild: true);
+            if (mounted) setState(() {});
+          },
+        ),
       'food' => FoodMerchantDashboard(
           key: ValueKey('food_dash_$uid'),
           email: email,

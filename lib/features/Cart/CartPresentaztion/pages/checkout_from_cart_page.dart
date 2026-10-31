@@ -1934,7 +1934,9 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
       final refs = await _orderService.createOrdersFromCartWithRefs(
         cartItems: items,
         address: addressForOrder,
-        status: OrderStatus.confirmed,
+        status: paymentRail == 'bank_transfer'
+            ? OrderStatus.pending
+            : OrderStatus.confirmed,
         deliveryMethod: _deliveryTypeLabel(widget.deliveryType),
         extraDescriptionTag: extraDescriptionTag,
         paymentStatus: paymentStatus,
@@ -2230,22 +2232,24 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
               .map((e) => e.quantity > 1 ? '${e.quantity}x ${e.name}' : e.name)
               .join(', ');
 
-      await OrderPartyNotificationService.publishNewFoodOrderToMerchant(
-        merchantUid: merchantId,
-        customerName: customerName,
-        orderNumber: orderNumber,
-        orderId: ref.id,
-        itemsSummary: itemsSummary,
-        totalMwk: totalMwk,
-      );
-      if (uid.isNotEmpty) {
-        await OrderPartyNotificationService.publishFoodOrderPlacedToBuyer(
-          buyerUid: uid,
+      if (paymentStatus == 'paid') {
+        await OrderPartyNotificationService.publishNewFoodOrderToMerchant(
+          merchantUid: merchantId,
+          customerName: customerName,
           orderNumber: orderNumber,
           orderId: ref.id,
-          restaurantName: merchantName,
           itemsSummary: itemsSummary,
+          totalMwk: totalMwk,
         );
+        if (uid.isNotEmpty) {
+          await OrderPartyNotificationService.publishFoodOrderPlacedToBuyer(
+            buyerUid: uid,
+            orderNumber: orderNumber,
+            orderId: ref.id,
+            restaurantName: merchantName,
+            itemsSummary: itemsSummary,
+          );
+        }
       }
       return ref.id;
     } catch (e) {
@@ -2535,6 +2539,12 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
       if (foodOrderId != null && foodOrderId.isNotEmpty) {
         extra['foodOrderId'] = foodOrderId;
       }
+      final kitchenUid = (food?.merchantId ??
+              (foodItems.isNotEmpty ? foodItems.first.merchantId : ''))
+          .trim();
+      if (kitchenUid.isNotEmpty) {
+        extra['merchantUids'] = [kitchenUid];
+      }
     }
 
     if (marketItems.isNotEmpty) {
@@ -2547,6 +2557,16 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
       extra['orderIds'] = refs.map((e) => e.orderId).where((e) => e.isNotEmpty).toList();
       extra['orderNumbers'] =
           refs.map((e) => e.orderNumber).where((e) => e.isNotEmpty).toList();
+      final existingMerchants = (extra['merchantUids'] as List?)
+              ?.map((e) => e.toString().trim())
+              .where((e) => e.isNotEmpty) ??
+          const <String>[];
+      extra['merchantUids'] = {
+        ...existingMerchants,
+        ...refs
+            .map((e) => e.item.merchantId.trim())
+            .where((e) => e.isNotEmpty),
+      }.toList();
     }
 
     if (esc != null) {

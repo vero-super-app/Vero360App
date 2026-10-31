@@ -2111,8 +2111,26 @@ exports.onFoodOrderCreated = onDocumentCreated(
     if (!snap) return;
     const data = snap.data() || {};
     const status = String(data.status || 'pending').trim().toLowerCase();
+    const paymentStatus = String(data.paymentStatus || data.PaymentStatus || '')
+      .trim()
+      .toLowerCase();
+    const paymentProvider = String(
+      data.paymentProvider || data.paymentRail || '',
+    )
+      .trim()
+      .toLowerCase();
     if (status !== 'pending') {
       console.log(`onFoodOrderCreated ${snap.id}: skip status=${status}`);
+      return;
+    }
+    if (
+      paymentStatus === 'pending_bank' ||
+      paymentProvider === 'bank_transfer' ||
+      paymentProvider === 'bank'
+    ) {
+      console.log(
+        `onFoodOrderCreated ${snap.id}: skip bank transfer until admin verifies`,
+      );
       return;
     }
 
@@ -2142,6 +2160,239 @@ exports.onFoodOrderCreated = onDocumentCreated(
     } catch (err) {
       console.error(`onFoodOrderCreated FCM failed for ${merchantId}`, err);
     }
+  },
+);
+
+function isBankTransferVerifiedStatus(status) {
+  const s = String(status || '').trim().toLowerCase();
+  return (
+    s === 'verified' ||
+    s === 'approved' ||
+    s === 'confirmed' ||
+    s === 'received' ||
+    s === 'paid' ||
+    s === 'completed'
+  );
+}
+
+function veroOrderLabel(raw) {
+  const clean = String(raw || '').trim();
+  if (!clean) return '';
+  return clean.toLowerCase().startsWith('vero') ? clean : `Vero${clean}`;
+}
+
+async function loadEscrowsForBankPayment(data) {
+  const db = admin.firestore();
+  const ids = new Set();
+  const rawIds = data.orderIds || data.orderId;
+  if (Array.isArray(rawIds)) {
+    for (const id of rawIds) {
+      const s = String(id || '').trim();
+      if (s) ids.add(s);
+    }
+  } else {
+    const s = String(rawIds || '').trim();
+    if (s) ids.add(s);
+  }
+  const foodId = String(data.foodOrderId || '').trim();
+  if (foodId) ids.add(foodId);
+
+  const out = [];
+  for (const id of ids) {
+    const snap = await db.collection(ESCROW_COLLECTION).doc(id).get();
+    if (snap.exists) out.push({ id: snap.id, data: snap.data() || {} });
+  }
+  if (!out.length) {
+    const txRef = String(data.txRef || '').trim();
+    if (txRef) {
+      const q = await db
+        .collection(ESCROW_COLLECTION)
+        .where('txRef', '==', txRef)
+        .limit(20)
+        .get();
+      for (const doc of q.docs) {
+        out.push({ id: doc.id, data: doc.data() || {} });
+      }
+    }
+  }
+  return out;
+}
+
+async function notifySellerOfVerifiedBankOrder(escrow, orderId) {
+  const merchantUid = String(escrow.merchantUid || '').trim();
+  if (!merchantUid) {
+    console.warn(`bank transfer verify: no merchantUid on escrow ${orderId}`);
+    return;
+  }
+  const on = veroOrderLabel(escrow.orderNumber);
+  const item = String(escrow.itemName || '').trim();
+  const itemPrefix = item ? `${item} - ` : '';
+  const serviceType = String(escrow.serviceType || '').trim().toLowerCase();
+  const isFood = serviceType === 'food';
+  const title = isFood ? 'New food order' : 'New order';
+  const body = on
+    ? `New order received: ${itemPrefix}${on}. Payment is confirmed — open ${
+        isFood ? 'kitchen orders' : 'Send Parcel'
+      } to fulfil it.`
+    : `You received a new paid order. Payment is confirmed — open ${
+        isFood ? 'kitchen orders' : 'Send Parcel'
+      } to fulfil it.`;
+
+  const dataPayload = stringifyDataPayload({
+    type: isFood ? 'food_order' : 'order_update',
+    orderId: String(orderId || ''),
+    orderNumber: on,
+    status: 'confirmed',
+    role: 'merchant',
+    action: isFood ? 'food_orders' : 'send_parcel',
+    toUid: merchantUid,
+    title,
+    body,
+  });
+  await admin.firestore().collection(ORDER_PARTY_ALERTS).add({
+    toUid: merchantUid,
+    title,
+    body,
+    payload: dataPayload,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    consumed: false,
+    read: false,
+    from: 'vero360_team',
+  });
+  // food_order alerts skip the generic FCM fan-out; push here.
+  if (isFood) {
+    await sendFcmToUser(merchantUid, title, body, dataPayload);
+  }
+}
+
+/**
+ * Admin confirms a National Bank transfer landed. Until then the seller
+ * must not be told to ship. After verify: hold becomes live + FCM order push.
+ *
+ * Admin panel writes status=verified (or approved/confirmed/received/paid)
+ * on bank_transfer_payments/{id}.
+ */
+async function activateVerifiedBankTransfer(snap, beforeStatus) {
+  const data = snap.data() || {};
+  const afterStatus = String(data.status || '').trim().toLowerCase();
+  if (!isBankTransferVerifiedStatus(afterStatus)) return;
+  if (isBankTransferVerifiedStatus(beforeStatus)) {
+    console.log(`onBankTransferPayment ${snap.id}: already verified`);
+    return;
+  }
+  if (data.sellerNotifiedAt) {
+    console.log(`onBankTransferPayment ${snap.id}: seller already notified`);
+    return;
+  }
+
+  const escrows = await loadEscrowsForBankPayment(data);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const notified = new Set();
+
+  for (const row of escrows) {
+    const status = String(row.data.status || '').trim().toLowerCase();
+    if (status === 'pending_admin' || status === 'pending' || !status) {
+      await admin
+        .firestore()
+        .collection(ESCROW_COLLECTION)
+        .doc(row.id)
+        .set(
+          {
+            status: 'held',
+            adminVerified: true,
+            paymentVerifiedAt: now,
+            paymentVerifiedBy: 'bank_transfer_admin',
+            updatedAt: now,
+          },
+          { merge: true },
+        );
+    }
+    const mid = String(row.data.merchantUid || '').trim();
+    if (mid && !notified.has(`${mid}:${row.id}`)) {
+      notified.add(`${mid}:${row.id}`);
+      await notifySellerOfVerifiedBankOrder(row.data, row.id);
+    }
+  }
+
+  const extraMerchants = [];
+  if (Array.isArray(data.merchantUids)) extraMerchants.push(...data.merchantUids);
+  if (data.merchantId) extraMerchants.push(data.merchantId);
+  if (data.merchantUid) extraMerchants.push(data.merchantUid);
+  if (!escrows.length) {
+    for (const raw of extraMerchants) {
+      const mid = String(raw || '').trim();
+      if (!mid || notified.has(mid)) continue;
+      notified.add(mid);
+      await notifySellerOfVerifiedBankOrder(
+        {
+          merchantUid: mid,
+          orderNumber: Array.isArray(data.orderNumbers)
+            ? data.orderNumbers[0]
+            : data.txRef,
+          itemName: data.title,
+          serviceType: data.source,
+        },
+        String((data.orderIds && data.orderIds[0]) || data.foodOrderId || snap.id),
+      );
+    }
+  }
+
+  const foodOrderId = String(data.foodOrderId || '').trim();
+  if (foodOrderId) {
+    try {
+      await admin
+        .firestore()
+        .collection('food_orders')
+        .doc(foodOrderId)
+        .set(
+          {
+            paymentStatus: 'paid',
+            status: 'pending',
+            bankVerifiedAt: now,
+            updatedAt: now,
+          },
+          { merge: true },
+        );
+    } catch (err) {
+      console.warn(`bank transfer verify: food_orders ${foodOrderId} patch failed`, err);
+    }
+  }
+
+  await snap.ref.set(
+    {
+      sellerNotifiedAt: now,
+      verifiedAt: data.verifiedAt || now,
+      updatedAt: now,
+    },
+    { merge: true },
+  );
+  console.log(
+    `onBankTransferPayment ${snap.id}: verified, sellers notified=${notified.size}`,
+  );
+}
+
+exports.onBankTransferPaymentUpdated = onDocumentUpdated(
+  {
+    document: 'bank_transfer_payments/{paymentId}',
+    serviceAccount: FUNCTIONS_SERVICE_ACCOUNT,
+  },
+  async (event) => {
+    const after = event.data?.after;
+    if (!after) return;
+    const beforeStatus = String(event.data?.before?.data()?.status || '').trim();
+    await activateVerifiedBankTransfer(after, beforeStatus);
+  },
+);
+
+exports.onBankTransferPaymentCreated = onDocumentCreated(
+  {
+    document: 'bank_transfer_payments/{paymentId}',
+    serviceAccount: FUNCTIONS_SERVICE_ACCOUNT,
+  },
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    await activateVerifiedBankTransfer(snap, '');
   },
 );
 

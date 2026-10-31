@@ -103,6 +103,10 @@ Future<void> persistMerchantServiceFromApi(
   } else if (fromApi == 'marketplace' && existing != 'marketplace') {
     // Do not let a generic API default clobber food/stay/courier.
     return;
+  } else if (existing == 'marketplace' && fromApi == 'food') {
+    // Do not let a leftover kitchen stub / stale /users/me food flag
+    // steal a marketplace seller.
+    return;
   } else {
     chosen = fromApi;
   }

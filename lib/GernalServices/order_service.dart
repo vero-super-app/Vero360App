@@ -12,6 +12,7 @@ import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/Gernalproviders/notification_store.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
+import 'package:vero360_app/GernalServices/order_escrow_service.dart';
 import 'package:vero360_app/GernalServices/buyer_commission.dart';
 import 'package:vero360_app/config/api_config.dart';
 
@@ -322,13 +323,20 @@ class OrderService {
       final changed = previous != null && previous != current;
       final firstSeen = previous == null;
 
-      if (changed || firstSeen) {
+      final incoming = incomingMerchantOrderIds.contains(o.id);
+      // Bank-transfer sales are announced via FCM after admin verifies.
+      // Don't also fire a local "new order" when the seller next opens the app.
+      final skipLocalNewSale = firstSeen &&
+          incoming &&
+          o.status == OrderStatus.pending &&
+          o.paymentStatus != PaymentStatus.paid;
+      if ((changed || firstSeen) && !skipLocalNewSale) {
         await _notifyOrderActivity(
           orderId: o.id,
           orderNumber: o.orderNumber,
           status: o.status,
           changed: changed,
-          isIncomingForMerchant: incomingMerchantOrderIds.contains(o.id),
+          isIncomingForMerchant: incoming,
           orderMarkedShippedByMerchant: false,
           customerName: o.customerName,
           itemName: o.itemName,
@@ -726,14 +734,27 @@ class OrderService {
       for (final o in results[0]) {
         byId[o.id] = o;
       }
+      final pendingUnpaidMerchant = <OrderItem>[];
       for (final o in results[1]) {
-        // A cancelled or unfinished payment must not appear as a merchant sale.
+        // Unpaid pending sales stay hidden until admin confirms a bank transfer
+        // (escrow flips pending_admin → held).
         if (o.paymentStatus != PaymentStatus.paid &&
             o.status == OrderStatus.pending) {
+          pendingUnpaidMerchant.add(o);
           continue;
         }
         byId[o.id] = o;
         incomingMerchantOrderIds.add(o.id);
+      }
+      if (pendingUnpaidMerchant.isNotEmpty) {
+        final held = await OrderEscrowService.fetchHeldIds(
+          pendingUnpaidMerchant.map((e) => e.id),
+        );
+        for (final o in pendingUnpaidMerchant) {
+          if (!held.contains(o.id)) continue;
+          byId[o.id] = o;
+          incomingMerchantOrderIds.add(o.id);
+        }
       }
 
       final all = byId.values.toList();

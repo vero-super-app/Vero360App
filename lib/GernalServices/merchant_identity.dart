@@ -56,11 +56,23 @@ class MerchantIdentityStore {
       'merchant_service_v1_${uid.trim()}';
 
   static MerchantIdentity? _memory;
+  static String? _listingConfirmedUid;
+  static String? _listingConfirmedService;
 
   static MerchantIdentity? peek() => _memory;
 
+  /// Vertical last confirmed by Firestore listings/shops for this uid.
+  /// Cached `food` must not open the kitchen until this matches.
+  static String? peekListingConfirmedService(String uid) {
+    final id = uid.trim();
+    if (id.isEmpty || _listingConfirmedUid != id) return null;
+    return _listingConfirmedService;
+  }
+
   static void clear() {
     _memory = null;
+    _listingConfirmedUid = null;
+    _listingConfirmedService = null;
   }
 
   /// Drop in-memory + global routing prefs so the next login cannot reopen the
@@ -116,10 +128,13 @@ class MerchantIdentityStore {
             prefs.getString('session_intended_merchant_service'),
           )
         : null;
-    // Prefer uid-scoped vertical, then session key, then signup intended.
-    final service = intendedService ??
-        normalizeMerchantServiceKey(prefs.getString(prefsServiceKeyForUid(id))) ??
-        normalizeMerchantServiceKey(prefs.getString('merchant_service'));
+    // Prefer uid-scoped vertical. Signup "intended" must not override a
+    // later correction (e.g. leftover food after a marketplace login).
+    final service = normalizeMerchantServiceKey(
+          prefs.getString(prefsServiceKeyForUid(id)),
+        ) ??
+        normalizeMerchantServiceKey(prefs.getString('merchant_service')) ??
+        intendedService;
 
     // A cached shop vertical must not freeze someone who chose "shop as customer".
     final effectiveRole = shoppingThisUid
@@ -164,6 +179,11 @@ class MerchantIdentityStore {
     if (r == RoleHelper.merchant && s != null) {
       await sp.setString('merchant_service', s);
       await sp.setString(prefsServiceKeyForUid(id), s);
+      final intendedFor = (sp.getString('session_intended_uid') ?? '').trim();
+      if (intendedFor.isEmpty || intendedFor == id) {
+        await sp.setString('session_intended_merchant_service', s);
+        await sp.setString('session_intended_uid', id);
+      }
     } else if (r != RoleHelper.merchant) {
       await sp.remove('merchant_service');
       if (keepVerticalCache) {
@@ -254,6 +274,8 @@ class MerchantIdentityStore {
 
     String role = cached?.role ?? RoleHelper.customer;
     String? service = forceRefresh ? null : cached?.service;
+    var serviceFromUsers = false;
+    final extraSellerIds = <String>{};
 
     // 1) Authoritative: users/{uid}
     if (!isFirebaseAppReady) {
@@ -286,11 +308,21 @@ class MerchantIdentityStore {
         );
         if (isKnownMerchantServiceKey(fromService)) {
           service = fromService;
+          serviceFromUsers = true;
           // Keep last vertical, but do not promote a customer shopping session.
           if (fromDoc != RoleHelper.customer &&
               fromDoc != RoleHelper.driver) {
             role = RoleHelper.merchant;
           }
+        }
+        for (final key in const [
+          'backendUserId',
+          'userId',
+          'sellerUserId',
+          'id',
+        ]) {
+          final raw = data[key]?.toString().trim() ?? '';
+          if (raw.isNotEmpty && raw != id) extraSellerIds.add(raw);
         }
       }
     } catch (e) {
@@ -310,9 +342,9 @@ class MerchantIdentityStore {
             sp.getString('session_intended_merchant_service'),
           )
         : null;
-    if (isKnownMerchantServiceKey(intendedService)) {
-      // Intended beats a generic marketplace default from API/users.
-      if (!isKnownMerchantServiceKey(service) || service == 'marketplace') {
+    if (isKnownMerchantServiceKey(intendedService) && !serviceFromUsers) {
+      // Intended fills a missing vertical. Never override users/{uid}.
+      if (!isKnownMerchantServiceKey(service)) {
         service = intendedService;
       }
       if (intendedRole == RoleHelper.merchant ||
@@ -321,23 +353,48 @@ class MerchantIdentityStore {
       }
     }
 
-    // 3) Probe shops when vertical unknown, or when refresh still looks like
-    // the generic marketplace default (often wrong for food/stay/courier).
-    final shouldProbe = allowShopProbe &&
-        (!isKnownMerchantServiceKey(service) ||
-            (forceRefresh && service == 'marketplace'));
-    if (shouldProbe) {
-      final probed = await _probeShopVertical(id, timeout: shopTimeout);
-      if (isKnownMerchantServiceKey(probed)) {
-        // Prefer non-marketplace shop over a marketplace-only default.
-        if (!isKnownMerchantServiceKey(service) ||
-            service == 'marketplace' ||
-            probed == service) {
-          service = probed;
-        }
+    // 3) Listings beat leftover shop stubs. Opening the restaurant UI once
+    // stamps food_merchants.serviceType=food (+100) and used to trap
+    // marketplace sellers on the kitchen dashboard.
+    final nestPref = (sp.getString('backendUserId') ?? '').trim();
+    if (nestPref.isNotEmpty && nestPref != id) extraSellerIds.add(nestPref);
+
+    if (allowShopProbe &&
+        (forceRefresh || !isKnownMerchantServiceKey(service))) {
+      final hint = await _listingHint(
+        id,
+        extraSellerIds: extraSellerIds,
+        timeout: shopTimeout,
+      );
+      final probe = await _probeShopVertical(id, timeout: shopTimeout);
+      final marketScore = probe.scoreFor('marketplace');
+      String? fromStock;
+      if (hint.hasMarketItems && !hint.hasFoodMenu) {
+        fromStock = 'marketplace';
+      } else if (hint.hasFoodMenu && !hint.hasMarketItems) {
+        fromStock = 'food';
+      } else if (hint.hasMarketItems && hint.hasFoodMenu) {
+        // Both exist — leftover kitchen from a wrong dashboard visit.
+        // Real store stock wins.
+        fromStock = 'marketplace';
+      } else if (!hint.hasFoodMenu && marketScore >= 20) {
+        fromStock = 'marketplace';
+      } else if (!isKnownMerchantServiceKey(service) &&
+          isKnownMerchantServiceKey(probe.service)) {
+        fromStock = probe.service;
+      }
+      if (kDebugMode) {
+        debugPrint(
+          '[MerchantIdentity] listings market=${hint.hasMarketItems} '
+          'foodMenu=${hint.hasFoodMenu} marketScore=$marketScore '
+          'fromStock=$fromStock was=$service',
+        );
+      }
+      if (isKnownMerchantServiceKey(fromStock) && fromStock != service) {
+        service = fromStock;
         if (role != RoleHelper.customer && role != RoleHelper.driver) {
           role = RoleHelper.merchant;
-          unawaited(_writeServiceToUsers(id, probed!));
+          await _writeServiceToUsers(id, fromStock!);
         }
       }
     }
@@ -358,6 +415,11 @@ class MerchantIdentityStore {
       role = RoleHelper.merchant;
     }
 
+    if (allowShopProbe && isKnownMerchantServiceKey(service)) {
+      _listingConfirmedUid = id;
+      _listingConfirmedService = service;
+    }
+
     return stamp(
       uid: id,
       role: role,
@@ -367,13 +429,63 @@ class MerchantIdentityStore {
     );
   }
 
+  static Future<_ListingHint> _listingHint(
+    String uid, {
+    Iterable<String> extraSellerIds = const [],
+    required Duration timeout,
+  }) async {
+    Future<bool> hasDocs(String collection, String field, String value) async {
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection(collection)
+            .where(field, isEqualTo: value)
+            .limit(1)
+            .get()
+            .timeout(timeout);
+        return snap.docs.isNotEmpty;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    final ids = <String>{
+      uid,
+      ...extraSellerIds.map((e) => e.trim()).where((e) => e.isNotEmpty),
+    };
+    final checks = <Future<bool>>[];
+    for (final id in ids) {
+      checks.add(hasDocs('marketplace_items', 'merchantId', id));
+      checks.add(hasDocs('marketplace_items', 'firebaseUid', id));
+      checks.add(hasDocs('marketplace_items', 'sellerUserId', id));
+      checks.add(hasDocs('latestarrivals', 'merchantId', id));
+      checks.add(hasDocs('food_menu_items', 'merchantId', id));
+    }
+    final hits = await Future.wait(checks);
+    var hasMarketItems = false;
+    var hasFoodMenu = false;
+    for (var i = 0; i < hits.length; i += 5) {
+      hasMarketItems = hasMarketItems ||
+          hits[i] ||
+          hits[i + 1] ||
+          hits[i + 2] ||
+          hits[i + 3];
+      hasFoodMenu = hasFoodMenu || hits[i + 4];
+    }
+    return _ListingHint(
+      hasMarketItems: hasMarketItems,
+      hasFoodMenu: hasFoodMenu,
+    );
+  }
+
   /// Pick the strongest real shop for this uid.
-  /// Marketplace is last in tie-break — name stubs often exist there wrongly.
-  static Future<String?> _probeShopVertical(
+  static Future<_ShopProbe> _probeShopVertical(
     String uid, {
     required Duration timeout,
   }) async {
-    const services = ['food', 'accommodation', 'courier', 'marketplace'];
+    const services = ['marketplace', 'food', 'accommodation', 'courier'];
+    final scores = <String, int>{
+      for (final s in services) s: 0,
+    };
     try {
       final scored = await Future.wait(
         services.map((service) async {
@@ -385,8 +497,7 @@ class MerchantIdentityStore {
                 .get()
                 .timeout(timeout);
             if (!doc.exists) return (service, 0);
-            final strength = merchantShopDocStrength(doc.data());
-            return (service, strength);
+            return (service, merchantShopDocStrength(doc.data()));
           } catch (_) {
             return (service, 0);
           }
@@ -397,6 +508,7 @@ class MerchantIdentityStore {
       var bestStrongScore = 0;
       final weakHits = <String>[];
       for (final (service, score) in scored) {
+        scores[service] = score;
         if (score <= 0) continue;
         if (score >= 20) {
           if (score > bestStrongScore) {
@@ -414,17 +526,18 @@ class MerchantIdentityStore {
             '(score $bestStrongScore) for $uid',
           );
         }
-        return bestStrong;
+        return _ShopProbe(service: bestStrong, scores: scores);
       }
 
-      // Soft fallback: a lone name-only shop (common for new food merchants).
-      // Never guess marketplace when multiple weak stubs exist.
-      if (weakHits.length == 1) return weakHits.first;
-      final nonMarket = weakHits.where((s) => s != 'marketplace').toList();
-      if (nonMarket.length == 1) return nonMarket.first;
-      if (nonMarket.isNotEmpty) return nonMarket.first; // food first in list
+      // Lone name-only shop. Never guess food when a marketplace stub also exists.
+      if (weakHits.length == 1) {
+        return _ShopProbe(service: weakHits.first, scores: scores);
+      }
+      if (weakHits.contains('marketplace')) {
+        return _ShopProbe(service: 'marketplace', scores: scores);
+      }
     } catch (_) {}
-    return null;
+    return _ShopProbe(service: null, scores: scores);
   }
 
   static Future<void> _writeServiceToUsers(String uid, String service) async {
@@ -439,5 +552,28 @@ class MerchantIdentityStore {
         SetOptions(merge: true),
       );
     } catch (_) {}
+  }
+}
+
+class _ListingHint {
+  const _ListingHint({
+    required this.hasMarketItems,
+    required this.hasFoodMenu,
+  });
+
+  final bool hasMarketItems;
+  final bool hasFoodMenu;
+}
+
+class _ShopProbe {
+  const _ShopProbe({required this.service, required this.scores});
+
+  final String? service;
+  final Map<String, int> scores;
+
+  int scoreFor(String? key) {
+    final k = (key ?? '').trim();
+    if (k.isEmpty) return 0;
+    return scores[k] ?? 0;
   }
 }

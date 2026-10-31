@@ -12,6 +12,7 @@ import 'package:image/image.dart' as img;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_products_page.dart';
 import 'package:vero360_app/features/Marketplace/presentation/pages/merchant_reviews_page.dart';
+import 'package:vero360_app/widgets/merchant_verified_badge.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:intl/intl.dart';
@@ -66,6 +67,7 @@ class _SellerInfo {
   int reviewCount;
   int? backendMerchantId;
   List<MerchantReview> recentReviews;
+  bool verified;
   _SellerInfo({
     this.businessName,
     this.openingHours,
@@ -78,6 +80,7 @@ class _SellerInfo {
     this.sellerUserId,
     this.backendMerchantId,
     this.recentReviews = const [],
+    this.verified = false,
   });
 }
 
@@ -103,7 +106,11 @@ Widget _buildMarketplaceImage(String src, {BoxFit fit = BoxFit.cover}) {
 
   // HTTP/HTTPS URL (disk-cached, full resolution)
   if (s.startsWith('http://') || s.startsWith('https://')) {
-    return ResilientCachedNetworkImage(url: s, fit: fit);
+    return ResilientCachedNetworkImage(
+      url: s,
+      fit: fit,
+      memCacheWidth: 900,
+    );
   }
 
   // Try base64 (with or without data: prefix)
@@ -113,6 +120,7 @@ Widget _buildMarketplaceImage(String src, {BoxFit fit = BoxFit.cover}) {
     return Image.memory(
       bytes,
       fit: fit,
+      cacheWidth: 900,
       errorBuilder: (_, __, ___) => Container(
         color: Colors.grey.shade200,
         child: const Icon(
@@ -128,6 +136,7 @@ Widget _buildMarketplaceImage(String src, {BoxFit fit = BoxFit.cover}) {
     return Image.network(
       s,
       fit: fit,
+      cacheWidth: 900,
       errorBuilder: (_, __, ___) => Container(
         color: Colors.grey.shade200,
         child: const Icon(
@@ -267,7 +276,7 @@ class _DetailsPageState extends State<DetailsPage> {
       return;
     }
     _autoTimer = Timer.periodic(_autoInterval, (_) {
-      if (!mounted || _media.length <= 1) return;
+      if (!mounted || _media.length <= 1 || !_pc.hasClients) return;
       final next = (_page + 1) % _media.length;
       _pc.animateToPage(next,
           duration: const Duration(milliseconds: 400),
@@ -317,6 +326,7 @@ class _DetailsPageState extends State<DetailsPage> {
       sellerUserId: seller.sellerUserId,
       backendMerchantId: seller.backendMerchantId,
       recentReviews: seller.recentReviews,
+      verified: seller.verified || (_seller?.verified ?? false),
     );
     _seller = next;
     final h = (next.openingHours ?? '').trim();
@@ -341,6 +351,8 @@ class _DetailsPageState extends State<DetailsPage> {
       sellerUserId: i.sellerUserId,
       backendMerchantId: bid,
       recentReviews: reviews?.reviews.take(3).toList() ?? const [],
+      verified: MerchantSellerLoader.peekVerified(i.merchantId) == true ||
+          MerchantSellerLoader.peekVerified(i.sellerUserId) == true,
     );
 
     if (bid != null && bid > 0 && reviews == null) {
@@ -499,6 +511,7 @@ class _DetailsPageState extends State<DetailsPage> {
       sellerUserId: seller.sellerUserId,
       backendMerchantId: seller.backendMerchantId,
       recentReviews: seller.recentReviews,
+      verified: seller.verified,
     );
     return info;
   }
@@ -682,6 +695,7 @@ class _DetailsPageState extends State<DetailsPage> {
     int? merchantBackendId,
     int reviewCount = 0,
     List<MerchantReview> recentReviews = const [],
+    bool verified = false,
   }) {
     final effectiveBackendId = merchantBackendId ??
         _seller?.backendMerchantId ??
@@ -701,6 +715,7 @@ class _DetailsPageState extends State<DetailsPage> {
               widget.item.sellerUserId ??
               _seller?.sellerUserId,
           merchantBackendId: effectiveBackendId,
+          verified: verified || (_seller?.verified ?? false),
           initialSummary: (rating != null && rating > 0) || reviewCount > 0
               ? MerchantReviewSummary(
                   average: rating ?? 0,
@@ -764,10 +779,10 @@ class _DetailsPageState extends State<DetailsPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        merchantDisplayName,
+                      MerchantNameWithBadge(
+                        name: merchantDisplayName,
+                        verified: _seller?.verified ?? false,
                         maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontWeight: FontWeight.w800,
                           fontSize: 17,
@@ -907,6 +922,7 @@ class _DetailsPageState extends State<DetailsPage> {
                           merchantBackendId: merchantBackendId ?? _seller?.backendMerchantId ?? item.merchantBackendId,
                           reviewCount: reviewCount,
                           recentReviews: recentReviews,
+                          verified: _seller?.verified ?? false,
                         )
                     : null,
                 child: Container(
@@ -1574,15 +1590,30 @@ class _DetailsPageState extends State<DetailsPage> {
                 Icon(Icons.schedule_rounded, size: 14, color: Colors.grey.shade500),
                 const SizedBox(width: 6),
                 Expanded(
-                  child: Text(
-                    item.createdAt != null
-                        ? 'Posted by $merchantDisplayName • ${_formatTimeAgo(item.createdAt!)}'
-                        : 'Posted by $merchantDisplayName',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey.shade600,
-                      fontWeight: FontWeight.w500,
-                    ),
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          item.createdAt != null
+                              ? 'Posted by $merchantDisplayName • ${_formatTimeAgo(item.createdAt!)}'
+                              : 'Posted by $merchantDisplayName',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      if (_seller?.verified == true) ...[
+                        const SizedBox(width: 4),
+                        const MerchantVerifiedBadge(
+                          showLabel: false,
+                          size: 14,
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ],

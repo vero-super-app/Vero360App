@@ -134,6 +134,50 @@ class OrderPartyNotificationService {
     }
   }
 
+  /// Seller: admin confirmed a bank transfer — this is now a real paid order.
+  static Future<void> publishNewMarketplaceOrderToMerchant({
+    required String merchantUid,
+    required String orderNumber,
+    required String itemName,
+    required String orderId,
+    String customerName = '',
+  }) async {
+    final uid = merchantUid.trim();
+    if (uid.isEmpty) return;
+    final on = _veroOrderNo(orderNumber);
+    final item = itemName.trim();
+    final itemPrefix = item.isEmpty ? '' : '$item - ';
+    final who = customerName.trim();
+    final customerSuffix = who.isEmpty ? '' : ' from $who';
+    try {
+      await FirebaseFirestore.instance.collection(collectionName).add({
+        'toUid': uid,
+        'title': 'New order',
+        'body': on.isEmpty
+            ? 'You received a new paid order$customerSuffix. Open Send Parcel to ship it.'
+            : 'New order received: $itemPrefix$on$customerSuffix. Open Send Parcel to ship it.',
+        'payload': {
+          'type': 'order_update',
+          'orderId': orderId,
+          'orderNumber': on,
+          'status': 'confirmed',
+          'role': 'merchant',
+          'action': 'send_parcel',
+          NotificationStore.kPayloadBadgeRoute:
+              NotificationStore.kBadgeShipped,
+        },
+        'createdAt': FieldValue.serverTimestamp(),
+        'consumed': false,
+        'read': false,
+        'from': 'vero360_team',
+      });
+    } catch (e) {
+      debugPrint(
+        '[OrderPartyNotification] publishNewMarketplaceOrderToMerchant: $e',
+      );
+    }
+  }
+
   /// Kitchen merchant: a customer paid for a food order.
   static Future<void> publishNewFoodOrderToMerchant({
     required String merchantUid,

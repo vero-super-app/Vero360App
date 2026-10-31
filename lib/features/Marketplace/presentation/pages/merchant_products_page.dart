@@ -35,8 +35,11 @@ import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
 import 'package:vero360_app/features/Cart/CartPresentaztion/pages/checkout_from_cart_page.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_cart_social_service.dart';
+import 'package:vero360_app/utils/low_ram_android.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
+import 'package:vero360_app/widgets/merchant_verified_badge.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
+import 'package:vero360_app/widgets/vero_thumb_image.dart';
 import 'package:vero360_app/widgets/app_skeleton.dart';
 import 'package:vero360_app/Home/story_ring_widget.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -74,6 +77,7 @@ class _MerchantShopHeaderCache {
   final int followerCount;
   final int? backendId;
   final List<MerchantReview> recentReviews;
+  final bool verified;
 
   const _MerchantShopHeaderCache({
     this.displayName,
@@ -89,6 +93,7 @@ class _MerchantShopHeaderCache {
     required this.followerCount,
     required this.backendId,
     required this.recentReviews,
+    this.verified = false,
   });
 }
 
@@ -146,10 +151,15 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   String? _merchantPhone;
   /// Live name from merchant/users docs (overrides constructor when set).
   String _resolvedMerchantName = '';
+  bool _merchantVerified = false;
   bool _loadingHeader = true;
   bool _following = false;
   int _followerCount = 0;
   final TextEditingController _searchController = TextEditingController();
+  final PageController _reviewsPageController =
+      PageController(viewportFraction: 0.88);
+  Timer? _reviewsSlideTimer;
+  int _reviewsPage = 0;
   String _searchQuery = '';
 
   // Brand color to match main marketplace UI
@@ -206,31 +216,16 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     return null;
   }
 
-  /// Prefer local cache so first paint is not blocked on network.
   Future<QuerySnapshot<Map<String, dynamic>>> _queryFast(
     Query<Map<String, dynamic>> q,
-  ) async {
-    try {
-      final cached = await q.get(const GetOptions(source: Source.cache));
-      if (cached.docs.isNotEmpty) {
-        unawaited(q.get(const GetOptions(source: Source.serverAndCache)));
-        return cached;
-      }
-    } catch (_) {}
-    return q.get(const GetOptions(source: Source.serverAndCache));
+  ) {
+    return q.get();
   }
 
   Future<DocumentSnapshot<Map<String, dynamic>>> _docFast(
     DocumentReference<Map<String, dynamic>> ref,
-  ) async {
-    try {
-      final cached = await ref.get(const GetOptions(source: Source.cache));
-      if (cached.exists) {
-        unawaited(ref.get(const GetOptions(source: Source.serverAndCache)));
-        return cached;
-      }
-    } catch (_) {}
-    return ref.get(const GetOptions(source: Source.serverAndCache));
+  ) {
+    return ref.get();
   }
 
   bool _looksLikeFirebaseUid(String value) {
@@ -453,6 +448,8 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       return CachedNetworkImage(
         imageUrl: s,
         fit: fit,
+        memCacheWidth: _thumbDecodePx(1),
+        maxWidthDiskCache: LowRamAndroid.maxDecodePx,
         fadeInDuration: Duration.zero,
         fadeOutDuration: Duration.zero,
         placeholder: (_, __) => const Center(
@@ -472,6 +469,8 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       return CachedNetworkImage(
         imageUrl: cached,
         fit: fit,
+        memCacheWidth: _thumbDecodePx(1),
+        maxWidthDiskCache: LowRamAndroid.maxDecodePx,
         fadeInDuration: Duration.zero,
         fadeOutDuration: Duration.zero,
         placeholder: (_, __) => const Center(
@@ -505,6 +504,8 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         return CachedNetworkImage(
           imageUrl: u,
           fit: fit,
+          memCacheWidth: _thumbDecodePx(1),
+          maxWidthDiskCache: LowRamAndroid.maxDecodePx,
           fadeInDuration: Duration.zero,
           fadeOutDuration: Duration.zero,
           errorWidget: (_, __, ___) =>
@@ -514,28 +515,22 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     );
   }
 
-  /// Warm full-size photo into image cache so tap-to-view is instant.
+  int _thumbDecodePx([double fraction = 0.5]) {
+    if (!mounted) return 360;
+    final w = MediaQuery.sizeOf(context).width;
+    final dpr = MediaQuery.devicePixelRatioOf(context).clamp(1.0, 2.0);
+    return (w * fraction * dpr).round().clamp(64, LowRamAndroid.maxDecodePx);
+  }
+
+  /// Resolve a download URL only — do not decode the full bitmap up front.
   void _precacheMerchantProfilePhoto() {
     if (!mounted) return;
     final raw = (_merchantProfileUrl ?? '').trim();
-    if (raw.isEmpty) return;
-
-    Future<void> warm(String url) async {
-      if (!_isHttp(url) || !mounted) return;
-      try {
-        await precacheImage(CachedNetworkImageProvider(url), context);
-      } catch (_) {}
-    }
-
-    if (_isHttp(raw)) {
-      unawaited(warm(raw));
-      return;
-    }
+    if (raw.isEmpty || _isHttp(raw) || _resolvedProfileHttpUrl != null) return;
     unawaited(() async {
       final u = await _toDownloadUrl(raw);
       if (u == null || u.isEmpty || !mounted) return;
       _resolvedProfileHttpUrl = u;
-      await warm(u);
     }());
   }
 
@@ -675,7 +670,13 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       try {
         final base64Part = s.contains(',') ? s.split(',').last : s;
         final bytes = base64Decode(base64Part);
-        return wrap(Image.memory(bytes, fit: fit, width: width, height: height));
+        return wrap(Image.memory(
+          bytes,
+          fit: fit,
+          width: width,
+          height: height,
+          cacheWidth: _thumbDecodePx(),
+        ));
       } catch (_) {}
     }
 
@@ -685,6 +686,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         fit: fit,
         width: width,
         height: height,
+        memCacheWidth: _thumbDecodePx(),
       ));
     }
 
@@ -706,6 +708,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
           fit: fit,
           width: width,
           height: height,
+          memCacheWidth: _thumbDecodePx(),
         ));
       },
     );
@@ -713,34 +716,21 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
 
   /// Match main marketplace: imageBytes, main image, gallery fallback
   Widget buildItemImage(MarketplaceDetailModel item) {
-    if (item.imageBytes != null) {
+    final mainImage = item.image.trim();
+    final fallback = item.gallery.isNotEmpty
+        ? item.gallery.first.toString().trim()
+        : '';
+    final src = mainImage.isNotEmpty ? mainImage : fallback;
+    if (src.isEmpty && item.imageBytes != null) {
       return Image.memory(
         item.imageBytes!,
         fit: BoxFit.cover,
         width: double.infinity,
         height: double.infinity,
+        cacheWidth: _thumbDecodePx(),
       );
     }
-    final mainImage = item.image.trim();
-    final fallbackUrl = mainImage.isEmpty && item.gallery.isNotEmpty
-        ? item.gallery.first.toString().trim()
-        : null;
-    return _imageFromAnySource(
-      mainImage.isNotEmpty ? mainImage : (fallbackUrl ?? ''),
-      fit: BoxFit.cover,
-      width: double.infinity,
-      height: double.infinity,
-    );
-  }
-
-  /// Build image for a single source. Used by carousel.
-  Widget buildImageForSource(String source) {
-    return _imageFromAnySource(
-      source.trim(),
-      fit: BoxFit.cover,
-      width: double.infinity,
-      height: double.infinity,
-    );
+    return VeroThumbImage(src, decodeLogicalPx: 220);
   }
 
   @override
@@ -752,11 +742,6 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     final memItems = _itemsMemCache[id];
     if (memItems != null) {
       _future = Future.value(memItems);
-      // Refresh quietly in background.
-      unawaited(_loadMerchantItems().then((fresh) {
-        if (!mounted || _redirectingToDriver) return;
-        setState(() => _future = Future.value(fresh));
-      }));
     } else {
       _future = _loadMerchantItems();
     }
@@ -781,6 +766,8 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       _followerCount = memHeader.followerCount;
       _merchantBackendId = memHeader.backendId;
       _recentReviews = memHeader.recentReviews;
+      _merchantVerified = memHeader.verified ||
+          MerchantSellerLoader.peekVerified(id) == true;
       _loadingHeader = false;
       final bid = memHeader.backendId;
       if (bid != null) {
@@ -788,7 +775,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         if (warm != null) {
           _cachedReviewSummary = warm.summary;
           _cachedReviews = warm.reviews;
-          _recentReviews = warm.reviews.take(3).toList();
+          _recentReviews = warm.reviews.take(8).toList();
           _merchantRating = warm.summary.average;
           _merchantReviewCount = warm.summary.count;
         }
@@ -808,6 +795,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       if (days != null && days.isNotEmpty) {
         _merchantOpeningDays = days;
       }
+      _merchantVerified = MerchantSellerLoader.peekVerified(id) == true;
     }
 
     _staysFuture = memAccom == true
@@ -825,7 +813,6 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         : Future<List<FoodModel>>.value(const []);
     unawaited(_resolveAccommodationMode());
     unawaited(_resolveFoodKitchenMode());
-    unawaited(_prefetchOpeningHoursFast(id));
     unawaited(_loadMerchantHeader());
     _searchController.addListener(() {
       setState(() => _searchQuery = _searchController.text.trim().toLowerCase());
@@ -849,12 +836,11 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     );
   }
 
-  Future<void> _prefetchOpeningHoursFast(String merchantId) async {
-    final hours = await MerchantSellerLoader.prefetchOpeningHours(merchantId);
-    if (!mounted || hours == null || hours.isEmpty) return;
-    final normalized = MarketplaceShopHours.normalize(hours) ?? hours;
-    if (_merchantOpeningHours == normalized) return;
-    setState(() => _merchantOpeningHours = normalized);
+  void _markVerifiedFromMap(Map<String, dynamic>? data, [String? id]) {
+    if (_merchantVerified) return;
+    if (!MerchantVerification.isVerifiedFromData(data)) return;
+    _merchantVerified = true;
+    MerchantSellerLoader.cacheVerified(id ?? widget.merchantId, true);
   }
 
   void _persistHeaderCache() {
@@ -874,6 +860,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       followerCount: _followerCount,
       backendId: _merchantBackendId,
       recentReviews: List<MerchantReview>.from(_recentReviews),
+      verified: _merchantVerified,
     );
   }
 
@@ -1015,8 +1002,28 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     );
   }
 
+  void _ensureReviewsAutoSlide() {
+    if (_recentReviews.length < 2) {
+      _reviewsSlideTimer?.cancel();
+      _reviewsSlideTimer = null;
+      return;
+    }
+    if (_reviewsSlideTimer != null) return;
+    _reviewsSlideTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (!mounted || !_reviewsPageController.hasClients) return;
+      final next = (_reviewsPage + 1) % _recentReviews.length;
+      _reviewsPageController.animateToPage(
+        next,
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
+
   @override
   void dispose() {
+    _reviewsSlideTimer?.cancel();
+    _reviewsPageController.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -1109,7 +1116,6 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       _itemsMemCache[id] = all;
 
       if (all.isNotEmpty) {
-        unawaited(_expandMerchantItems(id, all));
         return all;
       }
 
@@ -1131,34 +1137,6 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     } catch (e) {
       debugPrint('Error loading merchant items: $e');
       return _itemsMemCache[widget.merchantId.trim()] ?? [];
-    }
-  }
-
-  Future<void> _expandMerchantItems(
-    String id,
-    List<MarketplaceDetailModel> already,
-  ) async {
-    try {
-      final keys = await _resolveMerchantIdentityKeys();
-      if (keys.length <= 1) return;
-      final docs = await _queryDocsByOwner(
-        collection: 'marketplace_items',
-        keys: keys,
-        fields: const [
-          'merchantId',
-          'sellerUserId',
-          'firebaseUid',
-          'ownerId',
-        ],
-        merchantName: _shopDisplayName,
-      );
-      final merged = _parseMerchantItemDocs(docs, keys: keys);
-      if (merged.length <= already.length) return;
-      _itemsMemCache[id] = merged;
-      if (!mounted || _redirectingToDriver) return;
-      setState(() => _future = Future.value(merged));
-    } catch (e) {
-      debugPrint('expand merchant items: $e');
     }
   }
 
@@ -2625,6 +2603,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         if (mounted) {
           setState(() {
             _applyRatingFieldsFromMap(data);
+            _markVerifiedFromMap(data, mid);
             if (liveName != null) _resolvedMerchantName = liveName;
             if (status != null) _merchantStatus = status;
             if (openingHours != null) {
@@ -2671,6 +2650,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         backendId ??= _parseBackendIdFromMap(u);
         if (mounted) {
           setState(() {
+            _markVerifiedFromMap(u, mid);
             if (_resolvedMerchantName.trim().isEmpty && uName != null) {
               _resolvedMerchantName = uName;
             }
@@ -2727,6 +2707,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             (data['phone'] ?? data['phoneNumber'] ?? '').toString().trim();
         if (mounted) {
           setState(() {
+            _markVerifiedFromMap(data, mid);
             if (liveName != null &&
                 (_isRestaurantAccount || _resolvedMerchantName.trim().isEmpty)) {
               _resolvedMerchantName = liveName;
@@ -2856,7 +2837,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
               _merchantReviewCount = warm.summary.count;
               _cachedReviewSummary = warm.summary;
               _cachedReviews = warm.reviews;
-              _recentReviews = warm.reviews.take(3).toList();
+              _recentReviews = warm.reviews.take(8).toList();
               _reviewsLoading = false;
             });
             _persistHeaderCache();
@@ -2870,7 +2851,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
               _merchantReviewCount = bundle.summary.count;
               _cachedReviewSummary = bundle.summary;
               _cachedReviews = bundle.reviews;
-              _recentReviews = bundle.reviews.take(3).toList();
+              _recentReviews = bundle.reviews.take(8).toList();
             });
             _persistHeaderCache();
           }).catchError((_) {}));
@@ -2901,7 +2882,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         }
         _cachedReviewSummary = bundle.summary;
         _cachedReviews = bundle.reviews;
-        _recentReviews = bundle.reviews.take(3).toList();
+        _recentReviews = bundle.reviews.take(8).toList();
         _reviewsLoading = false;
       });
       _persistHeaderCache();
@@ -3073,6 +3054,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             : 0.72;
     return GridView.builder(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+      cacheExtent: 240,
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: cols,
         crossAxisSpacing: 10,
@@ -3135,6 +3117,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
           logoUrl: _merchantProfileUrl,
           rating: _merchantRating ?? summary.average,
           merchantBackendId: backendId,
+          verified: _merchantVerified,
           initialSummary: summary,
           initialReviews: reviews,
         ),
@@ -3147,20 +3130,16 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       return const SizedBox.shrink();
     }
 
+    _ensureReviewsAutoSlide();
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: _surfaceBorder),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(left: 2, right: 2),
+            child: Row(
               children: [
                 const Expanded(
                   child: Text(
@@ -3174,91 +3153,147 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                 ),
                 TextButton(
                   onPressed: _openMerchantReviews,
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
                   child: const Text('See all'),
                 ),
               ],
             ),
-            if (_reviewsLoading && _recentReviews.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8),
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: _brandOrange,
-                      ),
+          ),
+          if (_reviewsLoading && _recentReviews.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 10),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: _brandOrange,
                     ),
-                    SizedBox(width: 10),
-                    Text(
-                      'Loading reviews…',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13,
-                        color: Color(0xFF6B7280),
-                      ),
+                  ),
+                  SizedBox(width: 10),
+                  Text(
+                    'Loading reviews…',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                      color: Color(0xFF6B7280),
                     ),
-                  ],
-                ),
-              )
-            else
-              ..._recentReviews.map((review) {
-                final comment = review.comment.trim();
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              review.authorName.trim().isEmpty
-                                  ? 'Customer'
-                                  : review.authorName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 13,
+                  ),
+                ],
+              ),
+            )
+          else
+            SizedBox(
+              height: 108,
+              child: PageView.builder(
+                controller: _reviewsPageController,
+                padEnds: false,
+                itemCount: _recentReviews.length,
+                onPageChanged: (i) {
+                  if (_reviewsPage == i) return;
+                  setState(() => _reviewsPage = i);
+                },
+                itemBuilder: (context, index) {
+                  final review = _recentReviews[index];
+                  final comment = review.comment.trim();
+                  return Padding(
+                    padding: EdgeInsets.only(
+                      right: index == _recentReviews.length - 1 ? 0 : 10,
+                    ),
+                    child: Material(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      child: InkWell(
+                        onTap: _openMerchantReviews,
+                        borderRadius: BorderRadius.circular(16),
+                        child: Ink(
+                          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: _surfaceBorder),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      review.authorName.trim().isEmpty
+                                          ? 'Customer'
+                                          : review.authorName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ),
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: List.generate(5, (i) {
+                                      return Icon(
+                                        i < review.rating
+                                            ? Icons.star
+                                            : Icons.star_border,
+                                        size: 13,
+                                        color: Colors.amber,
+                                      );
+                                    }),
+                                  ),
+                                ],
                               ),
-                            ),
-                          ),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: List.generate(5, (i) {
-                              return Icon(
-                                i < review.rating
-                                    ? Icons.star
-                                    : Icons.star_border,
-                                size: 14,
-                                color: Colors.amber,
-                              );
-                            }),
-                          ),
-                        ],
-                      ),
-                      if (comment.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          comment,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12.5,
-                            height: 1.35,
-                            color: Colors.grey.shade700,
+                              if (comment.isNotEmpty) ...[
+                                const SizedBox(height: 6),
+                                Text(
+                                  comment,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12.5,
+                                    height: 1.35,
+                                    color: Colors.grey.shade700,
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                         ),
-                      ],
-                    ],
-                  ),
-                );
-              }),
-          ],
-        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          if (_recentReviews.length > 1)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(_recentReviews.length, (i) {
+                  final active = i == _reviewsPage;
+                  return AnimatedContainer(
+                    duration: const Duration(milliseconds: 220),
+                    width: active ? 14 : 6,
+                    height: 6,
+                    margin: const EdgeInsets.symmetric(horizontal: 2),
+                    decoration: BoxDecoration(
+                      color: active
+                          ? _brandOrange
+                          : const Color(0xFFD5DAE3),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                  );
+                }),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -3380,6 +3415,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                       : 0.72;
               return GridView.builder(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+                cacheExtent: 240,
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: cols,
                   crossAxisSpacing: 10,
@@ -3540,6 +3576,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
 
                           return GridView.builder(
                             padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+                            cacheExtent: 240,
                             gridDelegate:
                                 SliverGridDelegateWithFixedCrossAxisCount(
                               crossAxisCount: cols,
@@ -3552,11 +3589,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                               final it = items[index];
                               return _MerchantProductCard(
                                 item: it,
-                                imageBuilder: (item) => _ProductImageCarousel(
-                                  item: item,
-                                  buildImageForSource: buildImageForSource,
-                                  onOpen: () => _openProductDetails(it),
-                                ),
+                                imageBuilder: buildItemImage,
                                 onAddToCart: () => _addToCart(it),
                                 onBuyNow: () => _buyNow(it),
                                 onOpen: () => _openProductDetails(it),
@@ -3668,15 +3701,28 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                       : _isRestaurantAccount
                           ? '$baseName Restaurant'
                           : '$baseName Store';
-                  return Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w900,
-                      fontSize: 17,
-                      letterSpacing: -0.2,
-                    ),
+                  return Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 17,
+                            letterSpacing: -0.2,
+                          ),
+                        ),
+                      ),
+                      if (_merchantVerified) ...[
+                        const SizedBox(width: 6),
+                        const MerchantVerifiedBadge(
+                          showLabel: false,
+                          size: 18,
+                        ),
+                      ],
+                    ],
                   );
                 },
               ),
@@ -3703,6 +3749,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
           _MerchantProfileCard(
             merchantId: widget.merchantId,
             name: _shopDisplayName,
+            verified: _merchantVerified,
             rating: _merchantRating,
             reviewCount: _merchantReviewCount,
             openingHours: _merchantOpeningHours,
@@ -4168,6 +4215,7 @@ class _MerchantProfileCard extends StatelessWidget {
 
   final String merchantId;
   final String name;
+  final bool verified;
   final double? rating;
   final int reviewCount;
   final String? openingHours;
@@ -4190,6 +4238,7 @@ class _MerchantProfileCard extends StatelessWidget {
   const _MerchantProfileCard({
     required this.merchantId,
     required this.name,
+    this.verified = false,
     required this.rating,
     required this.reviewCount,
     required this.openingHours,
@@ -4286,10 +4335,9 @@ class _MerchantProfileCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    MerchantNameWithBadge(
+                      name: name,
+                      verified: verified,
                       style: const TextStyle(
                         fontSize: 19,
                         fontWeight: FontWeight.w900,
@@ -4593,132 +4641,6 @@ class _MerchantProfileCard extends StatelessWidget {
   }
 }
 
-/// Photo carousel for a product (cover + gallery), auto-slides every 1 second like details/main.
-class _ProductImageCarousel extends StatefulWidget {
-  final MarketplaceDetailModel item;
-  final Widget Function(String source) buildImageForSource;
-  final VoidCallback? onOpen;
-
-  const _ProductImageCarousel({
-    required this.item,
-    required this.buildImageForSource,
-    this.onOpen,
-  });
-
-  @override
-  State<_ProductImageCarousel> createState() => _ProductImageCarouselState();
-}
-
-class _ProductImageCarouselState extends State<_ProductImageCarousel> {
-  late final PageController _pc;
-  Timer? _timer;
-  int _page = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _pc = PageController();
-    final n = _mediaCount;
-    if (n > 1) {
-      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (!mounted || !_pc.hasClients) return;
-        final next = (_page + 1) % n;
-        _pc.animateToPage(
-          next,
-          duration: const Duration(milliseconds: 350),
-          curve: Curves.easeOut,
-        );
-      });
-    }
-  }
-
-  int get _mediaCount {
-    int c = 0;
-    if (widget.item.image.trim().isNotEmpty) c++;
-    c += widget.item.gallery.where((u) => u.trim().isNotEmpty).length;
-    return c;
-  }
-
-  void _pauseAutoSlide() {
-    _timer?.cancel();
-    _timer = null;
-  }
-
-  Widget _tappable(Widget child) {
-    final onOpen = widget.onOpen;
-    if (onOpen == null) return child;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () {
-        _pauseAutoSlide();
-        onOpen();
-      },
-      onTapDown: (_) => _pauseAutoSlide(),
-      child: child,
-    );
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    _pc.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final item = widget.item;
-    final images = <String>[
-      if (item.image.trim().isNotEmpty) item.image.trim(),
-      ...item.gallery.map((e) => e.toString().trim()).where((s) => s.isNotEmpty),
-    ];
-    if (images.isEmpty) {
-      return _tappable(
-        Container(
-          color: const Color(0xFFEDEDED),
-          child: const Center(
-            child: Icon(Icons.image_not_supported_rounded, color: Colors.black38),
-          ),
-        ),
-      );
-    }
-    if (images.length == 1) {
-      if (item.imageBytes != null &&
-          item.image.trim().isNotEmpty &&
-          item.image.trim() == images.first) {
-        return _tappable(
-          Image.memory(
-            item.imageBytes!,
-            fit: BoxFit.cover,
-            width: double.infinity,
-            height: double.infinity,
-          ),
-        );
-      }
-      return _tappable(widget.buildImageForSource(images.first));
-    }
-    return PageView.builder(
-      controller: _pc,
-      itemCount: images.length,
-      onPageChanged: (i) => setState(() => _page = i),
-      itemBuilder: (context, i) {
-        final src = images[i];
-        final useBytes =
-            i == 0 && item.imageBytes != null && item.image.trim() == src;
-        final image = useBytes
-            ? Image.memory(
-                item.imageBytes!,
-                fit: BoxFit.cover,
-                width: double.infinity,
-                height: double.infinity,
-              )
-            : widget.buildImageForSource(src);
-        return _tappable(image);
-      },
-    );
-  }
-}
-
 class _MerchantFoodCard extends StatelessWidget {
   const _MerchantFoodCard({
     required this.item,
@@ -4766,6 +4688,7 @@ class _MerchantFoodCard extends StatelessWidget {
                           fit: BoxFit.cover,
                           width: double.infinity,
                           height: double.infinity,
+                          memCacheWidth: 360,
                         ),
                 ),
               ),

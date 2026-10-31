@@ -14,7 +14,7 @@ int thumbnailCachePx(BuildContext context, {double logical = 360}) {
 /// MemoryImage compares by bytes identity, so a fresh decode on every build
 /// misses Flutter's image cache and re-decodes the picture. Reuse providers.
 final Map<String, MemoryImage> _memoryImages = <String, MemoryImage>{};
-const int _maxMemoryImages = 150;
+const int _maxMemoryImages = 24;
 
 MemoryImage _memoryImageFor(String raw) {
   final hit = _memoryImages.remove(raw);

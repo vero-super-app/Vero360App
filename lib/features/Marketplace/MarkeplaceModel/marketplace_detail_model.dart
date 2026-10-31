@@ -67,14 +67,6 @@ class MarketplaceDetailModel {
     final rawImage = (data['image'] ?? data['imageUrl'] ?? data['photo'] ?? data['picture'] ?? '')
         .toString()
         .trim();
-    Uint8List? bytes;
-    if (rawImage.isNotEmpty) {
-      try {
-        bytes = base64Decode(rawImage);
-      } catch (_) {
-        bytes = null; // if it's actually a URL, decoding will fail
-      }
-    }
 
     // createdAt: Timestamp / DateTime / ISO / epoch
     final created = MarketplaceTime.parseCreatedAt(data['createdAt']);
@@ -139,7 +131,7 @@ class MarketplaceDetailModel {
       category: cat,
       price: price,
       image: rawImage,
-      imageBytes: bytes,
+      imageBytes: null,
       description:
           data['description']?.toString(),
       location: data['location']?.toString(),

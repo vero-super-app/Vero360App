@@ -117,6 +117,20 @@ class _ToShipPageState extends State<ToShipPage> {
     return myUid == sellerUid;
   }
 
+  /// Paid PawaPay sales, or bank transfers after admin confirms the money.
+  bool _readyToShip(OrderItem o) {
+    if (o.status == OrderStatus.delivered ||
+        o.status == OrderStatus.cancelled) {
+      return false;
+    }
+    if (o.paymentStatus == PaymentStatus.paid &&
+        (o.status == OrderStatus.confirmed || o.status == OrderStatus.pending)) {
+      return true;
+    }
+    // getMyOrders only surfaces unpaid pending sales after escrow is held.
+    return o.status == OrderStatus.pending;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -166,8 +180,7 @@ class _ToShipPageState extends State<ToShipPage> {
     // orders this account is selling.
     final toShip = list.where((o) {
       if (!_isSellerForOrder(o)) return false;
-      return o.status == OrderStatus.confirmed &&
-          o.paymentStatus == PaymentStatus.paid;
+      return _readyToShip(o);
     }).take(8);
     for (final o in toShip) {
       try {
@@ -1243,8 +1256,7 @@ class _ToShipPageState extends State<ToShipPage> {
                       o.status == OrderStatus.cancelled) {
                     return false;
                   }
-                  if (!(o.status == OrderStatus.confirmed &&
-                      o.paymentStatus == PaymentStatus.paid)) {
+                  if (!_readyToShip(o)) {
                     return false;
                   }
                   return OrderListHelpers.matchesSearch(o, _searchQuery);

@@ -10,6 +10,8 @@ import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_revi
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_id_resolver.dart';
 import 'package:vero360_app/features/Marketplace/presentation/widgets/merchant_review_prompt.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_seller_loader.dart';
+import 'package:vero360_app/widgets/merchant_verified_badge.dart';
 import 'package:vero360_app/widgets/modern_confirm_dialog.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
@@ -27,6 +29,7 @@ class MerchantReviewsPage extends StatefulWidget {
   final String? serviceProviderId;
   final String? sellerUserId;
   final int? merchantBackendId;
+  final bool verified;
   /// Prefill so the page opens without waiting on the network.
   final MerchantReviewSummary? initialSummary;
   final List<MerchantReview>? initialReviews;
@@ -40,6 +43,7 @@ class MerchantReviewsPage extends StatefulWidget {
     this.serviceProviderId,
     this.sellerUserId,
     this.merchantBackendId,
+    this.verified = false,
     this.initialSummary,
     this.initialReviews,
   });
@@ -61,12 +65,28 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
   MerchantReviewSummary? _summary;
   List<MerchantReview> _reviews = const [];
   final Set<String> _reactingIds = {};
+  late bool _merchantVerified;
 
   @override
   void initState() {
     super.initState();
+    _merchantVerified = widget.verified ||
+        MerchantSellerLoader.peekVerified(widget.merchantId) == true ||
+        MerchantSellerLoader.peekVerified(widget.sellerUserId) == true;
     _seedFromPrefetch();
     _load(silent: _summary != null || _reviews.isNotEmpty);
+    if (!_merchantVerified) {
+      unawaited(_resolveVerified());
+    }
+  }
+
+  Future<void> _resolveVerified() async {
+    final ok = await MerchantSellerLoader.resolveVerified(
+      merchantId: widget.merchantId,
+      sellerUserId: widget.sellerUserId,
+    );
+    if (!mounted || !ok || _merchantVerified) return;
+    setState(() => _merchantVerified = true);
   }
 
   void _seedFromPrefetch() {
@@ -593,8 +613,9 @@ class _MerchantReviewsPageState extends State<MerchantReviewsPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  widget.merchantName,
+                MerchantNameWithBadge(
+                  name: widget.merchantName,
+                  verified: _merchantVerified,
                   style: const TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w800,

@@ -106,6 +106,7 @@ class OrderEscrowService {
       throw StateError('You must be signed in to place a hold.');
     }
 
+    final bank = _isBankRail(paymentRail);
     final eligible = <CreatedOrderRef>[];
     final grosses = <double>[];
     for (final r in refs) {
@@ -145,7 +146,8 @@ class OrderEscrowService {
           'txRef': txRef,
           'orderNumber': r.orderNumber,
           'itemName': r.item.name,
-          'status': 'held',
+          'status': bank ? 'pending_admin' : 'held',
+          if (bank) 'adminVerified': false,
           'deliveredAt': FieldValue.delete(),
           'releaseDueAt': FieldValue.delete(),
           'createdAt': FieldValue.serverTimestamp(),
@@ -156,6 +158,10 @@ class OrderEscrowService {
     }
 
     await batch.commit();
+
+    // Bank transfers wait for admin to confirm the money before the seller
+    // is told to ship.
+    if (bank) return;
 
     // Vero360 Team inbox tips: buyer can remind; merchant should ship.
     for (final r in refs) {
@@ -228,7 +234,8 @@ class OrderEscrowService {
         'txRef': txRef,
         'orderNumber': (orderNumber ?? oid).trim(),
         'itemName': foodName.trim().isEmpty ? 'Food order' : foodName.trim(),
-        'status': 'held',
+        'status': _isBankRail(paymentRail) ? 'pending_admin' : 'held',
+        if (_isBankRail(paymentRail)) 'adminVerified': false,
         'serviceType': 'food',
         'deliveredAt': FieldValue.delete(),
         'releaseDueAt': FieldValue.delete(),
@@ -889,6 +896,34 @@ class OrderEscrowService {
     final snap = await _doc(orderId).get();
     if (!snap.exists || snap.data() == null) return null;
     return OrderEscrowSnapshot.fromMap(orderId, snap.data()!);
+  }
+
+  /// Bank-transfer holds stay `pending_admin` until finance confirms the money.
+  static Future<Set<String>> fetchHeldIds(Iterable<String> orderIds) async {
+    final ids = orderIds.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
+    if (ids.isEmpty) return {};
+    final held = <String>{};
+    for (final chunk in _chunk(ids.toList(), 10)) {
+      final snaps = await Future.wait(chunk.map((id) => _doc(id).get()));
+      for (var i = 0; i < snaps.length; i++) {
+        final snap = snaps[i];
+        if (!snap.exists) continue;
+        final status = (snap.data()?['status'] ?? '').toString().trim();
+        if (status == 'held' || status == 'released' || status == 'auto_released') {
+          held.add(chunk[i]);
+        }
+      }
+    }
+    return held;
+  }
+
+  static List<List<T>> _chunk<T>(List<T> list, int size) {
+    if (list.isEmpty || size <= 0) return const [];
+    final out = <List<T>>[];
+    for (var i = 0; i < list.length; i += size) {
+      out.add(list.sublist(i, i + size > list.length ? list.length : i + size));
+    }
+    return out;
   }
 
   static Future<Map<String, OrderEscrowSnapshot?>> fetchEscrowForOrderIds(

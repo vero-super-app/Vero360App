@@ -848,7 +848,9 @@ class _MarketplaceMerchantDashboardState
         } else if (mounted) {
           setState(() => _loadingItems = false);
         }
-        unawaited(_loadItems(showLoading: false));
+        if (_items.isEmpty) {
+          unawaited(_loadItems(showLoading: false));
+        }
       }
     });
 
@@ -889,7 +891,6 @@ class _MarketplaceMerchantDashboardState
       });
     });
 
-    _startPeriodicUpdates();
   }
 
   /// Prefs + clear loading shell without waiting on APIs.
@@ -1039,21 +1040,6 @@ class _MarketplaceMerchantDashboardState
     _recentSalesSearchController.dispose();
     _recentSalesSearchFocus.dispose();
     super.dispose();
-  }
-
-  void _startPeriodicUpdates() {
-    _ticker?.cancel();
-    var tick = 0;
-    // Lighter polling on low-RAM devices: wallet often, heavy order dump rarely.
-    _ticker = Timer.periodic(const Duration(seconds: 60), (_) {
-      if (!mounted) return;
-      if (_sheetOpen) return;
-      tick++;
-      _hydrateFromFirebaseAuth();
-      unawaited(_loadWalletBalance());
-      if (tick % 3 == 0) unawaited(_loadOrderStats());
-      if (tick % 4 == 0) unawaited(_fetchCurrentUserMe());
-    });
   }
 
   // ----------------- Business name FIX (Auth G?? Firestore G?? API G?? Prefs) -----------------
@@ -1569,14 +1555,7 @@ class _MarketplaceMerchantDashboardState
     }
   }
 
-  Future<void> _warmProfilePhotoCache([String? url]) async {
-    final remote = (url ?? _merchantProfileUrl).trim();
-    if (remote.isEmpty) return;
-    final file = await ProfilePhotoCache.ensureCached(remote);
-    if (!mounted || file == null) return;
-    if (_localPhotoPath == file.path) return;
-    setState(() => _localPhotoPath = file.path);
-  }
+  Future<void> _warmProfilePhotoCache([String? url]) async {}
 
   Future<void> _writeMerchantProfile(Map<String, dynamic> payload) async {
     final uid = (_auth.currentUser?.uid ?? _uid).trim();

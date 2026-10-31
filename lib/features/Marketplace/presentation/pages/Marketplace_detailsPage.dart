@@ -1590,7 +1590,6 @@ class _DetailsPageState extends State<DetailsPage> {
                 Icon(Icons.schedule_rounded, size: 14, color: Colors.grey.shade500),
                 const SizedBox(width: 6),
                 Expanded(
-<<<<<<< HEAD
                   child: Row(
                     children: [
                       Flexible(
@@ -1615,17 +1614,6 @@ class _DetailsPageState extends State<DetailsPage> {
                         ),
                       ],
                     ],
-=======
-                  child: Text(
-                    item.createdAt != null
-                        ? 'Posted by $merchantDisplayName â€¢ ${_formatTimeAgo(item.createdAt!)}'
-                        : 'Posted by $merchantDisplayName',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey.shade600,
-                      fontWeight: FontWeight.w500,
-                    ),
->>>>>>> 8956e934e5ac3e4dfc219efd7f6c52921ce523f4
                   ),
                 ),
               ],

@@ -3174,7 +3174,6 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                       strokeWidth: 2,
                       color: _brandOrange,
                     ),
-<<<<<<< HEAD
                   ),
                   SizedBox(width: 10),
                   Text(
@@ -3183,16 +3182,6 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                       fontWeight: FontWeight.w600,
                       fontSize: 13,
                       color: Color(0xFF6B7280),
-=======
-                    SizedBox(width: 10),
-                    Text(
-                      'Loading reviewsâ€¦',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13,
-                        color: Color(0xFF6B7280),
-                      ),
->>>>>>> 8956e934e5ac3e4dfc219efd7f6c52921ce523f4
                     ),
                   ),
                 ],

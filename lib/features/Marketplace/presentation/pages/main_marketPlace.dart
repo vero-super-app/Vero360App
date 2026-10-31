@@ -1679,9 +1679,8 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
 
       final mergeVerticals = _hubVertical == MarketplaceHubVertical.all;
 
-<<<<<<< HEAD
       // 1) Memory cache — instant paint
-=======
+
       // Start food/stays immediately so they finish while products paint.
       final verticalsFuture = mergeVerticals
           ? MarketplaceHubLoader.loadFoodAndStays(
@@ -1691,7 +1690,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
           : null;
 
       // 1) Memory cache â€” instant paint
->>>>>>> 8956e934e5ac3e4dfc219efd7f6c52921ce523f4
+
       if (_productCacheFresh) {
         final ranked = await _finishFeed(
           _filterCachedProducts(category),

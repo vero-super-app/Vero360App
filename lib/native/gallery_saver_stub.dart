@@ -1,5 +1,5 @@
 class SaveResult {
-  const SaveResult({this.isSuccess = false, this.errorMessage});
+  const SaveResult(this.isSuccess, this.errorMessage);
   final bool isSuccess;
   final String? errorMessage;
 }
@@ -14,7 +14,8 @@ class SaverGallery {
     bool skipIfExists = false,
   }) async {
     return const SaveResult(
-      errorMessage: 'Saving to the gallery is available in the iOS/Android app.',
+      false,
+      'Saving to the gallery is available in the iOS/Android app.',
     );
   }
 
@@ -25,7 +26,8 @@ class SaverGallery {
     bool skipIfExists = false,
   }) async {
     return const SaveResult(
-      errorMessage: 'Saving files is available in the iOS/Android app.',
+      false,
+      'Saving files is available in the iOS/Android app.',
     );
   }
 }

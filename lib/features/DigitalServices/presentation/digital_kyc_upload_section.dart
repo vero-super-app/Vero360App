@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'package:universal_io/io.dart';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -381,7 +381,7 @@ class DigitalPayoutKycSectionState extends State<DigitalPayoutKycSection> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    file == null ? hint : 'Photo attached · tap to replace',
+                    file == null ? hint : 'Photo attached Â· tap to replace',
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,

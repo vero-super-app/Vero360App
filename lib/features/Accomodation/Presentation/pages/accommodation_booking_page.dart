@@ -1,6 +1,6 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'package:universal_io/io.dart';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -668,7 +668,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.chat_bubble_rounded),
-                  label: Text(_openingChat ? 'Opening chat…' : 'Message owner'),
+                  label: Text(_openingChat ? 'Opening chatâ€¦' : 'Message owner'),
                   style: FilledButton.styleFrom(
                     backgroundColor: _brandOrange,
                     foregroundColor: Colors.white,
@@ -698,7 +698,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
       user?.email,
       sp.getString('email'),
     ]);
-    // Don’t prefill from Firebase Auth phoneNumber — only saved profile / SP.
+    // Donâ€™t prefill from Firebase Auth phoneNumber â€” only saved profile / SP.
     var phone = _firstNonEmpty([
       sp.getString('phone'),
     ]);
@@ -862,7 +862,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
           ),
     );
     final buf = StringBuffer(
-      'Check out this stay on Vero360 — $name',
+      'Check out this stay on Vero360 â€” $name',
     );
     if (loc.isNotEmpty) buf.write('\n$loc');
     buf.write('\nMWK $price${_effectivePricePeriod.uiSuffix}');
@@ -872,7 +872,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     buf.write('\n$url');
     if (name.isNotEmpty) {
       buf.write(
-        '\n\nOpen in Vero360, or search “$name” under Accommodation.',
+        '\n\nOpen in Vero360, or search â€œ$nameâ€ under Accommodation.',
       );
     } else {
       buf.write('\n\nOpen the link in Vero360 to find and book this property.');
@@ -905,7 +905,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     if (!mounted) return;
     ToastHelper.showCustomToast(
       context,
-      'Link copied — share it so others can open this stay in Vero360.',
+      'Link copied â€” share it so others can open this stay in Vero360.',
       isSuccess: true,
       errorMessage: '',
     );
@@ -960,7 +960,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     return '';
   }
 
-  /// Rejects internal IDs mistaken for phones (e.g. `+firebase_…` from bad SP/Firestore data).
+  /// Rejects internal IDs mistaken for phones (e.g. `+firebase_â€¦` from bad SP/Firestore data).
   String _sanitizeStoredPhone(String raw) {
     final s = raw.trim();
     if (s.isEmpty) return '';
@@ -1011,9 +1011,9 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
     if (me.isNotEmpty && me == ownerUid) {
       ToastHelper.showCustomToast(
         context,
-        'This is your own listing — you cannot chat with yourself.',
+        'This is your own listing â€” you cannot chat with yourself.',
         isSuccess: false,
-        errorMessage: 'This is your own listing — you cannot chat with yourself.',
+        errorMessage: 'This is your own listing â€” you cannot chat with yourself.',
       );
       return;
     }
@@ -1466,7 +1466,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                 foregroundColor: Colors.white,
               ),
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('I understand — pay'),
+              child: const Text('I understand â€” pay'),
             ),
           ],
         );
@@ -1720,7 +1720,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
       }
 
       // Wait for success callback (post-frame) before freeing a reservation.
-      // Do NOT release on a short frame race — that wiped inventory after paid stays.
+      // Do NOT release on a short frame race â€” that wiped inventory after paid stays.
       await Future.any<void>([
         paymentSuccessGate.future,
         Future<void>.delayed(const Duration(seconds: 2)),
@@ -2268,7 +2268,7 @@ class _AccommodationBookingPageState extends State<AccommodationBookingPage> {
                                     ),
                                     const SizedBox(width: 8),
                                     Text(
-                                      'Loading calendar availability…',
+                                      'Loading calendar availabilityâ€¦',
                                       style: TextStyle(
                                         fontSize: 11.5,
                                         fontWeight: FontWeight.w600,
@@ -2648,7 +2648,7 @@ class _SignInRequiredCard extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            'Only signed-in guests can book a stay and pay securely. We’ll use your account name, email, and phone automatically.',
+            'Only signed-in guests can book a stay and pay securely. Weâ€™ll use your account name, email, and phone automatically.',
             style: TextStyle(
               fontSize: 14,
               height: 1.45,
@@ -2823,7 +2823,7 @@ class _AccommodationOwnerBanner extends StatelessWidget {
                             )
                           : const Icon(Icons.chat_bubble_rounded, size: 16),
                       label: Text(
-                        openingChat ? 'Opening…' : 'Message owner',
+                        openingChat ? 'Openingâ€¦' : 'Message owner',
                         style: const TextStyle(
                             fontWeight: FontWeight.w800, fontSize: 12),
                       ),
@@ -3232,7 +3232,7 @@ class _BookedAwareDatePickerDialogState
                       borderRadius: BorderRadius.circular(12),
                       child: InkWell(
                         borderRadius: BorderRadius.circular(12),
-                        // Larger, clearer hit target — select only, never auto-close.
+                        // Larger, clearer hit target â€” select only, never auto-close.
                         onTap: enabled ? () => _selectDay(day) : null,
                         child: Center(
                           child: Column(

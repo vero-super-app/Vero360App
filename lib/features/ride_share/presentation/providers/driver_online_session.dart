@@ -1,5 +1,5 @@
-import 'dart:async';
-import 'dart:io' show Platform;
+﻿import 'dart:async';
+import 'package:universal_io/io.dart' show Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
@@ -18,7 +18,7 @@ import 'package:vero360_app/features/ride_share/presentation/providers/ride_life
 /// backgrounding the app, and process death (restored from prefs).
 ///
 /// The toggle stays on until explicit [goOffline] or logout. Matching GPS
-/// keeps running in the background via a foreground location service — the
+/// keeps running in the background via a foreground location service â€” the
 /// same pattern as active-trip tracking.
 class DriverOnlineSessionState {
   final bool isOnline;
@@ -219,7 +219,7 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
       await goOnline(taxiId: id, setAvailabilityOnBackend: true);
     } catch (e) {
       if (kDebugMode) {
-        print('[DriverOnlineSession] ✗ reassert online: $e');
+        print('[DriverOnlineSession] âœ— reassert online: $e');
       }
       if (_positionSub == null && _broadcastTimer == null) {
         _startPublishers();
@@ -267,13 +267,13 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
           },
           onError: (e) {
             if (kDebugMode) {
-              print('[DriverOnlineSession] ✗ location stream: $e');
+              print('[DriverOnlineSession] âœ— location stream: $e');
             }
           },
         );
       } catch (e) {
         if (kDebugMode) {
-          print('[DriverOnlineSession] ✗ start location stream: $e');
+          print('[DriverOnlineSession] âœ— start location stream: $e');
         }
       }
     }());
@@ -335,7 +335,7 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
       await _publishPosition(position);
     } catch (e) {
       if (kDebugMode) {
-        print('[DriverOnlineSession] ✗ location broadcast: $e');
+        print('[DriverOnlineSession] âœ— location broadcast: $e');
       }
     }
   }
@@ -355,13 +355,13 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
       );
       if (kDebugMode) {
         print(
-          '[DriverOnlineSession] ✓ location → taxi $taxiId '
+          '[DriverOnlineSession] âœ“ location â†’ taxi $taxiId '
           '(${position.latitude}, ${position.longitude})',
         );
       }
     } catch (e) {
       if (kDebugMode) {
-        print('[DriverOnlineSession] ✗ location broadcast: $e');
+        print('[DriverOnlineSession] âœ— location broadcast: $e');
       }
     }
   }
@@ -390,12 +390,12 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
       );
       if (kDebugMode) {
         print(
-          '[DriverOnlineSession] ✓ availability=$isAvailable taxi=$taxiId',
+          '[DriverOnlineSession] âœ“ availability=$isAvailable taxi=$taxiId',
         );
       }
     } catch (e) {
       if (kDebugMode) {
-        print('[DriverOnlineSession] ✗ set availability: $e');
+        print('[DriverOnlineSession] âœ— set availability: $e');
       }
       rethrow;
     }
@@ -432,7 +432,7 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
       unawaited(_reassertOnline(taxiId: taxiId));
     } catch (e) {
       if (kDebugMode) {
-        print('[DriverOnlineSession] ✗ restore session: $e');
+        print('[DriverOnlineSession] âœ— restore session: $e');
       }
     }
   }

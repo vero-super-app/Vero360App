@@ -1,5 +1,5 @@
-// lib/features/Auth/AuthPresenter/oauth_buttons.dart
-import 'dart:io';
+﻿// lib/features/Auth/AuthPresenter/oauth_buttons.dart
+import 'package:universal_io/io.dart';
 import 'package:flutter/material.dart';
 
 class OAuthButtonsRow extends StatelessWidget {

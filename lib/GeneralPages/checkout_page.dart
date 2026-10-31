@@ -1,7 +1,7 @@
-// lib/Pages/checkout_page.dart
+﻿// lib/Pages/checkout_page.dart
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'package:universal_io/io.dart';
 import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -43,7 +43,7 @@ class CheckoutPage extends StatefulWidget {
 }
 
 class _CheckoutPageState extends State<CheckoutPage> {
-  // ► Brand (UI only)
+  // â–º Brand (UI only)
   static const Color _brandOrange = Color(0xFFFF8A00);
   static const Color _brandNavy = Color(0xFF16284C);
   static const Color _brandSoft = Color(0xFFFFE8CC);
@@ -174,7 +174,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     });
   }
 
-  /// Instant paint from memory/disk — never blocks on the API.
+  /// Instant paint from memory/disk â€” never blocks on the API.
   Future<void> _hydrateAddressFromCache() async {
     final mem = AddressService.peekDefaultAddress();
     if (mem != null) {
@@ -387,7 +387,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     _applyQty(n ?? _qty);
   }
 
-  // ── UI helpers ──────────────────────────────────────────────────────────
+  // â”€â”€ UI helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   OutlinedButtonThemeData get _outlinedTheme => OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: Colors.black87,
@@ -398,7 +398,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         ),
       );
 
-  // ── Delivery helpers ─────────────────────────────────────────────────────
+  // â”€â”€ Delivery helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   String _deliveryLabel(DeliveryType d) {
     switch (d) {
       case DeliveryType.speed:
@@ -618,7 +618,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     );
   }
 
-  // ── Auth + Default address bootstrap (single source: Firebase then SP) ───
+  // â”€â”€ Auth + Default address bootstrap (single source: Firebase then SP) â”€â”€â”€
   Future<String?> _readAuthToken() async => AuthHandler.getTokenForApi();
 
   bool get _needsDefaultAddress =>
@@ -705,7 +705,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     return ok;
   }
 
-  // ── Pay routing (PawaPay phone prompt) ─────────────
+  // â”€â”€ Pay routing (PawaPay phone prompt) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Future<void> _onPayPressed() async {
     if (_outOfStock) {
       ToastHelper.showCustomToast(
@@ -827,7 +827,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     }
   }
 
-  // ── Fast thumb: disk cache + sized decode (same pattern as cart) ─────────
+  // â”€â”€ Fast thumb: disk cache + sized decode (same pattern as cart) â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _itemImagePlaceholder(double size) {
     return Container(
       width: size,
@@ -1067,7 +1067,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   _section(
                     title: 'Courier',
                     subtitle: _deliveryType == DeliveryType.pickup
-                        ? 'Pickup selected — no delivery address needed'
+                        ? 'Pickup selected â€” no delivery address needed'
                         : (_veroCourierAvailable
                             ? 'Vero Courier is available you and the shop are both in Lilongwe'
                             : 'Choose how you want your order delivered'),
@@ -1260,7 +1260,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     );
   }
 
-  // ── Small helpers ────────────────────────────────────────────────────────
+  // â”€â”€ Small helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _qtyBtn(IconData icon, VoidCallback onTap) {
     return InkWell(
       onTap: onTap,
@@ -1297,7 +1297,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 }
 
-// ── Delivery Address card widget ───────────────────────────────────────────
+// â”€â”€ Delivery Address card widget â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _DeliveryAddressCard extends StatelessWidget {
   const _DeliveryAddressCard({
     required this.loading,
@@ -1425,7 +1425,7 @@ class _DeliveryAddressCard extends StatelessWidget {
               [
                 address!.city,
                 if (address!.description.isNotEmpty) address!.description,
-              ].join(' · '),
+              ].join(' Â· '),
             ),
         ],
       ),

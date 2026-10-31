@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
@@ -11,7 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-import 'package:local_auth/local_auth.dart';
+import 'package:vero360_app/native/biometrics.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -86,8 +86,8 @@ class _SettingsPageState extends State<SettingsPage> {
   String _photoUrl = '';
 
   // app info
-  String _appVersion = '—';
-  String _buildNumber = '—';
+  String _appVersion = 'â€”';
+  String _buildNumber = 'â€”';
 
   // address count + default address for profile header (from API)
   int _addressCount = -1; // -1 = not loaded yet
@@ -183,7 +183,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   String get _addressCountSubtitle {
-    if (_addressCount < 0) return '—';
+    if (_addressCount < 0) return 'â€”';
     if (_addressCount == 0) return _t('No addresses', 'Palibe maadiresi');
     if (_addressCount == 1) return _t('1 address', 'Adiresi imodzi');
     return _t('$_addressCount addresses', 'Maadiresi $_addressCount');
@@ -1189,7 +1189,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                   subtitle: Text(
                     _t(
-                      'Promotions, today’s arrivals, and marketplace (often when something new is posted)',
+                      'Promotions, todayâ€™s arrivals, and marketplace (often when something new is posted)',
                       'Zotsatsa, zofika lero, ndi msika (nthawi zambiri zikakhala zatsopano)',
                     ),
                   ),
@@ -1594,7 +1594,7 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  /// Tap App version → compare with Play Store / App Store and offer update.
+  /// Tap App version â†’ compare with Play Store / App Store and offer update.
   Future<void> _checkForAppUpdates() async {
     _maybeHaptic();
     if (!mounted) return;
@@ -1713,8 +1713,8 @@ class _SettingsPageState extends State<SettingsPage> {
         isIos: defaultTargetPlatform == TargetPlatform.iOS,
       );
       final text = _t(
-        'Try Vero360 – one app for VeroRide,marketplace, food, transport,accomodation and more. $storeUrl',
-        'Yesani Vero360 – pulogalamu imodzi ya msika, chakudya, mayendedwe, ndi zina. $storeUrl',
+        'Try Vero360 â€“ one app for VeroRide,marketplace, food, transport,accomodation and more. $storeUrl',
+        'Yesani Vero360 â€“ pulogalamu imodzi ya msika, chakudya, mayendedwe, ndi zina. $storeUrl',
       );
       await Share.share(text, subject: 'Vero360');
     } catch (_) {
@@ -1854,8 +1854,8 @@ class _SettingsPageState extends State<SettingsPage> {
     } finally {
       if (mounted) setState(() => _refreshing = false);
 
-      // Always reset the stack on the root navigator — even if Settings unmounted
-      // mid-logout (otherwise Profile stays visible as “Guest User”).
+      // Always reset the stack on the root navigator â€” even if Settings unmounted
+      // mid-logout (otherwise Profile stays visible as â€œGuest Userâ€).
       openVeroMainShell(rootNav.context, email: '', tabIndex: 0);
     }
   }
@@ -2283,20 +2283,20 @@ class _SettingsPageState extends State<SettingsPage> {
       title: _t('Delete account', 'Chotsani akaunti'),
       message: _t(
         'This permanently deletes your account and all related data:\n'
-        '• Profile & login\n'
-        '• Marketplace items & shop\n'
-        '• Food menus, restaurants & orders\n'
-        '• Accommodation listings, bookings & calendar blocks\n'
-        '• Cart, promos, stories & wallets\n'
-        '• Merchant / customer records\n\n'
+        'â€¢ Profile & login\n'
+        'â€¢ Marketplace items & shop\n'
+        'â€¢ Food menus, restaurants & orders\n'
+        'â€¢ Accommodation listings, bookings & calendar blocks\n'
+        'â€¢ Cart, promos, stories & wallets\n'
+        'â€¢ Merchant / customer records\n\n'
         'This cannot be undone.',
         'Izi zidzachotsa akaunti yanu ndi zinthu zonse:\n'
-        '• Profile ndi login\n'
-        '• Zogulitsa pa Marketplace ndi shop\n'
-        '• Menyu ya chakudya, ma restaurant ndi ma order\n'
-        '• Malo ogona, ma booking ndi masiku obisika\n'
-        '• Cart, promos, stories ndi wallets\n'
-        '• Zolemba za merchant / customer\n\n'
+        'â€¢ Profile ndi login\n'
+        'â€¢ Zogulitsa pa Marketplace ndi shop\n'
+        'â€¢ Menyu ya chakudya, ma restaurant ndi ma order\n'
+        'â€¢ Malo ogona, ma booking ndi masiku obisika\n'
+        'â€¢ Cart, promos, stories ndi wallets\n'
+        'â€¢ Zolemba za merchant / customer\n\n'
         'Sizingabwererenso.',
       ),
       confirmText: _t('Delete', 'Chotsani'),
@@ -2321,7 +2321,7 @@ class _SettingsPageState extends State<SettingsPage> {
       final verified = await _promptDeleteAuthMethod(currentUser);
       if (!verified) return;
 
-      // Remote wipe while still signed in (capped — do not hang Settings).
+      // Remote wipe while still signed in (capped â€” do not hang Settings).
       // Purge clears local chats/rides/hive first, then deletes API + Firestore.
       await AccountDataPurge.purgeCurrentUser(
         budget: const Duration(seconds: 10),
@@ -2471,8 +2471,8 @@ class _SettingsPageState extends State<SettingsPage> {
                     icon: Icons.local_taxi_rounded,
                     title: _t('Driver mode', 'Driver mode'),
                     subtitle: _isDriver
-                        ? _t('On – using app as a driver', 'Yayatsidwa – ngati driver')
-                        : _t('Off – switch on to drive with VeroRide', 'Yazimitsidwa – yatsani kuti muyendetse'),
+                        ? _t('On â€“ using app as a driver', 'Yayatsidwa â€“ ngati driver')
+                        : _t('Off â€“ switch on to drive with VeroRide', 'Yazimitsidwa â€“ yatsani kuti muyendetse'),
                     onTap: () => _onDriverModeChanged(!_isDriver),
                     trailing: _switchingDriverMode
                         ? const SizedBox(
@@ -2505,8 +2505,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   icon: Icons.fingerprint,
                   title: _t('App lock (Face ID / fingerprint)', 'Chitseko (Face ID / chala)'),
                   subtitle: _biometricLockEnabled
-                      ? _t('On – unlock when returning to app', 'Yayatsidwa – tsegulani mukabwerera')
-                      : _t('Off – require Face ID or fingerprint', 'Yazimitsidwa – Face ID kapena chala'),
+                      ? _t('On â€“ unlock when returning to app', 'Yayatsidwa â€“ tsegulani mukabwerera')
+                      : _t('Off â€“ require Face ID or fingerprint', 'Yazimitsidwa â€“ Face ID kapena chala'),
                   onTap: _openAppLockSettings,
                 ),
                 _SettingsTile(
@@ -2627,8 +2627,8 @@ class _SettingsPageState extends State<SettingsPage> {
                   icon: Icons.apps_outlined,
                   title: _t('App version', 'Mtundu wa pulogalamu'),
                   subtitle: _t(
-                    'v$_appVersion · Tap to check for updates',
-                    'v$_appVersion · Dinani kuyang\'ana zatsopano',
+                    'v$_appVersion Â· Tap to check for updates',
+                    'v$_appVersion Â· Dinani kuyang\'ana zatsopano',
                   ),
                   onTap: _checkForAppUpdates,
                 ),
@@ -2932,7 +2932,7 @@ class AboutUsPage extends StatelessWidget {
               const SizedBox(height: 14),
 
               const Text(
-                'Through Vero360, users can access marketplace products, food services, transport, courier services, accommodation bookings, and secure communication — all from a single app.',
+                'Through Vero360, users can access marketplace products, food services, transport, courier services, accommodation bookings, and secure communication â€” all from a single app.',
                 style: TextStyle(height: 1.4),
               ),
 
@@ -2964,7 +2964,7 @@ class AboutUsPage extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               const Text(
-                'To become Malawi’s leading super app for digital services, empowering businesses and improving customer experiences.',
+                'To become Malawiâ€™s leading super app for digital services, empowering businesses and improving customer experiences.',
                 style: TextStyle(height: 1.4),
               ),
 
@@ -2978,7 +2978,7 @@ class AboutUsPage extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               const Text(
-                'Innovation · Reliability · Security ·Accessibility · Customer-Centricity',
+                'Innovation Â· Reliability Â· Security Â·Accessibility Â· Customer-Centricity',
                 style: TextStyle(height: 1.4),
               ),
 
@@ -3013,7 +3013,7 @@ class AboutUsPage extends StatelessWidget {
               // Footer
               const Center(
                 child: Text(
-                  '© 2026 Vero360. All rights reserved.',
+                  'Â© 2026 Vero360. All rights reserved.',
                   style: TextStyle(
                     fontSize: 12,
                     color: Colors.black54,
@@ -3360,7 +3360,7 @@ class PolicyPage extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 _pageBody(
-                  'Vero360’s payment hold protection ends once funds are released. This does not affect your rights under applicable law.',
+                  'Vero360â€™s payment hold protection ends once funds are released. This does not affect your rights under applicable law.',
                 ),
               ],
             ),

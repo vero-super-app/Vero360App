@@ -1,7 +1,7 @@
-// lib/Pages/Home/food_page.dart
+﻿// lib/Pages/Home/food_page.dart
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'package:universal_io/io.dart';
 import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -70,7 +70,7 @@ const Color _pageBg = Color(0xFFFFFFFF);
 const Color _divider = Color(0xFFEEEEEE);
 
 class _FoodPageState extends State<FoodPage> {
-  // ── Services / controllers ─────────────────────────────────────────────────
+  // â”€â”€ Services / controllers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   final FoodService            foodService      = FoodService();
   final LocationService        _locationService = LocationService();
   final TextEditingController  _searchCtrl      = TextEditingController();
@@ -93,15 +93,15 @@ class _FoodPageState extends State<FoodPage> {
 
   late Future<List<FoodModel>> _future;
   Map<String, int> _engagementScores = const {};
-  /// merchantId → public profile bits for Food cards (hours, reviews, name).
+  /// merchantId â†’ public profile bits for Food cards (hours, reviews, name).
   final Map<String, _RestaurantPublicMeta> _restaurantMeta = {};
 
-  // ── Lifecycle ──────────────────────────────────────────────────────────────
+  // â”€â”€ Lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   @override
   void initState() {
     super.initState();
     _searchCtrl.addListener(_onSearchChanged);
-    // Must init before first build — never leave `late _future` unset.
+    // Must init before first build â€” never leave `late _future` unset.
     _future = _loadAll();
     unawaited(_bootstrap());
     unawaited(_loadEngagementScores());
@@ -242,7 +242,7 @@ class _FoodPageState extends State<FoodPage> {
       if (mounted && quick != null) {
         setState(() {
           _userPosition = quick;
-          // Don't spin forever — we already have a usable position.
+          // Don't spin forever â€” we already have a usable position.
           _locationLoading = false;
         });
         final next = _loadAll();
@@ -380,7 +380,7 @@ class _FoodPageState extends State<FoodPage> {
         .toList();
   }
 
-  // ── Data helpers ───────────────────────────────────────────────────────────
+  // â”€â”€ Data helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   List<FoodModel> _sortByDistanceIfPossible(List<FoodModel> items) {
     final p = _userPosition;
     if (p == null) return items;
@@ -448,7 +448,7 @@ class _FoodPageState extends State<FoodPage> {
   void _precacheFoodImages(List<FoodModel> items) {
     if (!mounted) return;
     final dpr = MediaQuery.devicePixelRatioOf(context);
-    // Thumb-sized decode — much faster than full-res food photos.
+    // Thumb-sized decode â€” much faster than full-res food photos.
     final cachePx = (120 * dpr).round().clamp(96, 240);
     // Near-you dishes first (already sorted); warm the first row hard.
     for (final item in items.take(16)) {
@@ -476,7 +476,7 @@ class _FoodPageState extends State<FoodPage> {
     return null;
   }
 
-  // ── Search handlers ────────────────────────────────────────────────────────
+  // â”€â”€ Search handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   void _onSearchChanged() {
     setState(() {});
     _debounce?.cancel();
@@ -926,7 +926,7 @@ class _FoodPageState extends State<FoodPage> {
     );
   }
 
-  // ── Location banner ────────────────────────────────────────────────────────
+  // â”€â”€ Location banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _buildLocationBanner() {
     if (_locationLoading) {
       return Padding(
@@ -937,7 +937,7 @@ class _FoodPageState extends State<FoodPage> {
             child: CircularProgressIndicator(strokeWidth: 2, color: _veroOrange),
           ),
           const SizedBox(width: 10),
-          Text('Getting your location…',
+          Text('Getting your locationâ€¦',
               style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
                   color: Colors.grey.shade600)),
         ]),
@@ -962,8 +962,8 @@ class _FoodPageState extends State<FoodPage> {
               Expanded(
                 child: Text(
                   label.isNotEmpty
-                      ? 'Near $label · prioritising nearby food'
-                      : 'Using GPS · prioritising food near you',
+                      ? 'Near $label Â· prioritising nearby food'
+                      : 'Using GPS Â· prioritising food near you',
                   style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
                       color: _veroOrange.withOpacity(0.9)),
                 ),
@@ -1010,7 +1010,7 @@ class _FoodPageState extends State<FoodPage> {
     );
   }
 
-  // ── Search row ─────────────────────────────────────────────────────────────
+  // â”€â”€ Search row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _buildSearchRow() {
     return Row(
       children: [
@@ -1074,7 +1074,7 @@ class _FoodPageState extends State<FoodPage> {
     );
   }
 
-  // ── Category chips ─────────────────────────────────────────────────────────
+  // â”€â”€ Category chips â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _buildCategoryChips() {
     return SizedBox(
       height: 42,
@@ -1113,7 +1113,7 @@ class _FoodPageState extends State<FoodPage> {
     );
   }
 
-  // ── Main build ─────────────────────────────────────────────────────────────
+  // â”€â”€ Main build â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1454,7 +1454,7 @@ class _FoodPageState extends State<FoodPage> {
     );
   }
 
-  // ── State helpers ──────────────────────────────────────────────────────────
+  // â”€â”€ State helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _buildSkeletonGrid() {
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
@@ -1549,7 +1549,7 @@ class _FoodPageState extends State<FoodPage> {
   }
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 bool _foodImageLooksLikeBase64(String s) {
   final x = s.contains(',') ? s.split(',').last.trim() : s.trim();
@@ -1560,10 +1560,10 @@ bool _foodImageLooksLikeBase64(String s) {
 String _foodListingLocationLine(FoodModel item) {
   final loc = item.listingLocation?.trim();
   if (loc != null && loc.isNotEmpty) {
-    return loc.length > 40 ? '${loc.substring(0, 38)}…' : loc;
+    return loc.length > 40 ? '${loc.substring(0, 38)}â€¦' : loc;
   }
   if (item.latitude != null && item.longitude != null) {
-    return '${item.latitude!.toStringAsFixed(2)}°, ${item.longitude!.toStringAsFixed(2)}°';
+    return '${item.latitude!.toStringAsFixed(2)}Â°, ${item.longitude!.toStringAsFixed(2)}Â°';
   }
   return 'Location on request';
 }
@@ -1602,7 +1602,7 @@ String _foodRestaurantMetaLine(
   }
   final dist = _foodDistanceLabel(item, userLat, userLng);
   if (dist.isNotEmpty) parts.add(dist);
-  return parts.join(' · ');
+  return parts.join(' Â· ');
 }
 
 Widget _foodMetaRow(IconData icon, String text) => Row(
@@ -1717,7 +1717,7 @@ class _FoodImageTileState extends State<_FoodImageTile> {
     final dpr = MediaQuery.devicePixelRatioOf(context);
     final cachePx = (widget.height * dpr).round().clamp(96, 240);
 
-    // HTTP URLs paint immediately — no setState delay.
+    // HTTP URLs paint immediately â€” no setState delay.
     if (raw.toLowerCase().startsWith('http://') ||
         raw.toLowerCase().startsWith('https://')) {
       return ResilientCachedNetworkImage(
@@ -1764,7 +1764,7 @@ class _FoodImageTileState extends State<_FoodImageTile> {
   }
 }
 
-// ── Food card ────────────────────────────────────────────────────────────────
+// â”€â”€ Food card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _RestaurantPublicMeta {
   const _RestaurantPublicMeta({
     this.businessName = '',
@@ -2054,7 +2054,7 @@ class _NearestRestaurantCard extends StatelessWidget {
               if (parts.isNotEmpty) ...[
                 const SizedBox(height: 4),
                 Text(
-                  parts.join(' · '),
+                  parts.join(' Â· '),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -2103,7 +2103,7 @@ class _NearestRestaurantCard extends StatelessWidget {
   }
 }
 
-// ── Section header ────────────────────────────────────────────────────────────
+// â”€â”€ Section header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _SectionHeader extends StatelessWidget {
   const _SectionHeader({
     required this.title,
@@ -2304,7 +2304,7 @@ class _NearestSeeAllPage extends StatelessWidget {
                         if (distLabel != null) distLabel,
                         if (loc.isNotEmpty) loc,
                         if (k.dishCount > 1) '${k.dishCount} dishes',
-                      ].join(' · ');
+                      ].join(' Â· ');
 
                       return Material(
                         color: Colors.white,
@@ -2412,7 +2412,7 @@ class _NearestSeeAllPage extends StatelessWidget {
   }
 }
 
-// ── Camera button ─────────────────────────────────────────────────────────────
+// â”€â”€ Camera button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _CameraButton extends StatelessWidget {
   const _CameraButton({required this.onTap, required this.color});
   final VoidCallback onTap;
@@ -2430,7 +2430,7 @@ class _CameraButton extends StatelessWidget {
   );
 }
 
-// ── Filter button ─────────────────────────────────────────────────────────────
+// â”€â”€ Filter button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _FilterButton extends StatelessWidget {
   const _FilterButton({required this.onTap, required this.color});
   final VoidCallback onTap;

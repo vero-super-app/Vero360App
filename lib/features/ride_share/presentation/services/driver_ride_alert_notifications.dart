@@ -1,9 +1,9 @@
-import 'dart:convert';
-import 'dart:io' show Platform;
+﻿import 'dart:convert';
+import 'package:universal_io/io.dart' show Platform;
 
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb, debugPrint;
 import 'package:flutter/services.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:vero360_app/native/local_notifications.dart';
 
 /// Local heads-up / full-screen ride offer used when the app is not in front.
 class DriverRideAlertNotifications {

@@ -1,7 +1,7 @@
-// lib/services/auth_service.dart
+﻿// lib/services/auth_service.dart
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'package:universal_io/io.dart';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -303,7 +303,7 @@ class AuthService {
     final trimmedId = identifier.trim();
 
     try {
-      // ✅ Use ApiConfig for production-ready endpoint
+      // âœ… Use ApiConfig for production-ready endpoint
       final res = await http
           .post(
             ApiConfig.endpoint('/auth/login'),
@@ -350,7 +350,7 @@ class AuthService {
         };
       }
 
-      // Firestore requires Firebase Auth — mirror backend account before returning.
+      // Firestore requires Firebase Auth â€” mirror backend account before returning.
       final firebaseEmail = _firebaseEmailForIdentifier(trimmedId);
       final fbUser = await _ensureFirebaseMirrorForBackendUser(
         email: firebaseEmail,
@@ -369,7 +369,7 @@ class AuthService {
         );
       }
 
-      // Mobile / ride-share require a Firebase ID token — do not keep a Nest JWT session.
+      // Mobile / ride-share require a Firebase ID token â€” do not keep a Nest JWT session.
       if (showErrorToast) {
         _toast(
           context,
@@ -715,7 +715,7 @@ class AuthService {
       await _firebaseAuth.signOut();
       return;
     } on FirebaseAuthException catch (_) {
-      // verificationTicket is not a Firebase custom token — expected.
+      // verificationTicket is not a Firebase custom token â€” expected.
     }
 
     try {
@@ -725,7 +725,7 @@ class AuthService {
       );
       return;
     } on FirebaseAuthException catch (_) {
-      // verificationTicket is not a Firebase oob code — expected.
+      // verificationTicket is not a Firebase oob code â€” expected.
     }
 
     throw const ApiException(
@@ -1222,7 +1222,7 @@ class AuthService {
         credential.familyName ?? '',
       ].where((s) => s.trim().isNotEmpty).join(' ').trim();
 
-      // ✅ Use ApiConfig for production-ready endpoint
+      // âœ… Use ApiConfig for production-ready endpoint
       final res = await http
           .post(
             ApiConfig.endpoint('/auth/apple'),
@@ -1312,7 +1312,7 @@ class AuthService {
 
   // -------------------- Logout --------------------
 
-  /// Best-effort network/driver/FCM cleanup — never blocks logout longer than [budget].
+  /// Best-effort network/driver/FCM cleanup â€” never blocks logout longer than [budget].
   Future<void> _logoutRemoteCleanup({
     required String? token,
     Duration budget = const Duration(milliseconds: 1600),
@@ -1362,7 +1362,7 @@ class AuthService {
 
     try {
       BackendChatService.clearAuthCache();
-      // Don't await socket teardown — local session clear is enough for UX.
+      // Don't await socket teardown â€” local session clear is enough for UX.
       unawaited(BackendMessagingSocket.disconnect());
     } catch (_) {}
 

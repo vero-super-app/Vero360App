@@ -21,7 +21,7 @@ const TNM = '27494cb5-ba9e-437f-a114-4e7a7686bcca';
 function providerFor(operatorId) {
   const id = String(operatorId || '').trim().toLowerCase();
   if (id === AIRTEL || id.includes('airtel')) return 'AIRTEL_MWI';
-  if (id === TNM || id.includes('tnm') || id.includes('mpamba')) return 'TNM_MWI';
+  if (id === TNM || id.includes('tnm') || id.includes('mpamba')) return 'TNM_MPAMBA_MWI';
   return '';
 }
 

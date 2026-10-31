@@ -1,7 +1,7 @@
- import 'dart:async';
+﻿ import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
-import 'dart:io' show File;
+import 'package:universal_io/io.dart' show File;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -32,7 +32,7 @@ class MessagePage extends StatefulWidget {
   final String? peerName;
   final String? peerAvatarUrl;
 
-  // legacy/unused (kept so old call-sites don’t break)
+  // legacy/unused (kept so old call-sites donâ€™t break)
   final String? peerId;
 
   const MessagePage({
@@ -405,7 +405,7 @@ class _MessagePageState extends State<MessagePage> {
 
     try {
       if (hasPics) {
-        // DON’T clear until success
+        // DONâ€™T clear until success
         final localCaption = caption;
 
         for (final img in List<_PendingImage>.from(_pendingImages)) {
@@ -893,7 +893,7 @@ class _MessagePageState extends State<MessagePage> {
                           if (msgs.isEmpty) {
                             return const Center(
                               child: Text(
-                                'Say hi 👋',
+                                'Say hi ðŸ‘‹',
                                 style: TextStyle(
                                   color: Colors.black54,
                                   fontWeight: FontWeight.w800,
@@ -1051,7 +1051,7 @@ class _MessagePageState extends State<MessagePage> {
                                             textInputAction: TextInputAction.send,
                                             onSubmitted: (_) => _send(),
                                             decoration: const InputDecoration(
-                                              hintText: 'Message…',
+                                              hintText: 'Messageâ€¦',
                                               border: InputBorder.none,
                                             ),
                                           ),
@@ -1308,7 +1308,7 @@ class _MessageBubble extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    edited ? '$time • edited' : time,
+                    edited ? '$time â€¢ edited' : time,
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w800,
@@ -1410,7 +1410,7 @@ class _AudioBubble extends StatelessWidget {
             const Icon(Icons.play_arrow_rounded),
             const SizedBox(width: 10),
             Text(
-              'Voice note • $duration',
+              'Voice note â€¢ $duration',
               style: const TextStyle(fontWeight: FontWeight.w800),
             ),
           ],
@@ -1443,7 +1443,7 @@ class _CallBubble extends StatelessWidget {
           Icon(icon),
           const SizedBox(width: 10),
           Text(
-            '$label • id: ${callId.isEmpty ? '—' : callId.substring(0, min(6, callId.length))}',
+            '$label â€¢ id: ${callId.isEmpty ? 'â€”' : callId.substring(0, min(6, callId.length))}',
             style: const TextStyle(fontWeight: FontWeight.w800),
           ),
         ],
@@ -1516,7 +1516,7 @@ class _CallPlaceholderScreen extends StatelessWidget {
             Icon(icon, color: Colors.white, size: 72),
             const SizedBox(height: 14),
             Text(
-              '$label…',
+              '$labelâ€¦',
               style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 10),

@@ -1,5 +1,5 @@
-import 'dart:convert';
-import 'dart:io';
+﻿import 'dart:convert';
+import 'package:universal_io/io.dart';
 
 import 'package:flutter/foundation.dart' show kDebugMode, debugPrint;
 import 'package:hive_ce_flutter/hive_ce_flutter.dart';
@@ -209,7 +209,7 @@ class ChatOutbox {
   }) async {
     final dir = await mediaDir();
     final dest = '${dir.path}/$clientMessageId.$ext';
-    // flush:false — chat UX should not wait on fsync before the bubble paints.
+    // flush:false â€” chat UX should not wait on fsync before the bubble paints.
     await File(dest).writeAsBytes(bytes, flush: false);
     return dest;
   }

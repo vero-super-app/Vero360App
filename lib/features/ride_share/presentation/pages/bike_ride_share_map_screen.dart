@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'package:universal_io/io.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -686,7 +686,7 @@ class _BikeRideShareMapScreenState extends ConsumerState<BikeRideShareMapScreen>
           ),
           const SizedBox(height: 8),
           Text(
-            'Please check your data or Wi‑Fi,\nthen try again.',
+            'Please check your data or Wiâ€‘Fi,\nthen try again.',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Colors.grey[600],

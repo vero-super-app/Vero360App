@@ -1,6 +1,6 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'package:universal_io/io.dart';
 import 'dart:math' as math;
 import 'dart:ui';
 
@@ -79,9 +79,9 @@ import 'package:vero360_app/widgets/app_skeleton.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
-/* ═══════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    DESIGN TOKENS
-═══════════════════════════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 class AppColors {
   static const brandOrange     = Color(0xFFFF6B00);
   static const brandOrangeDeep = Color(0xFFD94F00);
@@ -106,9 +106,9 @@ const kHeroGradient = LinearGradient(
   end: Alignment.bottomRight,
 );
 
-/* ═══════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    DATA MODELS
-═══════════════════════════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 class Mini {
   final String keyId;
   final String label;
@@ -147,9 +147,9 @@ const Map<String, String> kQuickServiceGuideNotes = {
   'customer_service': 'Chat with Vero Assist in English or Chichewa.',
 };
 
-/* ═══════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    HOMEPAGE
-═══════════════════════════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 class Vero360Homepage extends ConsumerStatefulWidget {
   final String email;
   final bool isDriverHome;
@@ -185,7 +185,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
   StreamSubscription<User?>? _authSub;
   String? _greetingUid;
 
-  /* ── helpers ─────────────────────────────────── */
+  /* â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   String _greeting() {
     final h = DateTime.now().hour;
     if (h < 12) return 'Good morning';
@@ -219,7 +219,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       if (_greetingIsBusiness) return raw;
       return _firstNameFromRaw(raw);
     }
-    // Never trust a stale constructor email alone after account switch —
+    // Never trust a stale constructor email alone after account switch â€”
     // wait until auth/prefs resolve for the current user.
     return _greetingResolved ? 'there' : '...';
   }
@@ -232,7 +232,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
           ))
       .toList();
 
-  /* ── lifecycle ───────────────────────────────── */
+  /* â”€â”€ lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   @override
   void initState() {
     super.initState();
@@ -287,7 +287,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
     super.dispose();
   }
 
-  /* ── data fetching ───────────────────────────── */
+  /* â”€â”€ data fetching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   Future<void> _resolveGreetingName({bool force = false}) async {
     User? authUser;
     try {
@@ -407,7 +407,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
     });
   }
 
-  /* ── build ───────────────────────────────────── */
+  /* â”€â”€ build â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   @override
   Widget build(BuildContext context) {
     return AnnotatedRegion<SystemUiOverlayStyle>(
@@ -423,7 +423,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
             CustomScrollView(
               physics: const BouncingScrollPhysics(),
               slivers: [
-                /* ── Hero SliverAppBar ───────────────────── */
+                /* â”€â”€ Hero SliverAppBar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
                 SliverAppBar(
                   expandedHeight: 248,
                   floating:  false,
@@ -447,7 +447,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                   actions: const [],
                 ),
 
-                /* ── Stories ─────────────────────────────── */
+                /* â”€â”€ Stories â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
                 const SliverToBoxAdapter(
                   child: Padding(
                     padding: EdgeInsets.fromLTRB(0, 14, 0, 0),
@@ -455,7 +455,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                   ),
                 ),
 
-                /* ── Sliding ads (above Quick Services) ──── */
+                /* â”€â”€ Sliding ads (above Quick Services) â”€â”€â”€â”€ */
                 const SliverToBoxAdapter(
                   child: Padding(
                     padding: EdgeInsets.only(top: 14),
@@ -463,7 +463,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                   ),
                 ),
 
-                /* ── Quick Services ──────────────────────── */
+                /* â”€â”€ Quick Services â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
                 SliverToBoxAdapter(
                   child: Padding(
                     key:     _servicesCardKey,
@@ -476,7 +476,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                   ),
                 ),
 
-                /* ── Nearby ──────────────────────────────── */
+                /* â”€â”€ Nearby â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.only(top: 24),
@@ -497,7 +497,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                   ),
                 ),
 
-                /* ── Promo banner ────────────────────────── */
+                /* â”€â”€ Promo banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
                 const SliverToBoxAdapter(
                   child: Padding(
                     padding: EdgeInsets.only(top: 20),
@@ -505,7 +505,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                   ),
                 ),
 
-                /* ── Digital services ────────────────────── */
+                /* â”€â”€ Digital services â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
@@ -515,7 +515,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
                   ),
                 ),
 
-                /* ── Latest arrivals ─────────────────────── */
+                /* â”€â”€ Latest arrivals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
                 SliverToBoxAdapter(
                   child: Padding(
                     padding: EdgeInsets.fromLTRB(
@@ -530,7 +530,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
               ],
             ),
 
-            /* ── Coach overlay ───────────────────────────── */
+            /* â”€â”€ Coach overlay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
             if (_showServicesHint)
               Builder(
                 builder: (ctx) => QuickServicesCoachOverlay(
@@ -555,7 +555,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
     );
   }
 
-  /* ── navigation helpers ──────────────────────── */
+  /* â”€â”€ navigation helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   Future<void> _onSearchTap() async {
     final picked = await showSearch<Mini?>(
       context: context,
@@ -673,7 +673,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       await Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => NetflixPlanPickerPage(
           onSelectPlan: (plan) {
-            // Push buy on top — Back returns to Choose your plan.
+            // Push buy on top â€” Back returns to Choose your plan.
             _openDigitalCheckout(
               product: plan,
               selectedUsd: 0,
@@ -702,7 +702,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       return;
     }
 
-    // Spotify / Apple Music / Netflix plan / ChatGPT: fixed MWK → checkout.
+    // Spotify / Apple Music / Netflix plan / ChatGPT: fixed MWK â†’ checkout.
     if (!p.usesAmountPicker) {
       await _openDigitalCheckout(
         product: p,
@@ -811,9 +811,9 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
   }
 }
 
-/* ═══════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    HERO HEADER
-═══════════════════════════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 class _HeroHeader extends StatelessWidget {
   final String            greeting;
   final String            name;
@@ -894,7 +894,7 @@ class _HeroHeader extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  /* top row — fade as the pinned scrim takes over */
+                  /* top row â€” fade as the pinned scrim takes over */
                   IgnorePointer(
                     ignoring: chromeOpacity < 0.08,
                     child: Opacity(
@@ -1017,7 +1017,7 @@ class _HeroHeader extends StatelessWidget {
 
                   const SizedBox(height: 14),
 
-                  /* search row — min height + padding so text scale / line height never clips */
+                  /* search row â€” min height + padding so text scale / line height never clips */
                   IgnorePointer(
                     ignoring: greetingOpacity < 0.08,
                     child: Opacity(
@@ -1062,7 +1062,7 @@ class _HeroHeader extends StatelessWidget {
             ),
           ),
 
-          /* text crawl — bottom strip of orange hero (no banner) */
+          /* text crawl â€” bottom strip of orange hero (no banner) */
           Positioned(
             left: 0,
             right: 0,
@@ -1163,7 +1163,7 @@ class _HeroFlexibleSpace extends StatelessWidget {
   }
 }
 
-/* ── Collapsed bar (shown when scrolled) ───────── */
+/* â”€â”€ Collapsed bar (shown when scrolled) â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 class _CollapsedBar extends StatelessWidget {
   final VoidCallback onSearchTap;
   final VoidCallback onNotifTap;
@@ -1282,7 +1282,7 @@ class _CollapsedBar extends StatelessWidget {
   }
 }
 
-/// Coin chip next to notifications — shows balance; opens Vero Coin instructions.
+/// Coin chip next to notifications â€” shows balance; opens Vero Coin instructions.
 class _VeroCoinHeroButton extends StatelessWidget {
   final VoidCallback onTap;
   final bool compact;
@@ -1336,9 +1336,9 @@ class _VeroCoinHeroButton extends StatelessWidget {
   }
 }
 
-/* ═══════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    SERVICES CARD
-═══════════════════════════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 class _ServicesCard extends StatelessWidget {
   final List<Mini>          items;
   final Map<String, GlobalKey> tileKeys;
@@ -1373,7 +1373,7 @@ class _ServicesCard extends StatelessWidget {
   }
 }
 
-/* ── Mini icons grid ─────────────────────────────── */
+/* â”€â”€ Mini icons grid â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 class _MiniIconsGrid extends StatelessWidget {
   final List<Mini>          items;
   final Map<String, GlobalKey> tileKeys;
@@ -1600,9 +1600,9 @@ class _SupportServiceTile extends StatelessWidget {
   }
 }
 
-/* ═══════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    NEARBY SECTION
-═══════════════════════════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 class _NearbySection extends StatefulWidget {
   final void Function(String) onOpenService;
   const _NearbySection({required this.onOpenService});
@@ -2184,9 +2184,9 @@ class _ProviderCard extends StatelessWidget {
   }
 }
 
-/* ═══════════════════════════════════════════════════
-   PROMO BANNER — sliding carousel (mirrors homepage ads)
-═══════════════════════════════════════════════════ */
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+   PROMO BANNER â€” sliding carousel (mirrors homepage ads)
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 class _PromoBanner extends StatefulWidget {
   const _PromoBanner();
 
@@ -2544,7 +2544,7 @@ class _PromoCtaSlide extends StatelessWidget {
                             ],
                           ),
                           child: const Text(
-                            'See all →',
+                            'See all â†’',
                             style: TextStyle(
                               color: AppColors.brandOrange,
                               fontWeight: FontWeight.w900,
@@ -2565,9 +2565,9 @@ class _PromoCtaSlide extends StatelessWidget {
   }
 }
 
-/* ═══════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    DIGITAL SERVICES SECTION
-═══════════════════════════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 class DigitalServicesSection extends StatefulWidget {
   final void Function(DigitalProduct) onBuy;
   const DigitalServicesSection({
@@ -2777,7 +2777,7 @@ class _DigitalTileState extends State<_DigitalTile> with SingleTickerProviderSta
                     ] else if (widget.p.category == 'streaming') ...[
                       const SizedBox(height: 2),
                       Text(
-                        '…',
+                        'â€¦',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: widget.compact ? 8 : 9,
@@ -2797,9 +2797,9 @@ class _DigitalTileState extends State<_DigitalTile> with SingleTickerProviderSta
   }
 }
 
-/* ═══════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    LATEST ARRIVALS SECTION
-═══════════════════════════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 class LatestArrivalsSection extends StatefulWidget {
   const LatestArrivalsSection({super.key});
 
@@ -3140,7 +3140,7 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
           )) {
         ToastHelper.showCustomToast(
           sheetCtx,
-          'This is your own listing — you cannot chat with yourself.',
+          'This is your own listing â€” you cannot chat with yourself.',
           isSuccess: false,
           errorMessage: '',
         );
@@ -3692,7 +3692,7 @@ class _LatestDetailsSheetState extends State<_LatestDetailsSheet> {
                                 )
                               : const Icon(Icons.chat_bubble_outline_rounded),
                           label: Text(
-                            _messaging ? 'Opening…' : 'Message',
+                            _messaging ? 'Openingâ€¦' : 'Message',
                             style: const TextStyle(fontWeight: FontWeight.w800),
                           ),
                           style: OutlinedButton.styleFrom(
@@ -3801,9 +3801,9 @@ class _ImgPlaceholder extends StatelessWidget {
   );
 }
 
-/* ═══════════════════════════════════════════════════
-   COACH OVERLAY — SERVICE GUIDE
-═══════════════════════════════════════════════════ */
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+   COACH OVERLAY â€” SERVICE GUIDE
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 class ServiceGuideStep {
   final String keyId;
   final String title;
@@ -4026,7 +4026,7 @@ class _QuickServicesCoachOverlayState extends State<QuickServicesCoachOverlay>
   }
 }
 
-/* ── Guide card ──────────────────────────────────── */
+/* â”€â”€ Guide card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 class _GuideCard extends StatelessWidget {
   const _GuideCard({
     required this.step,  required this.idx,   required this.total,
@@ -4254,7 +4254,7 @@ class _GuideCard extends StatelessWidget {
   }
 }
 
-/* ── Spotlight ring ──────────────────────────────── */
+/* â”€â”€ Spotlight ring â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 class _SpotlightRing extends StatelessWidget {
   const _SpotlightRing({required this.w, required this.h, required this.pulse, required this.color});
   final double w, h, pulse;
@@ -4294,7 +4294,7 @@ class _RingPainter extends CustomPainter {
   bool shouldRepaint(_RingPainter o) => o.pulse != pulse || o.color != color;
 }
 
-/* ── Bobbing arrow ───────────────────────────────── */
+/* â”€â”€ Bobbing arrow â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 class _BobArrow extends StatelessWidget {
   const _BobArrow({required this.pulse, required this.color});
   final double pulse;
@@ -4315,7 +4315,7 @@ class _BobArrow extends StatelessWidget {
   );
 }
 
-/* ── Floating orb ────────────────────────────────── */
+/* â”€â”€ Floating orb â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 class _Orb extends StatelessWidget {
   const _Orb({required this.anim, required this.left, required this.top,
       required this.size, required this.color, required this.phase});
@@ -4336,9 +4336,9 @@ class _Orb extends StatelessWidget {
   }
 }
 
-/* ═══════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    SHARED WIDGETS
-═══════════════════════════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 class _Dots extends StatelessWidget {
   final int count, index;
   const _Dots({required this.count, required this.index});
@@ -4399,9 +4399,9 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-/* ═══════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    DIGITAL PRODUCT DETAIL / CHECKOUT PAGE
-═══════════════════════════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 class DigitalProductDetailPage extends StatefulWidget {
   final DigitalProduct product;
   final double selectedUsd;
@@ -4636,8 +4636,8 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                             _isFixedPrice
                                 ? formatMwk(_mwkAmount)
                                 : (p.usdAmounts.isEmpty
-                                    ? 'Price from admin…'
-                                    : '${p.formatAmount(widget.selectedUsd)}  ·  ${formatMwk(_mwkAmount)}'),
+                                    ? 'Price from adminâ€¦'
+                                    : '${p.formatAmount(widget.selectedUsd)}  Â·  ${formatMwk(_mwkAmount)}'),
                             style: const TextStyle(
                               color: AppColors.brandOrange,
                               fontWeight: FontWeight.w800,
@@ -4763,7 +4763,7 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
               const SizedBox(height: 10),
               const Center(
                 child: Text(
-                  'Secure checkout • Signed-in buyers get codes in My Orders. Guests get them by email.',
+                  'Secure checkout â€¢ Signed-in buyers get codes in My Orders. Guests get them by email.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: AppColors.body, fontWeight: FontWeight.w600, fontSize: 12),
                 ),
@@ -4854,9 +4854,9 @@ class _LabeledField extends StatelessWidget {
   }
 }
 
-/* ═══════════════════════════════════════════════════
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
    UTILITY
-═══════════════════════════════════════════════════ */
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 class UtilityPage extends StatelessWidget {
   final String title;
   const UtilityPage({super.key, this.title = 'Utility'});

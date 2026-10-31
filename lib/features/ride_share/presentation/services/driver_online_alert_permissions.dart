@@ -1,8 +1,8 @@
-import 'dart:io' show Platform;
+﻿import 'package:universal_io/io.dart' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:vero360_app/native/local_notifications.dart';
 import 'package:vero360_app/features/ride_share/presentation/services/driver_ride_alert_notifications.dart';
 
 /// Prompt for notification / lock-screen / battery settings when going online.

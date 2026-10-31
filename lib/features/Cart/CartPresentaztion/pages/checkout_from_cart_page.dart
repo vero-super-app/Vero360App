@@ -1,6 +1,6 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'package:universal_io/io.dart';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -75,7 +75,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   bool _loggedIn = false;
   bool _merchantsInLilongwe = false;
 
-  /// raw image string → resolved http URL (or empty if failed / not network)
+  /// raw image string â†’ resolved http URL (or empty if failed / not network)
   final Map<String, String> _resolvedHttpUrls = {};
   final Map<String, Uint8List> _decodedBytes = {};
 
@@ -108,7 +108,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     final count =
         '${_items.length} item${_items.length == 1 ? '' : 's'} in this order';
     final prep = _maxFoodPrepMinutes;
-    if (prep != null) return '$count · up to $prep min prep';
+    if (prep != null) return '$count Â· up to $prep min prep';
     return count;
   }
 
@@ -526,7 +526,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     );
   }
 
-  /// Instant paint from memory/disk — never blocks on the API.
+  /// Instant paint from memory/disk â€” never blocks on the API.
   Future<void> _hydrateAddressFromCache() async {
     final mem = AddressService.peekDefaultAddress();
     if (mem != null) {
@@ -793,7 +793,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
     return false;
   }
 
-  // ✅ Fast thumbs: disk cache + sized decode (same idea as cart / single checkout)
+  // âœ… Fast thumbs: disk cache + sized decode (same idea as cart / single checkout)
   Widget _itemImage(String raw, {double size = 64}) {
     final s = raw.trim();
     if (s.isEmpty) {
@@ -1050,7 +1050,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'Secure checkout · Airtel Money or TNM Mpamba',
+                          'Secure checkout Â· Airtel Money or TNM Mpamba',
                           style: TextStyle(
                             fontSize: 12.5,
                             fontWeight: FontWeight.w600,
@@ -1510,7 +1510,7 @@ class _CheckoutFromCartPageState extends State<CheckoutFromCartPage> {
   }
 }
 
-// ── Delivery Address card (same pattern as checkout_page) ─────────
+// â”€â”€ Delivery Address card (same pattern as checkout_page) â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _DeliveryAddressCard extends StatelessWidget {
   const _DeliveryAddressCard({
     required this.loading,
@@ -1638,7 +1638,7 @@ class _DeliveryAddressCard extends StatelessWidget {
               [
                 address!.city,
                 if (address!.description.isNotEmpty) address!.description,
-              ].join(' · '),
+              ].join(' Â· '),
             ),
         ],
       ),
@@ -1715,7 +1715,7 @@ class _DeliveryAddressCard extends StatelessWidget {
   }
 }
 
-// ────────────────────── FOOD CHECKOUT (single item, PawaPay → food_orders) ──────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ FOOD CHECKOUT (single item, PawaPay â†’ food_orders) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class FoodCheckoutContext {
   const FoodCheckoutContext({
     required this.merchantId,
@@ -1748,7 +1748,7 @@ class FoodCheckoutContext {
   final String? firestoreListingId;
 }
 
-// ────────────────────── IN-APP PAYMENT PAGE ──────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ IN-APP PAYMENT PAGE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class InAppPaymentPage extends StatefulWidget {
   final String txRef;
   final double totalAmount;
@@ -1951,7 +1951,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
       debugPrint('[InAppPaymentPage] Failed to create orders / escrow: $e');
       final message = (e is order_svc.AuthRequiredException || e is order_svc.FriendlyApiException)
           ? e.toString()
-          : 'We couldn’t finalize your order. Please contact support.';
+          : 'We couldnâ€™t finalize your order. Please contact support.';
       if (mounted && widget.rootContext.mounted) {
         ToastHelper.showCustomToast(
           widget.rootContext,
@@ -2000,7 +2000,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
       debugPrint('[InAppPaymentPage] Failed to create backend orders: $e');
       final message = (e is order_svc.AuthRequiredException || e is order_svc.FriendlyApiException)
               ? e.toString()
-              : 'We couldn’t create your order. Please try again.';
+              : 'We couldnâ€™t create your order. Please try again.';
       if (mounted && widget.rootContext.mounted) {
         ToastHelper.showCustomToast(
           widget.rootContext,
@@ -2359,8 +2359,8 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
       isDigital
           ? 'Payment successful!'
           : (food != null || foodItems.isNotEmpty)
-              ? 'Payment successful — the kitchen has your order.'
-              : 'Payment successful — the merchant has your order.',
+              ? 'Payment successful â€” the kitchen has your order.'
+              : 'Payment successful â€” the merchant has your order.',
       isSuccess: true,
       errorMessage: '',
     );
@@ -2718,7 +2718,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
         ? 'The kitchen has your order.'
         : merchants.isEmpty
             ? 'The merchant has your order.'
-            : 'Sent to ${merchants.take(2).join(' · ')}.';
+            : 'Sent to ${merchants.take(2).join(' Â· ')}.';
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
       children: [
@@ -2790,7 +2790,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
                 _PaidLine(
                   title: it.name,
                   subtitle:
-                      'Qty ${it.quantity}${it.merchantName.isEmpty ? '' : ' · ${it.merchantName}'}',
+                      'Qty ${it.quantity}${it.merchantName.isEmpty ? '' : ' Â· ${it.merchantName}'}',
                   amount: it.price * it.quantity,
                 ),
               if (food == null && items.isEmpty)
@@ -3000,7 +3000,7 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
       placing: _placingOrder,
       waitingTitle: _placingOrder ? 'Placing your order' : null,
       waitingSubtitle: _placingOrder
-          ? 'Payment is confirmed. Sending this order to the merchant…'
+          ? 'Payment is confirmed. Sending this order to the merchantâ€¦'
           : null,
       message: _momoMessage,
     );

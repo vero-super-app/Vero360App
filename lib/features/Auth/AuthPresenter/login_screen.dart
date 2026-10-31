@@ -25,6 +25,7 @@ import 'package:vero360_app/GernalServices/role_session_service.dart';
 import 'package:vero360_app/utils/session_local_cache.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
+import 'package:vero360_app/widgets/ios_pwa_install_banner.dart';
 
 class AppColors {
   static const brandOrange = AuthPalette.orange;
@@ -1229,7 +1230,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       AuthHeroHeader(title: title, subtitle: subtitle),
-                      const SizedBox(height: 22),
+                      const SizedBox(height: 16),
+                      const IosPwaInstallBanner(),
+                      const SizedBox(height: 6),
                       AuthCard(
                         child: _loadingSavedAccounts
                             ? const Padding(

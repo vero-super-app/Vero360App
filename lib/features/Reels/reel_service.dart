@@ -1,5 +1,5 @@
-import 'dart:async';
-import 'dart:io';
+﻿import 'dart:async';
+import 'package:universal_io/io.dart';
 import 'dart:math' as math;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -69,7 +69,7 @@ class ReelService {
   Set<String>? _followingCache;
   Set<String>? _hiddenByMe;
 
-  // ── Identity ──────────────────────────────────────────────────────────────
+  // â”€â”€ Identity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   Future<ReelIdentity?> myIdentity() async {
     final user = FirebaseAuth.instance.currentUser;
@@ -99,7 +99,7 @@ class ReelService {
     );
   }
 
-  // ── Feed ──────────────────────────────────────────────────────────────────
+  // â”€â”€ Feed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   Future<Set<String>> hiddenByMe() async {
     final cached = _hiddenByMe;
@@ -317,7 +317,7 @@ class ReelService {
         _ => 'video/mp4',
       };
 
-  /// Uploads [filePath] and creates the reel; returns its id. [onProgress] gets 0.0–1.0.
+  /// Uploads [filePath] and creates the reel; returns its id. [onProgress] gets 0.0â€“1.0.
   Future<String> postReel({
     required String filePath,
     required String caption,
@@ -452,7 +452,7 @@ class ReelService {
     }();
   }
 
-  // ── Engagement ────────────────────────────────────────────────────────────
+  // â”€â”€ Engagement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   Future<bool> isLiked(String reelId) async {
     final uid = _uid;
@@ -556,7 +556,7 @@ class ReelService {
     await hideForMe(reelId);
   }
 
-  // ── Comments ──────────────────────────────────────────────────────────────
+  // â”€â”€ Comments â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   List<ReelComment> _parseComments(QuerySnapshot<Map<String, dynamic>> snap) {
     final list = snap.docs.map(ReelComment.fromDoc).toList();
@@ -654,7 +654,7 @@ class ReelService {
     await batch.commit();
   }
 
-  // ── Following ─────────────────────────────────────────────────────────────
+  // â”€â”€ Following â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   Future<Set<String>> followingIds({bool refresh = false}) async {
     final uid = _uid;

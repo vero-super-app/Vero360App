@@ -3049,6 +3049,8 @@ class PolicyPage extends StatelessWidget {
       'assets/documents/Vero360_Refund_Policy.pdf';
   static const String _subscriptionPaymentPolicyAsset =
       'assets/documents/Vero360_Subscription_Payment_Policy_v2.pdf';
+  static const String _carHirePolicyAsset =
+      'assets/documents/Vero360_Car_Hire_Service_Policy.pdf';
 
   static const Color _cream = Color(0xFFFFFBF6);
   static const Color _ink = Color(0xFF101010);
@@ -3253,12 +3255,38 @@ class PolicyPage extends StatelessWidget {
                 _pageTitle('Before You Continue'),
                 const SizedBox(height: 8),
                 _pageBody(
-                  'Please review how Vero360 handles payments and your personal information. Full Terms & Conditions and the Privacy Policy are available below.',
+                  focusCarHire
+                      ? 'These are the policies Vero uses for every car hire. Review the Car Hire Service Policy, then the platform and privacy documents below.'
+                      : 'Please review how Vero360 handles payments and your personal information. Full Terms & Conditions and the Privacy Policy are available below.',
                 ),
               ],
             ),
           ),
           const SizedBox(height: 14),
+
+          if (focusCarHire) ...[
+            _sectionCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _pageTitle('Car Hire Service Policy'),
+                  const SizedBox(height: 8),
+                  _pageBody(
+                    'Vero360 is a facilitator only. Payments stay in the App, the deposit is held by Vero360, handover uses a photo Condition Report and GPS trip start, and partners may set listing rules such as self-drive, travel area and extra drivers.',
+                  ),
+                  const SizedBox(height: 10),
+                  _docTile(
+                    context,
+                    icon: Icons.directions_car_outlined,
+                    title: 'Car Hire Service Policy',
+                    subtitle: 'Official Vero360 car hire rules (PDF)',
+                    assetPath: _carHirePolicyAsset,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+          ],
 
           _sectionCard(
             child: Column(
@@ -3482,6 +3510,14 @@ class PolicyPage extends StatelessWidget {
                   title: 'Subscription & Payment Policy',
                   subtitle: 'Subscription and payment terms (PDF)',
                   assetPath: _subscriptionPaymentPolicyAsset,
+                ),
+                const SizedBox(height: 10),
+                _docTile(
+                  context,
+                  icon: Icons.directions_car_outlined,
+                  title: 'Car Hire Service Policy',
+                  subtitle: 'How vehicle rental works on Vero360 (PDF)',
+                  assetPath: _carHirePolicyAsset,
                 ),
               ],
             ),

@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'package:universal_io/io.dart';
 import 'dart:math' as math;
@@ -17,6 +17,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:vero360_app/Quickservices/social.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_browse_page.dart';
+import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/bike_ride_share_map_screen.dart';
 import 'package:vero360_app/features/ride_share/ride_share_entry_resolver.dart';
@@ -1374,14 +1375,14 @@ class _ServicesCard extends StatelessWidget {
 }
 
 /* â”€â”€ Mini icons grid â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-class _MiniIconsGrid extends StatelessWidget {
+class _MiniIconsGrid extends ConsumerWidget {
   final List<Mini>          items;
   final Map<String, GlobalKey> tileKeys;
   final void Function(String) onOpen;
   const _MiniIconsGrid({required this.items, required this.tileKeys, required this.onOpen});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return LayoutBuilder(builder: (ctx, c) {
       final w            = c.maxWidth;
       const crossSpacing = 8.0;
@@ -1421,6 +1422,16 @@ class _MiniIconsGrid extends StatelessWidget {
                 icon: m.icon,
                 label: m.label,
                 onTap: () => onOpen(m.keyId),
+              );
+            }
+            if (m.keyId == 'car_hire') {
+              final carCount = ref.watch(carHireAvailableCountProvider).value ?? 0;
+              return _MiniIconTile(
+                tileKey: tileKeys[m.keyId],
+                icon:    m.icon,
+                label:   m.label,
+                badgeCount: carCount,
+                onTap:   () => onOpen(m.keyId),
               );
             }
             return _MiniIconTile(

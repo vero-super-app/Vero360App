@@ -9,7 +9,9 @@ import 'package:vero360_app/features/car_hire/data/models/car_hire_company_model
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_company_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
+import 'package:vero360_app/features/car_hire/data/models/car_hire_policy_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_company_widgets.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_listing_policies_editor.dart';
 import 'package:vero360_app/utils/formatters.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
@@ -86,6 +88,7 @@ class _CarHireCompanyAddVehiclePageState
   bool _saving = false;
   bool _postToFacebook = true;
   String? _saveError;
+  CarHireListingPolicies _listingPolicies = const CarHireListingPolicies();
 
   String get _operatorId => widget.access.usable.first.operatorId;
 
@@ -275,6 +278,7 @@ class _CarHireCompanyAddVehiclePageState
         'trackerUniqueId': _trackerId.text.trim(),
       if (_trackerPhone.text.trim().isNotEmpty)
         'trackerPhone': _trackerPhone.text.trim(),
+      'listingPolicies': _listingPolicies.toPayload(),
     };
 
     try {
@@ -571,6 +575,18 @@ class _CarHireCompanyAddVehiclePageState
             operatorId: _operatorId,
             value: _branchId,
             onChanged: (value) => setState(() => _branchId = value),
+          ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      _FormCard(
+        icon: Icons.rule_folder_outlined,
+        title: 'Rental rules',
+        trailing: 'Vero + yours',
+        children: [
+          CarHireListingPoliciesEditor(
+            value: _listingPolicies,
+            onChanged: (next) => setState(() => _listingPolicies = next),
           ),
         ],
       ),

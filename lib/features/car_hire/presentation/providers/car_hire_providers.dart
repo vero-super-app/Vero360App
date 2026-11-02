@@ -376,6 +376,9 @@ class CarHireBookingSubmissionController
     DateTime? endDate,
     String? renterNotes,
     String? driverName,
+    String? rentalMode,
+    String? platformPolicyVersion,
+    bool termsAccepted = false,
   }) async {
     if (state.submitting) return state.booking;
 
@@ -395,6 +398,9 @@ class CarHireBookingSubmissionController
             endDate: endDate,
             renterNotes: renterNotes,
             driverName: driverName,
+            rentalMode: rentalMode,
+            platformPolicyVersion: platformPolicyVersion,
+            termsAccepted: termsAccepted,
             idempotencyKey: key,
           );
       state = CarHireBookingSubmissionState(
@@ -733,3 +739,14 @@ final verificationSubmitProvider =
     NotifierProvider<CarHireVerificationSubmitController, CarHireMutationState>(
       CarHireVerificationSubmitController.new,
     );
+
+
+final carHireAvailableCountProvider = FutureProvider<int>((ref) async {
+  try {
+    final api = ref.watch(carHireApiProvider);
+    final result = await api.searchCars(limit: 1);
+    return result.total;
+  } catch (_) {
+    return 0;
+  }
+});

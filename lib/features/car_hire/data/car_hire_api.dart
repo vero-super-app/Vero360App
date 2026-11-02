@@ -501,6 +501,9 @@ class CarHireApi {
     DateTime? endDate,
     String? renterNotes,
     String? driverName,
+    String? rentalMode,
+    String? platformPolicyVersion,
+    bool termsAccepted = false,
     String? idempotencyKey,
   }) async {
     final body = <String, dynamic>{};
@@ -512,6 +515,13 @@ class CarHireApi {
       if (driverName != null && driverName.trim().isNotEmpty) {
         body['driverName'] = driverName.trim();
       }
+      if (rentalMode != null && rentalMode.trim().isNotEmpty) {
+        body['rentalMode'] = rentalMode.trim();
+      }
+      if (platformPolicyVersion != null && platformPolicyVersion.trim().isNotEmpty) {
+        body['platformPolicyVersion'] = platformPolicyVersion.trim();
+      }
+      body['termsAccepted'] = termsAccepted;
     } else {
       if (carId == null || startDate == null || endDate == null) {
         throw const CarHireApiException(
@@ -1219,6 +1229,26 @@ class CarHireApi {
       () => ApiClient.post(
         '$_bookingsPath/$bookingId/assign-unit',
         body: jsonEncode(<String, dynamic>{'carId': carId}),
+        timeout: _timeout,
+      ),
+    );
+  }
+
+  /// `POST /car-rental/bookings/:id/immobilize`
+  Future<void> sendEngineCommand({
+    required int bookingId,
+    required String command,
+    required String reason,
+    String? confirm,
+  }) async {
+    await _send(
+      () => ApiClient.post(
+        '$_bookingsPath/$bookingId/immobilize',
+        body: jsonEncode(<String, dynamic>{
+          'command': command,
+          'reason': reason,
+          if (confirm != null && confirm.trim().isNotEmpty) 'confirm': confirm,
+        }),
         timeout: _timeout,
       ),
     );

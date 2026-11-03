@@ -244,6 +244,7 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage> {
       backgroundColor: CarHirePalette.background,
       appBar: carHireAppBar(
         title: booking == null ? 'Checkout' : 'Your booking',
+        subtitle: 'Secure Vero360 payment',
         actions: [
           if (booking != null)
             CarHireIconButton(

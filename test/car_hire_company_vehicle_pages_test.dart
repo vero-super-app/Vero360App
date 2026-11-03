@@ -19,32 +19,32 @@ const _access = CompanyAccess(<CompanyMembership>[
 ]);
 
 FleetUnit _unit() => FleetUnit(
-      car: CarListing.fromJson(<String, dynamic>{
-        'id': 7,
-        'make': 'Toyota',
-        'model': 'Corolla Altis',
-        'year': 2023,
-        'dailyRate': 85000,
-        'seats': 5,
-        'transmission': 'Automatic',
-        'fuelType': 'Petrol',
-        'bodyType': 'Sedan',
-        'isAvailable': true,
-        'currency': 'MWK',
-        'listingStatus': 'PUBLISHED',
-        'images': const <String>[],
-        'latitude': -13.9626,
-        'longitude': 33.7741,
-      }),
-      licensePlate: 'MW 107',
-      operatorId: 'op-1',
-      tracker: const FleetTracker(
-        deviceId: 'OBD-8820',
-        latitude: -13.9626,
-        longitude: 33.7741,
-        speed: 34,
-      ),
-    );
+  car: CarListing.fromJson(<String, dynamic>{
+    'id': 7,
+    'make': 'Toyota',
+    'model': 'Corolla Altis',
+    'year': 2023,
+    'dailyRate': 85000,
+    'seats': 5,
+    'transmission': 'Automatic',
+    'fuelType': 'Petrol',
+    'bodyType': 'Sedan',
+    'isAvailable': true,
+    'currency': 'MWK',
+    'listingStatus': 'PUBLISHED',
+    'images': const <String>[],
+    'latitude': -13.9626,
+    'longitude': 33.7741,
+  }),
+  licensePlate: 'MW 107',
+  operatorId: 'op-1',
+  tracker: const FleetTracker(
+    deviceId: 'OBD-8820',
+    latitude: -13.9626,
+    longitude: 33.7741,
+    speed: 34,
+  ),
+);
 
 final _booking = CarHireBooking.fromJson(<String, dynamic>{
   'id': 42,
@@ -58,39 +58,41 @@ final _booking = CarHireBooking.fromJson(<String, dynamic>{
 });
 
 Widget _unitApp() => ProviderScope(
-      overrides: [
-        companyFleetProvider.overrideWith((ref) async => <FleetUnit>[_unit()]),
-        unitActiveBookingProvider.overrideWith((ref, id) async => _booking),
-        companyComplianceProvider.overrideWith(
-          (ref, id) async => const CarCompliance(
-            missing: <String>['INSURANCE'],
-            expired: <String>[],
-          ),
-        ),
-        companyMaintenanceBlocksProvider
-            .overrideWith((ref, id) async => const <MaintenanceBlock>[]),
-        companyBranchesProvider
-            .overrideWith((ref, id) async => const <CompanyBranch>[]),
-        companyAnalyticsProvider.overrideWith((ref) async => null),
-      ],
-      child: MaterialApp(
-        home: CarHireCompanyUnitPage(unit: _unit(), access: _access),
+  overrides: [
+    companyFleetProvider.overrideWith((ref) async => <FleetUnit>[_unit()]),
+    unitActiveBookingProvider.overrideWith((ref, id) async => _booking),
+    companyComplianceProvider.overrideWith(
+      (ref, id) async => const CarCompliance(
+        missing: <String>['INSURANCE'],
+        expired: <String>[],
       ),
-    );
+    ),
+    companyMaintenanceBlocksProvider.overrideWith(
+      (ref, id) async => const <MaintenanceBlock>[],
+    ),
+    companyBranchesProvider.overrideWith(
+      (ref, id) async => const <CompanyBranch>[],
+    ),
+    companyAnalyticsProvider.overrideWith((ref) async => null),
+  ],
+  child: MaterialApp(
+    home: CarHireCompanyUnitPage(unit: _unit(), access: _access),
+  ),
+);
 
 Widget _addApp() => ProviderScope(
-      overrides: [
-        companyBranchesProvider
-            .overrideWith((ref, id) async => const <CompanyBranch>[]),
-      ],
-      child: const MaterialApp(
-        home: CarHireCompanyAddVehiclePage(access: _access),
-      ),
-    );
+  overrides: [
+    companyBranchesProvider.overrideWith(
+      (ref, id) async => const <CompanyBranch>[],
+    ),
+  ],
+  child: const MaterialApp(home: CarHireCompanyAddVehiclePage(access: _access)),
+);
 
 void main() {
-  testWidgets('unit workspace shows the live rental and actions at 320px',
-      (tester) async {
+  testWidgets('unit workspace shows the live rental and actions at 320px', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(320, 640);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -114,8 +116,7 @@ void main() {
     expect(find.text('Remove vehicle from fleet'), findsOneWidget);
   });
 
-  testWidgets('add vehicle wizard validates before advancing',
-      (tester) async {
+  testWidgets('add vehicle wizard validates before advancing', (tester) async {
     tester.view.physicalSize = const Size(320, 640);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -135,7 +136,50 @@ void main() {
       scrollable: find.byType(Scrollable).first,
       maxScrolls: 20,
     );
-    expect(find.textContaining('Enter the registration plate'),
-        findsOneWidget);
+    expect(find.textContaining('Enter the registration plate'), findsOneWidget);
+  });
+
+  testWidgets('add vehicle rules use the same fields, chips and checks', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_addApp());
+    await tester.pumpAndSettle();
+
+    final scrollable = find.byType(Scrollable).first;
+    await tester.scrollUntilVisible(
+      find.text('Rental modes'),
+      300,
+      scrollable: scrollable,
+      maxScrolls: 40,
+    );
+
+    // Platform terms are stated once, then the owner's own choices.
+    expect(find.text('Always applied by Vero360'), findsOneWidget);
+    expect(find.text('Rental modes'), findsOneWidget);
+    expect(find.text('Self-drive'), findsOneWidget);
+    expect(find.text('With driver'), findsOneWidget);
+    expect(find.text('Guest extras'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    // Travel area is a chip group; picking one reveals its own field.
+    await tester.scrollUntilVisible(
+      find.text('Hire area only'),
+      300,
+      scrollable: scrollable,
+      maxScrolls: 40,
+    );
+    await tester.ensureVisible(find.text('Hire area only'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Hire area only'));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Hire-area radius (km)'));
+    await tester.pumpAndSettle();
+    expect(find.text('Hire-area radius (km)'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

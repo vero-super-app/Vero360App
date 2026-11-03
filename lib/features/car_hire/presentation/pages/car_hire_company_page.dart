@@ -15,7 +15,6 @@ import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skel
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 import 'package:vero360_app/utils/formatters.dart';
-import 'package:vero360_app/widgets/merchant_verified_badge.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
 /// Company home: one glanceable dashboard instead of a wall of tables.
@@ -43,7 +42,7 @@ class CarHireCompanyPage extends ConsumerWidget {
 
     return Scaffold(
       backgroundColor: CarHirePalette.background,
-      appBar: carHireAppBar(title: 'Company'),
+      appBar: carHireAppBar(title: 'Car hire', subtitle: 'Company mode'),
       body: access != null
           ? const CarHireEmptyState(
               icon: Icons.business_outlined,
@@ -112,6 +111,21 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
     }
   }
 
+  /// Add-vehicle shortcut shared by the header and the empty-fleet card.
+  Future<void> _addCar(BuildContext context) async {
+    final created = await CarHireRoutes.openCompanyAddVehicle(
+      context,
+      access: widget.access,
+    );
+    if (created != null && context.mounted) {
+      CarHireRoutes.openCompanyUnit(
+        context,
+        unit: created,
+        access: widget.access,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final fleetAsync = ref.watch(companyFleetProvider);
@@ -139,40 +153,68 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
 
     final visible = _visibleUnits(snapshot);
 
+    // Very small phones only get the primary action, so the car hire's name
+    // never collapses into an ellipsis.
+    final narrow = MediaQuery.sizeOf(context).width < 340;
+
+    // The header mirrors the marketplace: brand mark, the car hire's own name
+    // and a one-line live summary. Adding a car is the single primary action,
+    // so there is no second add-car button further down the page.
+    final loadingFleet = fleetAsync.isLoading && !fleetAsync.hasValue;
+    final summary = loadingFleet
+        ? 'Loading live fleet…'
+        : snapshot.units.isEmpty
+        ? 'Live operations'
+        : '${snapshot.total} cars · ${snapshot.ready} ready';
+
     return Scaffold(
       backgroundColor: CarHirePalette.background,
       appBar: carHireAppBar(
-        title: widget.asHome ? 'Car hire' : 'Company',
-        actions: widget.asHome
-            ? [
-                CarHireIconButton(
-                  icon: Icons.storefront_outlined,
-                  tooltip: 'Browse marketplace',
-                  onTap: () => CarHireRoutes.openBrowse(context),
+        title: widget.access.title,
+        subtitle: summary,
+        titleTrailing: widget.access.hasCompany
+            ? const Tooltip(
+                message: 'Verified car hire',
+                child: Icon(
+                  Icons.verified_rounded,
+                  size: 15,
+                  color: CarHirePalette.accent,
                 ),
-                const SizedBox(width: 16),
-              ]
+              )
             : null,
+        actions: [
+          if (widget.access.canManageFleet)
+            CarHirePillButton(
+              label: 'Add car',
+              icon: Icons.add_rounded,
+              tooltip: 'Add a car',
+              onTap: () => _addCar(context),
+            ),
+          if (widget.asHome && !narrow) ...[
+            const SizedBox(width: 8),
+            CarHireIconButton(
+              icon: Icons.storefront_outlined,
+              tooltip: 'Browse marketplace',
+              size: 36,
+              iconSize: 18,
+              onTap: () => CarHireRoutes.openBrowse(context),
+            ),
+          ],
+        ],
       ),
       body: RefreshIndicator(
         color: CarHirePalette.accent,
         onRefresh: _refresh,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
           children: [
-            _CompanyStrip(
-              access: widget.access,
-              snapshot: snapshot,
-              loading: fleetAsync.isLoading && !fleetAsync.hasValue,
-            ),
             if (widget.access.canManageWallet) ...[
-              const SizedBox(height: 12),
               _WalletTile(companyName: widget.access.title),
+              const SizedBox(height: 12),
             ],
-            const SizedBox(height: 14),
             ..._pulseSection(fleetAsync, activeAsync, analytics, snapshot),
-            const SizedBox(height: 18),
+            const SizedBox(height: 12),
             if (widget.access.canViewBookings) ...[
               _NextOpsSection(
                 board: boardAsync,
@@ -185,7 +227,7 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
                   bookingId: booking.id,
                 ),
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 12),
             ],
             TextField(
               controller: _search,
@@ -214,7 +256,7 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
                 filled: true,
                 fillColor: CarHirePalette.surface,
                 isDense: true,
-                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                contentPadding: const EdgeInsets.symmetric(vertical: 10),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(CarHireShape.pillRadius),
                   borderSide: const BorderSide(color: CarHirePalette.hairline),
@@ -229,7 +271,7 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
                 ),
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             SizedBox(
               height: 34,
               child: ListView(
@@ -342,18 +384,9 @@ class _CompanyDashboardState extends ConsumerState<_CompanyDashboard> {
     }
     if (snapshot.units.isEmpty) {
       return [
-        _QuietCard(
-          icon: Icons.directions_car_outlined,
-          message: widget.access.canManageFleet
-              ? 'No cars yet · add your first vehicle.'
-              : 'No cars in this fleet yet.',
-          actionLabel: widget.access.canManageFleet ? 'Add car' : null,
-          onAction: widget.access.canManageFleet
-              ? () => CarHireRoutes.openCompanyAddVehicle(
-                  context,
-                  access: widget.access,
-                )
-              : null,
+        _FirstCarCard(
+          canManage: widget.access.canManageFleet,
+          onAdd: () => _addCar(context),
         ),
       ];
     }
@@ -502,158 +535,51 @@ class _WalletTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: CarHirePalette.surface,
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(14),
       child: InkWell(
         onTap: () => _open(context),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+          padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
           child: Row(
             children: [
               Container(
-                width: 38,
-                height: 38,
+                width: 30,
+                height: 30,
                 decoration: const BoxDecoration(
                   color: CarHirePalette.accentPale,
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(
                   Icons.account_balance_wallet_rounded,
-                  size: 18,
+                  size: 16,
                   color: CarHirePalette.accent,
                 ),
               ),
-              const SizedBox(width: 12),
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Wallet', style: CarHireType.title),
-                    SizedBox(height: 2),
-                    Text(
-                      'Balance, held rentals, and withdraw',
-                      style: CarHireType.bodySmall,
-                    ),
-                  ],
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Wallet',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: CarHireType.title.copyWith(fontSize: 12.5),
                 ),
+              ),
+              Text(
+                'Balance & payouts',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: CarHireType.bodySmall.copyWith(fontSize: 10.5),
               ),
               const Icon(
                 Icons.chevron_right_rounded,
+                size: 18,
                 color: CarHirePalette.muted,
               ),
             ],
           ),
         ),
       ),
-    );
-  }
-}
-
-class _CompanyStrip extends StatelessWidget {
-  const _CompanyStrip({
-    required this.access,
-    required this.snapshot,
-    this.loading = false,
-  });
-
-  final CompanyAccess access;
-  final _FleetSnapshot snapshot;
-  final bool loading;
-
-  @override
-  Widget build(BuildContext context) {
-    final subline = loading
-        ? 'Loading live fleet…'
-        : snapshot.units.isEmpty
-        ? 'Live operations'
-        : '${snapshot.total} cars · ${snapshot.ready} ready';
-
-    return Row(
-      children: [
-        Container(
-          width: 42,
-          height: 42,
-          decoration: const BoxDecoration(
-            color: CarHirePalette.accentPale,
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(
-            Icons.hub_rounded,
-            size: 20,
-            color: CarHirePalette.accent,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              MerchantNameWithBadge(
-                name: access.title,
-                verified: access.hasCompany,
-                showLabel: false,
-                badgeSize: 16,
-                tooltip: 'Verified car hire',
-                style: CarHireType.title.copyWith(fontSize: 16.5),
-              ),
-              const SizedBox(height: 3),
-              Row(
-                children: [
-                  Container(
-                    width: 6,
-                    height: 6,
-                    decoration: const BoxDecoration(
-                      color: CarHirePalette.accent,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Flexible(
-                    child: Text(
-                      subline,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: CarHireType.bodySmall.copyWith(fontSize: 11.5),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 8),
-        if (access.canManageFleet) ...[
-          CarHireIconButton(
-            icon: Icons.add_rounded,
-            tooltip: 'Add car',
-            size: 38,
-            iconSize: 20,
-            background: CarHirePalette.accent,
-            foreground: Colors.white,
-            onTap: () async {
-              final created = await CarHireRoutes.openCompanyAddVehicle(
-                context,
-                access: access,
-              );
-              if (created != null && context.mounted) {
-                CarHireRoutes.openCompanyUnit(
-                  context,
-                  unit: created,
-                  access: access,
-                );
-              }
-            },
-          ),
-          const SizedBox(width: 8),
-        ],
-        CarHireIconButton(
-          icon: Icons.directions_car_filled_outlined,
-          tooltip: 'Fleet',
-          size: 38,
-          iconSize: 18,
-          onTap: () => CarHireRoutes.openCompanyFleet(context),
-        ),
-      ],
     );
   }
 }
@@ -686,7 +612,7 @@ class _PulseCard extends StatelessWidget {
     return CarHireSurface(
       shadow: true,
       radius: 18,
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -956,6 +882,8 @@ class _NextOpsSection extends StatelessWidget {
             Expanded(
               child: Text(
                 'Needs you today',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: CarHireType.title.copyWith(fontSize: 14),
               ),
             ),
@@ -974,7 +902,7 @@ class _NextOpsSection extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 4),
         if (board.hasError && data != null)
           CarHireSectionStaleStrip(
             message: 'Today’s work may be out of date.',
@@ -1130,7 +1058,7 @@ class _NextOpRow extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
           child: Row(
             children: [
               Container(
@@ -1188,17 +1116,10 @@ class _NextOpRow extends StatelessWidget {
 }
 
 class _QuietRow extends StatelessWidget {
-  const _QuietRow({
-    required this.icon,
-    required this.message,
-    this.actionLabel,
-    this.onAction,
-  });
+  const _QuietRow({required this.icon, required this.message});
 
   final IconData icon;
   final String message;
-  final String? actionLabel;
-  final VoidCallback? onAction;
 
   @override
   Widget build(BuildContext context) {
@@ -1214,23 +1135,6 @@ class _QuietRow extends StatelessWidget {
               style: CarHireType.bodySmall.copyWith(fontSize: 11.5),
             ),
           ),
-          if (actionLabel != null)
-            TextButton(
-              onPressed: onAction,
-              style: TextButton.styleFrom(
-                foregroundColor: CarHirePalette.accent,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: Text(
-                actionLabel!,
-                style: const TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
         ],
       ),
     );
@@ -1238,27 +1142,135 @@ class _QuietRow extends StatelessWidget {
 }
 
 class _QuietCard extends StatelessWidget {
-  const _QuietCard({
-    required this.icon,
-    required this.message,
-    this.actionLabel,
-    this.onAction,
-  });
+  const _QuietCard({required this.icon, required this.message});
 
   final IconData icon;
   final String message;
-  final String? actionLabel;
-  final VoidCallback? onAction;
 
   @override
   Widget build(BuildContext context) {
     return CarHireSurface(
       padding: const EdgeInsets.all(6),
-      child: _QuietRow(
-        icon: icon,
-        message: message,
-        actionLabel: actionLabel,
-        onAction: onAction,
+      child: _QuietRow(icon: icon, message: message),
+    );
+  }
+}
+
+/// First-car onboarding. Approved partners with an empty fleet get a clear,
+/// friendly next step instead of a table with nothing in it.
+class _FirstCarCard extends StatelessWidget {
+  const _FirstCarCard({required this.canManage, required this.onAdd});
+
+  final bool canManage;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    return CarHireSurface(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+      radius: 20,
+      color: CarHirePalette.accentPale,
+      borderColor: CarHirePalette.accentSoft,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: const BoxDecoration(
+                  color: CarHirePalette.surface,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.directions_car_filled_rounded,
+                  size: 21,
+                  color: CarHirePalette.accent,
+                ),
+              ),
+              const SizedBox(width: 11),
+              const Expanded(
+                child: Text(
+                  'Add your first car',
+                  style: TextStyle(
+                    color: CarHirePalette.onAccentSoft,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            canManage
+                ? 'You only need a plate, a daily rate and one photo. It '
+                      'takes about two minutes and the car goes live straight '
+                      'away.'
+                : 'Cars added by the company owner will appear here.',
+            style: CarHireType.bodySmall.copyWith(
+              color: CarHirePalette.onAccentSoft,
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              _SetupChip(icon: Icons.pin_outlined, label: 'Plate'),
+              _SetupChip(icon: Icons.payments_outlined, label: 'Daily rate'),
+              _SetupChip(icon: Icons.photo_camera_outlined, label: 'One photo'),
+            ],
+          ),
+          if (canManage) ...[
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: onAdd,
+                style: carHirePrimaryButton(),
+                icon: const Icon(Icons.add_rounded, size: 18),
+                label: const Text('Add your first car'),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SetupChip extends StatelessWidget {
+  const _SetupChip({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: CarHirePalette.surface,
+        borderRadius: BorderRadius.circular(99),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: CarHirePalette.accent),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: const TextStyle(
+              color: CarHirePalette.onAccentSoft,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
       ),
     );
   }

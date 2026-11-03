@@ -535,7 +535,7 @@ class CarHireCompanyCarCardSkeleton extends StatelessWidget {
   }
 }
 
-/// Dashboard placeholder: header strip, pulse, today's operations and cars.
+/// Dashboard placeholder: wallet, pulse, today's operations and cars.
 class CarHireCompanyDashboardSkeleton extends StatelessWidget {
   const CarHireCompanyDashboardSkeleton({super.key, this.cards = 2});
 
@@ -546,34 +546,22 @@ class CarHireCompanyDashboardSkeleton extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _SectionShimmer(
+        const _SectionShimmer(
           child: Row(
-            children: const [
+            children: [
               AppSkeletonBox(
-                width: 42,
-                height: 42,
-                radius: 21,
+                width: 30,
+                height: 30,
+                radius: 15,
                 color: CarHireSkeleton.bone,
               ),
-              SizedBox(width: 12),
+              SizedBox(width: 10),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    AppSkeletonBox(
-                      height: 15,
-                      width: 130,
-                      radius: 5,
-                      color: CarHireSkeleton.bone,
-                    ),
-                    SizedBox(height: 6),
-                    AppSkeletonBox(
-                      height: 10,
-                      width: 96,
-                      radius: 4,
-                      color: CarHireSkeleton.boneLight,
-                    ),
-                  ],
+                child: AppSkeletonBox(
+                  height: 13,
+                  width: 180,
+                  radius: 5,
+                  color: CarHireSkeleton.bone,
                 ),
               ),
             ],

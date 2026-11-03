@@ -52,6 +52,9 @@ enum CarHireEntryDestination { company, marketplace }
 /// Opening car hire used to paint a spinner for the account, then a second
 /// spinner for the company memberships. This resolves both in one pass so the
 /// entry shows a single skeleton and hands straight over to the real page.
+///
+/// A verified car hire account always starts on the company dashboard, never
+/// the renter marketplace.
 final carHireEntryProvider = FutureProvider<CarHireEntryDestination>((
   ref,
 ) async {

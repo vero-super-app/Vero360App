@@ -8,7 +8,6 @@ import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_co
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skeletons.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
-import 'package:vero360_app/features/car_hire/utils/car_hire_invite_prefs.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 
 /// Car hire entry point. A live car hire account lands on its company home;
@@ -35,15 +34,20 @@ class CarHireHomePage extends ConsumerWidget {
       };
     }
 
-    // Once the account is known to be a live company, the remaining wait is
-    // the membership lookup, so show the dashboard's own skeleton instead of
-    // a generic one. Both share the same frame, so the switch is quiet.
+    // Once the account is known to be a live company — or the login is a
+    // member of one — the remaining wait is the membership lookup, so show
+    // the dashboard's own skeleton instead of a generic one. Both share the
+    // same frame, so the switch is quiet.
     final expectsCompany =
-        ref.watch(carHireAccountProvider).value?.isActive ?? false;
+        (ref.watch(carHireAccountProvider).value?.isActive ?? false) ||
+        (ref.watch(companyAccessProvider).value?.hasCompany ?? false);
 
     return Scaffold(
       backgroundColor: CarHirePalette.background,
-      appBar: carHireAppBar(title: 'Car hire'),
+      appBar: carHireAppBar(
+        title: 'Car hire',
+        subtitle: 'Rent a car or earn with yours',
+      ),
       body: Semantics(
         label: 'Opening car hire',
         container: true,
@@ -75,7 +79,7 @@ class CarHireAccountBanner extends ConsumerWidget {
 
     if (renterInvite) {
       if (account.hasProfile) return const SizedBox.shrink();
-      return const _RenterInviteBanner();
+      return const _PartnerInviteCard();
     }
 
     final copy = _statusCopy(account);
@@ -95,51 +99,81 @@ class CarHireAccountBanner extends ConsumerWidget {
   }
 }
 
-/// First-open "Rent out your cars" card. Shown once, then remembered.
-class _RenterInviteBanner extends StatefulWidget {
-  const _RenterInviteBanner();
-
-  @override
-  State<_RenterInviteBanner> createState() => _RenterInviteBannerState();
-}
-
-class _RenterInviteBannerState extends State<_RenterInviteBanner> {
-  bool _ready = false;
-  bool _seen = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    final seen = await CarHireInvitePrefs.hasSeen();
-    if (!mounted) return;
-    if (!seen) {
-      await CarHireInvitePrefs.markSeen();
-    }
-    if (!mounted) return;
-    setState(() {
-      _ready = true;
-      _seen = seen;
-    });
-  }
+/// Persistent "Rent out your cars" card for accounts without a profile.
+///
+/// Unlike the old one-time sheet, this stays available on the marketplace so
+/// a new car hire owner can always find the way in.
+class _PartnerInviteCard extends StatelessWidget {
+  const _PartnerInviteCard();
 
   @override
   Widget build(BuildContext context) {
-    if (!_ready || _seen) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-      child: _BannerTap(
-        onTap: () => CarHireRoutes.openApply(context),
-        child: const CarHireInfoBanner(
-          icon: Icons.add_business_outlined,
-          title: 'Rent out your cars on Vero360',
-          message:
-              'Car hire companies and individual owners can list '
-              'cars and manage every booking from one account.',
-          tone: CarHireInfoTone.accent,
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+      child: Material(
+        color: CarHirePalette.accentPale,
+        borderRadius: BorderRadius.circular(20),
+        child: InkWell(
+          onTap: () => CarHireRoutes.openPartner(context),
+          borderRadius: BorderRadius.circular(20),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(14, 13, 12, 13),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: CarHirePalette.accentSoft),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: const BoxDecoration(
+                    color: CarHirePalette.surface,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.add_road_rounded,
+                    size: 19,
+                    color: CarHirePalette.accent,
+                  ),
+                ),
+                const SizedBox(width: 11),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Have a car? List it on Vero360',
+                        style: TextStyle(
+                          color: CarHirePalette.onAccentSoft,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.1,
+                        ),
+                      ),
+                      SizedBox(height: 3),
+                      Text(
+                        'Company or private owner · verified renters · '
+                        'wallet payouts',
+                        style: TextStyle(
+                          color: CarHirePalette.onAccentSoft,
+                          fontSize: 10.8,
+                          height: 1.4,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Icon(
+                  Icons.arrow_forward_rounded,
+                  size: 17,
+                  color: CarHirePalette.onAccentSoft,
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -242,7 +276,10 @@ class CarHireAccountStatusPage extends ConsumerWidget {
     final async = ref.watch(carHireAccountProvider);
     return Scaffold(
       backgroundColor: CarHirePalette.background,
-      appBar: carHireAppBar(title: 'Car hire account'),
+      appBar: carHireAppBar(
+        title: 'Car hire account',
+        subtitle: 'Application status',
+      ),
       body: async.when(
         skipLoadingOnRefresh: true,
         skipLoadingOnReload: true,
@@ -276,8 +313,8 @@ class CarHireAccountStatusPage extends ConsumerWidget {
               icon: Icons.add_business_outlined,
               title: 'No car hire account yet',
               message: 'Apply to list your cars on Vero360.',
-              actionLabel: 'Apply now',
-              onAction: () => CarHireRoutes.openApply(context),
+              actionLabel: 'Get started',
+              onAction: () => CarHireRoutes.openPartner(context),
             );
           }
           final note = account.reviewerNote?.trim() ?? '';

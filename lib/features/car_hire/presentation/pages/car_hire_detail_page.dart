@@ -294,7 +294,19 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
   }
 
   PreferredSizeWidget _appBar() {
-    return carHireAppBar(title: 'Vehicle details');
+    return carHireAppBar(
+      title: 'Vehicle details',
+      subtitle: 'Verified car hire',
+      actions: [
+        CarHireIconButton(
+          icon: Icons.receipt_long_rounded,
+          tooltip: 'My bookings',
+          size: 36,
+          iconSize: 18,
+          onTap: () => CarHireRoutes.openBookings(context),
+        ),
+      ],
+    );
   }
 
   Widget _titleBlock(CarListing car) {

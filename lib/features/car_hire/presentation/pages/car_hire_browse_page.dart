@@ -17,6 +17,7 @@ import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_sect
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skeletons.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
+import 'package:vero360_app/utils/formatters.dart';
 import 'package:vero360_app/widgets/merchant_verified_badge.dart';
 
 /// Vehicle categories shown as the horizontal chip rail.
@@ -92,7 +93,6 @@ class CarHireBrowsePage extends ConsumerStatefulWidget {
 }
 
 class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
-  late final TextEditingController _pickupController;
   late final TextEditingController _searchController;
   Timer? _searchDebounce;
   _VehicleCategory _category = _VehicleCategory.all;
@@ -104,13 +104,11 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
   @override
   void initState() {
     super.initState();
-    final query = ref.read(carHireSearchProvider);
-    _pickupController = TextEditingController(text: query.pickupArea);
     _searchController = TextEditingController(
       text: ref.read(carHireFiltersProvider).text,
     );
     // Sections load independently after the first frame so the static chrome
-    // (location bar, search, filters) paints immediately.
+    // (trip dates, search, filters) paints immediately.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       ref.read(carHireBrowseProvider.notifier).loadAll();
@@ -120,7 +118,6 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
   @override
   void dispose() {
     _searchDebounce?.cancel();
-    _pickupController.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -281,18 +278,12 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
       );
       return;
     }
-    ref
-        .read(carHireSearchProvider.notifier)
-        .setPickupArea(_pickupController.text);
     ref.read(carHireBrowseProvider.notifier).refreshResults();
     FocusScope.of(context).unfocus();
     if (closeSheet && mounted) Navigator.of(context).maybePop();
   }
 
   Future<void> _openTripSheet() async {
-    final query = ref.read(carHireSearchProvider);
-    _pickupController.text = query.pickupArea;
-
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -324,7 +315,6 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
                   builder: (context, ref, _) {
                     final live = ref.watch(carHireSearchProvider);
                     return CarHireSearchForm(
-                      pickupController: _pickupController,
                       startAt: live.startAt ?? DateTime.now(),
                       endAt: live.endAt ?? DateTime.now(),
                       onPickStart: _pickStart,
@@ -343,9 +333,6 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
   }
 
   Future<void> _refresh() async {
-    ref
-        .read(carHireSearchProvider.notifier)
-        .setPickupArea(_pickupController.text);
     // Each section swallows its own failure; the strips explain what failed.
     await ref.read(carHireBrowseProvider.notifier).loadAll();
   }
@@ -502,29 +489,44 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
     final query = ref.watch(carHireSearchProvider);
     final browse = ref.watch(carHireBrowseProvider);
     final filters = ref.watch(carHireFiltersProvider);
+    final account = ref.watch(carHireAccountProvider).value;
     final hasCompany =
-        (ref.watch(carHireAccountProvider).value?.isActive ?? false) ||
+        (account?.isActive ?? false) ||
         (ref.watch(companyAccessProvider).value?.hasCompany ?? false);
+    final canJoin = account == null || !account.hasProfile;
 
     return Scaffold(
       backgroundColor: CarHirePalette.background,
       appBar: carHireAppBar(
         title: 'Car hire',
+        subtitle: 'Verified cars across Malawi',
         actions: [
-          if (hasCompany) ...[
+          if (canJoin)
             CarHireIconButton(
-              icon: Icons.business_center_outlined,
-              tooltip: 'My company',
+              icon: Icons.add_road_rounded,
+              tooltip: 'List your car',
+              size: 36,
+              iconSize: 18,
+              onTap: () => CarHireRoutes.openPartner(context),
+            ),
+          if (hasCompany) ...[
+            const SizedBox(width: 8),
+            CarHireIconButton(
+              icon: Icons.dashboard_customize_outlined,
+              tooltip: 'Company dashboard',
+              size: 36,
+              iconSize: 18,
               onTap: () => CarHireRoutes.openCompany(context),
             ),
-            const SizedBox(width: 8),
           ],
+          const SizedBox(width: 8),
           CarHireIconButton(
             icon: Icons.receipt_long_rounded,
             tooltip: 'My bookings',
+            size: 36,
+            iconSize: 18,
             onTap: () => CarHireRoutes.openBookings(context),
           ),
-          const SizedBox(width: 16),
         ],
       ),
       body: RefreshIndicator(
@@ -537,8 +539,8 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
             const SliverToBoxAdapter(
               child: CarHireAccountBanner(renterInvite: true),
             ),
-            SliverToBoxAdapter(child: _locationBar(query)),
             const SliverToBoxAdapter(child: CarHireAccountBanner()),
+            SliverToBoxAdapter(child: _tripCard(query)),
             SliverToBoxAdapter(child: _searchRow(filters)),
             SliverToBoxAdapter(child: _companyRail(browse.companies, filters)),
             SliverToBoxAdapter(
@@ -560,109 +562,96 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
     );
   }
 
-  Widget _locationBar(CarHireSearchQuery query) {
-    final area = query.pickupArea.trim();
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
-      decoration: const BoxDecoration(
-        color: CarHirePalette.surfaceLow,
-        border: Border(bottom: BorderSide(color: CarHirePalette.hairline)),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: _openTripSheet,
-          borderRadius: BorderRadius.circular(16),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: CarHirePalette.surface,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: CarHirePalette.hairline),
-                  ),
-                  child: const Icon(
-                    Icons.location_on_rounded,
-                    size: 19,
-                    color: CarHirePalette.onSurface,
-                  ),
-                ),
-                const SizedBox(width: 11),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              area.isEmpty ? 'All pick-up areas' : area,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: CarHirePalette.onSurface,
-                                fontSize: 14.5,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: -0.2,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 3),
-                          const Icon(
-                            Icons.expand_more_rounded,
-                            size: 17,
-                            color: CarHirePalette.muted,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        _tripSummary(query),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: CarHireType.labelSmall.copyWith(fontSize: 11),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 9,
-                  ),
-                  decoration: BoxDecoration(
-                    color: CarHirePalette.surface,
-                    borderRadius: BorderRadius.circular(99),
-                    border: Border.all(color: CarHirePalette.hairline),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.edit_calendar_rounded,
-                        size: 15,
-                        color: CarHirePalette.accent,
-                      ),
-                      SizedBox(width: 5),
-                      Text(
-                        'Edit',
-                        style: TextStyle(
-                          color: CarHirePalette.onSurface,
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+  /// Trip card: dates only. Pick-up areas were removed from the home so the
+  /// marketplace shows every verified car without an empty location filter.
+  Widget _tripCard(CarHireSearchQuery query) {
+    final start = query.startAt;
+    final days = _rentalDays(query);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+      child: CarHireSurface(
+        onTap: _openTripSheet,
+        radius: 20,
+        shadow: true,
+        padding: const EdgeInsets.fromLTRB(14, 13, 12, 13),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: const BoxDecoration(
+                color: CarHirePalette.accentPale,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.event_available_rounded,
+                size: 20,
+                color: CarHirePalette.accent,
+              ),
             ),
-          ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'YOUR TRIP',
+                    style: CarHireType.overline,
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    _tripSummary(query),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: CarHirePalette.onSurface,
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.2,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    start == null
+                        ? 'Tap to choose your dates'
+                        : 'Pick-up ${CarHireFormatters.formatTime(start)} · '
+                              '$days ${days == 1 ? 'day' : 'days'}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: CarHireType.labelSmall.copyWith(fontSize: 10.5),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+              decoration: BoxDecoration(
+                color: CarHirePalette.surfaceLow,
+                borderRadius: BorderRadius.circular(99),
+                border: Border.all(color: CarHirePalette.hairline),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.edit_calendar_rounded,
+                    size: 15,
+                    color: CarHirePalette.accent,
+                  ),
+                  SizedBox(width: 5),
+                  Text(
+                    'Change',
+                    style: TextStyle(
+                      color: CarHirePalette.onSurface,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1071,21 +1060,11 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
             child: CarHireEmptyState(
               icon: Icons.directions_car_outlined,
               title: 'No cars available',
-              message: query.pickupArea.trim().isEmpty
-                  ? 'No vehicles match these dates. Try a different '
-                        'pick-up or return time.'
-                  : 'No vehicles match these dates in '
-                        '"${query.pickupArea}". Try different dates or clear '
-                        'the pick-up area.',
-              actionLabel: query.pickupArea.trim().isEmpty
-                  ? null
-                  : 'Clear area & retry',
-              onAction: query.pickupArea.trim().isEmpty
-                  ? null
-                  : () {
-                      _pickupController.clear();
-                      _onSearch();
-                    },
+              message:
+                  'No vehicles match these dates. Try a different pick-up '
+                  'or return time.',
+              actionLabel: 'Change dates',
+              onAction: _openTripSheet,
             ),
           ),
         ),

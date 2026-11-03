@@ -463,34 +463,171 @@ InputDecoration carHireInputDecoration({
   );
 }
 
-/// App bar shared by the journey. Flat, warm and quiet.
-AppBar carHireAppBar({
+/// The app header shared by every car-hire screen.
+///
+/// One consistent branded bar: a compact orange-on-navy car mark, a bold
+/// title with an optional context line, and quiet pill actions. Keeping every
+/// page on this header makes the journey feel like a single product instead of
+/// a set of unrelated screens.
+class CarHireAppHeader extends StatelessWidget implements PreferredSizeWidget {
+  const CarHireAppHeader({
+    super.key,
+    required this.title,
+    this.subtitle,
+    this.titleTrailing,
+    this.actions,
+    this.bottom,
+    this.automaticallyImplyLeading = true,
+    this.showBrandMark = true,
+  });
+
+  final String title;
+
+  /// Optional mark rendered just after the title, e.g. a verified tick.
+  final Widget? titleTrailing;
+  final String? subtitle;
+  final List<Widget>? actions;
+  final PreferredSizeWidget? bottom;
+  final bool automaticallyImplyLeading;
+  final bool showBrandMark;
+
+  double get _toolbarHeight =>
+      subtitle != null && subtitle!.trim().isNotEmpty ? 64 : 56;
+
+  @override
+  Size get preferredSize =>
+      Size.fromHeight(_toolbarHeight + (bottom?.preferredSize.height ?? 0));
+
+  @override
+  Widget build(BuildContext context) {
+    final hasSubtitle = subtitle != null && subtitle!.trim().isNotEmpty;
+    // Only reserve a back-button lane when there is actually a route to pop,
+    // so a labelled action still has room for the title on small phones.
+    final showsBack =
+        automaticallyImplyLeading && (ModalRoute.of(context)?.canPop ?? false);
+    return AppBar(
+      backgroundColor: CarHirePalette.background,
+      surfaceTintColor: Colors.transparent,
+      foregroundColor: CarHirePalette.onSurface,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      toolbarHeight: _toolbarHeight,
+      automaticallyImplyLeading: false,
+      leadingWidth: showsBack ? 52 : 12,
+      leading: showsBack ? const CarHireBackButton() : null,
+      titleSpacing: showsBack ? 0 : 4,
+      centerTitle: false,
+      title: Row(
+        children: [
+          if (showBrandMark) ...[
+            const _CarHireBrandMark(),
+            const SizedBox(width: 10),
+          ],
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: CarHirePalette.onSurface,
+                          fontSize: 17.5,
+                          height: 1.15,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.4,
+                        ),
+                      ),
+                    ),
+                    if (titleTrailing != null) ...[
+                      const SizedBox(width: 5),
+                      titleTrailing!,
+                    ],
+                  ],
+                ),
+                if (hasSubtitle) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: CarHirePalette.muted,
+                      fontSize: 10.5,
+                      height: 1.2,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.1,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+      actions: actions == null
+          ? null
+          : [...actions!, const SizedBox(width: 14)],
+      bottom: bottom,
+    );
+  }
+}
+
+class _CarHireBrandMark extends StatelessWidget {
+  const _CarHireBrandMark();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 34,
+      height: 34,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [CarHirePalette.primaryContainer, CarHirePalette.primary],
+        ),
+        borderRadius: BorderRadius.circular(11),
+        boxShadow: [
+          BoxShadow(
+            color: CarHirePalette.primary.withValues(alpha: 0.14),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: const Icon(
+        Icons.directions_car_filled_rounded,
+        size: 19,
+        color: CarHirePalette.accent,
+      ),
+    );
+  }
+}
+
+/// App bar shared by the journey. Modern, branded and consistent everywhere.
+PreferredSizeWidget carHireAppBar({
   required String title,
+  String? subtitle,
+  Widget? titleTrailing,
   List<Widget>? actions,
   PreferredSizeWidget? bottom,
   bool automaticallyImplyLeading = true,
+  bool showBrandMark = true,
 }) {
-  return AppBar(
-    backgroundColor: CarHirePalette.background,
-    surfaceTintColor: Colors.transparent,
-    foregroundColor: CarHirePalette.onSurface,
-    elevation: 0,
-    scrolledUnderElevation: 0.5,
-    automaticallyImplyLeading: false,
-    leading: automaticallyImplyLeading ? const CarHireBackButton() : null,
-    titleSpacing: automaticallyImplyLeading ? 0 : 16,
-    centerTitle: false,
-    title: Text(
-      title,
-      style: const TextStyle(
-        color: CarHirePalette.onSurface,
-        fontSize: 18,
-        fontWeight: FontWeight.w800,
-        letterSpacing: -0.3,
-      ),
-    ),
+  return CarHireAppHeader(
+    title: title,
+    subtitle: subtitle,
+    titleTrailing: titleTrailing,
     actions: actions,
     bottom: bottom,
+    automaticallyImplyLeading: automaticallyImplyLeading,
+    showBrandMark: showBrandMark,
   );
 }
 
@@ -562,5 +699,271 @@ class CarHireIconButton extends StatelessWidget {
 
     if (tooltip == null) return button;
     return Tooltip(message: tooltip!, child: button);
+  }
+}
+
+/// Pill-shaped action with an icon and a short label, for app bars where an
+/// icon alone would be ambiguous (e.g. "Add car").
+class CarHirePillButton extends StatelessWidget {
+  const CarHirePillButton({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.onTap,
+    this.background = CarHirePalette.accent,
+    this.foreground = Colors.white,
+    this.height = 34,
+    this.iconSize = 16,
+    this.fontSize = 11.5,
+    this.tooltip,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+  final Color background;
+  final Color foreground;
+  final double height;
+  final double iconSize;
+  final double fontSize;
+  final String? tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final button = Material(
+      color: background,
+      borderRadius: BorderRadius.circular(CarHireShape.pillRadius),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: SizedBox(
+          height: height,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 11),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: iconSize, color: foreground),
+                const SizedBox(width: 4),
+                Text(
+                  label,
+                  maxLines: 1,
+                  style: TextStyle(
+                    color: foreground,
+                    fontSize: fontSize,
+                    height: 1.1,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.1,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    if (tooltip == null) return button;
+    return Tooltip(message: tooltip!, child: button);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared form building blocks
+//
+// The add-vehicle wizard and the listing-rules editor use the same pieces, so
+// rules read exactly like the fields above them instead of a second design.
+// ---------------------------------------------------------------------------
+
+/// Small label that sits above a field, matching the wizard's field labels.
+class CarHireFieldLabel extends StatelessWidget {
+  const CarHireFieldLabel(
+    this.label, {
+    super.key,
+    this.padding = const EdgeInsets.only(left: 2, bottom: 5),
+    this.trailing,
+  });
+
+  final String label;
+  final EdgeInsetsGeometry padding;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: padding,
+      child: Row(
+        children: [
+          Expanded(child: Text(label, style: CarHireType.label)),
+          ?trailing,
+        ],
+      ),
+    );
+  }
+}
+
+/// Selectable pill used for one-of-many and many-of-many choices.
+class CarHireChoiceChip extends StatelessWidget {
+  const CarHireChoiceChip({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.icon,
+    this.enabled = true,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final IconData? icon;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground = !enabled
+        ? CarHirePalette.muted
+        : selected
+        ? Colors.white
+        : CarHirePalette.onSurfaceVariant;
+
+    return GestureDetector(
+      onTap: enabled ? onTap : null,
+      child: AnimatedContainer(
+        duration: CarHireShape.fast,
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected && enabled
+              ? CarHirePalette.primary
+              : CarHirePalette.surfaceLow,
+          borderRadius: BorderRadius.circular(CarHireShape.pillRadius),
+          border: Border.all(
+            color: selected && enabled
+                ? CarHirePalette.primary
+                : CarHirePalette.hairline,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 13, color: foreground),
+              const SizedBox(width: 5),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                color: foreground,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Quiet yes/no row with a rounded check box, used for listing rules.
+class CarHireCheckRow extends StatelessWidget {
+  const CarHireCheckRow({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.onChanged,
+    this.subtitle,
+    this.enabled = true,
+  });
+
+  final String label;
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+  final String? subtitle;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = enabled && onChanged != null;
+    final foreground = active ? CarHirePalette.onSurface : CarHirePalette.muted;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 7),
+      child: Material(
+        color: CarHirePalette.surfaceLow,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: active ? () => onChanged!(!value) : null,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(10, 9, 12, 9),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: value && active
+                    ? CarHirePalette.accentSoft
+                    : CarHirePalette.hairline,
+              ),
+            ),
+            child: Row(
+              children: [
+                AnimatedContainer(
+                  duration: CarHireShape.fast,
+                  width: 20,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: value && active
+                        ? CarHirePalette.accent
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: value && active
+                          ? CarHirePalette.accent
+                          : active
+                          ? CarHirePalette.outlineVariant
+                          : CarHirePalette.hairline,
+                      width: 1.4,
+                    ),
+                  ),
+                  child: value && active
+                      ? const Icon(
+                          Icons.check_rounded,
+                          size: 14,
+                          color: Colors.white,
+                        )
+                      : null,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        label,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: value ? FontWeight.w700 : FontWeight.w600,
+                          color: foreground,
+                        ),
+                      ),
+                      if (subtitle != null) ...[
+                        const SizedBox(height: 1),
+                        Text(
+                          subtitle!,
+                          style: CarHireType.bodySmall.copyWith(
+                            fontSize: 10.5,
+                            color: CarHirePalette.muted,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

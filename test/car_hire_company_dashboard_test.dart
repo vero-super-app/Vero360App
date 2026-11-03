@@ -125,6 +125,7 @@ void main() {
 
       expect(find.text('Fleet pulse'), findsOneWidget);
       expect(find.text('Ace Car Hire'), findsOneWidget);
+      expect(find.text('Add car'), findsOneWidget);
       expect(find.text('Needs you today'), findsOneWidget);
       expect(find.textContaining('On road'), findsWidgets);
 

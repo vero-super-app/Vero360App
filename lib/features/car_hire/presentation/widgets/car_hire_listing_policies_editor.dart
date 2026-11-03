@@ -33,6 +33,9 @@ const _districts = <(String, String)>[
   ('neno', 'Neno'),
 ];
 
+/// Listing rules, drawn with the same pieces as the wizard fields above:
+/// labelled fields, choice pills and quiet check rows. The platform terms are
+/// stated once as a note; everything below is the owner's own choice.
 class CarHireListingPoliciesEditor extends StatelessWidget {
   const CarHireListingPoliciesEditor({
     super.key,
@@ -50,7 +53,19 @@ class CarHireListingPoliciesEditor extends StatelessWidget {
     } else {
       next.add(mode);
     }
-    onChanged(value.copyWith(rentalModes: next.isEmpty ? <String>[mode] : next));
+    onChanged(
+      value.copyWith(rentalModes: next.isEmpty ? <String>[mode] : next),
+    );
+  }
+
+  void _toggleDistrict(String id, bool selected) {
+    final next = List<String>.from(value.allowedDistricts);
+    if (selected) {
+      if (!next.contains(id)) next.add(id);
+    } else {
+      next.remove(id);
+    }
+    onChanged(value.copyWith(allowedDistricts: next));
   }
 
   @override
@@ -58,158 +73,215 @@ class CarHireListingPoliciesEditor extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Always applied by Vero360', style: CarHireType.title.copyWith(fontSize: 13.5)),
-        const SizedBox(height: 6),
-        Text(
-          'In-app payment, Vero-held deposit, cancellation table, GPS trip start, photo handover, no off-platform deals.',
-          style: CarHireType.bodySmall,
+        const _VeroNote(),
+        const SizedBox(height: 14),
+        const CarHireFieldLabel('Rental modes'),
+        Wrap(
+          spacing: 7,
+          runSpacing: 7,
+          children: [
+            CarHireChoiceChip(
+              label: 'Self-drive',
+              icon: Icons.key_rounded,
+              selected: value.offersSelfDrive,
+              onTap: () => _toggleMode('SELF_DRIVE'),
+            ),
+            CarHireChoiceChip(
+              label: 'With driver',
+              icon: Icons.person_outline_rounded,
+              selected: value.offersWithDriver,
+              onTap: () => _toggleMode('WITH_DRIVER'),
+            ),
+          ],
         ),
         const SizedBox(height: 14),
-        Text('Your listing rules', style: CarHireType.title.copyWith(fontSize: 13.5)),
-        CheckboxListTile(
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Self-drive'),
-          value: value.offersSelfDrive,
-          onChanged: (_) => _toggleMode('SELF_DRIVE'),
-        ),
-        CheckboxListTile(
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          title: const Text('With driver'),
-          value: value.offersWithDriver,
-          onChanged: (_) => _toggleMode('WITH_DRIVER'),
-        ),
-        CheckboxListTile(
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Extra drivers'),
+        const CarHireFieldLabel('Guest extras'),
+        CarHireCheckRow(
+          label: 'Extra drivers',
+          subtitle: value.offersSelfDrive
+              ? 'Let renters add licensed drivers'
+              : 'Needs self-drive to be offered',
           value: value.extraDriversAllowed,
+          enabled: value.offersSelfDrive,
           onChanged: value.offersSelfDrive
-              ? (checked) => onChanged(value.copyWith(extraDriversAllowed: checked ?? false))
+              ? (checked) =>
+                    onChanged(value.copyWith(extraDriversAllowed: checked))
               : null,
         ),
-        if (value.extraDriversAllowed)
+        if (value.extraDriversAllowed) ...[
+          const CarHireFieldLabel('Maximum extra drivers'),
           TextFormField(
-            initialValue: '${value.extraDriversMax > 0 ? value.extraDriversMax : 1}',
+            initialValue:
+                '${value.extraDriversMax > 0 ? value.extraDriversMax : 1}',
             keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Maximum extra drivers'),
-            onChanged: (text) =>
-                onChanged(value.copyWith(extraDriversMax: int.tryParse(text) ?? 1)),
+            decoration: carHireInputDecoration(
+              hint: '2',
+              helper: 'Renters can add up to this many drivers.',
+            ),
+            onChanged: (text) => onChanged(
+              value.copyWith(extraDriversMax: int.tryParse(text) ?? 1),
+            ),
           ),
-        CheckboxListTile(
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Smoking allowed'),
+          const SizedBox(height: 12),
+        ],
+        CarHireCheckRow(
+          label: 'Smoking allowed',
           value: value.smokingAllowed,
-          onChanged: (checked) => onChanged(value.copyWith(smokingAllowed: checked ?? false)),
+          onChanged: (checked) =>
+              onChanged(value.copyWith(smokingAllowed: checked)),
         ),
-        CheckboxListTile(
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Pets allowed'),
+        CarHireCheckRow(
+          label: 'Pets allowed',
           value: value.petsAllowed,
-          onChanged: (checked) => onChanged(value.copyWith(petsAllowed: checked ?? false)),
+          onChanged: (checked) =>
+              onChanged(value.copyWith(petsAllowed: checked)),
         ),
-        CheckboxListTile(
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Cross-border travel'),
+        CarHireCheckRow(
+          label: 'Cross-border travel',
+          subtitle: 'Malawi to Zambia, Tanzania or Mozambique',
           value: value.crossBorderAllowed,
-          onChanged: (checked) => onChanged(value.copyWith(crossBorderAllowed: checked ?? false)),
+          onChanged: (checked) =>
+              onChanged(value.copyWith(crossBorderAllowed: checked)),
         ),
-        CheckboxListTile(
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Off-road use'),
+        CarHireCheckRow(
+          label: 'Off-road use',
           value: value.offRoadAllowed,
-          onChanged: (checked) => onChanged(value.copyWith(offRoadAllowed: checked ?? false)),
+          onChanged: (checked) =>
+              onChanged(value.copyWith(offRoadAllowed: checked)),
         ),
-        CheckboxListTile(
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Delivery / collection'),
+        CarHireCheckRow(
+          label: 'Delivery / collection',
+          subtitle: 'Hand the car over at an address you agree',
           value: value.deliveryOffered,
-          onChanged: (checked) => onChanged(value.copyWith(deliveryOffered: checked ?? false)),
+          onChanged: (checked) =>
+              onChanged(value.copyWith(deliveryOffered: checked)),
         ),
-        CheckboxListTile(
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Remote engine-off available'),
+        CarHireCheckRow(
+          label: 'Remote engine-off available',
+          subtitle: 'You can immobilise the car from Vero while it is out',
           value: value.immobilizeAvailable,
           onChanged: (checked) =>
-              onChanged(value.copyWith(immobilizeAvailable: checked ?? false)),
+              onChanged(value.copyWith(immobilizeAvailable: checked)),
         ),
-        const SizedBox(height: 8),
-        Text('Travel area', style: CarHireType.bodySmall.copyWith(fontWeight: FontWeight.w700)),
-        DropdownButton<String>(
-          isExpanded: true,
-          value: value.travelAreaMode,
-          items: const [
-            DropdownMenuItem(value: 'NATIONWIDE', child: Text('Nationwide Malawi')),
-            DropdownMenuItem(value: 'HIRE_AREA', child: Text('Hire area only')),
-            DropdownMenuItem(value: 'DISTRICT', child: Text('Selected districts')),
+        const SizedBox(height: 7),
+        const CarHireFieldLabel('Travel area'),
+        Wrap(
+          spacing: 7,
+          runSpacing: 7,
+          children: [
+            CarHireChoiceChip(
+              label: 'Nationwide Malawi',
+              selected: value.travelAreaMode == 'NATIONWIDE',
+              onTap: () =>
+                  onChanged(value.copyWith(travelAreaMode: 'NATIONWIDE')),
+            ),
+            CarHireChoiceChip(
+              label: 'Hire area only',
+              selected: value.travelAreaMode == 'HIRE_AREA',
+              onTap: () =>
+                  onChanged(value.copyWith(travelAreaMode: 'HIRE_AREA')),
+            ),
+            CarHireChoiceChip(
+              label: 'Selected districts',
+              selected: value.travelAreaMode == 'DISTRICT',
+              onTap: () =>
+                  onChanged(value.copyWith(travelAreaMode: 'DISTRICT')),
+            ),
           ],
-          onChanged: (next) {
-            if (next != null) onChanged(value.copyWith(travelAreaMode: next));
-          },
         ),
-        if (value.travelAreaMode == 'HIRE_AREA')
+        if (value.travelAreaMode == 'HIRE_AREA') ...[
+          const SizedBox(height: 12),
+          const CarHireFieldLabel('Hire-area radius (km)'),
           TextFormField(
             initialValue: '${value.hireAreaRadiusKm}',
             keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Hire-area radius (km)'),
-            onChanged: (text) =>
-                onChanged(value.copyWith(hireAreaRadiusKm: int.tryParse(text) ?? 25)),
+            decoration: carHireInputDecoration(
+              hint: '25',
+              helper: 'How far from your branch the car may go.',
+            ),
+            onChanged: (text) => onChanged(
+              value.copyWith(hireAreaRadiusKm: int.tryParse(text) ?? 25),
+            ),
           ),
-        if (value.travelAreaMode == 'DISTRICT')
+        ],
+        if (value.travelAreaMode == 'DISTRICT') ...[
+          const SizedBox(height: 12),
+          CarHireFieldLabel(
+            'Districts you serve',
+            trailing: value.allowedDistricts.isEmpty
+                ? null
+                : TextButton(
+                    onPressed: () =>
+                        onChanged(value.copyWith(allowedDistricts: <String>[])),
+                    style: TextButton.styleFrom(
+                      foregroundColor: CarHirePalette.accent,
+                      padding: EdgeInsets.zero,
+                      minimumSize: const Size(0, 24),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text(
+                      'Clear',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+          ),
           Wrap(
-            spacing: 8,
+            spacing: 7,
+            runSpacing: 7,
             children: [
               for (final district in _districts)
-                FilterChip(
-                  label: Text(district.$2),
+                CarHireChoiceChip(
+                  label: district.$2,
                   selected: value.allowedDistricts.contains(district.$1.trim()),
-                  onSelected: (selected) {
-                    final id = district.$1.trim();
-                    final next = List<String>.from(value.allowedDistricts);
-                    if (selected) {
-                      next.add(id);
-                    } else {
-                      next.remove(id);
-                    }
-                    onChanged(value.copyWith(allowedDistricts: next));
-                  },
+                  onTap: () => _toggleDistrict(
+                    district.$1.trim(),
+                    !value.allowedDistricts.contains(district.$1.trim()),
+                  ),
                 ),
             ],
           ),
-        CheckboxListTile(
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          title: const Text('GPS alerts if the car leaves this area'),
+        ],
+        const SizedBox(height: 14),
+        CarHireCheckRow(
+          label: 'GPS alerts if the car leaves this area',
+          subtitle: value.travelAreaMode == 'NATIONWIDE'
+              ? 'You are alerted the moment the car is out of area'
+              : 'Always on outside the area you set',
           value: value.geofenceAlerts,
+          enabled: value.travelAreaMode == 'NATIONWIDE',
           onChanged: value.travelAreaMode == 'NATIONWIDE'
-              ? (checked) =>
-                  onChanged(value.copyWith(geofenceAlerts: checked ?? false))
+              ? (checked) => onChanged(value.copyWith(geofenceAlerts: checked))
               : null,
         ),
-        DropdownButtonFormField<String>(
-          value: value.fuelPolicy,
-          decoration: const InputDecoration(labelText: 'Fuel return'),
-          items: const [
-            DropdownMenuItem(value: 'SAME_LEVEL', child: Text('Same level as handover')),
-            DropdownMenuItem(value: 'LISTING_STATED', child: Text('As stated on the listing')),
+        const CarHireFieldLabel('Fuel return'),
+        Wrap(
+          spacing: 7,
+          runSpacing: 7,
+          children: [
+            CarHireChoiceChip(
+              label: 'Same level',
+              selected: value.fuelPolicy == 'SAME_LEVEL',
+              onTap: () => onChanged(value.copyWith(fuelPolicy: 'SAME_LEVEL')),
+            ),
+            CarHireChoiceChip(
+              label: 'As stated',
+              selected: value.fuelPolicy == 'LISTING_STATED',
+              onTap: () =>
+                  onChanged(value.copyWith(fuelPolicy: 'LISTING_STATED')),
+            ),
           ],
-          onChanged: (next) {
-            if (next != null) onChanged(value.copyWith(fuelPolicy: next));
-          },
         ),
+        const SizedBox(height: 14),
+        const CarHireFieldLabel('Daily mileage allowance (km)'),
         TextFormField(
           initialValue: value.mileageAllowanceKm?.toStringAsFixed(0) ?? '',
           keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-            labelText: 'Daily mileage allowance (km)',
-            hintText: 'Leave empty for no stated limit',
+          decoration: carHireInputDecoration(
+            hint: 'No limit',
+            helper: 'Leave empty for no stated limit.',
           ),
           onChanged: (text) => onChanged(
             value.copyWith(
@@ -219,25 +291,85 @@ class CarHireListingPoliciesEditor extends StatelessWidget {
             ),
           ),
         ),
-        if (value.mileageAllowanceKm != null)
+        if (value.mileageAllowanceKm != null) ...[
+          const SizedBox(height: 12),
+          const CarHireFieldLabel('Extra km rate (MWK)'),
           TextFormField(
             initialValue: value.extraKmRate?.toStringAsFixed(0) ?? '',
             keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Extra km rate (MWK)'),
-            onChanged: (text) => onChanged(
-              value.copyWith(extraKmRate: double.tryParse(text)),
+            decoration: carHireInputDecoration(
+              hint: '1500',
+              helper: 'Charged per km beyond the daily allowance.',
             ),
+            onChanged: (text) =>
+                onChanged(value.copyWith(extraKmRate: double.tryParse(text))),
           ),
+        ],
+        const SizedBox(height: 12),
+        const CarHireFieldLabel('House notes (not legal terms)'),
         TextFormField(
           initialValue: value.houseNotes,
           maxLength: 400,
           maxLines: 3,
-          decoration: const InputDecoration(
-            labelText: 'House notes (not legal terms)',
+          decoration: carHireInputDecoration(
+            hint: 'Anything a renter should know before booking',
+            helper: 'Shown on the listing. Platform terms above always apply.',
+            alignLabelWithHint: true,
           ),
           onChanged: (text) => onChanged(value.copyWith(houseNotes: text)),
         ),
       ],
+    );
+  }
+}
+
+/// The platform terms, stated once as a quiet note instead of a checkbox list.
+class _VeroNote extends StatelessWidget {
+  const _VeroNote();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(11, 10, 11, 11),
+      decoration: BoxDecoration(
+        color: CarHirePalette.accentPale,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: CarHirePalette.accentSoft),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.verified_user_outlined,
+            size: 15,
+            color: CarHirePalette.onAccentSoft,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Always applied by Vero360',
+                  style: CarHireType.label.copyWith(
+                    color: CarHirePalette.onAccentSoft,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'In-app payment, Vero-held deposit, cancellation table, GPS '
+                  'trip start, photo handover, no off-platform deals.',
+                  style: CarHireType.bodySmall.copyWith(
+                    fontSize: 11,
+                    color: CarHirePalette.onAccentSoft,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

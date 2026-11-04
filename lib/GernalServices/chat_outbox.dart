@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'package:universal_io/io.dart';
 
 import 'package:flutter/foundation.dart' show kDebugMode, debugPrint;
@@ -209,7 +209,7 @@ class ChatOutbox {
   }) async {
     final dir = await mediaDir();
     final dest = '${dir.path}/$clientMessageId.$ext';
-    // flush:false â€” chat UX should not wait on fsync before the bubble paints.
+    // flush:false — chat UX should not wait on fsync before the bubble paints.
     await File(dest).writeAsBytes(bytes, flush: false);
     return dest;
   }

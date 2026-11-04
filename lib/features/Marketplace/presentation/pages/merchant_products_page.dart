@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'package:universal_io/io.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -125,7 +125,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   final CartService _cartService =
       CartService('unused', apiPrefix: ApiConfig.apiPrefix);
 
-  /// null while detecting â€” show products immediately (common case).
+  /// null while detecting — show products immediately (common case).
   bool? _isAccommodationHost;
   /// Food kitchens must show restaurant + menu, not marketplace store.
   bool? _isFoodKitchen;
@@ -299,7 +299,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       }
     } catch (_) {}
 
-    // Firebase UID shops already have the listing key â€” skip slow numeric bridges.
+    // Firebase UID shops already have the listing key — skip slow numeric bridges.
     if (!_looksLikeFirebaseUid(mid)) {
       final numeric = int.tryParse(mid) ?? _merchantBackendId;
       if (numeric != null && numeric > 0) {
@@ -444,7 +444,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
       } catch (_) {}
     }
     if (_isHttp(s)) {
-      // Disk + memory cache â€” same URL as the avatar ring, so open is instant.
+      // Disk + memory cache — same URL as the avatar ring, so open is instant.
       return CachedNetworkImage(
         imageUrl: s,
         fit: fit,
@@ -538,7 +538,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     final raw = (_merchantProfileUrl ?? '').trim();
     if (raw.isEmpty) return;
 
-    // Open dialog immediately â€” image comes from cache when available.
+    // Open dialog immediately — image comes from cache when available.
     showGeneralDialog(
       context: context,
       barrierDismissible: true,
@@ -1605,7 +1605,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
   Future<void> _toggleFollow() async {
     final user = _auth.currentUser;
     if (user == null) {
-      // Not logged in â€“ you can later hook this to open login.
+      // Not logged in – you can later hook this to open login.
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please log in to follow this seller.')),
       );
@@ -1671,8 +1671,8 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         );
 
   String get _shareMessage => _isRestaurantAccount
-      ? 'Check out this restaurant on Vero360 â€” $_shopDisplayName\n$_merchantShopUrl'
-      : 'Check out this shop on Vero360 â€” $_shopDisplayName\n$_merchantShopUrl';
+      ? 'Check out this restaurant on Vero360 — $_shopDisplayName\n$_merchantShopUrl'
+      : 'Check out this shop on Vero360 — $_shopDisplayName\n$_merchantShopUrl';
 
   void _copyMerchantLink() {
     Clipboard.setData(ClipboardData(text: _merchantShopUrl));
@@ -1737,7 +1737,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
             ),
             const SizedBox(height: 6),
             Text(
-              'Up to $_kMaxReportPhotos photos Â· $remainingSlots slot${remainingSlots == 1 ? '' : 's'} left',
+              'Up to $_kMaxReportPhotos photos · $remainingSlots slot${remainingSlots == 1 ? '' : 's'} left',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 13,
@@ -2273,7 +2273,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                                     ),
                                     const SizedBox(height: 2),
                                     Text(
-                                      'Camera or gallery Â· ${picked.length}/$_kMaxReportPhotos',
+                                      'Camera or gallery · ${picked.length}/$_kMaxReportPhotos',
                                       style: TextStyle(
                                         fontSize: 12,
                                         color: Colors.grey.shade600,
@@ -2384,7 +2384,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
     messenger.hideCurrentSnackBar();
     messenger.showSnackBar(
       const SnackBar(
-        content: Text('Sending reportâ€¦'),
+        content: Text('Sending report…'),
         duration: Duration(seconds: 60),
       ),
     );
@@ -2400,7 +2400,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
           messenger.showSnackBar(
             SnackBar(
               content: Text(
-                'Uploading photo ${i + 1} of ${pickedFiles.length}â€¦',
+                'Uploading photo ${i + 1} of ${pickedFiles.length}…',
               ),
               duration: const Duration(seconds: 60),
             ),
@@ -2425,7 +2425,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
         messenger.hideCurrentSnackBar();
         messenger.showSnackBar(
           const SnackBar(
-            content: Text('Saving reportâ€¦'),
+            content: Text('Saving report…'),
             duration: Duration(seconds: 30),
           ),
         );
@@ -3338,7 +3338,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                   child: Padding(
                     padding: const EdgeInsets.all(24),
                     child: Text(
-                      'Could not load this restaurantâ€™s food.',
+                      'Could not load this restaurant’s food.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontWeight: FontWeight.w800,
@@ -3773,7 +3773,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
           Expanded(
             child: Builder(
               builder: (context) {
-                // Don't block products on accommodation detect â€” show products
+                // Don't block products on accommodation detect — show products
                 // unless we already know this is a Stay host.
                 final isAccommodationHost = _isAccommodationHost == true;
                 if (isAccommodationHost) {
@@ -3796,7 +3796,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                             Padding(
                               padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                               child: _buildModernSearchBar(
-                                'Search ${_shopDisplayName == 'Merchant' ? 'this host' : _shopDisplayName}â€¦',
+                                'Search ${_shopDisplayName == 'Merchant' ? 'this host' : _shopDisplayName}…',
                               ),
                             ),
                             Expanded(
@@ -3805,7 +3805,7 @@ class _MerchantProductsPageState extends State<MerchantProductsPage> {
                           ],
                         );
                       }
-                      // Host profile with no stay rooms â€” show marketplace listings.
+                      // Host profile with no stay rooms — show marketplace listings.
                       return _buildProductsBrowseColumn(context);
                     },
                   );
@@ -4263,7 +4263,7 @@ class _MerchantProfileCard extends StatelessWidget {
     final raw = profileUrl?.trim() ?? '';
     if (raw.isEmpty) return null;
     if (raw.startsWith('http://') || raw.startsWith('https://')) {
-      // Same URL as the full viewer â†’ shared disk/memory cache (instant open).
+      // Same URL as the full viewer → shared disk/memory cache (instant open).
       return CachedNetworkImageProvider(raw);
     }
     // Try base64 (same pattern as dashboard)
@@ -4317,7 +4317,7 @@ class _MerchantProfileCard extends StatelessWidget {
             children: [
               Tooltip(
                 message: hasPhoto
-                    ? 'Tap to view photo Â· Long-press for stories'
+                    ? 'Tap to view photo · Long-press for stories'
                     : 'Profile photo',
                 child: StoryProfileRing(
                   merchantId: merchantId,
@@ -4389,7 +4389,7 @@ class _MerchantProfileCard extends StatelessWidget {
                                 ),
                                 if (reviewCount > 0) ...[
                                   Text(
-                                    ' Â· $reviewCount',
+                                    ' · $reviewCount',
                                     style: TextStyle(
                                       fontWeight: FontWeight.w700,
                                       fontSize: 11,

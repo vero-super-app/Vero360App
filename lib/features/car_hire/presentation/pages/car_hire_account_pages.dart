@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:vero360_app/features/car_hire/data/models/car_hire_company_models.dart';
@@ -365,7 +365,7 @@ class _DetailsCard extends StatelessWidget {
             ),
             Expanded(
               child: Text(
-                value.isEmpty ? 'â€”' : value,
+                value.isEmpty ? '—' : value,
                 style: const TextStyle(
                   color: CarHirePalette.onSurface,
                   fontSize: 13,

@@ -80,75 +80,78 @@
                 <data android:scheme="vero360" />
             </intent-filter>
 
-            <!-- HTTPS App Links -->
+            <!--
+                HTTPS App Links (autoVerify).
+                Keep ONE host per intent-filter so a failing host (e.g. www
+                redirect) cannot poison verification of the other host.
+                Share URLs use https://vero360.app/... (apex). www is only
+                claimed after Netlify serves assetlinks.json with HTTP 200
+                and no 301/302 — see hosting/DEEP_LINKS.md.
+            -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
-
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
 
-                <!-- vero360.app -->
                 <data
                     android:scheme="https"
                     android:host="vero360.app"
                     android:pathPrefix="/accommodation" />
-
                 <data
                     android:scheme="https"
                     android:host="vero360.app"
                     android:pathPrefix="/stay" />
-
                 <data
                     android:scheme="https"
                     android:host="vero360.app"
                     android:pathPrefix="/marketplace" />
-
                 <data
                     android:scheme="https"
                     android:host="vero360.app"
                     android:pathPrefix="/shop" />
-
                 <data
                     android:scheme="https"
                     android:host="vero360.app"
                     android:pathPrefix="/merchant" />
-
                 <data
                     android:scheme="https"
                     android:host="vero360.app"
                     android:pathPrefix="/food" />
+            </intent-filter>
 
-                <!-- www.vero360.app -->
+            <!--
+                www host: keep autoVerify, but Netlify must stop 301-redirecting
+                /.well-known/* to the apex or Google marks this domain failed.
+            -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
                 <data
                     android:scheme="https"
                     android:host="www.vero360.app"
                     android:pathPrefix="/accommodation" />
-
                 <data
                     android:scheme="https"
                     android:host="www.vero360.app"
                     android:pathPrefix="/stay" />
-
                 <data
                     android:scheme="https"
                     android:host="www.vero360.app"
                     android:pathPrefix="/marketplace" />
-
                 <data
                     android:scheme="https"
                     android:host="www.vero360.app"
                     android:pathPrefix="/shop" />
-
                 <data
                     android:scheme="https"
                     android:host="www.vero360.app"
                     android:pathPrefix="/merchant" />
-
                 <data
                     android:scheme="https"
                     android:host="www.vero360.app"
                     android:pathPrefix="/food" />
-
             </intent-filter>
 
         </activity>

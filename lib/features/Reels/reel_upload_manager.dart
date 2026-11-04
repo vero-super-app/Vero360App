@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:vero360_app/native/local_notifications.dart';
@@ -12,7 +12,7 @@ class ReelUpload {
   final ReelProduct? product;
   final ReelMusic? music;
 
-  /// 0.0â€“1.0 while uploading.
+  /// 0.0–1.0 while uploading.
   final double progress;
 
   /// Set when the upload failed; the upload can be retried.

@@ -1,4 +1,4 @@
-﻿// lib/Pages/video_player_page.dart
+// lib/Pages/video_player_page.dart
 import 'dart:async';
 import 'package:universal_io/io.dart';
 

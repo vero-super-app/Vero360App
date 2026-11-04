@@ -1,4 +1,4 @@
-﻿import 'package:universal_io/io.dart';
+import 'package:universal_io/io.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -19,7 +19,7 @@ import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_
 
 enum _OnboardingPhase { driver, vehicle, status }
 
-/// Dual-gate driver verification wizard (identity docs â†’ vehicle docs â†’ status).
+/// Dual-gate driver verification wizard (identity docs → vehicle docs → status).
 class BecomeDriverPage extends ConsumerStatefulWidget {
   const BecomeDriverPage({super.key});
 
@@ -145,7 +145,7 @@ class _BecomeDriverPageState extends ConsumerState<BecomeDriverPage> {
       _error = null;
     });
     try {
-      // Heal stale inactive flags, then fetch â€” keep Riverpod dashboard in sync.
+      // Heal stale inactive flags, then fetch — keep Riverpod dashboard in sync.
       try {
         await _driverService.reactivateMySession();
       } catch (_) {}
@@ -1004,7 +1004,7 @@ class _BecomeDriverPageState extends ConsumerState<BecomeDriverPage> {
       tone = RideShareColors.primaryDeep;
     } else {
       headline = 'Verification in progress';
-      body = 'Driver: $status Â· Vehicle: ${taxiStatus.isEmpty ? 'none' : taxiStatus}';
+      body = 'Driver: $status · Vehicle: ${taxiStatus.isEmpty ? 'none' : taxiStatus}';
       tone = RideShareColors.primaryDeep;
     }
 

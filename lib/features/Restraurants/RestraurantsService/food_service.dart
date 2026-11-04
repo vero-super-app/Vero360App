@@ -1,4 +1,4 @@
-﻿// lib/services/food_service.dart
+// lib/services/food_service.dart
 
 import 'dart:convert';
 import 'package:universal_io/io.dart';
@@ -154,7 +154,7 @@ class FoodService {
     }
   }
 
-  /// Merchant kitchen menu (posted via food dashboard â†’ `food_menu_items`).
+  /// Merchant kitchen menu (posted via food dashboard → `food_menu_items`).
   Future<List<FoodModel>> _fetchFirestoreFoodMenuItems() async {
     try {
       final snap = await FirebaseFirestore.instance

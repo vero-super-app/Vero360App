@@ -1,4 +1,4 @@
-﻿import 'package:universal_io/io.dart';
+import 'package:universal_io/io.dart';
 
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';

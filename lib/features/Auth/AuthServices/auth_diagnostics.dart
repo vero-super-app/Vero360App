@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'package:universal_io/io.dart' show Platform;
 
 import 'package:firebase_auth/firebase_auth.dart';

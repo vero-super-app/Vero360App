@@ -1,4 +1,4 @@
-﻿// lib/services/marketplace_service.dart
+// lib/services/marketplace_service.dart
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' as ui;
@@ -475,7 +475,7 @@ class MarketplaceService {
   /// Marketplace content now lives in Firestore, so this method no longer calls
   /// `/marketplace/search/photo/url`.
   /// Photo search (Taobao / Idle Fish style):
-  /// 1) Cloud Vision fully scans the photo â†’ product keywords
+  /// 1) Cloud Vision fully scans the photo → product keywords
   /// 2) Rank marketplace listings by name/description/category match
   /// 3) Near-duplicate image hash is a secondary boost only
   /// 4) Empty list when nothing meaningful matches (no catalog dump)

@@ -35,9 +35,7 @@ bool? _boolOrNull(dynamic value) {
   return null;
 }
 
-// ---------------------------------------------------------------------------
 // Section envelope
-// ---------------------------------------------------------------------------
 
 enum CarHireSectionStatus { ok, unavailable }
 
@@ -106,9 +104,7 @@ class CarHireSection<T> {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Facets
-// ---------------------------------------------------------------------------
 
 class CarHirePriceFacet {
   const CarHirePriceFacet({
@@ -191,9 +187,7 @@ class CarHireFacets {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Date availability
-// ---------------------------------------------------------------------------
 
 /// Result of the standalone availability check used by the detail page.
 class CarHireAvailability {
@@ -255,9 +249,7 @@ class CarHireAvailabilityRequest {
   int get hashCode => Object.hash(carId, startAt, endAt);
 }
 
-// ---------------------------------------------------------------------------
 // Browse snapshot
-// ---------------------------------------------------------------------------
 
 /// The three independently resolved sections of the browse page.
 class CarHireBrowseSnapshot {

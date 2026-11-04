@@ -71,9 +71,7 @@ class CarHireCompanyPage extends ConsumerWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Dashboard
-// ---------------------------------------------------------------------------
 
 class _CompanyDashboard extends ConsumerStatefulWidget {
   const _CompanyDashboard({required this.access, required this.asHome});
@@ -473,9 +471,7 @@ class _FleetSnapshot {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Header
-// ---------------------------------------------------------------------------
 
 class _WalletTile extends StatelessWidget {
   const _WalletTile({required this.companyName});
@@ -658,9 +654,7 @@ class _CompanyStrip extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Fleet pulse
-// ---------------------------------------------------------------------------
 
 class _PulseCard extends StatelessWidget {
   const _PulseCard({
@@ -920,9 +914,7 @@ class _PulseMetric extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Today's operations
-// ---------------------------------------------------------------------------
 
 class _NextOpsSection extends StatelessWidget {
   const _NextOpsSection({
@@ -1264,9 +1256,7 @@ class _QuietCard extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Filters and car cards
-// ---------------------------------------------------------------------------
 
 enum _UnitFilter {
   all,

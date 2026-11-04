@@ -125,9 +125,7 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
     super.dispose();
   }
 
-  // ---------------------------------------------------------------------
   // Filters
-  // ---------------------------------------------------------------------
 
   void _onSearchTextChanged(String value) {
     setState(() {});
@@ -188,9 +186,7 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
     }
   }
 
-  // ---------------------------------------------------------------------
   // Date + search
-  // ---------------------------------------------------------------------
 
   Future<DateTime?> _pickDateTime(DateTime initial) async {
     final now = DateTime.now();
@@ -359,9 +355,7 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
       );
   }
 
-  // ---------------------------------------------------------------------
   // Derived data
-  // ---------------------------------------------------------------------
 
   int _rentalDays(CarHireSearchQuery query) {
     final start = query.startAt;
@@ -493,9 +487,7 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
     }
   }
 
-  // ---------------------------------------------------------------------
   // Build
-  // ---------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
@@ -1285,9 +1277,7 @@ class _CarHireBrowsePageState extends ConsumerState<CarHireBrowsePage> {
   }
 }
 
-// -------------------------------------------------------------------------
 // Small pieces
-// -------------------------------------------------------------------------
 
 String _titleCase(String value) {
   final lower = value.trim().toLowerCase();

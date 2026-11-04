@@ -113,9 +113,7 @@ Widget merchantDashboardFromPrefs(String email, SharedPreferences prefs) {
 /// Set in [MyApp] initState; used by [OnboardingGate] to re-run role-based shell redirect.
 void Function()? _onOnboardingGateCompletedHook;
 
-// ───────────────────────────────────────────────
 //  BACKGROUND MESSAGE HANDLER - must be top-level
-// ───────────────────────────────────────────────
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await _ensureFirebaseHealthy(quiet: true);
@@ -272,9 +270,7 @@ Future<bool> _ensureFirebaseHealthy({
   return ok;
 }
 
-// ───────────────────────────────────────────────
 //  MAIN — paint launcher first, heal Firebase after
-// ───────────────────────────────────────────────
 bool _isFirebaseNoApp(Object error) {
   final msg = error.toString();
   return msg.contains('core/no-app') || msg.contains('No Firebase App');
@@ -392,9 +388,7 @@ const SystemUiOverlayStyle _kEdgeToEdgeOverlay = SystemUiOverlayStyle(
   systemNavigationBarIconBrightness: Brightness.dark,
 );
 
-// ───────────────────────────────────────────────
 //  AppBootstrap — launcher + Firebase self-heal
-// ───────────────────────────────────────────────
 class AppBootstrap extends StatefulWidget {
   const AppBootstrap({super.key});
 

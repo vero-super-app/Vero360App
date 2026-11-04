@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'package:universal_io/io.dart';
 
 import 'package:flutter/foundation.dart';
@@ -291,7 +291,7 @@ class _PostReelPageState extends State<PostReelPage> {
     );
   }
 
-  // â”€â”€ Step 1: pick a video â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Step 1: pick a video
 
   Widget _choosePanel() {
     return ListView(
@@ -396,7 +396,7 @@ class _PostReelPageState extends State<PostReelPage> {
     );
   }
 
-  // â”€â”€ Step 2: preview, caption, product â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Step 2: preview, caption, product
 
   Widget _editor(VideoPlayerController preview) {
     final screenH = MediaQuery.sizeOf(context).height;
@@ -516,7 +516,7 @@ class _PostReelPageState extends State<PostReelPage> {
                   style: const TextStyle(color: _kInk, fontSize: 15, height: 1.35),
                   cursorColor: _kOrange,
                   decoration: const InputDecoration(
-                    hintText: 'Describe your reelâ€¦ add #tags',
+                    hintText: 'Describe your reel… add #tags',
                     hintStyle: TextStyle(color: Colors.black38),
                     border: InputBorder.none,
                     counterStyle: TextStyle(color: Colors.black38, fontSize: 11),
@@ -614,7 +614,7 @@ class _PostReelPageState extends State<PostReelPage> {
                       Text(
                         _product == null
                             ? 'Buyers can tap Shop on your reel'
-                            : 'Tagged Â· buyers can tap Shop',
+                            : 'Tagged · buyers can tap Shop',
                         style: const TextStyle(color: Colors.black54, fontSize: 12.5),
                       ),
                     ],

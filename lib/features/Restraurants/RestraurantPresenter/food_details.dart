@@ -1,4 +1,4 @@
-﻿// lib/features/Restraurants/RestraurantPresenter/food_details.dart
+// lib/features/Restraurants/RestraurantPresenter/food_details.dart
 import 'dart:async';
 import 'dart:convert';
 import 'package:universal_io/io.dart';
@@ -39,12 +39,12 @@ import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
-// â”€â”€ Brand colours (Vero) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Brand colours (Vero)
 const Color _veroOrange = Color(0xFFFF8A00);
 const Color _ink        = Color(0xFF1A1109);
 const Color _divider    = Color(0xFFEEEEEE);
 
-// â”€â”€ Image helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Image helpers
 bool _isBase64(String s) {
   final x = s.contains(',') ? s.split(',').last.trim() : s.trim();
   if (x.length < 40) return false;
@@ -126,7 +126,7 @@ class _FoodHeroImageState extends State<_FoodHeroImage> {
   void _precache(String url) {
     if (!mounted || url.isEmpty) return;
     final dpr = MediaQuery.devicePixelRatioOf(context);
-    // Keep hero sharp â€” avoid heavy downsampling that looks "compressed".
+    // Keep hero sharp — avoid heavy downsampling that looks "compressed".
     final cachePx = (MediaQuery.sizeOf(context).width * dpr).round().clamp(640, 1600);
     unawaited(
       precacheImage(
@@ -182,7 +182,6 @@ class _FoodHeroImageState extends State<_FoodHeroImage> {
   }
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class FoodDetailsPage extends StatefulWidget {
   final FoodModel foodItem;
   const FoodDetailsPage({required this.foodItem, super.key});
@@ -370,7 +369,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     final url = _foodShareUrl();
     final buf = StringBuffer('Try ${item.FoodName} on Vero360');
     if (item.RestrauntName.trim().isNotEmpty) {
-      buf.write(' â€” ${item.RestrauntName.trim()}');
+      buf.write(' — ${item.RestrauntName.trim()}');
     }
     buf.write(
       '\nMWK ${NumberFormat('#,##0').format(BuyerCommission.buyerFacing(_unitPrice).round())}',
@@ -726,7 +725,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     }
   }
 
-  /// Checkout this dish only â€” does not write to the cart.
+  /// Checkout this dish only — does not write to the cart.
   Future<void> _buyFoodNow() async {
     if (_cartBusy || _buyNowBusy) return;
     if (_maxQty < 1) {
@@ -1092,7 +1091,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
             ),
             if (_deliveryLat != null && _deliveryLng != null) ...[
               const SizedBox(height: 8),
-              // Avoid ClipRRect around GoogleMap â€” it blanks tiles on Android.
+              // Avoid ClipRRect around GoogleMap — it blanks tiles on Android.
               SizedBox(
                 height: 140,
                 width: double.infinity,
@@ -1132,7 +1131,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     );
   }
 
-  // â”€â”€ Build â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Build
   @override
   Widget build(BuildContext context) {
     final item   = widget.foodItem;
@@ -1151,12 +1150,12 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
       body: Stack(
         children: [
 
-          // â”€â”€ SCROLLABLE BODY â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+          // SCROLLABLE BODY
           SingleChildScrollView(
             child: Column(
                 children: [
 
-                  // â”€â”€ ORANGE DOME + CIRCULAR FOOD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                  // ORANGE DOME + CIRCULAR FOOD
                   SizedBox(
                     height: heroHeight + 48,
                     width: double.infinity,
@@ -1242,7 +1241,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                     ),
                   ),
 
-                  // â”€â”€ WHITE BODY â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                  // WHITE BODY
                   Container(
                     width: double.infinity,
                     color: Colors.white,
@@ -1400,7 +1399,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                             physics:
                                 const NeverScrollableScrollPhysics(),
                             children: [
-                              // â€” Details tab â€”
+                              // — Details tab —
                               desc.isEmpty
                                   ? Text('No description available.',
                                       style: TextStyle(
@@ -1440,7 +1439,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                                         ],
                                       ),
                                     ),
-                              // â€” Reviews tab â€”
+                              // — Reviews tab —
                               _KitchenReviewsPane(
                                 restaurantId: item.restaurantId,
                                 merchantId: item.merchantId,
@@ -1470,7 +1469,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
                         _field(
                           ctrl: _descCtrl,
                           label: 'Optional',
-                          hint: 'e.g. No onions, extra sauceâ€¦',
+                          hint: 'e.g. No onions, extra sauce…',
                           maxLines: 2,
                         ),
                         const SizedBox(height: 16),
@@ -1485,7 +1484,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
               ),
             ),
 
-          // â”€â”€ BACK BUTTON (top-left, over red) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+          // BACK BUTTON (top-left, over red)
           Positioned(
             top: mq.padding.top + 14,
             left: 16,
@@ -1522,7 +1521,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
             ),
           ),
 
-          // â”€â”€ BOTTOM BAR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+          // BOTTOM BAR
           Positioned(
             bottom: 0, left: 0, right: 0,
             child: Container(
@@ -1620,7 +1619,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
     );
   }
 
-  // â”€â”€ Tiny helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Tiny helpers
   Widget _barActionButton({
     required String label,
     required Color color,
@@ -1739,7 +1738,7 @@ class _FoodDetailsPageState extends State<FoodDetailsPage>
   }
 }
 
-// â”€â”€ Kitchen reviews (food_reviews) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Kitchen reviews (food_reviews)
 class _KitchenReviewsPane extends StatelessWidget {
   const _KitchenReviewsPane({this.restaurantId, this.merchantId});
 
@@ -2640,7 +2639,7 @@ class _KitchenExplorePageState extends State<KitchenExplorePage> {
                       label: Text(
                         picked.isEmpty
                             ? 'Add screenshots'
-                            : 'Add more photos Â· ${picked.length}/$_kMaxReportPhotos',
+                            : 'Add more photos · ${picked.length}/$_kMaxReportPhotos',
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                     ),
@@ -2707,7 +2706,7 @@ class _KitchenExplorePageState extends State<KitchenExplorePage> {
     messenger.hideCurrentSnackBar();
     messenger.showSnackBar(
       const SnackBar(
-        content: Text('Sending reportâ€¦'),
+        content: Text('Sending report…'),
         duration: Duration(seconds: 60),
       ),
     );
@@ -2720,7 +2719,7 @@ class _KitchenExplorePageState extends State<KitchenExplorePage> {
           messenger.showSnackBar(
             SnackBar(
               content: Text(
-                'Uploading photo ${i + 1} of ${result.picked.length}â€¦',
+                'Uploading photo ${i + 1} of ${result.picked.length}…',
               ),
               duration: const Duration(seconds: 60),
             ),
@@ -2900,13 +2899,13 @@ class _KitchenExplorePageState extends State<KitchenExplorePage> {
                       Text(
                         [
                           if (_reviewCount > 0)
-                            '$_reviewCount review${_reviewCount == 1 ? '' : 's'} Â· ${_rating.toStringAsFixed(1)} â˜…'
+                            '$_reviewCount review${_reviewCount == 1 ? '' : 's'} · ${_rating.toStringAsFixed(1)} ★'
                           else
                             'No reviews yet',
                           _followerCount <= 0
                               ? 'No followers yet'
                               : '$_followerCount follower${_followerCount == 1 ? '' : 's'}',
-                        ].join(' Â· '),
+                        ].join(' · '),
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: Colors.grey.shade700,
@@ -2950,8 +2949,8 @@ class _KitchenExplorePageState extends State<KitchenExplorePage> {
                           ),
                           child: Text(
                             openNow
-                                ? 'OPEN Â· $_openingHours'
-                                : 'CLOSED Â· $_openingHours',
+                                ? 'OPEN · $_openingHours'
+                                : 'CLOSED · $_openingHours',
                             style: TextStyle(
                               color: openNow
                                   ? Colors.green.shade700
@@ -3006,8 +3005,8 @@ class _KitchenExplorePageState extends State<KitchenExplorePage> {
           const SizedBox(height: 18),
           Text(
             _loadingMenu
-                ? 'Loading menuâ€¦'
-                : 'Menu Â· ${_menuItems.length} dish${_menuItems.length == 1 ? '' : 'es'}',
+                ? 'Loading menu…'
+                : 'Menu · ${_menuItems.length} dish${_menuItems.length == 1 ? '' : 'es'}',
             style: const TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w900,
@@ -3130,7 +3129,7 @@ class _KitchenExplorePageState extends State<KitchenExplorePage> {
   }
 }
 
-// â”€â”€ Segmented tab bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Segmented tab bar
 class _SegmentedTabs extends StatelessWidget {
   const _SegmentedTabs({required this.controller});
   final TabController controller;

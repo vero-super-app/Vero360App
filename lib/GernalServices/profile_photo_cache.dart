@@ -1,4 +1,4 @@
-﻿import 'package:universal_io/io.dart';
+import 'package:universal_io/io.dart';
 import 'dart:typed_data';
 
 import 'package:firebase_auth/firebase_auth.dart';
@@ -20,7 +20,7 @@ class ProfilePhotoCache {
 
   static String? get _currentUid => FirebaseAuth.instance.currentUser?.uid;
 
-  /// Instant path from prefs â€” only if it belongs to the signed-in user
+  /// Instant path from prefs — only if it belongs to the signed-in user
   /// and (when [forRemoteUrl] is set) matches that URL.
   static Future<String?> peekLocalPath({String? forRemoteUrl}) async {
     if (kIsWeb) return null;
@@ -135,7 +135,7 @@ class ProfilePhotoCache {
     await prefs.remove(_prefsLocalPathKey);
     await prefs.remove(_prefsCachedForUrlKey);
     await prefs.remove(_prefsCachedForUidKey);
-    // Do not remove prefsRemoteUrlKey here â€” session clear owns that key.
+    // Do not remove prefsRemoteUrlKey here — session clear owns that key.
     if (path.isNotEmpty) {
       try {
         final f = File(path);

@@ -1,7 +1,5 @@
-// =============================================================================
 // Copy this file into your Flutter app (e.g. lib/core/network/auth_interceptor.dart)
 // and wire it to your Dio client. See docs/flutter_auth_setup.md for steps.
-// =============================================================================
 
 import 'package:dio/dio.dart';
 import 'package:firebase_auth/firebase_auth.dart';

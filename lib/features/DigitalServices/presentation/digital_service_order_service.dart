@@ -287,12 +287,11 @@ class DigitalServiceOrderService {
     DigitalPayoutKycPayload? payoutKyc,
     String paymentProvider = 'pawapay',
   }) async {
-    var user = FirebaseAuth.instance.currentUser;
-    user ??= (await FirebaseAuth.instance.signInAnonymously()).user;
-    if (user == null) {
-      throw Exception('Could not start checkout. Please try again.');
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || user.isAnonymous) {
+      throw Exception('Login first to purchase');
     }
-    final isGuest = user.isAnonymous;
+    final isGuest = false;
     final isSubscription = product.fixedMwkPrice != null;
     final isCrypto = product.category.trim().toLowerCase() == 'crypto';
     final kind = isCrypto
@@ -328,19 +327,43 @@ class DigitalServiceOrderService {
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
-    if (!isGuest) {
-      await OrderPartyNotificationService.publishDigitalOrderToBuyer(
-        buyerUid: user.uid,
-        productName: product.name,
-        orderId: doc.id,
-        title: 'Payment awaiting · ${product.name}',
-        body:
-            'Payment is awaiting confirmation for your ${product.name} order. '
-            'Approve the prompt on your phone, then we will process it.',
-        type: 'digital_pending',
-      );
-    }
+    // Pending push is sent only if the buyer leaves payment unfinished.
     return doc.id;
+  }
+
+  /// Buyer opened payment then left without paying.
+  static Future<void> notifyAbandonedPayment(String orderId) async {
+    final id = orderId.trim();
+    if (id.isEmpty) return;
+    final ref = _col.doc(id);
+    final snap = await ref.get();
+    if (!snap.exists) return;
+    final data = snap.data() ?? const <String, dynamic>{};
+    final status = (data['status'] ?? '').toString().trim().toLowerCase();
+    if (status == 'paid' ||
+        status == 'fulfilled' ||
+        status == 'completed' ||
+        data['abandonedNotified'] == true) {
+      return;
+    }
+    final buyerUid = (data['buyerUid'] ?? '').toString().trim();
+    if (buyerUid.isEmpty || data['isGuest'] == true) return;
+    final productName =
+        (data['productName'] ?? 'Digital service').toString().trim();
+    await ref.set({
+      'abandonedNotified': true,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+    await OrderPartyNotificationService.publishDigitalOrderToBuyer(
+      buyerUid: buyerUid,
+      productName: productName,
+      orderId: id,
+      title: 'Payment awaiting · $productName',
+      body:
+          'You left payment for $productName unfinished. '
+          'Open the app to complete it.',
+      type: 'digital_pending',
+    );
   }
 
   /// Marks paid, credits full amount to platform (Vero main) wallet.

@@ -92,7 +92,8 @@ class DigitalServicesCatalog extends ChangeNotifier {
 
   static bool _asHub(dynamic value, String key) {
     if (value == true) return true;
-    return key == 'chatgpt' || key == 'netflix';
+    final k = key.trim().toLowerCase();
+    return k == 'chatgpt' || k == 'netflix' || k == 'claude';
   }
 
   static bool _asActive(dynamic value) {
@@ -277,6 +278,11 @@ class DigitalServicesCatalog extends ChangeNotifier {
         maxOtherAmount: !isSub ? maxOtherAmount : null,
         clearMaxOtherAmount: !isSub && maxOtherAmount == null,
         imageUrl: imageUrl.isNotEmpty ? imageUrl : null,
+        logoAsset: base.logoAsset ??
+            defaultBrandLogoAsset(
+              base.key,
+              hubKey: (cfg['hubKey'] ?? base.hubKey).toString(),
+            ),
         active: true,
         isHub: _asHub(cfg['isHub'], base.key) || base.isHub,
         hubKey: (cfg['hubKey'] ?? '').toString().trim().isNotEmpty
@@ -337,6 +343,10 @@ class DigitalServicesCatalog extends ChangeNotifier {
       }
 
       final isSub = category == 'streaming' || category == 'subscription';
+      final hubKey = (cfg['hubKey'] ?? '').toString().trim();
+      final isClaude = key.toLowerCase() == 'claude' ||
+          key.toLowerCase().startsWith('claude_') ||
+          hubKey.toLowerCase() == 'claude';
       return DigitalProduct(
         key: key,
         name: name.isNotEmpty ? name : key,
@@ -344,7 +354,9 @@ class DigitalServicesCatalog extends ChangeNotifier {
             ? subtitle
             : (unitLabel.isNotEmpty ? '$unitLabel digital card' : 'Digital card'),
         category: category.isNotEmpty ? category : 'crypto',
-        accent: const Color(0xFF0F766E),
+        accent: isClaude
+            ? const Color(0xFFD97757)
+            : const Color(0xFF0F766E),
         brandTag: brandTag.isNotEmpty
             ? brandTag
             : (unitLabel.isNotEmpty ? unitLabel : name),
@@ -354,12 +366,15 @@ class DigitalServicesCatalog extends ChangeNotifier {
         unitLabel: unitLabel.isNotEmpty ? unitLabel : null,
         maxOtherAmount: isSub ? null : maxOtherAmount,
         imageUrl: imageUrl.isNotEmpty ? imageUrl : null,
-        icon: isSub
-            ? Icons.workspace_premium_outlined
-            : Icons.currency_exchange_rounded,
+        logoAsset: defaultBrandLogoAsset(key, hubKey: hubKey),
+        icon: isClaude
+            ? Icons.auto_awesome_rounded
+            : (isSub
+                ? Icons.workspace_premium_outlined
+                : Icons.currency_exchange_rounded),
         active: true,
         isHub: _asHub(cfg['isHub'], key),
-        hubKey: (cfg['hubKey'] ?? '').toString().trim(),
+        hubKey: hubKey,
         planBadge: (cfg['planBadge'] ?? '').toString().trim(),
         featureLines: _asStringList(cfg['featureLines']),
         recommended: cfg['recommended'] == true,

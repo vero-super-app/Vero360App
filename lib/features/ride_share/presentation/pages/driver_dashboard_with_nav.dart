@@ -72,7 +72,6 @@ num _asNum(dynamic v) {
 
 String mwk0(dynamic v) => _mwk0Fmt.format(_asNum(v)); // MWK 12,500
 String mwk2(dynamic v) => _mwk2Fmt.format(_asNum(v)); // MWK 12,500.00
-// ---------------------------------------------------------------------------
 
 /// “Your Items” / “My Items” grids: taller cells on narrow screens + large text scale
 /// so [_ModernItemMiniCard] / [_ItemCard] never bottom-overflow inside the cell.

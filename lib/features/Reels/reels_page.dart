@@ -377,6 +377,8 @@ class _ReelsPageState extends State<ReelsPage> {
         child: CircularProgressIndicator(color: Colors.white),
       );
     }
+    final guestFollowing =
+        _mode == _FeedMode.following && !_service.isSignedIn && _error == null;
     final String message;
     if (_error != null) {
       message = _error!;
@@ -412,11 +414,13 @@ class _ReelsPageState extends State<ReelsPage> {
                 ),
                 const SizedBox(width: 10),
                 FilledButton(
-                  onPressed: _post,
+                  onPressed: guestFollowing
+                      ? () => Navigator.of(context).pushNamed('/login')
+                      : _post,
                   style: FilledButton.styleFrom(
                     backgroundColor: const Color(0xFFFF8A00),
                   ),
-                  child: const Text('Post a reel'),
+                  child: Text(guestFollowing ? 'Sign in' : 'Post a reel'),
                 ),
               ],
             ),

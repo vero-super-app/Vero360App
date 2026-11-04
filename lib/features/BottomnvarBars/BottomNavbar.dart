@@ -43,9 +43,7 @@ import 'package:vero360_app/features/Restraurants/RestraurantPresenter/Restraura
 import 'package:vero360_app/features/Accomodation/Presentation/pages/AccomodationMerchant/accommodation_merchant_dashboard.dart';
 import 'package:vero360_app/features/VeroCourier/VeroCourierPresenter/VeroCourierMerchant/courier_merchant_dashboard.dart';
 
-// ─────────────────────────────────────────────
 // DESIGN TOKENS
-// ─────────────────────────────────────────────
 const _kOrange      = Color(0xFFFF8A00);
 const _kOrangeDark  = Color(0xFFE07000);
 const _kOrangeLight = Color(0xFFFFF0D9);
@@ -729,9 +727,7 @@ class _BottomnavbarState extends State<Bottomnavbar>
   }
 }
 
-// ─────────────────────────────────────────────
 // NAV ITEM DATA (shared with FoodPage / shells)
-// ─────────────────────────────────────────────
 class VeroNavItemData {
   final IconData icon;
   final String label;
@@ -802,9 +798,7 @@ void openVeroMainShell(BuildContext context, {required String email, int tabInde
   });
 }
 
-// ─────────────────────────────────────────────
 // VERO NAV BAR  — floating frosted pill
-// ─────────────────────────────────────────────
 class VeroMainNavigationBar extends StatelessWidget {
   const VeroMainNavigationBar({
     super.key,
@@ -892,9 +886,7 @@ class VeroMainNavigationBar extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────
 // INDIVIDUAL NAV BUTTON  — morph + ripple + label
-// ─────────────────────────────────────────────
 class _VeroNavButton extends StatefulWidget {
   const _VeroNavButton({
     required this.item,
@@ -998,7 +990,7 @@ class _VeroNavButtonState extends State<_VeroNavButton>
             child: SizedBox(
               height: 70,
               child: Stack(alignment: Alignment.center, children: [
-                // ── AMBER PILL BACKGROUND ──
+                // AMBER PILL BACKGROUND
                 ScaleTransition(
                   scale: _pillScale,
                   child: FadeTransition(
@@ -1025,7 +1017,7 @@ class _VeroNavButtonState extends State<_VeroNavButton>
                   ),
                 ),
 
-                // ── ICON + LABEL STACK ──
+                // ICON + LABEL STACK
                 Column(mainAxisAlignment: MainAxisAlignment.center, children: [
                   // Icon + optional unread badge
                   Stack(

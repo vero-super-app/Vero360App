@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'package:universal_io/io.dart' show Platform;
 import 'dart:math';
 
@@ -91,7 +91,7 @@ class FirebaseAuthService {
       final userCred = await _auth.signInWithCredential(oauthCred);
       final user = userCred.user;
 
-      // Apple only sends the full name on the first authorization â€” persist it.
+      // Apple only sends the full name on the first authorization — persist it.
       final given = (appleCred.givenName ?? '').trim();
       final family = (appleCred.familyName ?? '').trim();
       final fullName = [given, family].where((s) => s.isNotEmpty).join(' ');

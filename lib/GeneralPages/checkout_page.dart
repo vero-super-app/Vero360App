@@ -1,4 +1,4 @@
-﻿// lib/Pages/checkout_page.dart
+// lib/Pages/checkout_page.dart
 import 'dart:async';
 import 'dart:convert';
 import 'package:universal_io/io.dart';
@@ -174,7 +174,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     });
   }
 
-  /// Instant paint from memory/disk â€” never blocks on the API.
+  /// Instant paint from memory/disk — never blocks on the API.
   Future<void> _hydrateAddressFromCache() async {
     final mem = AddressService.peekDefaultAddress();
     if (mem != null) {
@@ -387,7 +387,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     _applyQty(n ?? _qty);
   }
 
-  // â”€â”€ UI helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // UI helpers
   OutlinedButtonThemeData get _outlinedTheme => OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: Colors.black87,
@@ -398,7 +398,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
         ),
       );
 
-  // â”€â”€ Delivery helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Delivery helpers
   String _deliveryLabel(DeliveryType d) {
     switch (d) {
       case DeliveryType.speed:
@@ -618,7 +618,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     );
   }
 
-  // â”€â”€ Auth + Default address bootstrap (single source: Firebase then SP) â”€â”€â”€
+  // Auth + Default address bootstrap (single source: Firebase then SP)
   Future<String?> _readAuthToken() async => AuthHandler.getTokenForApi();
 
   bool get _needsDefaultAddress =>
@@ -705,7 +705,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     return ok;
   }
 
-  // â”€â”€ Pay routing (PawaPay phone prompt) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Pay routing (PawaPay phone prompt)
   Future<void> _onPayPressed() async {
     if (_outOfStock) {
       ToastHelper.showCustomToast(
@@ -827,7 +827,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     }
   }
 
-  // â”€â”€ Fast thumb: disk cache + sized decode (same pattern as cart) â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Fast thumb: disk cache + sized decode (same pattern as cart)
   Widget _itemImagePlaceholder(double size) {
     return Container(
       width: size,
@@ -1067,7 +1067,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   _section(
                     title: 'Courier',
                     subtitle: _deliveryType == DeliveryType.pickup
-                        ? 'Pickup selected â€” no delivery address needed'
+                        ? 'Pickup selected — no delivery address needed'
                         : (_veroCourierAvailable
                             ? 'Vero Courier is available you and the shop are both in Lilongwe'
                             : 'Choose how you want your order delivered'),
@@ -1260,7 +1260,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     );
   }
 
-  // â”€â”€ Small helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Small helpers
   Widget _qtyBtn(IconData icon, VoidCallback onTap) {
     return InkWell(
       onTap: onTap,
@@ -1297,7 +1297,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
   }
 }
 
-// â”€â”€ Delivery Address card widget â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Delivery Address card widget
 class _DeliveryAddressCard extends StatelessWidget {
   const _DeliveryAddressCard({
     required this.loading,
@@ -1425,7 +1425,7 @@ class _DeliveryAddressCard extends StatelessWidget {
               [
                 address!.city,
                 if (address!.description.isNotEmpty) address!.description,
-              ].join(' Â· '),
+              ].join(' · '),
             ),
         ],
       ),

@@ -606,9 +606,7 @@ class _AppOnboardingPageState extends State<AppOnboardingPage>
   }
 }
 
-// ---------------------------------------------------------------------------
 // Orbiting dots decoration
-// ---------------------------------------------------------------------------
 class _OrbitingDots extends StatefulWidget {
   const _OrbitingDots({required this.color});
   final Color color;

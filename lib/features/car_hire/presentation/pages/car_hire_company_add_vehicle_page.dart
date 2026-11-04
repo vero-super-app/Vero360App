@@ -380,9 +380,7 @@ class _CarHireCompanyAddVehiclePageState
     );
   }
 
-  // -------------------------------------------------------------------------
   // Step 1
-  // -------------------------------------------------------------------------
 
   List<Widget> _stepVehicle() {
     return [
@@ -577,9 +575,7 @@ class _CarHireCompanyAddVehiclePageState
     ];
   }
 
-  // -------------------------------------------------------------------------
   // Step 2
-  // -------------------------------------------------------------------------
 
   List<Widget> _stepInsurance() {
     return [
@@ -655,9 +651,7 @@ class _CarHireCompanyAddVehiclePageState
     ];
   }
 
-  // -------------------------------------------------------------------------
   // Step 3
-  // -------------------------------------------------------------------------
 
   List<Widget> _stepPhotos() {
     return [
@@ -772,9 +766,7 @@ class _CarHireCompanyAddVehiclePageState
   }
 }
 
-// ---------------------------------------------------------------------------
 // Step chrome
-// ---------------------------------------------------------------------------
 
 class _StepHeader extends StatelessWidget {
   const _StepHeader({
@@ -973,9 +965,7 @@ class _StepFooter extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Small building blocks
-// ---------------------------------------------------------------------------
 
 class _FormCard extends StatelessWidget {
   const _FormCard({

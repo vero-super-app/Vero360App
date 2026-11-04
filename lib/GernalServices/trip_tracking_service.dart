@@ -122,7 +122,7 @@ class TripTrackingService {
     _positionController = null;
   }
 
-  // ────── Haversine distance calculation ──────
+  // Haversine distance calculation
   double _calculateDistanceFromLogs(List<TripLogModel> logs) {
     if (logs.length < 2) return 0.0;
 

@@ -1,4 +1,4 @@
-﻿// lib/services/promo_service.dart  (your file name may differ)
+// lib/services/promo_service.dart  (your file name may differ)
 import 'dart:convert';
 import 'package:universal_io/io.dart' show File;
 import 'dart:typed_data';
@@ -51,7 +51,7 @@ class PromoDateFormat {
     if (end == null) return startLabel;
     final endLabel = dayMonth(end);
     if (startLabel == endLabel) return startLabel;
-    return '$startLabel â€“ $endLabel';
+    return '$startLabel – $endLabel';
   }
 }
 
@@ -144,11 +144,11 @@ class PromoModel {
 
   String get formattedPromoEnd {
     final end = promoEnd;
-    if (end == null) return 'â€”';
+    if (end == null) return '—';
     return PromoDateFormat.dayMonthYearTime(end);
   }
 
-  /// e.g. "2 January â€“ 10 January"
+  /// e.g. "2 January – 10 January"
   String get formattedPromoPeriodRange =>
       PromoDateFormat.periodRange(promoStart, promoEnd);
 

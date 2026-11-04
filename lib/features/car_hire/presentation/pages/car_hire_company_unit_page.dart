@@ -261,9 +261,7 @@ class _CarHireCompanyUnitPageState
   }
 }
 
-// ---------------------------------------------------------------------------
 // Status and identity
-// ---------------------------------------------------------------------------
 
 class _StatusBar extends StatelessWidget {
   const _StatusBar({
@@ -564,9 +562,7 @@ class _ImagePlaceholder extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Snapshot
-// ---------------------------------------------------------------------------
 
 class _SnapshotCard extends StatelessWidget {
   const _SnapshotCard({required this.unit});
@@ -748,9 +744,7 @@ class _MiniTag extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Location
-// ---------------------------------------------------------------------------
 
 class _LocationCard extends ConsumerWidget {
   const _LocationCard({required this.unit});
@@ -908,9 +902,7 @@ class _LocationCard extends ConsumerWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Active reservation
-// ---------------------------------------------------------------------------
 
 class _ReservationCard extends StatelessWidget {
   const _ReservationCard({
@@ -1251,9 +1243,7 @@ class _TimePoint extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Management
-// ---------------------------------------------------------------------------
 
 class _ManagementGrid extends ConsumerWidget {
   const _ManagementGrid({
@@ -1637,9 +1627,7 @@ class _DeleteSheetState extends State<_DeleteSheet> {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Details, documents, service and listing sheets
-// ---------------------------------------------------------------------------
 
 class _SheetShell extends StatelessWidget {
   const _SheetShell({
@@ -2918,9 +2906,7 @@ class _ListingChoice extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Sheet form pieces
-// ---------------------------------------------------------------------------
 
 class _SheetField extends StatelessWidget {
   const _SheetField({required this.label, required this.child});

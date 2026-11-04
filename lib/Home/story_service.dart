@@ -1,4 +1,4 @@
-﻿// Merchant stories â€” Firestore + Storage (Firebase Spark plan). 24h expiry.
+// Merchant stories — Firestore + Storage (Firebase Spark plan). 24h expiry.
 // When Storage fails (e.g. -13040), falls back to storing image as base64 in Firestore.
 
 import 'dart:convert';
@@ -149,16 +149,16 @@ class StoryService {
     }
   }
 
-  /// viewerId::merchantId â†’ hasUnviewed
+  /// viewerId::merchantId → hasUnviewed
   static final Map<String, bool> _merchantUnviewedCache = {};
 
-  /// viewerId::storyId â†’ viewed
+  /// viewerId::storyId → viewed
   static final Map<String, bool> _storyViewedCache = {};
 
-  /// storyId â†’ like count. Survives rebuilds so the number does not flash off.
+  /// storyId → like count. Survives rebuilds so the number does not flash off.
   static final Map<String, int> _likeCountCache = {};
 
-  /// viewerId::storyId â†’ whether this viewer liked it.
+  /// viewerId::storyId → whether this viewer liked it.
   static final Map<String, bool> _myLikeCache = {};
 
   static Stream<String> get merchantViewRefreshStream =>
@@ -287,7 +287,7 @@ class StoryService {
   /// Stream of active story groups (non-expired), grouped by merchant.
   /// When [viewerId] is set, each group includes [MerchantStoryGroup.hasUnviewed].
   /// Uses an in-memory viewed cache on the first emit so rings don't flash
-  /// unviewed (blue/green) â†’ viewed (gray) when returning to Home.
+  /// unviewed (blue/green) → viewed (gray) when returning to Home.
   Stream<List<MerchantStoryGroup>> getActiveStoriesStream({String? viewerId}) {
     final controller = StreamController<List<MerchantStoryGroup>>();
     StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? storySub;
@@ -590,7 +590,7 @@ class StoryService {
       'accommodation_merchants',
       'courier_merchants',
     ];
-    // Business-only keys â€” never personal fullName / Auth displayName.
+    // Business-only keys — never personal fullName / Auth displayName.
     const businessKeys = [
       'businessName',
       'business_name',
@@ -616,7 +616,7 @@ class StoryService {
     final nameById = <String, String>{};
     await Future.wait(ids.map((id) async {
       try {
-        // 1) Shop docs â€” `name` here is usually the business title.
+        // 1) Shop docs — `name` here is usually the business title.
         for (final col in shopCollections) {
           final snap = await _firestore.collection(col).doc(id).get();
           if (!snap.exists) continue;
@@ -626,7 +626,7 @@ class StoryService {
             return;
           }
         }
-        // 2) User profile â€” business fields only (never personal name).
+        // 2) User profile — business fields only (never personal name).
         final userSnap = await _firestore.collection('users').doc(id).get();
         if (userSnap.exists) {
           final biz = pickBusiness(userSnap.data(), allowName: false);
@@ -822,7 +822,7 @@ class StoryService {
       'expiresAt': Timestamp.fromDate(expiresAt),
     });
 
-    // Do NOT re-read from server here â€” that often fails on flaky networks
+    // Do NOT re-read from server here — that often fails on flaky networks
     // even after a successful write, which caused "failed but story posted".
     _notifyActiveStoriesRefresh();
 

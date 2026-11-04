@@ -15,9 +15,7 @@ CarHireApiException _asApiException(Object error) {
   return CarHireApiException(message: UserFacingError.from(error));
 }
 
-// ---------------------------------------------------------------------------
 // Section state
-// ---------------------------------------------------------------------------
 
 /// Loading, data and error for one independent page section.
 ///
@@ -73,9 +71,7 @@ class CarHireSectionState<T> {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Browse state
-// ---------------------------------------------------------------------------
 
 class CarHireBrowseState {
   const CarHireBrowseState({
@@ -321,9 +317,7 @@ final carHireBrowseProvider =
       CarHireBrowseController.new,
     );
 
-// ---------------------------------------------------------------------------
 // Detail availability
-// ---------------------------------------------------------------------------
 
 /// Date availability for one listing. The detail page watches this separately
 /// from the car itself, so a slow or failing calendar never blocks the page.

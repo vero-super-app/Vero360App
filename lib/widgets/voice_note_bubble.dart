@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'package:universal_io/io.dart';
 
 import 'package:audioplayers/audioplayers.dart';

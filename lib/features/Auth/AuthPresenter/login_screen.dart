@@ -18,6 +18,8 @@ import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/firebaseAuth.dart';
 import 'package:vero360_app/features/Auth/AuthServices/recent_login_storage.dart';
+import 'package:vero360_app/features/Auth/AuthServices/saved_password_store.dart';
+import 'package:vero360_app/native/biometrics.dart';
 import 'package:vero360_app/GernalServices/merchant_service_helper.dart';
 import 'package:vero360_app/GernalServices/merchant_identity.dart';
 import 'package:vero360_app/GernalServices/role_helper.dart';
@@ -64,6 +66,11 @@ class _LoginScreenState extends State<LoginScreen> {
   SavedLoginAccount? _selectedAccount;
   bool _showFullForm = false;
   bool _loadingSavedAccounts = true;
+  bool _hasSavedPassword = false;
+  bool _biometricsReady = false;
+  bool _bioBusy = false;
+  String _biometricLabel = 'biometrics';
+  String? _biometricPromptedFor;
 
   /// True while Google/Apple flow is running (buttons disabled + overlay shown).
   bool get _socialLoading => _oauthPhase != _OAuthPhase.idle;
@@ -72,6 +79,7 @@ class _LoginScreenState extends State<LoginScreen> {
   void initState() {
     super.initState();
     _loadSavedAccounts();
+    _refreshBiometrics();
   }
 
   Future<void> _loadSavedAccounts() async {
@@ -90,6 +98,114 @@ class _LoginScreenState extends State<LoginScreen> {
     _selectedAccount = account;
     _identifier.text = account.identifier;
     _password.clear();
+    _hasSavedPassword = false;
+    if (!account.isSocial) {
+      unawaited(_fillSavedPassword(account));
+    }
+  }
+
+  Future<void> _refreshBiometrics() async {
+    final auth = LocalAuthentication();
+    var supported = false;
+    var canCheck = false;
+    var types = <BiometricType>[];
+    try {
+      supported = await auth.isDeviceSupported();
+      canCheck = await auth.canCheckBiometrics;
+      types = await auth.getAvailableBiometrics();
+    } catch (_) {}
+    if (!mounted) return;
+    final isFace = types.contains(BiometricType.face);
+    final isFinger = types.contains(BiometricType.fingerprint);
+    setState(() {
+      _biometricsReady = supported && (canCheck || types.isNotEmpty);
+      _biometricLabel = isFace && isFinger
+          ? 'Face ID or fingerprint'
+          : isFace
+              ? 'Face ID'
+              : isFinger
+                  ? 'fingerprint'
+                  : 'biometrics';
+    });
+    _maybeAutoBiometric();
+  }
+
+  Future<void> _fillSavedPassword(SavedLoginAccount account) async {
+    final saved = await SavedPasswordStore.read(account.identifier);
+    if (!mounted || _selectedAccount?.id != account.id) return;
+    final hasSaved = saved != null && saved.isNotEmpty;
+    setState(() {
+      _hasSavedPassword = hasSaved;
+      if (hasSaved) _password.text = saved;
+    });
+    _maybeAutoBiometric();
+  }
+
+  void _maybeAutoBiometric() {
+    final account = _selectedAccount;
+    if (account == null || account.isSocial || !_showSavedAccountSignIn) return;
+    if (!_biometricsReady || !_hasSavedPassword || _password.text.isEmpty) return;
+    if (_biometricPromptedFor == account.id || _bioBusy || _loading) return;
+    _biometricPromptedFor = account.id;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _selectedAccount?.id != account.id) return;
+      if (!_showSavedAccountSignIn) return;
+      unawaited(_signInWithBiometric(automatic: true));
+    });
+  }
+
+  Future<void> _signInWithBiometric({bool automatic = false}) async {
+    if (_bioBusy || _loading) return;
+    if (_password.text.isEmpty) {
+      if (automatic) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Sign in with your password once, then $_biometricLabel can be used.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      return;
+    }
+    setState(() => _bioBusy = true);
+    try {
+      final ok = await LocalAuthentication().authenticate(
+        localizedReason: 'Confirm $_biometricLabel to sign in to Vero360',
+        options: const AuthenticationOptions(
+          biometricOnly: false,
+          stickyAuth: true,
+          useErrorDialogs: true,
+        ),
+      );
+      if (!ok || !mounted) return;
+      await _submit();
+    } catch (_) {
+      if (!mounted || automatic) return;
+      ToastHelper.showCustomToast(
+        context,
+        'Could not verify $_biometricLabel. Use your saved password instead.',
+        isSuccess: false,
+        errorMessage: '',
+      );
+    } finally {
+      if (mounted) setState(() => _bioBusy = false);
+    }
+  }
+
+  Future<void> _rememberPassword(String identifier, String password) async {
+    await SavedPasswordStore.save(identifier, password);
+    TextInput.finishAutofillContext(shouldSave: true);
+  }
+
+  Future<void> _forgetRejectedPassword(String identifier) async {
+    await SavedPasswordStore.clear(identifier);
+    if (!mounted) return;
+    if (_identifier.text.trim().toLowerCase() != identifier.trim().toLowerCase()) {
+      return;
+    }
+    setState(() {
+      _password.clear();
+      _hasSavedPassword = false;
+    });
   }
 
   void _selectAccount(SavedLoginAccount account) {
@@ -99,6 +215,7 @@ class _LoginScreenState extends State<LoginScreen> {
   void _switchAccount({bool addNewAccount = false}) {
     setState(() {
       _password.clear();
+      _hasSavedPassword = false;
       if (addNewAccount) {
         _selectedAccount = null;
         _showFullForm = true;
@@ -113,6 +230,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _removeSavedAccount(SavedLoginAccount account) async {
     await RecentLoginStorage.removeAccount(account.id);
+    await SavedPasswordStore.clear(account.identifier);
     if (!mounted) return;
     final remaining = _savedAccounts.where((a) => a.id != account.id).toList();
     setState(() {
@@ -121,6 +239,7 @@ class _LoginScreenState extends State<LoginScreen> {
         _selectedAccount = null;
         _identifier.clear();
         _password.clear();
+        _hasSavedPassword = false;
         if (remaining.length == 1) {
           _applySelectedAccount(remaining.first);
           _showFullForm = false;
@@ -503,11 +622,22 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _submit() async {
+    final identifier = _identifier.text.trim();
+    if (_password.text.trim().isEmpty && identifier.isNotEmpty) {
+      final saved = await SavedPasswordStore.read(identifier);
+      if (!mounted) return;
+      if (saved != null && saved.isNotEmpty) {
+        setState(() {
+          _password.text = saved;
+          _hasSavedPassword = true;
+        });
+      }
+    }
+
     setState(() => _submittedOnce = true);
     if (!(_formKey.currentState?.validate() ?? false)) return;
     FocusScope.of(context).unfocus();
 
-    final identifier = _identifier.text.trim();
     final password = _password.text.trim();
 
     setState(() => _loading = true);
@@ -523,6 +653,7 @@ class _LoginScreenState extends State<LoginScreen> {
           showErrorToast: !isPhone,
         );
         if (result != null && mounted) {
+          await _rememberPassword(identifier, password);
           await _handleAuthResult(result);
           return;
         }
@@ -544,11 +675,16 @@ class _LoginScreenState extends State<LoginScreen> {
                 isSuccess: true,
                 errorMessage: '',
               );
+              await _rememberPassword(identifier, password);
               await _handleAuthResult(result);
               unawaited(_buildResultFromUser(user));
               return;
             }
-          } on FirebaseAuthException catch (_) {}
+          } on FirebaseAuthException catch (e) {
+            if (e.code == 'wrong-password' || e.code == 'invalid-credential') {
+              await _forgetRejectedPassword(identifier);
+            }
+          }
         }
         if (mounted && isPhone) {
           ToastHelper.showCustomToast(
@@ -584,6 +720,7 @@ class _LoginScreenState extends State<LoginScreen> {
         isSuccess: true,
         errorMessage: '',
       );
+      await _rememberPassword(identifier, password);
       await _handleAuthResult(result);
       unawaited(_buildResultFromUser(user));
     } on FirebaseAuthException catch (e) {
@@ -596,6 +733,7 @@ class _LoginScreenState extends State<LoginScreen> {
         case 'invalid-credential':
         case 'invalid-email':
           msg = 'Incorrect email or password.';
+          await _forgetRejectedPassword(identifier);
           break;
         case 'user-disabled':
           msg = 'This account has been disabled.';
@@ -623,6 +761,9 @@ class _LoginScreenState extends State<LoginScreen> {
               e.toString().contains('invalid')
           ? 'Incorrect email or password.'
           : 'Login failed. Please try again.';
+      if (msg.startsWith('Incorrect')) {
+        await _forgetRejectedPassword(identifier);
+      }
       ToastHelper.showCustomToast(
         context,
         msg,
@@ -647,7 +788,18 @@ class _LoginScreenState extends State<LoginScreen> {
     if (updatedIdentifier != null &&
         updatedIdentifier.trim().isNotEmpty &&
         mounted) {
-      _identifier.text = updatedIdentifier.trim();
+      final id = updatedIdentifier.trim();
+      _identifier.text = id;
+      final saved = await SavedPasswordStore.read(id);
+      if (!mounted) return;
+      setState(() {
+        _hasSavedPassword = saved != null && saved.isNotEmpty;
+        if (_hasSavedPassword) {
+          _password.text = saved!;
+        } else {
+          _password.clear();
+        }
+      });
     }
   }
 
@@ -1024,16 +1176,48 @@ class _LoginScreenState extends State<LoginScreen> {
                     : () => _continueWithSavedSocial(_selectedAccount!),
               ),
             ] else ...[
+              if (_biometricsReady && _hasSavedPassword) ...[
+                SizedBox(
+                  width: double.infinity,
+                  height: 54,
+                  child: OutlinedButton.icon(
+                    onPressed: (_loading || _socialLoading || _bioBusy)
+                        ? null
+                        : _signInWithBiometric,
+                    icon: Icon(
+                      _biometricLabel == 'Face ID'
+                          ? Icons.face_retouching_natural
+                          : Icons.fingerprint,
+                    ),
+                    label: Text(
+                      _bioBusy ? 'Checking…' : 'Sign in with $_biometricLabel',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.brandOrange,
+                      side: const BorderSide(color: AppColors.brandOrange),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
               TextFormField(
                 controller: _password,
                 obscureText: _obscure,
-                autofocus: true,
+                enableSuggestions: false,
+                autocorrect: false,
+                keyboardType: TextInputType.visiblePassword,
                 autofillHints: const [AutofillHints.password],
                 textInputAction: TextInputAction.done,
                 onFieldSubmitted: (_) => _submit(),
                 decoration: _fieldDecoration(
                   label: 'Password',
-                  hint: 'Enter your password',
+                  hint: _hasSavedPassword
+                      ? 'Saved on this device'
+                      : 'Enter your password',
                   icon: Icons.lock_outline,
                   trailing: IconButton(
                     tooltip: _obscure ? 'Show' : 'Hide',
@@ -1115,6 +1299,9 @@ class _LoginScreenState extends State<LoginScreen> {
             TextFormField(
               controller: _password,
               obscureText: _obscure,
+              enableSuggestions: false,
+              autocorrect: false,
+              keyboardType: TextInputType.visiblePassword,
               autofillHints: const [AutofillHints.password],
               textInputAction: TextInputAction.done,
               onFieldSubmitted: (_) => _submit(),
@@ -1210,7 +1397,11 @@ class _LoginScreenState extends State<LoginScreen> {
             ? 'Choose an account or add another one'
             : 'Tap your account, then enter your password')
         : _showSavedAccountSignIn
-            ? 'Enter your password to continue'
+            ? (_selectedAccount!.isSocial
+                ? 'Continue with the same account'
+                : _hasSavedPassword
+                    ? 'Your password is saved. Sign in, or use $_biometricLabel.'
+                    : 'Enter your password to continue')
             : 'Sign in to pick up where you left off';
 
     return Scaffold(

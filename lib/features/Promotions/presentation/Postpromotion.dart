@@ -1,4 +1,4 @@
-﻿// lib/Pages/promotions_crud_page.dart
+// lib/Pages/promotions_crud_page.dart
 import 'dart:async';
 import 'package:universal_io/io.dart' show File;
 import 'dart:typed_data';
@@ -466,7 +466,7 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Delete promotion'),
-        content: Text('Delete â€œ${p.title}â€?'),
+        content: Text('Delete "${p.title}"?'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -699,7 +699,7 @@ class _PromotionsCrudPageState extends State<PromotionsCrudPage>
                   const SizedBox(height: 8),
                   const FacebookShareHint(
                     message:
-                        'Weâ€™ll also share this promotion on the Vero360 Facebook Page to help grow your customers.',
+                        'We’ll also share this promotion on the Vero360 Facebook Page to help grow your customers.',
                   ),
                 ],
                 const SizedBox(height: 16),

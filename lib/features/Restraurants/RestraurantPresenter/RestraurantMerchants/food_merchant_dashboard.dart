@@ -1,4 +1,4 @@
-﻿// lib/Pages/MerchantDashboards/food_merchant_dashboard.dart
+// lib/Pages/MerchantDashboards/food_merchant_dashboard.dart
 import 'dart:async';
 import 'package:universal_io/io.dart' show File;
 
@@ -77,7 +77,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
   late TabController _foodTabs;
-  /// Slow fallback for wallet + reviews only â€” orders arrive via [_ordersSub].
+  /// Slow fallback for wallet + reviews only — orders arrive via [_ordersSub].
   Timer? _refreshTimer;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _ordersSub;
   String _ordersSubscribedUid = '';
@@ -139,7 +139,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
   static String _foodBusinessNamePrefsKey(String uid) =>
       'food_business_name_v1_$uid';
 
-  /// Sync paint from Auth before prefs/Firestore â€” avoids blank avatar flash.
+  /// Sync paint from Auth before prefs/Firestore — avoids blank avatar flash.
   void _bootstrapIdentityFast() {
     final pinned = (widget.merchantUid ?? '').trim();
     final user = _auth.currentUser;
@@ -264,7 +264,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
         _openingDays = MarketplaceShopHours.parseDays(dayPref);
       }
 
-      // Paint name/photo immediately â€” do not wait for menu/wallet/Firestore.
+      // Paint name/photo immediately — do not wait for menu/wallet/Firestore.
       if (mounted) setState(() {});
       if (_profileUrl.trim().isNotEmpty) {
         unawaited(_warmProfilePhotoCache(_profileUrl));
@@ -460,7 +460,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
         }
       }
 
-      // Keep next open instant from prefs (incl. after logout â†’ re-login).
+      // Keep next open instant from prefs (incl. after logout → re-login).
       try {
         final prefs = await SharedPreferences.getInstance();
         if (_businessName.trim().isNotEmpty &&
@@ -561,7 +561,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     }
   }
 
-  /// Kitchen POS-style ping: haptic + system alert + banner. No extra package â€”
+  /// Kitchen POS-style ping: haptic + system alert + banner. No extra package —
   /// [audioplayers] is already used for voice notes, not ticket chimes.
   void _alertNewPendingOrders(List<Map<String, dynamic>> orders) {
     HapticFeedback.heavyImpact();
@@ -791,7 +791,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
         context,
         code == null || code.isEmpty
             ? 'Food sent. The customer will confirm receipt to release payment.'
-            : 'Food sent Â· Vero Courier $code. Customer confirms receipt to release payment.',
+            : 'Food sent · Vero Courier $code. Customer confirms receipt to release payment.',
         isSuccess: true,
         errorMessage: '',
       );
@@ -851,7 +851,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     final pair = MarketplaceShopHours.parseRange(_openingHours);
     if (pair == null) return 'Set business hours';
     final days = _formatOpenDaysLabel(_openingDays.toSet());
-    return '$days Â· ${MarketplaceShopHours.formatRangeDisplay(pair.open, pair.close)}';
+    return '$days · ${MarketplaceShopHours.formatRangeDisplay(pair.open, pair.close)}';
   }
 
   String _formatOpenDaysLabel(Set<int> days) {
@@ -868,12 +868,12 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       }
       ranges.add(start == prev
           ? _kDayLabels[start - 1]
-          : '${_kDayLabels[start - 1]}â€“${_kDayLabels[prev - 1]}');
+          : '${_kDayLabels[start - 1]}–${_kDayLabels[prev - 1]}');
       start = prev = d;
     }
     ranges.add(start == prev
         ? _kDayLabels[start - 1]
-        : '${_kDayLabels[start - 1]}â€“${_kDayLabels[prev - 1]}');
+        : '${_kDayLabels[start - 1]}–${_kDayLabels[prev - 1]}');
     return ranges.join(', ');
   }
 
@@ -1465,7 +1465,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       } catch (e) {
         debugPrint('Sync menu business name: $e');
       }
-      // Auth + Nest must match â€” logout clears prefs and re-login used to
+      // Auth + Nest must match — logout clears prefs and re-login used to
       // restore the old Auth/API signup name.
       try {
         await _auth.currentUser?.updateDisplayName(name);
@@ -1692,7 +1692,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     }
 
     final emailLine = _merchantEmail.isNotEmpty ? _merchantEmail : widget.email;
-    final phoneLine = _merchantPhone.isNotEmpty ? _merchantPhone : 'â€”';
+    final phoneLine = _merchantPhone.isNotEmpty ? _merchantPhone : '—';
 
     return Container(
       decoration: BoxDecoration(
@@ -1822,7 +1822,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                         children: [
                           const Icon(Icons.star, size: 14),
                           Text(
-                            ' ${_rating.toStringAsFixed(1)} Â· $_reviewCount review${_reviewCount == 1 ? '' : 's'}',
+                            ' ${_rating.toStringAsFixed(1)} · $_reviewCount review${_reviewCount == 1 ? '' : 's'}',
                             style: const TextStyle(
                               fontWeight: FontWeight.w900,
                               fontSize: 12,
@@ -2385,7 +2385,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     if (raw is Timestamp) at = raw.toDate();
     if (raw is DateTime) at = raw;
     if (at == null) return '';
-    return DateFormat('dd MMM Â· HH:mm').format(at.toLocal());
+    return DateFormat('dd MMM · HH:mm').format(at.toLocal());
   }
 
   String _firstNonEmpty(Iterable<Object?> values) {
@@ -2424,7 +2424,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     return left == right;
   }
 
-  /// Kitchen pickup address for Vero Courier â€” never the restaurant name.
+  /// Kitchen pickup address for Vero Courier — never the restaurant name.
   String _orderKitchenLocation(Map<String, dynamic> order) {
     final restaurant = _orderRestaurantName(order);
     final delivery = _orderDeliveryAddress(order);
@@ -2468,7 +2468,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
     required String value,
     VoidCallback? onCopy,
   }) {
-    final v = value.trim().isEmpty ? 'â€”' : value.trim();
+    final v = value.trim().isEmpty ? '—' : value.trim();
     final copyable = onCopy != null && value.trim().isNotEmpty;
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -2762,7 +2762,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                             )
                           : const Icon(Icons.delivery_dining_rounded),
                       label: Text(
-                        sending ? 'Sendingâ€¦' : 'Send food',
+                        sending ? 'Sending…' : 'Send food',
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                     ),
@@ -2877,8 +2877,8 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                 _merchantDetailRow(
                   'Placed',
                   order.createdAt == null
-                      ? 'â€”'
-                      : DateFormat('EEE, d MMM yyyy Â· HH:mm')
+                      ? '—'
+                      : DateFormat('EEE, d MMM yyyy · HH:mm')
                           .format(order.createdAt!.toLocal()),
                 ),
                 _merchantDetailRow('Payment', order.paymentStatus),
@@ -2918,7 +2918,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '${line.quantity}Ã—',
+                        '${line.quantity}×',
                         style: const TextStyle(
                           fontWeight: FontWeight.w900,
                           color: _brandOrange,
@@ -3078,7 +3078,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
           ),
           Expanded(
             child: Text(
-              v.isEmpty ? 'â€”' : v,
+              v.isEmpty ? '—' : v,
               style: const TextStyle(
                 fontWeight: FontWeight.w700,
                 fontSize: 13,
@@ -3831,7 +3831,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    '$_reviewCount review${_reviewCount == 1 ? '' : 's'} Â· ${_rating.toStringAsFixed(1)} â˜…',
+                    '$_reviewCount review${_reviewCount == 1 ? '' : 's'} · ${_rating.toStringAsFixed(1)} ★',
                     style: TextStyle(
                       color: Colors.grey.shade700,
                       fontWeight: FontWeight.w700,

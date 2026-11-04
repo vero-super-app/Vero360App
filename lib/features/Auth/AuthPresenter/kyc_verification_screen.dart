@@ -1,4 +1,4 @@
-﻿import 'dart:math' as math;
+import 'dart:math' as math;
 
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
@@ -15,7 +15,7 @@ class KycVerificationScreen extends StatefulWidget {
 
 class _KycVerificationScreenState extends State<KycVerificationScreen>
     with SingleTickerProviderStateMixin {
-  // Vero brand + calm neutrals â€” warm, trustworthy, not generic purple.
+  // Vero brand + calm neutrals — warm, trustworthy, not generic purple.
   static const _ink = Color(0xFF141414);
   static const _muted = Color(0xFF6B6B6B);
   static const _cream = Color(0xFFFFFBF7);
@@ -271,7 +271,7 @@ class _KycVerificationScreenState extends State<KycVerificationScreen>
                         _PrimaryCta(
                           busy: _busy,
                           label: _busy
-                              ? 'Starting sessionâ€¦'
+                              ? 'Starting session…'
                               : (_error != null
                                   ? 'Try again'
                                   : 'Start verification'),
@@ -307,7 +307,7 @@ class _KycVerificationScreenState extends State<KycVerificationScreen>
   }
 }
 
-// â”€â”€â”€ Visual pieces â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Visual pieces
 
 class _KycAtmosphere extends StatelessWidget {
   const _KycAtmosphere();
@@ -407,7 +407,7 @@ class _TopBar extends StatelessWidget {
                     size: 14, color: Color(0xFFFF8A00)),
                 SizedBox(width: 6),
                 Text(
-                  'Secure Â· Encrypted',
+                  'Secure · Encrypted',
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,

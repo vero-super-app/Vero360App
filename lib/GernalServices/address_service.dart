@@ -1,4 +1,4 @@
-﻿// lib/services/address_service.dart
+// lib/services/address_service.dart
 import 'dart:async';
 import 'dart:convert';
 import 'package:universal_io/io.dart';
@@ -138,7 +138,7 @@ class AddressService {
     }
   }
 
-  /// Fast default for checkout: memory â†’ disk â†’ null (never waits on API).
+  /// Fast default for checkout: memory → disk → null (never waits on API).
   Future<Address?> getCachedDefaultAddress() async {
     final mem = peekDefaultAddress();
     if (mem != null) return mem;

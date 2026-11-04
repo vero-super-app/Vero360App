@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'package:universal_io/io.dart' show File;
 import 'dart:math';
@@ -100,7 +100,6 @@ String mwk0(dynamic v) => _mwk0Fmt.format(_asNum(v)); // MWK 12,500
 String mwkBuyer(dynamic v) =>
     mwk0(BuyerCommission.buyerFacing(_asNum(v)));
 String mwk2(dynamic v) => _mwk2Fmt.format(_asNum(v)); // MWK 12,500.00
-// ---------------------------------------------------------------------------
 
 /// G?Your ItemsG? / G?My ItemsG? grids: taller cells on narrow screens + large text scale
 /// so [_ModernItemMiniCard] / [_ItemCard] never bottom-overflow inside the cell.
@@ -825,7 +824,7 @@ class _MarketplaceMerchantDashboardState
   @override
   void initState() {
     super.initState();
-    // Standalone push (e.g. chat â€œfinish business profileâ€) must show dashboard
+    // Standalone push (e.g. chat "finish business profile") must show dashboard
     // content (index 4), not the merchant shell Home tab (index 0).
     if (widget.embeddedInMainNav || widget.initialInnerTab > 0) {
       _selectedIndex = 4;
@@ -1366,7 +1365,7 @@ class _MarketplaceMerchantDashboardState
       }
     } catch (_) {}
 
-    // 2) Firestore users â€” business fields only (not personal name).
+    // 2) Firestore users — business fields only (not personal name).
     if (resolved.isEmpty) {
       try {
         final doc = await _sharedDoc('users', u.uid);
@@ -1658,7 +1657,7 @@ class _MarketplaceMerchantDashboardState
   String _formatOpenDaysLabel(Set<int> days) {
     if (days.isEmpty || days.length == 7) return 'Every day';
     final sorted = days.toList()..sort();
-    // Contiguous ranges â€” Monâ€“Fri style
+    // Contiguous ranges — Mon–Fri style
     final ranges = <String>[];
     int start = sorted.first;
     int prev = sorted.first;
@@ -1670,12 +1669,12 @@ class _MarketplaceMerchantDashboardState
       }
       ranges.add(start == prev
           ? _kDayLabels[start - 1]
-          : '${_kDayLabels[start - 1]}â€“${_kDayLabels[prev - 1]}');
+          : '${_kDayLabels[start - 1]}–${_kDayLabels[prev - 1]}');
       start = prev = d;
     }
     ranges.add(start == prev
         ? _kDayLabels[start - 1]
-        : '${_kDayLabels[start - 1]}â€“${_kDayLabels[prev - 1]}');
+        : '${_kDayLabels[start - 1]}–${_kDayLabels[prev - 1]}');
     return ranges.join(', ');
   }
 
@@ -1683,7 +1682,7 @@ class _MarketplaceMerchantDashboardState
     if (_openTime == null || _closeTime == null) return 'Set shop hours';
     final times =
         MarketplaceShopHours.formatRangeDisplay(_openTime!, _closeTime!);
-    return '${_formatOpenDaysLabel(_openDays)} Â· $times';
+    return '${_formatOpenDaysLabel(_openDays)} · $times';
   }
 
   bool get _isShopOpenNow {
@@ -2086,7 +2085,7 @@ class _MarketplaceMerchantDashboardState
     if (!mounted) return;
     final myFirebaseUid = (_auth.currentUser?.uid ?? _uid).trim();
 
-    // Escrow is local Firestore â€” paint a real figure immediately.
+    // Escrow is local Firestore — paint a real figure immediately.
     unawaited(_applyEscrowEarnings(myFirebaseUid));
 
     try {
@@ -2547,7 +2546,7 @@ class _MarketplaceMerchantDashboardState
         into[doc.id] = {...?doc.data(), 'id': doc.id};
       }
     }
-    // An empty local cache on first open isn't "no items" â€” wait for the server.
+    // An empty local cache on first open isn't "no items" — wait for the server.
     if (snap.metadata.isFromCache && snap.docs.isEmpty) {
       Future<void>.delayed(const Duration(seconds: 5), () {
         if (mounted && _loadingItems) setState(() => _loadingItems = false);
@@ -3411,7 +3410,7 @@ class _MarketplaceMerchantDashboardState
                   style: body,
                   children: [
                     TextSpan(
-                      text: 'You are responsible for your productsâ€™ quality and condition. ',
+                      text: 'You are responsible for your products’ quality and condition. ',
                       style: strong,
                     ),
                     TextSpan(
@@ -3490,6 +3489,9 @@ class _MarketplaceMerchantDashboardState
     // Sync lock BEFORE any await so one tap cannot post twice on slow networks.
     if (_submitting) return;
 
+    // Dismiss keyboard before validation / confirm dialog.
+    FocusManager.instance.primaryFocus?.unfocus();
+
     if (_cover == null) {
       _toastErr('Please pick a cover photo');
       return;
@@ -3532,7 +3534,7 @@ class _MarketplaceMerchantDashboardState
         _toastErr('Missing user id G?? sign in and try again.');
         return;
       }
-      // Never block posting on /users/me â€” use cache/JWT only.
+      // Never block posting on /users/me — use cache/JWT only.
       final sellerId = await _getNestUserId(allowNetwork: false);
       final merchantDisplay = _displayBusinessName();
       final effectiveSellerId =
@@ -3633,7 +3635,7 @@ class _MarketplaceMerchantDashboardState
           await _firestore.collection('marketplace_items').add(data);
       debugPrint('Firestore write OK G?? marketplace_items (pending review)');
 
-      // Visual hashes for duplicate detection â€” never block the submit UX.
+      // Visual hashes for duplicate detection — never block the submit UX.
       final hashCover = coverBytes;
       final hashGallery = List<Uint8List>.from(galleryBytes);
       unawaited(() async {
@@ -3660,12 +3662,12 @@ class _MarketplaceMerchantDashboardState
       if (!mounted) return;
       ToastHelper.showCustomToast(
         context,
-        'Submitted for review. Weâ€™ll notify you when itâ€™s live.',
+        'Submitted for review. We’ll notify you when it’s live.',
         isSuccess: true,
         errorMessage: 'Submitted',
         showFacebook: _postToFacebook,
         facebookMessage: _postToFacebook
-            ? 'Once approved, weâ€™ll also share this on the Vero360 Facebook Page.'
+            ? 'Once approved, we’ll also share this on the Vero360 Facebook Page.'
             : null,
       );
 
@@ -4433,17 +4435,26 @@ class _MarketplaceMerchantDashboardState
 
   void _onPriceFieldFocused() {
     if (!_priceFocus.hasFocus) return;
-    _showAddItemCommissionGuide();
+    unawaited(_showAddItemCommissionGuide());
   }
 
-  void _showAddItemCommissionGuide() {
+  Future<void> _showAddItemCommissionGuide() async {
     if (_addItemCommissionShown ||
         _commissionGuideShownThisInstall ||
         !mounted) {
       return;
     }
     _addItemCommissionShown = true;
-    unawaited(_showCommissionGuideOnce());
+    // Keep the keyboard down while the guide is open — focusing Price was
+    // popping it under the dialog.
+    _priceFocus.unfocus();
+    FocusManager.instance.primaryFocus?.unfocus();
+    await _showCommissionGuideOnce();
+    if (!mounted) return;
+    // After the guide, put focus back so they can type the price.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _priceFocus.requestFocus();
+    });
   }
 
   Future<void> _showCommissionGuideOnce() async {
@@ -6060,7 +6071,7 @@ class _MarketplaceMerchantDashboardState
   }
 
 
-  // ----------------- "My Items" on Dashboard â€” with promote -----------------
+  // ----------------- "My Items" on Dashboard — with promote -----------------
   Widget _buildAllClientItemsSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -6601,7 +6612,7 @@ class _MarketplaceMerchantDashboardState
                       : const Icon(Icons.upload_rounded),
                   label: Text(
                     _submitting
-                        ? 'Postingâ€¦'
+                        ? 'Posting…'
                         : (_postToFacebook
                             ? 'Post on Marketplace + Facebook'
                             : 'Post on Marketplace'),

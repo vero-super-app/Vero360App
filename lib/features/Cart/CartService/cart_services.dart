@@ -102,9 +102,7 @@ class CartService {
     _memoryCacheUid = FirebaseAuth.instance.currentUser?.uid;
   }
 
-  // ---------------------------------------------------------------------------
   // AUTH + HEADERS (single source: Firebase then SP, same as rest of app)
-  // ---------------------------------------------------------------------------
 
   Future<String?> _getToken() async => AuthHandler.getTokenForApi();
 
@@ -176,11 +174,9 @@ class CartService {
         msg.contains('unexpected error');
   }
 
-  // ---------------------------------------------------------------------------
   // FIRESTORE OFFLINE BACKUP (ONE schema everywhere)
   // backup_carts/{userKey}/items/{itemId_merchantId}
   // userKey = FirebaseAuth.uid ?? email
-  // ---------------------------------------------------------------------------
 
   Future<String?> _userKey() async {
     final uid = _auth.currentUser?.uid;
@@ -508,9 +504,7 @@ class CartService {
     }
   }
 
-  // ---------------------------------------------------------------------------
   // API PAYLOAD (small => avoids 413)
-  // ---------------------------------------------------------------------------
 
   Map<String, dynamic> _smallCartPayload(CartModel cartItem) {
     return <String, dynamic>{
@@ -533,9 +527,7 @@ class CartService {
     };
   }
 
-  // ---------------------------------------------------------------------------
   // PUBLIC API
-  // ---------------------------------------------------------------------------
 
   /// Offline-first + instant UI:
   /// - updates in-memory cart immediately (returns fast)

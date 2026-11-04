@@ -1,4 +1,4 @@
-﻿import 'package:universal_io/io.dart';
+import 'package:universal_io/io.dart';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -98,10 +98,9 @@ class DigitalPayoutKycSectionState extends State<DigitalPayoutKycSection> {
 
     setState(() => _error = null);
 
-    var user = FirebaseAuth.instance.currentUser;
-    user ??= (await FirebaseAuth.instance.signInAnonymously()).user;
-    if (user == null) {
-      setState(() => _error = 'Could not start a secure upload session.');
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || user.isAnonymous) {
+      setState(() => _error = 'Login first to purchase');
       return null;
     }
 

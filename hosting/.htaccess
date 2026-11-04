@@ -1,4 +1,26 @@
+# Apache / cPanel — App Links must return HTTP 200 with NO redirects on
+# /.well-known/* for BOTH vero360.app and www.vero360.app.
+
 RewriteEngine On
+
+# Never redirect Digital Asset Links / Apple App Site Association.
+RewriteRule ^\.well-known/ - [L]
+
+# Optional: redirect other www pages to apex (AFTER .well-known exception).
+# Only enable if DNS points both hosts at this same Apache vhost.
+# RewriteCond %{HTTP_HOST} ^www\.vero360\.app$ [NC]
+# RewriteRule ^(.*)$ https://vero360.app/$1 [R=301,L]
+
+# Deep-link web fallback (app not installed).
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^(accommodation|stay|stays|marketplace)(/.*)?$ /open.html [L,QSA]
+RewriteRule ^(accommodation|stay|stays|marketplace|shop|merchant|food)(/.*)?$ /open.html [L,QSA]
+
+<IfModule mod_headers.c>
+  <Files "assetlinks.json">
+    Header set Content-Type "application/json"
+  </Files>
+  <Files "apple-app-site-association">
+    Header set Content-Type "application/json"
+  </Files>
+</IfModule>

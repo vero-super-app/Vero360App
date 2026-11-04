@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'package:universal_io/io.dart';
 
@@ -231,7 +231,7 @@ class _OrdersPageState extends State<OrdersPage>
   Future<List<OrderItem>> _fetchOrdersWithProofs() async {
     final list = await _svc.getMyOrders();
     if (!mounted) return list;
-    // Don't block list paint on hydration â€” refresh UI when extras arrive.
+    // Don't block list paint on hydration — refresh UI when extras arrive.
     unawaited(Future.wait([
       _hydrateFirestoreDelivery(list),
       _hydrateEscrow(list),
@@ -358,7 +358,7 @@ class _OrdersPageState extends State<OrdersPage>
           peerFirebaseUid,
         );
         if (peerUserId == null || peerUserId <= 0) {
-          throw Exception('Could not find the buyerâ€™s chat account.');
+          throw Exception('Could not find the buyer’s chat account.');
         }
         final cached =
             BackendChatService.findCachedDirectChatWithPeer(peerUserId);
@@ -644,7 +644,7 @@ class _OrdersPageState extends State<OrdersPage>
                 if (esc.releaseDueAt != null)
                   'If you do not confirm, payment is sent to the merchant on '
                       '${_date.format(esc.releaseDueAt!.toLocal())}. ',
-                'Youâ€™ll confirm with Face ID, fingerprint, or PIN.',
+                'You’ll confirm with Face ID, fingerprint, or PIN.',
               ].join(),
               style: const TextStyle(
                 fontSize: 13,
@@ -670,7 +670,7 @@ class _OrdersPageState extends State<OrdersPage>
           ] else if (isMerchantParty)
             Text(
               esc.releaseDueAt != null
-                  ? 'Waiting for buyer confirmation. If they donâ€™t confirm, funds release on '
+                  ? 'Waiting for buyer confirmation. If they don’t confirm, funds release on '
                       '${_date.format(esc.releaseDueAt!.toLocal())}.'
                   : 'Waiting for the buyer to confirm receipt so your payout can be released.',
               style: const TextStyle(
@@ -682,7 +682,7 @@ class _OrdersPageState extends State<OrdersPage>
           else
             const Text(
               'Payment is held. Sign in as the buyer account that placed this order to see '
-              'â€œI received this parcelâ€, or pull to refresh.',
+              '"I received this parcel", or pull to refresh.',
               style: TextStyle(
                 fontSize: 13,
                 color: Color(0xFF6B778C),
@@ -828,7 +828,7 @@ class _OrdersPageState extends State<OrdersPage>
       if (addr.isNotEmpty) addr,
     ];
     if (parts.isEmpty) return 'No address';
-    return parts.join(' â€¢ ');
+    return parts.join(' • ');
   }
 
   String _courierLabel(OrderItem o) {
@@ -976,7 +976,7 @@ class _OrdersPageState extends State<OrdersPage>
               (o.addressCity ?? '').trim(),
             if ((o.addressDescription ?? '').trim().isNotEmpty)
               (o.addressDescription ?? '').trim(),
-          ].join(' â€¢ ');
+          ].join(' • ');
     final shop = (businessName ?? o.merchantName ?? '').trim();
     final hello = _isWeakShopName(shop) ? 'Hi' : 'Hi @$shop';
 
@@ -1316,14 +1316,14 @@ class _OrdersPageState extends State<OrdersPage>
                 _infoRow(
                   icon: Icons.person_outline,
                   text: (o.customerName ?? '').toString().trim().isEmpty
-                      ? 'Name: â€”'
+                      ? 'Name: —'
                       : 'Name: ${(o.customerName ?? '').toString().trim()}',
                 ),
                 const SizedBox(height: 6),
                 _infoRow(
                   icon: Icons.phone_outlined,
                   text: safeMerchantPhone(o.customerPhone) == 'No phone number'
-                      ? 'Phone: â€”'
+                      ? 'Phone: —'
                       : 'Phone: ${safeMerchantPhone(o.customerPhone)}',
                 ),
 
@@ -1369,7 +1369,7 @@ class _OrdersPageState extends State<OrdersPage>
                   icon: Icons.storefront_outlined,
                   text: _sellerLabel(o),
                   trailing: (o.merchantAvgRating != null)
-                      ? 'â­ ${o.merchantAvgRating!.toStringAsFixed(1)}'
+                      ? '⭐ ${o.merchantAvgRating!.toStringAsFixed(1)}'
                       : null,
                 ),
                 const SizedBox(height: 6),
@@ -1382,7 +1382,7 @@ class _OrdersPageState extends State<OrdersPage>
                 Row(
                   children: [
                     Text(
-                      '${_money.format(o.price)}  Ã—  ${o.quantity}',
+                      '${_money.format(o.price)}  ×  ${o.quantity}',
                       style: const TextStyle(
                         color: Color(0xFF222222),
                         fontWeight: FontWeight.w600,

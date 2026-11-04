@@ -1,11 +1,9 @@
 import 'package:vero360_app/utils/formatters.dart';
 
-// ---------------------------------------------------------------------------
 // Tolerant JSON helpers.
 //
 // Postgres decimal / bigint columns are serialized as strings by the backend
 // (e.g. "45000.00"). Never call `.toDouble()` / `.toInt()` on raw JSON values.
-// ---------------------------------------------------------------------------
 
 double _asDouble(dynamic value, {double fallback = 0}) {
   if (value is num) {
@@ -245,9 +243,7 @@ List<String> _asMedia(dynamic value) {
       .toList(growable: false);
 }
 
-// ---------------------------------------------------------------------------
 // Enums
-// ---------------------------------------------------------------------------
 
 enum BookingStatus {
   pending('PENDING', 'Pending'),
@@ -527,9 +523,7 @@ enum SupportCaseCategory {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Public vehicle listing (`CarPublicView`)
-// ---------------------------------------------------------------------------
 
 /// The company or individual host that provides a listing.
 class CarHireProvider {
@@ -927,9 +921,7 @@ class CarHireSearchResult {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Quote
-// ---------------------------------------------------------------------------
 
 class QuoteLineItem {
   const QuoteLineItem({
@@ -1089,9 +1081,7 @@ class RentalQuote {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Booking
-// ---------------------------------------------------------------------------
 
 class CarHireBooking {
   const CarHireBooking({
@@ -1432,9 +1422,7 @@ class BookingPage {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Payment initiation + verification
-// ---------------------------------------------------------------------------
 
 class PaymentInitiation {
   const PaymentInitiation({
@@ -1473,9 +1461,7 @@ class PaymentInitiation {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Phase 4: extensions, handover inspections, incidents, support, verification
-// ---------------------------------------------------------------------------
 
 class BookingExtension {
   const BookingExtension({

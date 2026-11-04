@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:vero360_app/features/Auth/AuthServices/saved_password_store.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 class ResetPasswordScreen extends StatefulWidget {
@@ -73,6 +74,10 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
         code: widget.oobCode,
         newPassword: _password.text.trim(),
       );
+      final email = _email?.trim() ?? '';
+      if (email.isNotEmpty) {
+        await SavedPasswordStore.save(email, _password.text.trim());
+      }
       if (!mounted) return;
       ToastHelper.showCustomToast(
         context,

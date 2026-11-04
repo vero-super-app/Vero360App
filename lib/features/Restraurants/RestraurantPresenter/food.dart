@@ -1,4 +1,4 @@
-﻿// lib/Pages/Home/food_page.dart
+// lib/Pages/Home/food_page.dart
 import 'dart:async';
 import 'dart:convert';
 import 'package:universal_io/io.dart';

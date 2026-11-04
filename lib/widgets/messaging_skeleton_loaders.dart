@@ -14,7 +14,7 @@ class MessagingSkeleton {
   static const Color chatBg = Color(0xFFF3F4F7);
 }
 
-// ─── Chat list ───────────────────────────────────────────────────────────────
+// Chat list
 
 class ChatListSkeleton extends StatelessWidget {
   const ChatListSkeleton({super.key, this.rows = 8});
@@ -114,7 +114,7 @@ class _ChatListRowSkeleton extends StatelessWidget {
   }
 }
 
-// ─── Full chat screen loading (header + messages + typing) ───────────────────
+// Full chat screen loading (header + messages + typing)
 
 /// Top app-bar shimmer while chat boots (avatar + title lines).
 class ChatAppBarSkeleton extends StatelessWidget {
@@ -690,7 +690,7 @@ class _LoadingHint extends StatelessWidget {
   }
 }
 
-// ─── Composer ────────────────────────────────────────────────────────────────
+// Composer
 
 class ChatComposerSkeleton extends StatelessWidget {
   const ChatComposerSkeleton({super.key});
@@ -777,7 +777,7 @@ class ChatComposerSkeleton extends StatelessWidget {
   }
 }
 
-// ─── Shared bones ────────────────────────────────────────────────────────────
+// Shared bones
 
 class _CuteAvatarBone extends StatelessWidget {
   const _CuteAvatarBone({

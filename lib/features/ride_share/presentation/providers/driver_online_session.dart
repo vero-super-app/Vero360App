@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'package:universal_io/io.dart' show Platform;
 
 import 'package:flutter/foundation.dart';
@@ -18,7 +18,7 @@ import 'package:vero360_app/features/ride_share/presentation/providers/ride_life
 /// backgrounding the app, and process death (restored from prefs).
 ///
 /// The toggle stays on until explicit [goOffline] or logout. Matching GPS
-/// keeps running in the background via a foreground location service â€” the
+/// keeps running in the background via a foreground location service — the
 /// same pattern as active-trip tracking.
 class DriverOnlineSessionState {
   final bool isOnline;
@@ -355,7 +355,7 @@ class DriverOnlineSessionNotifier extends Notifier<DriverOnlineSessionState>
       );
       if (kDebugMode) {
         print(
-          '[DriverOnlineSession] âœ“ location â†’ taxi $taxiId '
+          '[DriverOnlineSession] âœ“ location → taxi $taxiId '
           '(${position.latitude}, ${position.longitude})',
         );
       }

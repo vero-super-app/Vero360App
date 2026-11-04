@@ -62,6 +62,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
   final _form = GlobalKey<FormState>();
   final _name = TextEditingController();
   final _price = TextEditingController();
+  final _priceFocus = FocusNode();
   final _location = TextEditingController();
   final _desc = TextEditingController();
   final _stock = TextEditingController(text: '1');
@@ -160,6 +161,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
     _tabs.dispose();
     _name.dispose();
     _price.dispose();
+    _priceFocus.dispose();
     _location.dispose();
     _desc.dispose();
     _stock.dispose();
@@ -1607,6 +1609,7 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
 
                 TextFormField(
                   controller: _price,
+                  focusNode: _priceFocus,
                   keyboardType:
                       const TextInputType.numberWithOptions(
                     decimal: false,
@@ -1614,13 +1617,20 @@ class _MarketplaceCrudPageState extends State<MarketplaceCrudPage>
                   inputFormatters: [
                     FilteringTextInputFormatter.digitsOnly,
                   ],
-                  onTap: () {
+                  onTap: () async {
                     if (_commissionGuideShown) return;
                     setState(() => _commissionGuideShown = true);
-                    MerchantCommissionGuide.show(
+                    // Don't leave the keyboard open under the commission dialog.
+                    _priceFocus.unfocus();
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    await MerchantCommissionGuide.show(
                       context,
                       price: double.tryParse(_price.text.trim()),
                     );
+                    if (!mounted) return;
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) _priceFocus.requestFocus();
+                    });
                   },
                   decoration: _inputDecoration(label: 'Price (MWK)').copyWith(
                     suffixIcon: MerchantCommissionGuide.infoButton(

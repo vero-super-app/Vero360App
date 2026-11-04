@@ -72,9 +72,7 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
     );
   }
 
-  // =========================
   // IMAGE RESOLVER (Firestore + Storage aware)
-  // =========================
   Future<String?> _resolveImageUrl(LatestArrivalModels item) async {
     final raw = item.imageUrl.trim();
 
@@ -128,9 +126,7 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
     return _imageFutureCache.putIfAbsent(key, () => _resolveImageUrl(item));
   }
 
-  // =========================
   // CART LOGIC
-  // =========================
   Future<void> _addToCart(LatestArrivalModels item, {int qty = 1}) async {
     if (qty <= 0) return;
 
@@ -211,9 +207,7 @@ class _LatestArrivalsSectionState extends State<LatestArrivalsSection> {
     );
   }
 
-  // =========================
   // BOTTOM SHEETS
-  // =========================
   void _showOptions(BuildContext context, LatestArrivalModels item) {
     showModalBottomSheet(
       context: context,
@@ -497,9 +491,7 @@ class _ImgPlaceholder extends StatelessWidget {
   }
 }
 
-// =====================
 // DETAILS SHEET
-// =====================
 class _LatestDetailsSheet extends StatefulWidget {
   final LatestArrivalModels item;
   final Future<String?> imageFuture;

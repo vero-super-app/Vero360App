@@ -1,0 +1,34 @@
+{
+  "headers": [
+    {
+      "source": "/.well-known/assetlinks.json",
+      "headers": [
+        { "key": "Content-Type", "value": "application/json" },
+        { "key": "Cache-Control", "value": "public, max-age=300" }
+      ]
+    },
+    {
+      "source": "/.well-known/apple-app-site-association",
+      "headers": [
+        { "key": "Content-Type", "value": "application/json" },
+        { "key": "Cache-Control", "value": "public, max-age=300" }
+      ]
+    }
+  ],
+  "rewrites": [
+    { "source": "/accommodation", "destination": "/open.html" },
+    { "source": "/accommodation/:path*", "destination": "/open.html" },
+    { "source": "/stay", "destination": "/open.html" },
+    { "source": "/stay/:path*", "destination": "/open.html" },
+    { "source": "/stays", "destination": "/open.html" },
+    { "source": "/stays/:path*", "destination": "/open.html" },
+    { "source": "/marketplace", "destination": "/open.html" },
+    { "source": "/marketplace/:path*", "destination": "/open.html" },
+    { "source": "/shop", "destination": "/open.html" },
+    { "source": "/shop/:path*", "destination": "/open.html" },
+    { "source": "/merchant", "destination": "/open.html" },
+    { "source": "/merchant/:path*", "destination": "/open.html" },
+    { "source": "/food", "destination": "/open.html" },
+    { "source": "/food/:path*", "destination": "/open.html" }
+  ]
+}

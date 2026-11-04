@@ -150,9 +150,7 @@ class CarWebSocketService {
     disconnect();
   }
 
-  // ──────────────────────────────────────────────────────────
   // PRIVATE HELPERS
-  // ──────────────────────────────────────────────────────────
 
   void _listenToMessages() {
     _channel!.stream.listen(

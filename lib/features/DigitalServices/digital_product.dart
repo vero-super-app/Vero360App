@@ -18,6 +18,27 @@ String formatUsd(num usd) => _usdFmt.format(usd);
 String formatMwk(num mwk) => _mwkFmt.format(mwk.round());
 double usdToMwk(num usd) => usd * digitalServicesUsdToMwkRate;
 
+/// Bundled brand tiles (same treatment as ChatGPT / Netflix).
+String? defaultBrandLogoAsset(String key, {String hubKey = ''}) {
+  final k = key.trim().toLowerCase();
+  final hub = hubKey.trim().toLowerCase();
+  if (k == 'chatgpt' ||
+      k == 'chatgpt_basic' ||
+      k == 'chatgpt_plus' ||
+      hub == 'chatgpt') {
+    return 'assets/brands/chatgpt.png';
+  }
+  if (k == 'claude' || k.startsWith('claude_') || hub == 'claude') {
+    return 'assets/brands/claude.png';
+  }
+  if (k == 'netflix' || k.startsWith('netflix_') || hub == 'netflix') {
+    return 'assets/brands/netflix.png';
+  }
+  if (k == 'spotify') return 'assets/brands/spotify.jpg';
+  if (k == 'apple_music') return 'assets/brands/apple_music.png';
+  return null;
+}
+
 class DigitalProduct {
   final String key;
   final String name;
@@ -189,6 +210,7 @@ class DigitalProduct {
     double? maxOtherAmount,
     bool clearMaxOtherAmount = false,
     String? imageUrl,
+    String? logoAsset,
     bool? active,
     bool? isHub,
     String? hubKey,
@@ -212,7 +234,7 @@ class DigitalProduct {
           ? null
           : (maxOtherAmount ?? this.maxOtherAmount),
       icon: icon,
-      logoAsset: logoAsset,
+      logoAsset: logoAsset ?? this.logoAsset,
       imageUrl: imageUrl ?? this.imageUrl,
       active: active ?? this.active,
       isHub: isHub ?? this.isHub,
@@ -267,6 +289,17 @@ const List<DigitalProduct> kDigitalProducts = [
     brandTag: 'GPT',
     logoAsset: 'assets/brands/chatgpt.png',
     icon: Icons.chat_bubble_outline_rounded,
+    isHub: true,
+  ),
+  DigitalProduct(
+    key: 'claude',
+    name: 'Claude',
+    subtitle: 'Choose a plan',
+    category: 'streaming',
+    accent: Color(0xFFD97757),
+    brandTag: 'Claude',
+    logoAsset: 'assets/brands/claude.png',
+    icon: Icons.auto_awesome_rounded,
     isHub: true,
   ),
 ];

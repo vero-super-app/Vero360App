@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart' show sha256;
@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:vero360_app/native/biometrics.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// App PIN used for buyer â€œconfirm receiptâ€ and merchant wallet unlock.
+/// App PIN used for buyer "confirm receipt" and merchant wallet unlock.
 /// Same storage keys as [marketplace_merchant_dashboard] (`app_pin_hash` / `app_pin_salt`).
 class AppWalletPin {
   AppWalletPin._();
@@ -141,7 +141,7 @@ class AppWalletPin {
               borderRadius: BorderRadius.circular(24),
             ),
             clipBehavior: Clip.antiAlias,
-            // One scroll view â€” never a flex Column that can overflow at ~165px.
+            // One scroll view — never a flex Column that can overflow at ~165px.
             child: SingleChildScrollView(
               keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               child: Column(
@@ -275,7 +275,7 @@ class AppWalletPin {
     );
   }
 
-  /// Guest confirms they arrived at a stay â€” releases escrow to the host.
+  /// Guest confirms they arrived at a stay — releases escrow to the host.
   static Future<bool> verifyStayArrival(BuildContext context) async {
     if (await _tryBiometric(
       'Confirm you have arrived at this stay to release payment to the host.',
@@ -307,7 +307,7 @@ class AppWalletPin {
       context,
       title: 'Unlock wallet',
       subtitle:
-          'Use Face ID / fingerprint, or enter your wallet password (4â€“6 digits).',
+          'Use Face ID / fingerprint, or enter your wallet password (4–6 digits).',
     );
   }
 
@@ -344,7 +344,7 @@ class AppWalletPin {
   static Future<bool> verifyPin(
     BuildContext context, {
     String title = 'Enter password',
-    String subtitle = 'Enter your 4â€“6 digit wallet password.',
+    String subtitle = 'Enter your 4–6 digit wallet password.',
   }) async {
     if (!await hasPin()) return false;
 
@@ -423,7 +423,7 @@ class AppWalletPin {
                       fontWeight: FontWeight.w700,
                       letterSpacing: 2,
                     ),
-                    decoration: _pinFieldDecoration('4â€“6 digit password'),
+                    decoration: _pinFieldDecoration('4–6 digit password'),
                   ),
                 ),
                 if (shortPinHint != null)
@@ -505,7 +505,7 @@ class AppWalletPin {
               icon: Icons.pin_rounded,
               title: 'Set wallet PIN',
               subtitle:
-                  'Choose a 4â€“6 digit PIN. Youâ€™ll use it here and to unlock your wallet.',
+                  'Choose a 4–6 digit PIN. You’ll use it here and to unlock your wallet.',
             ),
             body: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -538,7 +538,7 @@ class AppWalletPin {
                       fontWeight: FontWeight.w700,
                       letterSpacing: 2,
                     ),
-                    decoration: _pinFieldDecoration('4â€“6 digits'),
+                    decoration: _pinFieldDecoration('4–6 digits'),
                   ),
                 ),
                 Padding(

@@ -1,4 +1,4 @@
-﻿import 'package:universal_io/io.dart';
+import 'package:universal_io/io.dart';
 import 'dart:developer' as developer;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';

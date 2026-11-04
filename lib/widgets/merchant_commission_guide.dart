@@ -66,7 +66,7 @@ class MerchantCommissionGuide {
                       Text(
                         hasPrice
                             ? 'Customer pays ${money(quote!.buyerTotal)}. You receive ${money(quote.providerPrice)}.'
-                            : 'Vero360 adds commission for the customer. It is not taken from your price.',
+                            : 'Vero360 adds commission .',
                         style: const TextStyle(
                           color: Color(0xFF7A3E00),
                           fontWeight: FontWeight.w700,
@@ -165,7 +165,7 @@ class MerchantCommissionGuide {
                   const Padding(
                     padding: EdgeInsets.only(right: 8),
                     child: Text(
-                      'Enter the price you want to receive. Commission is added for the customer. It is not taken from you.',
+                      'Enter the price you want to receive. Commission is added to your price.',
                       style: TextStyle(
                         color: Color(0xFFE8E8E8),
                         fontSize: 15,

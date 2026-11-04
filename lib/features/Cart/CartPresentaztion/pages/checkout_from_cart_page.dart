@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'package:universal_io/io.dart';
 import 'dart:math';
@@ -20,6 +20,7 @@ import 'package:vero360_app/GeneralModels/address_model.dart';
 import 'package:vero360_app/GeneralModels/order_model.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/Cart/CartModel/cart_model.dart';
+import 'package:vero360_app/features/DigitalServices/presentation/digital_service_order_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/MarkeplaceMerchantServices/postlatestArrivalservices.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_order_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_order_number.dart';
@@ -2985,7 +2986,13 @@ class _InAppPaymentPageState extends State<InAppPaymentPage> {
           ),
         ),
       );
-    if (goBack == true && mounted) Navigator.of(context).pop();
+    if (goBack == true && mounted) {
+      final digitalId = (widget.digitalOrderId ?? '').trim();
+      if (digitalId.isNotEmpty && !_paid) {
+        unawaited(DigitalServiceOrderService.notifyAbandonedPayment(digitalId));
+      }
+      Navigator.of(context).pop();
+    }
   }
 
   Widget _pawaPayBody() {

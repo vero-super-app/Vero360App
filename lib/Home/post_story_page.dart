@@ -1,4 +1,4 @@
-﻿// Merchant post story â€” photos, a gallery video, or a camera recording.
+// Merchant post story — photos, a gallery video, or a camera recording.
 
 import 'package:universal_io/io.dart';
 import 'dart:typed_data';
@@ -11,7 +11,7 @@ import 'package:vero360_app/Home/story_service.dart';
 import 'package:vero360_app/Home/story_viewer_screen.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
-/// One slide in the composer (before posting) â€” photo or video.
+/// One slide in the composer (before posting) — photo or video.
 class _DraftSlide {
   final Uint8List bytes;
   final String mediaType;
@@ -245,7 +245,7 @@ class _PostStoryPageState extends State<PostStoryPage> {
           ..addAll(keep);
         ToastHelper.showCustomToast(
           context,
-          'Posted ${result.posted}, ${result.failed} failed â€” retry remaining',
+          'Posted ${result.posted}, ${result.failed} failed — retry remaining',
           isSuccess: true,
           errorMessage: result.errors.isEmpty ? '' : result.errors.first,
         );
@@ -911,7 +911,7 @@ class _PostStoryPageState extends State<PostStoryPage> {
         ),
         const SizedBox(height: 8),
         Text(
-          '${_draftSlides.length} item${_draftSlides.length == 1 ? '' : 's'} ready Â· visible 24h after posting',
+          '${_draftSlides.length} item${_draftSlides.length == 1 ? '' : 's'} ready · visible 24h after posting',
           style: TextStyle(fontSize: 12, color: Colors.grey[600]),
         ),
         const SizedBox(height: 16),
@@ -1084,7 +1084,7 @@ class _PostStoryPageState extends State<PostStoryPage> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          'Share a photo status Â· disappears in 24 hours',
+                          'Share a photo status · disappears in 24 hours',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 13,

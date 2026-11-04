@@ -1,4 +1,4 @@
-﻿// lib/services/notification_service.dart
+// lib/services/notification_service.dart
 import 'dart:async';
 import 'dart:convert';
 
@@ -497,16 +497,7 @@ class NotificationService {
           }
         }
 
-        if (change.type == DocumentChangeType.added && order.isPending) {
-          await banner(
-            id: 'digital_pending_${order.id}',
-            type: 'digital_pending',
-            title: 'Payment awaiting · ${order.productName}',
-            body:
-                'Payment is awaiting confirmation for your ${order.productName} order. Approve the prompt on your phone, then we will process it.',
-            addToInbox: false,
-          );
-        } else if (order.isPaid &&
+        if (order.isPaid &&
             prevStatus != null &&
             prevStatus != 'paid' &&
             prevStatus != 'fulfilled' &&

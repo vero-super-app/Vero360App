@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/GernalServices/changepassword_service.dart';
+import 'package:vero360_app/features/Auth/AuthServices/saved_password_store.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 class ChangePasswordPage extends StatefulWidget {
@@ -65,6 +66,7 @@ class _ChangePasswordPageState extends State<ChangePasswordPage> {
         currentPassword: _currentCtrl.text,
         newPassword: _newCtrl.text,
       );
+      await SavedPasswordStore.replaceForCurrentUser(_newCtrl.text);
       if (!mounted) return;
       ToastHelper.showCustomToast(
         context,

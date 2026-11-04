@@ -1,0 +1,86 @@
+# Only needed if the new host is still Netlify.
+# Critical: do NOT use Netlify "primary domain" redirect between
+# vero360.app and www — that 301 breaks Android App Links on www.
+# Make both hosts domain aliases of the same site.
+
+[[headers]]
+  for = "/.well-known/assetlinks.json"
+  [headers.values]
+    Content-Type = "application/json"
+    Cache-Control = "public, max-age=300"
+
+[[headers]]
+  for = "/.well-known/apple-app-site-association"
+  [headers.values]
+    Content-Type = "application/json"
+    Cache-Control = "public, max-age=300"
+
+[[redirects]]
+  from = "/accommodation"
+  to = "/open.html"
+  status = 200
+
+[[redirects]]
+  from = "/accommodation/*"
+  to = "/open.html"
+  status = 200
+
+[[redirects]]
+  from = "/stay"
+  to = "/open.html"
+  status = 200
+
+[[redirects]]
+  from = "/stay/*"
+  to = "/open.html"
+  status = 200
+
+[[redirects]]
+  from = "/stays"
+  to = "/open.html"
+  status = 200
+
+[[redirects]]
+  from = "/stays/*"
+  to = "/open.html"
+  status = 200
+
+[[redirects]]
+  from = "/marketplace"
+  to = "/open.html"
+  status = 200
+
+[[redirects]]
+  from = "/marketplace/*"
+  to = "/open.html"
+  status = 200
+
+[[redirects]]
+  from = "/shop"
+  to = "/open.html"
+  status = 200
+
+[[redirects]]
+  from = "/shop/*"
+  to = "/open.html"
+  status = 200
+
+[[redirects]]
+  from = "/merchant"
+  to = "/open.html"
+  status = 200
+
+[[redirects]]
+  from = "/merchant/*"
+  to = "/open.html"
+  status = 200
+
+[[redirects]]
+  from = "/food"
+  to = "/open.html"
+  status = 200
+
+[[redirects]]
+  from = "/food/*"
+  to = "/open.html"
+  status = 200

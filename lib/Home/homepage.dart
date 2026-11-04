@@ -2729,13 +2729,47 @@ class _DigitalTileState extends State<_DigitalTile> with SingleTickerProviderSta
                         border: Border.all(color: AppColors.brandOrangeSoft, width: 1.5),
                       ),
                       child: ClipOval(
-                        child: widget.p.logoAsset != null
-                            ? Image.asset(widget.p.logoAsset!, fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) =>
-                                    Icon(widget.p.icon ?? Icons.shopping_bag,
-                                        color: AppColors.brandOrange, size: 20))
-                            : Icon(widget.p.icon ?? Icons.shopping_bag,
-                                size: 20, color: AppColors.brandOrange),
+                        child: () {
+                          final url = (widget.p.imageUrl ?? '').trim();
+                          if (url.isNotEmpty) {
+                            return Image.network(
+                              url,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) =>
+                                  widget.p.logoAsset != null
+                                      ? Image.asset(
+                                          widget.p.logoAsset!,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, __, ___) => Icon(
+                                            widget.p.icon ?? Icons.shopping_bag,
+                                            color: AppColors.brandOrange,
+                                            size: 20,
+                                          ),
+                                        )
+                                      : Icon(
+                                          widget.p.icon ?? Icons.shopping_bag,
+                                          size: 20,
+                                          color: AppColors.brandOrange,
+                                        ),
+                            );
+                          }
+                          if (widget.p.logoAsset != null) {
+                            return Image.asset(
+                              widget.p.logoAsset!,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Icon(
+                                widget.p.icon ?? Icons.shopping_bag,
+                                color: AppColors.brandOrange,
+                                size: 20,
+                              ),
+                            );
+                          }
+                          return Icon(
+                            widget.p.icon ?? Icons.shopping_bag,
+                            size: 20,
+                            color: AppColors.brandOrange,
+                          );
+                        }(),
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -4484,6 +4518,16 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
   }
 
   Future<void> _payNow() async {
+    if (!_isLoggedInBuyer()) {
+      ToastHelper.showCustomToast(
+        context,
+        'Login first to purchase',
+        isSuccess: false,
+        errorMessage: '',
+      );
+      if (mounted) Navigator.of(context).pushNamed('/login');
+      return;
+    }
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _submitting = true);
@@ -4614,11 +4658,44 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                         border: Border.all(color: AppColors.brandOrange),
                       ),
                       child: ClipOval(
-                        child: p.logoAsset != null
-                            ? Image.asset(p.logoAsset!, fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) =>
-                                    Icon(p.icon ?? Icons.shopping_bag, color: AppColors.title))
-                            : Icon(p.icon ?? Icons.shopping_bag, size: 26, color: AppColors.title),
+                        child: () {
+                          final url = (p.imageUrl ?? '').trim();
+                          if (url.isNotEmpty) {
+                            return Image.network(
+                              url,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => p.logoAsset != null
+                                  ? Image.asset(
+                                      p.logoAsset!,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => Icon(
+                                        p.icon ?? Icons.shopping_bag,
+                                        color: AppColors.title,
+                                      ),
+                                    )
+                                  : Icon(
+                                      p.icon ?? Icons.shopping_bag,
+                                      size: 26,
+                                      color: AppColors.title,
+                                    ),
+                            );
+                          }
+                          if (p.logoAsset != null) {
+                            return Image.asset(
+                              p.logoAsset!,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Icon(
+                                p.icon ?? Icons.shopping_bag,
+                                color: AppColors.title,
+                              ),
+                            );
+                          }
+                          return Icon(
+                            p.icon ?? Icons.shopping_bag,
+                            size: 26,
+                            color: AppColors.title,
+                          );
+                        }(),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -4796,7 +4873,7 @@ class _DigitalGuestNotice extends StatelessWidget {
       child: Text(
         loggedIn
             ? 'You are signed in. After payment, card details and joining links appear in My Digital Orders.'
-            : 'You are not signed in. After payment we will email card details and joining links to the address above.',
+            : 'Login first to purchase. Card details and joining links are saved to your account after payment.',
         style: const TextStyle(
           fontWeight: FontWeight.w700,
           fontSize: 12.5,

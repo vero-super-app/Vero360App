@@ -43,9 +43,7 @@ class ApiConfig {
   static String get prod => _baseRoot;
   static String get prodBase => _baseRoot;
 
-  // ---------------------------------------------------------------------------
   // INIT / SELECTION
-  // ---------------------------------------------------------------------------
 
   static Future<void> init() async {
     if (_inited) return;
@@ -92,10 +90,8 @@ class ApiConfig {
   /// Keep compatibility with existing code (ignored param).
   static Future<void> setBase(String ignored) => useProd();
 
-  // ---------------------------------------------------------------------------
   // ADMIN (service fee) — optional extra report; the fee is credited to
   // wallets/super_admin in Firestore regardless of this.
-  // ---------------------------------------------------------------------------
   /// Vero360 web (Next) — announcements, tenders, etc.
   /// Override: --dart-define=SITE_API_BASE_URL=https://vero360.app
   static const String siteApiBase = String.fromEnvironment(
@@ -120,9 +116,7 @@ class ApiConfig {
   static bool get isAdminApiConfigured =>
       adminApiBase.trim().isNotEmpty && adminServiceFeeSecret.trim().isNotEmpty;
 
-  // ---------------------------------------------------------------------------
   // URL BUILDERS
-  // ---------------------------------------------------------------------------
 
   /// Builds: {root}{/vero}{path}
   /// - If you pass '/cart' => http://root/vero/cart
@@ -154,9 +148,7 @@ class ApiConfig {
     );
   }
 
-  // ---------------------------------------------------------------------------
   // HEALTH CHECKS
-  // ---------------------------------------------------------------------------
 
   static Future<bool> ensureBackendUp({
     Duration timeout = const Duration(milliseconds: 900),
@@ -189,9 +181,7 @@ class ApiConfig {
     return _isReachable(_baseRoot, timeout: timeout);
   }
 
-  // ---------------------------------------------------------------------------
   // INTERNAL
-  // ---------------------------------------------------------------------------
 
   /// For Android emulators, map localhost/127.0.0.1 to 10.0.2.2 so the
   /// app can reach the backend running on your development machine.

@@ -317,9 +317,7 @@ class ServiceproviderService {
     return ServiceProviderServicess.deleteById(id);
   }
 
-  // ---------------------------------------------------------------------------
   // HELPER METHODS
-  // ---------------------------------------------------------------------------
 
   /// Convert ServiceProvider object to Map
   Map<String, dynamic> _convertServiceProviderToMap(ServiceProvider shop) {

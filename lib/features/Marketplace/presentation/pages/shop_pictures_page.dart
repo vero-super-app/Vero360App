@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'package:universal_io/io.dart' show File;
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -289,8 +289,8 @@ class _ShopPicturesPageState extends State<ShopPicturesPage> {
       _uploading = true;
       _uploadProgress = null;
       _uploadLabel = kind == 'video'
-          ? 'Preparing your videoâ€¦'
-          : 'Preparing your photoâ€¦';
+          ? 'Preparing your video…'
+          : 'Preparing your photo…';
     });
     var failed = 0;
     var tooLarge = 0;
@@ -378,7 +378,7 @@ class _ShopPicturesPageState extends State<ShopPicturesPage> {
           : 'This can take a moment.';
       setState(() {
         _uploadProgress = fraction;
-        _uploadLabel = '$progressPrefixâ€¦ $percent%. $hint';
+        _uploadLabel = '$progressPrefix… $percent%. $hint';
       });
     });
     try {
@@ -516,7 +516,7 @@ class _ShopPicturesPageState extends State<ShopPicturesPage> {
     if (time.isEmpty && dayText.isEmpty) return 'Hours not set';
     if (dayText.isEmpty) return time;
     if (time.isEmpty) return dayText;
-    return '$dayText Â· $time';
+    return '$dayText · $time';
   }
 
   Widget _profilePhoto() {
@@ -702,7 +702,7 @@ class _ShopPicturesPageState extends State<ShopPicturesPage> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    _uploadLabel ?? 'Uploadingâ€¦ Keep this page open.',
+                    _uploadLabel ?? 'Uploading… Keep this page open.',
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,

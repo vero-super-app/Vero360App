@@ -1,4 +1,4 @@
-﻿import 'package:universal_io/io.dart' show Platform;
+import 'package:universal_io/io.dart' show Platform;
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb, debugPrint;
@@ -32,7 +32,7 @@ class GoogleSignInHelper {
 
   /// Firebase Google sign-in via the native Google account picker only.
   ///
-  /// We intentionally do **not** use [FirebaseAuth.signInWithProvider] â€”
+  /// We intentionally do **not** use [FirebaseAuth.signInWithProvider] —
   /// that opens a Firebase-hosted OAuth page that can show the Cloud project
   /// number and developer contact instead of Vero360 branding.
   static Future<User?> signInToFirebase() async {
@@ -153,20 +153,20 @@ class GoogleSignInHelper {
           return FirebaseAuthException(
             code: 'google-config',
             message:
-                'Google sign-in isnâ€™t available right now. Try again or use email.',
+                'Google sign-in isn’t available right now. Try again or use email.',
           );
         case GoogleSignInExceptionCode.uiUnavailable:
           return FirebaseAuthException(
             code: 'google-ui',
             message:
-                'Google Sign-In isnâ€™t available. Update Google Play services and try again.',
+                'Google Sign-In isn’t available. Update Google Play services and try again.',
           );
         case GoogleSignInExceptionCode.canceled:
           if (_looksLikeConfigFailure(e.description)) {
             return FirebaseAuthException(
               code: 'google-config',
               message:
-                  'Google sign-in isnâ€™t available right now. Try again or use email.',
+                  'Google sign-in isn’t available right now. Try again or use email.',
             );
           }
           return FirebaseAuthException(
@@ -192,7 +192,7 @@ class GoogleSignInHelper {
       return FirebaseAuthException(
         code: 'google-config',
         message:
-            'Google sign-in isnâ€™t available right now. Try again or use email.',
+            'Google sign-in isn’t available right now. Try again or use email.',
       );
     }
     return providerError ??

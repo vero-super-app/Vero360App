@@ -15,9 +15,7 @@ import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 
-// ---------------------------------------------------------------------------
 // Typed errors
-// ---------------------------------------------------------------------------
 
 enum CarHireErrorKind {
   validation,
@@ -63,9 +61,7 @@ class CarHireApiException implements Exception {
   String toString() => message;
 }
 
-// ---------------------------------------------------------------------------
 // API client
-// ---------------------------------------------------------------------------
 
 class CarHireApi {
   static const Duration _timeout = Duration(seconds: 30);
@@ -79,9 +75,7 @@ class CarHireApi {
   static const String _verificationSubmissionsPath =
       '/car-rental/verification/submissions';
 
-  // -------------------------------------------------------------------------
   // Public inventory
-  // -------------------------------------------------------------------------
 
   /// `GET /car-rental/cars`
   Future<CarHireSearchResult> searchCars({
@@ -453,9 +447,7 @@ class CarHireApi {
     return CarListing.fromJson(payload);
   }
 
-  // -------------------------------------------------------------------------
   // Quotes
-  // -------------------------------------------------------------------------
 
   /// `POST /car-rental/quotes`
   Future<RentalQuote> createQuote({
@@ -486,9 +478,7 @@ class CarHireApi {
     return RentalQuote.fromJson(decoded);
   }
 
-  // -------------------------------------------------------------------------
   // Bookings
-  // -------------------------------------------------------------------------
 
   /// `POST /car-rental/bookings`
   ///
@@ -642,9 +632,7 @@ class CarHireApi {
     return PaymentInitiation.fromJson(decoded);
   }
 
-  // -------------------------------------------------------------------------
   // Verification
-  // -------------------------------------------------------------------------
 
   /// `GET /car-rental/verification/me`
   Future<CarHireVerification> getVerificationStatus() async {
@@ -659,9 +647,7 @@ class CarHireApi {
     return CarHireVerification.fromJson(payload);
   }
 
-  // -------------------------------------------------------------------------
   // Extensions
-  // -------------------------------------------------------------------------
 
   /// `POST /car-rental/bookings/:id/extensions`
   Future<BookingExtension> requestExtension(
@@ -711,9 +697,7 @@ class CarHireApi {
         .toList(growable: false);
   }
 
-  // -------------------------------------------------------------------------
   // Handover inspections
-  // -------------------------------------------------------------------------
 
   /// `POST /car-rental/bookings/:id/inspections/pickup|return`
   Future<HandoverInspection> submitInspection(
@@ -838,9 +822,7 @@ class CarHireApi {
     );
   }
 
-  // -------------------------------------------------------------------------
   // Incidents + support cases
-  // -------------------------------------------------------------------------
 
   /// `POST /car-rental/bookings/:id/incidents`
   Future<IncidentReport> reportIncident(
@@ -947,9 +929,7 @@ class CarHireApi {
         .toList(growable: false);
   }
 
-  // -------------------------------------------------------------------------
   // Verification submissions
-  // -------------------------------------------------------------------------
 
   /// `GET /car-rental/verification/requirements`
   Future<CarHireVerification> getVerificationRequirements() async {
@@ -1001,9 +981,7 @@ class CarHireApi {
     return getVerificationRequirements();
   }
 
-  // -------------------------------------------------------------------------
   // Company mode (providing company staff)
-  // -------------------------------------------------------------------------
 
   /// `GET /car-rental/operators/account` — the login's single car hire account.
   Future<CarHireAccount> getCarHireAccount() async {
@@ -1305,9 +1283,7 @@ class CarHireApi {
     );
   }
 
-  // -------------------------------------------------------------------------
   // Fleet setup: add, edit and retire a vehicle
-  // -------------------------------------------------------------------------
 
   /// `POST /car-rental/cars`
   ///
@@ -1474,9 +1450,7 @@ class CarHireApi {
     }
   }
 
-  // -------------------------------------------------------------------------
   // Helpers
-  // -------------------------------------------------------------------------
 
   static List<dynamic> _listFrom(dynamic decoded, List<String> keys) {
     if (decoded is List) return decoded;

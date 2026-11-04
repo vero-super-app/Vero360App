@@ -4,6 +4,7 @@ import 'package:vero360_app/features/Auth/AuthPresenter/auth_ui.dart';
 import 'package:vero360_app/features/Auth/AuthPresenter/register_otp_screen.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/password_reset_verification_service.dart';
+import 'package:vero360_app/features/Auth/AuthServices/saved_password_store.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
@@ -199,6 +200,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       );
 
       if (result.success) {
+        await SavedPasswordStore.save(_identifierValue, _password.text);
+        if (!mounted) return;
         Navigator.of(context).pop(_identifierValue);
       }
     } finally {

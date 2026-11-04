@@ -1,4 +1,4 @@
-﻿// lib/Pages/cartpage.dart
+// lib/Pages/cartpage.dart
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
@@ -101,7 +101,7 @@ class _CartPageState extends State<CartPage> {
 
   /// Show local cart immediately; sync with API in the background.
   Future<List<CartModel>> _bootstrapCart() async {
-    // Fast session check â€” avoid AuthHandler round-trip before first paint.
+    // Fast session check — avoid AuthHandler round-trip before first paint.
     final quickLoggedIn = _auth.currentUser != null;
 
     try {
@@ -117,11 +117,11 @@ class _CartPageState extends State<CartPage> {
       } else if (mounted && valid.isEmpty && _items.isNotEmpty) {
         // Keep memory items until network says otherwise.
       } else if (mounted && valid.isEmpty && !quickLoggedIn) {
-        // May still have SP session â€” don't clear yet.
+        // May still have SP session — don't clear yet.
       }
     } catch (_) {}
 
-    // Unblock FutureBuilder now â€” don't wait on API.
+    // Unblock FutureBuilder now — don't wait on API.
     final snapshot = List<CartModel>.from(_items);
     unawaited(_refreshFromNetworkQuiet());
     return snapshot;
@@ -372,7 +372,7 @@ class _CartPageState extends State<CartPage> {
       }
 
       try {
-        // 1) Try main backend (NestJS) â€” service already mirrors to Firestore.
+        // 1) Try main backend (NestJS) — service already mirrors to Firestore.
         final data = await widget.cartService.fetchCartItems();
 
         // Validate merchant info

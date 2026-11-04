@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as dev;
 import 'package:universal_io/io.dart';
@@ -174,7 +174,7 @@ class OrderService {
     final formattedOrderNumber = _formatOrderNumber(orderNumber);
     final item = itemName?.trim() ?? '';
     final itemPrefix = item.isEmpty ? '' : '$item - ';
-    final itemSeg = item.isEmpty ? '' : ' â€” $item';
+    final itemSeg = item.isEmpty ? '' : ' — $item';
     final orderSeg = formattedOrderNumber.isEmpty
         ? 'Your order'
         : 'Your order $formattedOrderNumber';
@@ -373,12 +373,12 @@ class OrderService {
 
   String _friendlyMessageForStatus(int code, {required String action}) {
     if (code == 401 || code == 403) return 'Your session has expired. Please sign in again.';
-    if (code == 404) return 'We couldnâ€™t find what you requested.';
+    if (code == 404) return 'We couldn’t find what you requested.';
     if (code == 408) return 'Request timed out. Please try again.';
-    if (code == 409) return 'This request couldnâ€™t be completed due to a conflict. Please refresh and try again.';
-    if (code == 422 || code == 400) return 'We couldnâ€™t $action. Please check your details and try again.';
-    if (code >= 500) return 'We couldnâ€™t $action right now. Please try again shortly.';
-    return 'We couldnâ€™t $action. Please try again.';
+    if (code == 409) return 'This request couldn’t be completed due to a conflict. Please refresh and try again.';
+    if (code == 422 || code == 400) return 'We couldn’t $action. Please check your details and try again.';
+    if (code >= 500) return 'We couldn’t $action right now. Please try again shortly.';
+    return 'We couldn’t $action. Please try again.';
   }
 
   /// Parses API error message from JSON body (e.g. {"message":"Selected user is not a merchant"}).
@@ -429,7 +429,7 @@ class OrderService {
   String _safeBodyForLogs(String body) {
     // Avoid logging massive payloads
     if (body.length <= 1200) return body;
-    return '${body.substring(0, 1200)}â€¦(truncated)';
+    return '${body.substring(0, 1200)}…(truncated)';
   }
 
   FriendlyApiException _networkFriendly(Object e, {StackTrace? st, required String action}) {
@@ -443,9 +443,9 @@ class OrderService {
       return FriendlyApiException('No internet connection. Please check your network and try again.', debugMessage: 'SocketException');
     }
     if (e is http.ClientException) {
-      return FriendlyApiException('We couldnâ€™t reach the server. Please try again.', debugMessage: 'ClientException');
+      return FriendlyApiException('We couldn’t reach the server. Please try again.', debugMessage: 'ClientException');
     }
-    return FriendlyApiException('We couldnâ€™t $action. Please try again.', debugMessage: 'Unknown error: $e');
+    return FriendlyApiException('We couldn’t $action. Please try again.', debugMessage: 'Unknown error: $e');
   }
 
   Future<http.Response> _retry(
@@ -706,7 +706,7 @@ class OrderService {
     );
   }
 
-  // Chooses the right â€œmeâ€ endpoint by role.
+  // Chooses the right "me" endpoint by role.
   Future<List<OrderItem>> getMyOrders({OrderStatus? status}) async {
     final isMerchant = await _isMerchant();
     final qp = status != null ? {'status': orderStatusToApi(status)} : null;
@@ -777,7 +777,7 @@ class OrderService {
         return List<OrderItem>.from(_myOrdersMemCache);
       }
       dev.log('[OrderService] JSON parse error', name: 'OrderService', error: e, stackTrace: st);
-      throw FriendlyApiException('We couldnâ€™t load your orders. Please check your internet connection and try again.');
+      throw FriendlyApiException('We couldn’t load your orders. Please check your internet connection and try again.');
     }
   }
 

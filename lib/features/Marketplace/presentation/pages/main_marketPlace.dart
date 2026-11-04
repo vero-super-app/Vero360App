@@ -1,13 +1,11 @@
 ﻿// lib/Pages/marketPlace.dart
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// VERO360 MARKETPLACE  â€“ 2025 Luxury Editorial Redesign
-//   â€¢ Warm amber/cream luxury palette
-//   â€¢ Glass-morphism cards with depth shadows
-//   â€¢ Animated entrance + micro-interactions
-//   â€¢ Hero image aspect-ratio cards
-//   â€¢ Frosted search bar with live suggestion carousel
-//   â€¢ All original logic 100% preserved
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// VERO360 MARKETPLACE  - 2025 Luxury Editorial Redesign
+//   - Warm amber/cream luxury palette
+//   - Glass-morphism cards with depth shadows
+//   - Animated entrance + micro-interactions
+//   - Hero image aspect-ratio cards
+//   - Frosted search bar with live suggestion carousel
+//   - All original logic 100% preserved
 import 'dart:async';
 import 'dart:convert';
 import 'package:universal_io/io.dart';
@@ -66,9 +64,7 @@ import 'package:vero360_app/features/Restraurants/RestraurantPresenter/food_deta
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart'
     show veroFloatingNavClearance;
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// DESIGN TOKENS â€” Warm Luxury Editorial
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// DESIGN TOKENS - Warm Luxury Editorial
 const _kAmber       = Color(0xFFFF8A00);
 const _kAmberDark   = Color(0xFFE07800);
 const _kAmberLight  = Color(0xFFFFF0D9);
@@ -103,9 +99,7 @@ const Map<String, Color> _kCategoryColors = {
   'other':       Color(0xFF8D6E63),
 };
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // GRID LAYOUT (unchanged logic)
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 ({
   int crossAxisCount,
   double childAspectRatio,
@@ -138,9 +132,7 @@ const Map<String, Color> _kCategoryColors = {
   return (crossAxisCount: cross, childAspectRatio: aspect, gridSpacing: gridSpacing, gridPadH: gridPadH);
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // SHIMMER (beautiful amber shimmer)
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _Shimmer extends StatefulWidget {
   const _Shimmer({required this.child});
   final Widget child;
@@ -241,9 +233,7 @@ class _SkeletonCard extends StatelessWidget {
   );
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// SCROLL BEHAVIOR
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
 class _NoBarsScrollBehavior extends MaterialScrollBehavior {
   const _NoBarsScrollBehavior();
   @override
@@ -252,9 +242,7 @@ class _NoBarsScrollBehavior extends MaterialScrollBehavior {
   Widget buildScrollbar(BuildContext context, Widget child, ScrollableDetails details) => child;
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// LOCAL MODEL (unchanged)
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
 class MarketplaceDetailModel {
   final String id;
   final int? sqlItemId;
@@ -432,9 +420,6 @@ class MarketplaceDetailModel {
   }
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// SELLER INFO (unchanged)
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _SellerInfo {
   String? businessName, openingHours, status, description, logoUrl;
   double? rating;
@@ -458,24 +443,19 @@ Future<_SellerInfo> _loadSellerForItem(MarketplaceDetailModel i) async {
   return info;
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// HELPERS
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 String? _closingFromHours(String? openingHours) {
   if (openingHours == null || openingHours.trim().isEmpty) return null;
-  final parts = openingHours.replaceAll('â€“', '-').split('-');
+  final parts = openingHours.replaceAll(RegExp(r'[–—]'), '-').split('-');
   return parts.length == 2 ? parts[1].trim() : null;
 }
 
 String _fmtRating(double? r) {
-  if (r == null) return 'â€”';
+  if (r == null) return '—';
   final whole = r.truncateToDouble();
   return r == whole ? r.toStringAsFixed(0) : r.toStringAsFixed(1);
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// BEAUTIFUL RATING STARS
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
 Widget _ratingStars(double? rating) {
   final rr = ((rating ?? 0).clamp(0, 5)).toDouble();
   final filled = rr.floor();
@@ -497,7 +477,7 @@ Widget _infoRow(String label, String? value, {IconData? icon}) {
       if (icon != null) ...[Icon(icon, size: 15, color: _kAmber), const SizedBox(width: 8)],
       SizedBox(width: 110, child: Text(label, style: const TextStyle(color: _kInkLight, fontSize: 12))),
       const SizedBox(width: 6),
-      Expanded(child: Text((value ?? '').isNotEmpty ? value! : 'â€”', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: _kInk))),
+      Expanded(child: Text((value ?? '').isNotEmpty ? value! : '—', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: _kInk))),
     ]),
   );
 }
@@ -511,19 +491,16 @@ Widget _statusChip(String? status) {
   return Container(
     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
     decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
-    child: Text((status ?? 'â€”').toUpperCase(), style: TextStyle(color: fg, fontWeight: FontWeight.w800, fontSize: 9, letterSpacing: 0.8)),
+    child: Text((status ?? '—').toUpperCase(), style: TextStyle(color: fg, fontWeight: FontWeight.w800, fontSize: 9, letterSpacing: 0.8)),
   );
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// MARKET PAGE
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class MarketPage extends StatefulWidget {
   final CartService cartService;
   /// When Marketplace is embedded as a bottom-nav tab, back should switch to
   /// Home instead of popping the app shell (which leaves a blank screen).
   final VoidCallback? onBackToHome;
-  /// Force GPS near-me ranking (used when opening from Home â†’ Nearby).
+  /// Force GPS near-me ranking (used when opening from Home -> Nearby).
   final bool preferNearbyLocation;
   const MarketPage({
     required this.cartService,
@@ -545,7 +522,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   late final NumberFormat _mwkFmt = NumberFormat.currency(locale: 'en_US', symbol: 'MWK ', decimalDigits: 0);
   String _mwk(num v) => _mwkFmt.format(BuyerCommission.buyerFacing(v));
 
-  /// Food listings use the Food flow only â€” not shown under Products vertical.
+  /// Food listings use the Food flow only - not shown under Products vertical.
   static const List<String> _kCategories = ['drinks', 'electronics', 'clothes', 'shoes', 'other'];
   String? _selectedCategory;
   MarketplaceHubVertical _hubVertical = MarketplaceHubVertical.all;
@@ -556,7 +533,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   String _lastQuery = '';
   bool _loading = false;
   bool _photoMode = false;
-  /// True while photo search runs â€” keep the current grid visible.
+  /// True while photo search runs - keep the current grid visible.
   bool _photoSearching = false;
   /// Last non-empty grid so photo search can run without blanking the feed.
   List<MarketplaceFeedItem> _lastGridItems = const [];
@@ -679,7 +656,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null || uid.isEmpty) return {};
     try {
-      // User-scoped list â€” no collection-group index required.
+      // User-scoped list - no collection-group index required.
       final qs = await _firestore
           .collection('users')
           .doc(uid)
@@ -905,7 +882,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
 
     List<MarketplaceDetailModel> list;
     if (fast) {
-      // Sync-ish newest sort â€” skip prefs / follows / social for first paint.
+      // Sync-ish newest sort - skip prefs / follows / social for first paint.
       list = List<MarketplaceDetailModel>.from(enriched);
       list.sort((a, b) {
         final byPromo = (b.isPromotedNow ? 1 : 0).compareTo(a.isPromotedNow ? 1 : 0);
@@ -1084,7 +1061,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
           nearMe: true,
         );
       }
-      // Soft re-rank only â€” never restart a full network load after GPS.
+      // Soft re-rank only - never restart a full network load after GPS.
       if (_lastQuery.trim().isEmpty && _productCache.isNotEmpty) {
         unawaited(_rerankVisibleProducts());
       }
@@ -1315,7 +1292,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
         return;
       }
       final gen = _loadGen;
-      // Products only â€” never re-fetch food/stays on every Firestore tick.
+      // Products only - never re-fetch food/stays on every Firestore tick.
       final result = await _hubFromProductDocs(
         snap.docs,
         category: _selectedCategory,
@@ -1395,7 +1372,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     super.dispose();
   }
 
-  // â”€â”€â”€ IMAGE HELPERS (unchanged) â”€â”€â”€
+  // IMAGE HELPERS (unchanged)
   bool _isHttp(String s) { final l = s.toLowerCase(); return l.startsWith('http://') || l.startsWith('https://'); }
   bool _isGs(String s) => s.startsWith('gs://');
   bool _isRelativePath(String s) => s.isNotEmpty && !s.contains('://') && !_looksLikeBase64(s);
@@ -1679,8 +1656,6 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
 
       final mergeVerticals = _hubVertical == MarketplaceHubVertical.all;
 
-      // 1) Memory cache — instant paint
-
       // Start food/stays immediately so they finish while products paint.
       final verticalsFuture = mergeVerticals
           ? MarketplaceHubLoader.loadFoodAndStays(
@@ -1689,8 +1664,31 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
             )
           : null;
 
-      // 1) Memory cache â€” instant paint
+      void scheduleVerticalsMerge({
+        required List<MarketplaceFeedItem> shops,
+      }) {
+        if (!mergeVerticals || verticalsFuture == null) return;
+        unawaited(_enrichHubInBackground(
+          productRaw: _filterCachedProducts(category),
+          shops: shops,
+          query: '',
+          mergeVerticals: true,
+          loadGen: gen,
+          verticalsFuture: verticalsFuture,
+          needRerank: false,
+        ));
+      }
 
+      List<MarketplaceFeedItem> fallbackProducts() {
+        final fromGrid = _lastGridItems
+            .where((e) => e.kind == MarketplaceFeedKind.product)
+            .toList();
+        if (fromGrid.isNotEmpty) return fromGrid;
+        if (_productCache.isEmpty) return const [];
+        return _filterCachedProducts(category).map(_feedFromProduct).toList();
+      }
+
+      // 1) Memory cache — instant paint
       if (_productCacheFresh) {
         final ranked = await _finishFeed(
           _filterCachedProducts(category),
@@ -1705,10 +1703,11 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
             _loading = false;
           });
         }
+        scheduleVerticalsMerge(shops: const []);
         return quick;
       }
 
-      // 2) Firestore disk cache â€” usually fast
+      // 2) Firestore disk cache — usually fast
       try {
         final cached = await _marketplaceItemsQuery()
             .get(const GetOptions(source: Source.cache));
@@ -1732,6 +1731,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
               _loading = false;
             });
           }
+          scheduleVerticalsMerge(shops: quick.shops);
           return quick;
         }
       } catch (_) {}
@@ -1758,6 +1758,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
             }
           });
         }
+        scheduleVerticalsMerge(shops: quick.shops);
         return quick;
       } catch (serverError) {
         final err = serverError.toString().toLowerCase();
@@ -1774,14 +1775,25 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
             ),
           ));
         }
-        if (_hubVertical == MarketplaceHubVertical.all) {
-          final (food, stays) = await MarketplaceHubLoader.loadFoodAndStays(
-            latitude: _userLat,
-            longitude: _userLng,
-          );
-          return MarketplaceHubSnapshot(
-            items: MarketplaceHubLoader.mergeMixed([food, stays]),
-          );
+        final keptProducts = fallbackProducts();
+        if (mergeVerticals) {
+          try {
+            final pair = await (verticalsFuture ??
+                MarketplaceHubLoader.loadFoodAndStays(
+                  latitude: _userLat,
+                  longitude: _userLng,
+                ));
+            return MarketplaceHubSnapshot(
+              items: MarketplaceHubLoader.mergeMixed([
+                keptProducts,
+                pair.$1,
+                pair.$2,
+              ]),
+            );
+          } catch (_) {}
+        }
+        if (keptProducts.isNotEmpty) {
+          return MarketplaceHubSnapshot(items: keptProducts);
         }
         return MarketplaceHubSnapshot.empty;
       }
@@ -1853,7 +1865,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
           return _productSearchHaystack(item).contains(lower);
         }).toList();
       }
-      // Skip social enrichment on search â€” keeps shop/name results snappy.
+      // Skip social enrichment on search - keeps shop/name results snappy.
       final ranked = await _finishFeed(matches, attachSocial: false, fast: true);
       if (gen != _searchGen) return MarketplaceHubSnapshot.empty;
       final productItems = ranked.map(_feedFromProduct).toList();
@@ -1958,7 +1970,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     final catsText = topCats.take(3).map((e) => _titleCase(e.key)).join(', ');
     final priceMin = items.map((i) => i.price).reduce((a, b) => a < b ? a : b);
     final priceMax = items.map((i) => i.price).reduce((a, b) => a > b ? a : b);
-    return 'Found ${items.length} results for "$query" across ${topCats.length} categories${topCats.isNotEmpty ? ' ($catsText)' : ''}. Prices: MWK ${priceMin.toStringAsFixed(0)} â€“ MWK ${priceMax.toStringAsFixed(0)}.';
+    return 'Found ${items.length} results for "$query" across ${topCats.length} categories${topCats.isNotEmpty ? ' ($catsText)' : ''}. Prices: MWK ${priceMin.toStringAsFixed(0)} – MWK ${priceMax.toStringAsFixed(0)}.';
   }
 
   String _getAiHighlight(MarketplaceDetailModel item) {
@@ -1966,9 +1978,9 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     final rating = item.sellerRating ?? 0;
     if (rating >= 4.5) sb.write('Top-rated seller');
     else if (rating >= 4) sb.write('Reliable seller');
-    if (sb.isNotEmpty && item.price > 0) sb.write(' Â· ');
+    if (sb.isNotEmpty && item.price > 0) sb.write(' · ');
     sb.write(_mwk(item.price));
-    if ((item.description ?? '').toLowerCase().contains('new') || (item.description ?? '').toLowerCase().contains('brand')) { if (sb.isNotEmpty) sb.write(' Â· '); sb.write('Like new'); }
+    if ((item.description ?? '').toLowerCase().contains('new') || (item.description ?? '').toLowerCase().contains('brand')) { if (sb.isNotEmpty) sb.write(' · '); sb.write('Like new'); }
     return sb.toString().trim().isEmpty ? _mwk(item.price) : sb.toString();
   }
 
@@ -2063,7 +2075,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
         ));
       } else {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: const Text('Item not available â€” no matching listing for this photo'),
+          content: const Text('Item not available — no matching listing for this photo'),
           backgroundColor: _kAmber,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -2138,7 +2150,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       image: marketplaceShareImageUrl(item.image, item.gallery),
     );
     Share.share(
-      '$merchantName is selling this on Vero360 â€” ${item.name} â€” MWK $priceStr\n$url',
+      '$merchantName is selling this on Vero360 — ${item.name} — MWK $priceStr\n$url',
     );
   }
 
@@ -2461,9 +2473,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   String _titleCase(String s) => s.isEmpty ? s : (s[0].toUpperCase() + s.substring(1));
 
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // BEAUTIFUL ITEM IMAGE WIDGET
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _buildItemImageWidget(MarketplaceDetailModel item) {
     final mainImage = item.image.trim();
     final sources = <String>[
@@ -2504,9 +2514,6 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     );
   }
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // BEAUTIFUL PRODUCT CARD
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _buildFeedCard(MarketplaceFeedItem feed) {
     if (feed.kind == MarketplaceFeedKind.product &&
         feed.product is MarketplaceDetailModel) {
@@ -2763,7 +2770,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
           ],
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          // â”€â”€ HERO IMAGE â”€â”€
+          // HERO IMAGE
           Expanded(
             flex: 58,
             child: Stack(children: [
@@ -2906,7 +2913,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
             ]),
           ),
 
-          // â”€â”€ INFO PANEL â”€â”€
+          // INFO PANEL
           Container(
             decoration: const BoxDecoration(
               color: _kAmberLight,
@@ -2994,9 +3001,6 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     );
   }
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // DETAILS BOTTOM SHEET (redesigned)
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Future<void> _showDetailsBottomSheet(MarketplaceDetailModel item) async {
     if (!mounted) return;
     final Future<_SellerInfo> sellerFuture = _loadSellerForItem(item);
@@ -3046,7 +3050,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                           // Drag handle
                           Center(child: Container(width: 40, height: 4, margin: const EdgeInsets.only(top: 12, bottom: 0), decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)))),
 
-                          // â”€â”€ HERO MEDIA â”€â”€
+                          // HERO MEDIA
                           Padding(
                             padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                             child: AspectRatio(
@@ -3074,7 +3078,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                             ),
                           ),
 
-                          // â”€â”€ CONTENT â”€â”€
+                          // CONTENT
                           Padding(
                             padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -3116,7 +3120,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                               if (item.location != null && item.location!.trim().isNotEmpty)
                                 _InfoPill(icon: Icons.location_on_rounded, text: item.location!, color: Colors.red),
                               if (item.createdAt != null)
-                                _InfoPill(icon: Icons.schedule_rounded, text: 'Posted by $displayMerchantName â€¢ ${_formatTimeAgo(item.createdAt!)}', color: _kAmber),
+                                _InfoPill(icon: Icons.schedule_rounded, text: 'Posted by $displayMerchantName • ${_formatTimeAgo(item.createdAt!)}', color: _kAmber),
                               if ((item.description ?? '').trim().isNotEmpty) ...[
                                 const SizedBox(height: 12),
                                 Container(
@@ -3190,9 +3194,6 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     ).whenComplete(() { autoTimer?.cancel(); pageController.dispose(); });
   }
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // AI QUESTION HANDLER
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Future<void> _onAskQuestionSubmitted() async {
     final q = _askQuestionCtrl.text.trim();
     if (q.isEmpty) return;
@@ -3225,13 +3226,13 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       final scored = items.map((i) { final rating = (i.sellerRating ?? 0).clamp(0.0, 5.0); final score = rating > 0 ? (rating / 5) * 100 - (i.price / 10000) : -i.price / 10000; return MapEntry(i, score); }).toList();
       scored.sort((a, b) => b.value.compareTo(a.value));
       final best = scored.first.key; final rating = best.sellerRating;
-      return 'Based on price and seller rating, I recommend **${best.name}** at ${_mwk(best.price)}${rating != null && rating >= 4 ? ' (${_fmtRating(rating)}â˜… seller)' : ''}.';
+      return 'Based on price and seller rating, I recommend **${best.name}** at ${_mwk(best.price)}${rating != null && rating >= 4 ? ' (${_fmtRating(rating)}★ seller)' : ''}.';
     }
     if (_matches(q, ['price range', 'how much', 'cost', 'prices'])) { final prices = items.map((i) => i.price).toList(); final min = prices.reduce((a, b) => a < b ? a : b); final max = prices.reduce((a, b) => a > b ? a : b); return 'Prices range from ${_mwk(min)} to ${_mwk(max)} across ${items.length} products.'; }
     if (_matches(q, ['compare', 'comparison', 'difference'])) {
       if (items.length < 2) return 'There\'s only one product. Try searching for more to compare.';
       final top3 = items.take(3).toList(); final sb = StringBuffer('Here\'s a quick comparison of the top results:\n\n');
-      for (int i = 0; i < top3.length; i++) { final it = top3[i]; sb.write('${i + 1}. **${it.name}** â€“ ${_mwk(it.price)}'); if (it.sellerRating != null) sb.write(' (${_fmtRating(it.sellerRating!)}â˜…)'); sb.writeln(); }
+      for (int i = 0; i < top3.length; i++) { final it = top3[i]; sb.write('${i + 1}. **${it.name}** – ${_mwk(it.price)}'); if (it.sellerRating != null) sb.write(' (${_fmtRating(it.sellerRating!)}★)'); sb.writeln(); }
       return sb.toString().trimRight();
     }
     if (_matches(q, ['categories', 'category', 'types', 'what kind'])) { final cats = <String, int>{}; for (final i in items) { final c = i.category.isEmpty ? 'other' : i.category; cats[c] = (cats[c] ?? 0) + 1; } final list = cats.entries.map((e) => '${_titleCase(e.key)} (${e.value})').join(', '); return 'These products span ${cats.length} categories: $list.'; }
@@ -3271,10 +3272,6 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
     );
   }
 
-
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  // BUILD
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   @override
   Widget build(BuildContext context) {
     return AnnotatedRegion<SystemUiOverlayStyle>(
@@ -3286,10 +3283,10 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
       child: Scaffold(
         backgroundColor: _kCream,
         body: Column(children: [
-          // â”€â”€ BEAUTIFUL HEADER â”€â”€
+          // BEAUTIFUL HEADER
           _MarketAppBar(showBlur: _showHeaderBlur, onBackToHome: widget.onBackToHome),
 
-          // â”€â”€ SEARCH BAR â”€â”€
+          // SEARCH BAR
           _SearchSection(
             controller: _searchCtrl,
             aiSearchMode: _aiSearchMode,
@@ -3301,7 +3298,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
             hintText: 'Search products or shops',
           ),
 
-          // â”€â”€ FILTER CHIPS â”€â”€
+          // FILTER CHIPS
           _FilterRow(
             aiSearchMode: _aiSearchMode,
             forYouMode: _forYouMode,
@@ -3311,7 +3308,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
             categories: _kCategories,
             hubVertical: _hubVertical,
             locationLabel: _nearMeMode
-                ? (_browseCity == null ? 'Near me' : 'Near Â· $_browseCity')
+                ? (_browseCity == null ? 'Near me' : 'Near · $_browseCity')
                 : (_browseCity ?? 'All Malawi'),
             onLocationTap: _openLocationPicker,
             onAiToggle: (ai) {
@@ -3327,11 +3324,11 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
           if (_photoSearching)
             const _PhotoSearchingBanner(),
 
-          // â”€â”€ VERO AI QUESTION BOX â”€â”€
+          // VERO AI QUESTION BOX
           if (_aiSearchMode)
             _AiQuestionBox(controller: _askQuestionCtrl, loading: _veroAiLoading, onSubmit: _onAskQuestionSubmitted),
 
-          // â”€â”€ GRID â”€â”€
+          // GRID
           Expanded(
             child: FadeTransition(
               opacity: _fadeAnim,
@@ -3343,7 +3340,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                   builder: (context, snapshot) {
                     final waitingFresh = snapshot.connectionState == ConnectionState.waiting &&
                         !snapshot.hasData;
-                    // Photo search runs in the background â€” keep showing the feed.
+                    // Photo search runs in the background - keep showing the feed.
                     if (waitingFresh && !(_photoSearching && _lastGridItems.isNotEmpty)) {
                       return LayoutBuilder(builder: (context, constraints) {
                         final layout = _marketplaceSliverGridLayout(comfortable: _comfortableView, width: constraints.maxWidth);
@@ -3414,7 +3411,7 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
                           SizedBox(height: MediaQuery.of(context).size.height * 0.18),
                           const Center(
                             child: Text(
-                              'Searching your photo in the backgroundâ€¦',
+                              'Searching your photo in the background…',
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w600,
@@ -3510,9 +3507,6 @@ class _MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   }
 } // end _MarketPageState
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// SUB-WIDGETS
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _MarketAppBar extends StatelessWidget {
   final bool showBlur;
@@ -3520,7 +3514,7 @@ class _MarketAppBar extends StatelessWidget {
   const _MarketAppBar({required this.showBlur, this.onBackToHome});
 
   /// True only when this page was pushed on top of another Flutter route.
-  /// Do not use [Navigator.canPop] alone â€” on web it can be true from browser
+  /// Do not use [Navigator.canPop] alone - on web it can be true from browser
   /// history even when Marketplace is the root shell tab, and popping then
   /// leaves a blank white screen.
   bool _wasPushed(BuildContext context) {
@@ -3931,7 +3925,7 @@ class _AiQuestionBox extends StatelessWidget {
             textInputAction: TextInputAction.send,
             onSubmitted: (_) => onSubmit(),
             style: const TextStyle(fontSize: 13.5, color: _kInk),
-            decoration: const InputDecoration(border: InputBorder.none, hintText: 'Ask Vero AI about these resultsâ€¦', hintStyle: TextStyle(fontSize: 13.5, color: _kInkLight), isDense: true, contentPadding: EdgeInsets.symmetric(vertical: 12)),
+            decoration: const InputDecoration(border: InputBorder.none, hintText: 'Ask Vero AI about these results…', hintStyle: TextStyle(fontSize: 13.5, color: _kInkLight), isDense: true, contentPadding: EdgeInsets.symmetric(vertical: 12)),
           )),
           loading
               ? const Padding(padding: EdgeInsets.all(12), child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: _kBlue)))
@@ -4253,9 +4247,7 @@ class _PhotoPickerOption extends StatelessWidget {
   }
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // AUTO SLIDE IMAGE CAROUSEL (unchanged logic)
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class _AutoSlideImageCarousel extends StatefulWidget {
   const _AutoSlideImageCarousel({
     super.key,

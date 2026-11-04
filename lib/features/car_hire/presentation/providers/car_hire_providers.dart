@@ -5,15 +5,11 @@ import 'package:vero360_app/features/car_hire/data/car_hire_api.dart';
 import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 
-// ---------------------------------------------------------------------------
 // API
-// ---------------------------------------------------------------------------
 
 final carHireApiProvider = Provider<CarHireApi>((ref) => CarHireApi());
 
-// ---------------------------------------------------------------------------
 // Browse query
-// ---------------------------------------------------------------------------
 
 class CarHireSearchQuery {
   const CarHireSearchQuery({this.pickupArea = '', this.startAt, this.endAt});
@@ -100,9 +96,7 @@ final carHireSearchProvider =
       CarHireSearchNotifier.new,
     );
 
-// ---------------------------------------------------------------------------
 // Browse filters
-// ---------------------------------------------------------------------------
 
 /// Optional narrowing of the public search, applied by the server.
 class CarHireFilters {
@@ -211,9 +205,7 @@ final carHireFiltersProvider =
       CarHireFiltersNotifier.new,
     );
 
-// ---------------------------------------------------------------------------
 // Detail + bookings
-// ---------------------------------------------------------------------------
 
 final carHireDetailProvider = FutureProvider.family<CarListing, int>((
   ref,
@@ -238,9 +230,7 @@ final carHireBookingDetailProvider = FutureProvider.family<CarHireBooking, int>(
   },
 );
 
-// ---------------------------------------------------------------------------
 // Quote controller
-// ---------------------------------------------------------------------------
 
 class CarHireQuoteRequest {
   const CarHireQuoteRequest({
@@ -341,9 +331,7 @@ final quoteControllerProvider =
       CarHireQuoteController.new,
     );
 
-// ---------------------------------------------------------------------------
 // Booking submission controller
-// ---------------------------------------------------------------------------
 
 class CarHireBookingSubmissionState {
   const CarHireBookingSubmissionState({
@@ -436,18 +424,14 @@ final bookingSubmissionProvider =
       CarHireBookingSubmissionState
     >(CarHireBookingSubmissionController.new);
 
-// ---------------------------------------------------------------------------
 // Verification
-// ---------------------------------------------------------------------------
 
 final verificationProvider = FutureProvider<CarHireVerification>((ref) async {
   final api = ref.watch(carHireApiProvider);
   return api.getVerificationStatus();
 });
 
-// ---------------------------------------------------------------------------
 // Phase 4: extensions, inspections, incidents, support, verification
-// ---------------------------------------------------------------------------
 
 final bookingExtensionsProvider =
     FutureProvider.family<List<BookingExtension>, int>((ref, bookingId) async {

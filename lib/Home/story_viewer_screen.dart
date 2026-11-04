@@ -1,4 +1,4 @@
-﻿// Full-screen story viewer â€” one merchant's stories, 24h, caption, video, record viewers.
+// Full-screen story viewer — one merchant's stories, 24h, caption, video, record viewers.
 
 import 'dart:async';
 import 'package:universal_io/io.dart';
@@ -96,7 +96,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     return uid != null && uid == _currentGroup.merchantId;
   }
 
-  /// Story owner label â€” merchants always show business name (including own).
+  /// Story owner label — merchants always show business name (including own).
   String get _ownerDisplayName {
     final name = _currentGroup.merchantName.trim();
     if (name.isEmpty) return _isOwnStory ? 'My status' : 'Merchant';
@@ -245,7 +245,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
       builder: (ctx) => AlertDialog(
         title: const Text('Delete status?'),
         content: const Text(
-          'This status will be removed for everyone. You canâ€™t undo this.',
+          'This status will be removed for everyone. You can’t undo this.',
         ),
         actions: [
           TextButton(
@@ -695,7 +695,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                       const SizedBox(width: 8),
                       Flexible(
                           child: Text(
-                            '$_ownViewerCount view${_ownViewerCount == 1 ? '' : 's'} Â· $_likeCount like${_likeCount == 1 ? '' : 's'}',
+                            '$_ownViewerCount view${_ownViewerCount == 1 ? '' : 's'} · $_likeCount like${_likeCount == 1 ? '' : 's'}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -1055,7 +1055,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
               style: const TextStyle(color: Colors.white, fontSize: 15),
               cursorColor: const Color(0xFFFF8A00),
               decoration: InputDecoration(
-                hintText: 'Reply to ${_ownerDisplayName}â€¦',
+                hintText: 'Reply to ${_ownerDisplayName}…',
                 hintStyle: TextStyle(
                   color: Colors.white.withValues(alpha: 0.55),
                   fontSize: 14,
@@ -1364,8 +1364,8 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
         );
       } else {
         final content = (caption != null && caption.isNotEmpty)
-            ? 'â†©ï¸ Story reply:\n"$caption"\n\n$text'
-            : 'â†©ï¸ Story reply:\n\n$text';
+            ? '↩️ Story reply:\n"$caption"\n\n$text'
+            : '↩️ Story reply:\n\n$text';
         await BackendChatService.sendMessage(
           chatId: result.chat.id,
           content: content,
@@ -1428,12 +1428,12 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
       final message = raw.contains('own listing') ||
               raw.contains('cannot chat with yourself') ||
               raw.contains('cannot chat with ur self')
-          ? 'You canâ€™t reply to your own story.'
+          ? 'You can’t reply to your own story.'
           : raw.contains('could not find') ||
                   raw.contains('not linked') ||
                   raw.contains('User ') && raw.contains('not found')
-              ? 'Couldnâ€™t open inbox â€” this merchantâ€™s account isnâ€™t linked for chat yet.'
-              : 'Couldnâ€™t send reply. Check your connection and try again.';
+              ? 'Couldn’t open inbox — this merchant’s account isn’t linked for chat yet.'
+              : 'Couldn’t send reply. Check your connection and try again.';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(message),
@@ -1907,7 +1907,7 @@ class _EmptyViewers extends StatelessWidget {
           ),
           SizedBox(height: 4),
           Text(
-            'When someone watches this status,\ntheyâ€™ll show up here.',
+            'When someone watches this status,\nthey’ll show up here.',
             textAlign: TextAlign.center,
             style: TextStyle(
               color: Color(0xFF667781),

@@ -1,4 +1,4 @@
-﻿// lib/Pages/profile_page.dart
+// lib/Pages/profile_page.dart
 import 'dart:async'; // <-- for FutureOr
 import 'dart:convert';
 import 'package:universal_io/io.dart';

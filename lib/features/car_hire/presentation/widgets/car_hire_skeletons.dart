@@ -326,9 +326,7 @@ class CarHireDetailSkeleton extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Company / management pages
-// ---------------------------------------------------------------------------
 
 /// Four metric tiles inside a card: the fleet pulse placeholder.
 class CarHireCompanyPulseSkeleton extends StatelessWidget {

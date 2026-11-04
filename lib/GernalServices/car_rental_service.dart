@@ -12,7 +12,7 @@ import 'package:vero360_app/dto/geofence_dto.dart';
 class CarRentalService {
   static const Duration _timeout = Duration(seconds: 30);
 
-  // ────── GET Endpoints ──────
+  // GET Endpoints
   /// Fetch all available cars for booking
   Future<List<CarModel>> getAvailableCars({
     String? location,
@@ -110,7 +110,7 @@ class CarRentalService {
     }
   }
 
-  // ────── POST Endpoints ──────
+  // POST Endpoints
   /// Create new booking
   Future<CarBookingModel> createBooking({
     required int carId,
@@ -143,7 +143,7 @@ class CarRentalService {
     }
   }
 
-  // ────── PUT Endpoints (Status transitions) ──────
+  // PUT Endpoints (Status transitions)
   /// Confirm booking (PENDING → CONFIRMED)
   Future<CarBookingModel> confirmBooking(int bookingId) async {
     return _updateBookingStatus(bookingId, 'CONFIRMED');
@@ -187,7 +187,7 @@ class CarRentalService {
     }
   }
 
-  // ────── Cache ──────
+  // Cache
   Future<void> cacheActiveBooking(CarBookingModel booking) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('active_car_booking', jsonEncode(booking.toJson()));
@@ -211,7 +211,7 @@ class CarRentalService {
     await prefs.remove('active_car_booking');
   }
 
-  // ────── MERCHANT OPERATIONS ──────
+  // MERCHANT OPERATIONS
   /// Get all cars owned by current merchant
   Future<List<CarModel>> getMyCars() async {
     final token = await _getToken();
@@ -390,7 +390,7 @@ class CarRentalService {
     }
   }
 
-  // ────── PAYMENT OPERATIONS ──────
+  // PAYMENT OPERATIONS
   /// Get merchant's analytics
   Future<MerchantAnalytics> getAnalytics({
     DateTime? startDate,

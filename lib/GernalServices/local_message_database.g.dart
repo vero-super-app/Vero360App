@@ -2,9 +2,7 @@
 
 part of 'local_message_database.dart';
 
-// **************************************************************************
 // TypeAdapterGenerator
-// **************************************************************************
 
 class LocalMessageAdapter extends TypeAdapter<LocalMessage> {
   @override

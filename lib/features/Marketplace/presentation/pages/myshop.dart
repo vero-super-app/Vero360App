@@ -1,4 +1,4 @@
-﻿// lib/Pages/service_provider_crud_page.dart
+// lib/Pages/service_provider_crud_page.dart
 import 'dart:typed_data';
 import 'package:universal_io/io.dart' show File;
 
@@ -74,7 +74,7 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
         _status.text = (mine.status ?? '').isNotEmpty ? mine.status! : 'open';
 
         final s = mine.openingHours ?? '';
-        final parts = s.split('â€“');
+        final parts = s.split('–');
         if (parts.length == 2) {
           TimeOfDay? parse(String x) {
             final t = x.trim().split(':');
@@ -155,7 +155,7 @@ class _ServiceProviderCrudPageState extends State<ServiceProviderCrudPage>
     if (!_form.currentState!.validate()) return;
 
     final openingHours = (_openTime != null && _closeTime != null)
-        ? '${_formatTime(_openTime!)}â€“${_formatTime(_closeTime!)}'
+        ? '${_formatTime(_openTime!)}–${_formatTime(_closeTime!)}'
         : '';
 
     setState(() => _saving = true);
@@ -663,7 +663,7 @@ class _ServiceCard extends StatelessWidget {
                     maxLines: 2, overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 6),
                 Text(
-                  'Status: ${sp.status ?? 'open'} â€¢ Hours: ${sp.openingHours ?? ''}',
+                  'Status: ${sp.status ?? 'open'} • Hours: ${sp.openingHours ?? ''}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: Colors.grey.shade700),

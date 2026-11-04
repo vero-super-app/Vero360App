@@ -1,4 +1,4 @@
-﻿// lib/Pages/MerchantDashboards/accommodation_merchant_dashboard.dart
+// lib/Pages/MerchantDashboards/accommodation_merchant_dashboard.dart
 import 'dart:async';
 import 'dart:convert';
 import 'package:universal_io/io.dart' show File;
@@ -53,7 +53,7 @@ import 'package:vero360_app/features/ride_share/presentation/pages/ride_history_
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:intl/intl.dart';
 
-/// Local media for Add Property (cover + gallery) â€“ like marketplace LocalMedia.
+/// Local media for Add Property (cover + gallery) – like marketplace LocalMedia.
 class _PropertyMedia {
   final Uint8List bytes;
   final String filename;
@@ -69,7 +69,7 @@ class _PropertyMedia {
   });
 }
 
-/// Full-screen add listing â€” avoids bottom sheets closing when opening the image picker.
+/// Full-screen add listing — avoids bottom sheets closing when opening the image picker.
 class _AddPropertyPage extends StatefulWidget {
   const _AddPropertyPage({
     required this.accommodationApi,
@@ -438,7 +438,7 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Do not add MediaQuery.viewInsets padding here â€” Scaffold already
+    // Do not add MediaQuery.viewInsets padding here — Scaffold already
     // resizes for the keyboard; doubling it fills the screen with white space.
     return Scaffold(
       backgroundColor: const Color(0xFFF3F4F7),
@@ -947,7 +947,7 @@ class _AddPropertyPageState extends State<_AddPropertyPage> {
                     maxLines: 5,
                     decoration: _fieldDecoration(
                       label: 'Description',
-                      hint: 'House rules, what makes it specialâ€¦',
+                      hint: 'House rules, what makes it special…',
                       alignLabelWithHint: true,
                     ),
                   ),
@@ -1278,7 +1278,7 @@ class AccommodationMerchantDashboard extends StatefulWidget {
   final String email;
   final String? merchantUid;
   final bool embeddedInMainNav;
-  /// Inner TabBar: 0 Dashboard â€¦ 3 Profile.
+  /// Inner TabBar: 0 Dashboard … 3 Profile.
   final int initialInnerTab;
 
   const AccommodationMerchantDashboard({
@@ -1308,7 +1308,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   static const Color _dialogFieldFill = Color(0xFFF4F6FA);
   static const String _fallbackBusinessLabel = 'Accommodation Provider';
 
-  /// `accommodation_merchants` / `users` â€” keys backends use for listing name.
+  /// `accommodation_merchants` / `users` — keys backends use for listing name.
   String? _businessNameFromFirestoreMap(Map<String, dynamic>? m) {
     if (m == null) return null;
     for (final k in [
@@ -1423,7 +1423,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     );
   }
 
-  // Wallet lock (PIN) â€“ like marketplace
+  // Wallet lock (PIN) – like marketplace
   DateTime? _walletUnlockedUntil;
   static const Duration _walletUnlockDuration = Duration(minutes: 5);
 
@@ -1453,7 +1453,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   List<String> _servicesOffered = [];
   List<dynamic> _rooms = [];
   List<dynamic> _reviews = [];
-  /// Section loading for properties only â€” never block the whole dashboard chrome.
+  /// Section loading for properties only — never block the whole dashboard chrome.
   bool _roomsLoading = false;
   bool _isLoading = false;
   bool _initialLoadComplete = true;
@@ -1466,7 +1466,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   String _status = 'pending';
   int _availableRooms = 0;
 
-  /// Business Overview â€” from Vero API (`_veroMerchantBookings`), not Firestore `bookings` capped at 20.
+  /// Business Overview — from Vero API (`_veroMerchantBookings`), not Firestore `bookings` capped at 20.
   int get _overviewBookingCount => _veroMerchantBookings.length;
 
   /// Sum of `price + bookingFee` for paid/settled stays ([BookingItem.countsTowardHostRevenue]).
@@ -1523,7 +1523,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     super.dispose();
   }
 
-  /// Instant Auth / email paint â€” same idea as marketplace/food dashboards.
+  /// Instant Auth / email paint — same idea as marketplace/food dashboards.
   void _bootstrapFast() {
     final user = _auth.currentUser;
     final pinned = (widget.merchantUid ?? '').trim();
@@ -1610,7 +1610,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
       _businessName = _fallbackBusinessLabel;
     }
 
-    // Never block the whole page on network â€” paint tabs immediately.
+    // Never block the whole page on network — paint tabs immediately.
     if (mounted) {
       setState(() {
         _isLoading = false;
@@ -1638,7 +1638,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
 
     if (mounted) setState(() => _roomsLoading = false);
 
-    // Wave 2: API merge + bookings/reviews â€” never hold the spinner.
+    // Wave 2: API merge + bookings/reviews — never hold the spinner.
     unawaited(Future.wait<void>([
       _loadRooms(includeApi: true),
       _loadVeroMerchantBookings(),
@@ -2497,7 +2497,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         errorMessage: '',
         showFacebook: postToFacebook,
         facebookMessage: postToFacebook
-            ? 'Weâ€™ll also share this stay on the Vero360 Facebook Page.'
+            ? 'We’ll also share this stay on the Vero360 Facebook Page.'
             : null,
       );
     });
@@ -3612,7 +3612,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
             .limit(5)
             .get();
       } on FirebaseException catch (e) {
-        // Missing composite index â€” fall back until indexes are deployed.
+        // Missing composite index — fall back until indexes are deployed.
         if (e.code != 'failed-precondition') rethrow;
         AppLogger.d(
           '[AccommodationMerchant] reviews index missing; using unordered fallback',
@@ -3832,7 +3832,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                   letterSpacing: 2,
                                 ),
                                 decoration:
-                                    _walletPinFieldDecoration('4â€“6 digits'),
+                                    _walletPinFieldDecoration('4–6 digits'),
                               ),
                             ),
                             if (shortPinHint != null)
@@ -3984,7 +3984,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                       icon: Icons.pin_rounded,
                       title: 'Set wallet PIN',
                       subtitle:
-                          'Choose a 4â€“6 digit PIN. Youâ€™ll need it to unlock your wallet.',
+                          'Choose a 4–6 digit PIN. You’ll need it to unlock your wallet.',
                     ),
                     Padding(
                       padding: EdgeInsets.only(bottom: kb),
@@ -4025,7 +4025,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                                   letterSpacing: 2,
                                 ),
                                 decoration:
-                                    _walletPinFieldDecoration('4â€“6 digits'),
+                                    _walletPinFieldDecoration('4–6 digits'),
                               ),
                             ),
                             Padding(
@@ -4271,7 +4271,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              _initialLoadComplete ? 'Accommodation Dashboard' : 'Loadingâ€¦',
+              _initialLoadComplete ? 'Accommodation Dashboard' : 'Loading…',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -4415,7 +4415,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   }
 
   Widget _buildDashboardContent() {
-    // Always show tabs immediately â€” section loaders fill in data.
+    // Always show tabs immediately — section loaders fill in data.
     if (_accommodationTabs == null) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -4553,7 +4553,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
               icon: Icons.spa_rounded,
               title: 'Services offered',
               subtitle: _servicesOffered.isEmpty
-                  ? 'Pool, bar, conference, Wiâ€‘Fiâ€¦'
+                  ? 'Pool, bar, conference, Wi‑Fi…'
                   : _servicesOffered.join(', '),
               onTap: _showEditServicesSheet,
             ),
@@ -5557,7 +5557,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
     final unlocked = _walletUnlockedNow;
     final balanceStr = unlocked
         ? 'MWK ${_walletBalance.toStringAsFixed(2)}'
-        : 'MWK â€¢â€¢â€¢â€¢';
+        : 'MWK ••••';
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -5604,7 +5604,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                   const Padding(
                     padding: EdgeInsets.only(top: 4),
                     child: Text(
-                      'Locked â€” tap Open to unlock',
+                      'Locked — tap Open to unlock',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
@@ -5856,7 +5856,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                       _veroBookingInfoLine(
                         Icons.date_range_outlined,
                         'Dates',
-                        '${bookingMap['checkIn'] ?? ''} â€“ ${bookingMap['checkOut'] ?? ''}',
+                        '${bookingMap['checkIn'] ?? ''} – ${bookingMap['checkOut'] ?? ''}',
                       ),
                       _veroBookingInfoLine(
                         Icons.payments_outlined,
@@ -6082,7 +6082,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                 _veroBookingInfoLine(
                   Icons.phone_iphone_outlined,
                   'Booker phone',
-                  guestPhone.isNotEmpty ? guestPhone : 'â€”',
+                  guestPhone.isNotEmpty ? guestPhone : '—',
                   iconColor: _brandOrange,
                 ),
                 _veroBookingInfoLine(
@@ -6094,7 +6094,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'Ref Â· ${b.displayBookingRef}',
+                  'Ref · ${b.displayBookingRef}',
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w800,
@@ -6325,7 +6325,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                 _veroDetailRow('Transaction date', txDateStr),
                 _veroDetailRow(
                   'Booker phone',
-                  guestPhone.isNotEmpty ? guestPhone : 'â€”',
+                  guestPhone.isNotEmpty ? guestPhone : '—',
                 ),
                 _veroDetailRow(
                   'Price',

@@ -1,4 +1,4 @@
-﻿// lib/services/auth_service.dart
+// lib/services/auth_service.dart
 import 'dart:async';
 import 'dart:convert';
 import 'package:universal_io/io.dart';
@@ -350,7 +350,7 @@ class AuthService {
         };
       }
 
-      // Firestore requires Firebase Auth â€” mirror backend account before returning.
+      // Firestore requires Firebase Auth — mirror backend account before returning.
       final firebaseEmail = _firebaseEmailForIdentifier(trimmedId);
       final fbUser = await _ensureFirebaseMirrorForBackendUser(
         email: firebaseEmail,
@@ -369,7 +369,7 @@ class AuthService {
         );
       }
 
-      // Mobile / ride-share require a Firebase ID token â€” do not keep a Nest JWT session.
+      // Mobile / ride-share require a Firebase ID token — do not keep a Nest JWT session.
       if (showErrorToast) {
         _toast(
           context,
@@ -715,7 +715,7 @@ class AuthService {
       await _firebaseAuth.signOut();
       return;
     } on FirebaseAuthException catch (_) {
-      // verificationTicket is not a Firebase custom token â€” expected.
+      // verificationTicket is not a Firebase custom token — expected.
     }
 
     try {
@@ -725,7 +725,7 @@ class AuthService {
       );
       return;
     } on FirebaseAuthException catch (_) {
-      // verificationTicket is not a Firebase oob code â€” expected.
+      // verificationTicket is not a Firebase oob code — expected.
     }
 
     throw const ApiException(
@@ -1312,7 +1312,7 @@ class AuthService {
 
   // -------------------- Logout --------------------
 
-  /// Best-effort network/driver/FCM cleanup â€” never blocks logout longer than [budget].
+  /// Best-effort network/driver/FCM cleanup — never blocks logout longer than [budget].
   Future<void> _logoutRemoteCleanup({
     required String? token,
     Duration budget = const Duration(milliseconds: 1600),
@@ -1362,7 +1362,7 @@ class AuthService {
 
     try {
       BackendChatService.clearAuthCache();
-      // Don't await socket teardown â€” local session clear is enough for UX.
+      // Don't await socket teardown — local session clear is enough for UX.
       unawaited(BackendMessagingSocket.disconnect());
     } catch (_) {}
 

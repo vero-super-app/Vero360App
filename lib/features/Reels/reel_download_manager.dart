@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'package:universal_io/io.dart';
 
 import 'package:dio/dio.dart';
@@ -15,7 +15,7 @@ class ReelDownloadProgress {
   /// Server is still adding the watermark.
   final bool preparing;
 
-  /// 0.0â€“1.0 once the file is downloading.
+  /// 0.0–1.0 once the file is downloading.
   final double progress;
 
   const ReelDownloadProgress({required this.preparing, required this.progress});

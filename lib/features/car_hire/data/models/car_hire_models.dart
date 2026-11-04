@@ -1,3 +1,4 @@
+import 'package:vero360_app/features/car_hire/data/models/car_hire_policy_models.dart';
 import 'package:vero360_app/utils/formatters.dart';
 
 // Tolerant JSON helpers.
@@ -638,6 +639,7 @@ class CarListing {
     this.branchName,
     this.branchAddress,
     this.instantBook = true,
+    this.listingPolicies,
   });
 
   final int id;
@@ -684,6 +686,7 @@ class CarListing {
 
   /// False when the company accepts each request before the renter pays.
   final bool instantBook;
+  final CarHireListingPolicies? listingPolicies;
 
   String get bookingModeLabel => instantBook
       ? 'Confirmed instantly after payment'
@@ -760,6 +763,9 @@ class CarListing {
       branchName: _asStringOrNull(location['name']),
       branchAddress: _asStringOrNull(location['address']),
       instantBook: _asBool(json['instantBook'], fallback: true),
+      listingPolicies: json['listingPolicies'] == null
+          ? null
+          : CarHireListingPolicies.fromJson(json['listingPolicies']),
     );
   }
 
@@ -1119,6 +1125,9 @@ class CarHireBooking {
     this.renterPhone,
     this.bookingMode = 'INSTANT',
     this.branchName,
+    this.rentalMode,
+    this.listingPolicies,
+    this.immobilizeAvailable = false,
   });
 
   final int id;
@@ -1165,6 +1174,9 @@ class CarHireBooking {
 
   /// Pickup branch; sent on the company dispatch board.
   final String? branchName;
+  final String? rentalMode;
+  final CarHireListingPolicies? listingPolicies;
+  final bool immobilizeAvailable;
 
   bool get isRequest => bookingMode == 'REQUEST';
 
@@ -1226,6 +1238,17 @@ class CarHireBooking {
         fallback: 'INSTANT',
       ).toUpperCase(),
       branchName: _asStringOrNull(_asMap(json['branch'])['name']),
+      rentalMode: _asStringOrNull(json['rentalMode']),
+      listingPolicies: json['acceptedListingPolicies'] != null
+          ? CarHireListingPolicies.fromJson(json['acceptedListingPolicies'])
+          : (carRaw is Map
+                ? CarListing.fromJson(carRaw).listingPolicies
+                : null),
+      immobilizeAvailable:
+          _asMap(json['acceptedListingPolicies'])['immobilizeAvailable'] ==
+              true ||
+          _asMap(_asMap(json['car'])['listingPolicies'])['immobilizeAvailable'] ==
+              true,
     );
   }
 

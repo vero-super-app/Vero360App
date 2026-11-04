@@ -8,6 +8,7 @@ import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_pr
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_section_frame.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skeletons.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_policy_block.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 import 'package:vero360_app/utils/formatters.dart';
@@ -256,6 +257,10 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
                       const SizedBox(height: 6),
                       Text(car.description!.trim(), style: CarHireType.body),
                     ],
+                    if (car.listingPolicies != null) ...[
+                      const SizedBox(height: 20),
+                      CarHirePolicyBlock(policies: car.listingPolicies!),
+                    ],
                     const SizedBox(height: 16),
                     Center(
                       child: TextButton(
@@ -289,7 +294,19 @@ class _CarHireDetailPageState extends ConsumerState<CarHireDetailPage> {
   }
 
   PreferredSizeWidget _appBar() {
-    return carHireAppBar(title: 'Vehicle details');
+    return carHireAppBar(
+      title: 'Vehicle details',
+      subtitle: 'Verified car hire',
+      actions: [
+        CarHireIconButton(
+          icon: Icons.receipt_long_rounded,
+          tooltip: 'My bookings',
+          size: 36,
+          iconSize: 18,
+          onTap: () => CarHireRoutes.openBookings(context),
+        ),
+      ],
+    );
   }
 
   Widget _titleBlock(CarListing car) {

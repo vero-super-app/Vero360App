@@ -279,6 +279,7 @@ class _CarHireApplyPageState extends ConsumerState<CarHireApplyPage> {
       backgroundColor: CarHirePalette.background,
       appBar: carHireAppBar(
         title: _updating ? 'Update application' : 'Partner Application',
+        subtitle: 'Reviewed by Vero360 in 4–24 hours',
         actions: [
           IconButton(
             tooltip: 'Help & support',
@@ -572,9 +573,35 @@ class _ProgressHeader extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         const Text(
-          'List your fleet or private car on Vero360. We only need identity '
-          ,
+          'List your fleet or private car on Vero360. We only need your '
+          'identity, a contact number and the areas where renters can '
+          'collect the car.',
           style: CarHireType.body,
+        ),
+        const SizedBox(height: 12),
+        const Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            CarHirePill(
+              label: 'About 5 minutes',
+              icon: Icons.timer_outlined,
+              background: CarHirePalette.surface,
+              borderColor: CarHirePalette.hairline,
+            ),
+            CarHirePill(
+              label: 'One form',
+              icon: Icons.check_circle_outline_rounded,
+              background: CarHirePalette.surface,
+              borderColor: CarHirePalette.hairline,
+            ),
+            CarHirePill(
+              label: 'No payment now',
+              icon: Icons.lock_outline_rounded,
+              background: CarHirePalette.surface,
+              borderColor: CarHirePalette.hairline,
+            ),
+          ],
         ),
       ],
     );

@@ -9,7 +9,9 @@ import 'package:vero360_app/features/car_hire/data/models/car_hire_company_model
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_company_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
+import 'package:vero360_app/features/car_hire/data/models/car_hire_policy_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_company_widgets.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_listing_policies_editor.dart';
 import 'package:vero360_app/utils/formatters.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
@@ -86,6 +88,7 @@ class _CarHireCompanyAddVehiclePageState
   bool _saving = false;
   bool _postToFacebook = true;
   String? _saveError;
+  CarHireListingPolicies _listingPolicies = const CarHireListingPolicies();
 
   String get _operatorId => widget.access.usable.first.operatorId;
 
@@ -275,6 +278,7 @@ class _CarHireCompanyAddVehiclePageState
         'trackerUniqueId': _trackerId.text.trim(),
       if (_trackerPhone.text.trim().isNotEmpty)
         'trackerPhone': _trackerPhone.text.trim(),
+      'listingPolicies': _listingPolicies.toPayload(),
     };
 
     try {
@@ -339,7 +343,7 @@ class _CarHireCompanyAddVehiclePageState
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: CarHirePalette.background,
-      appBar: carHireAppBar(title: 'Add vehicle'),
+      appBar: carHireAppBar(title: 'Add vehicle', subtitle: '3 quick steps'),
       body: Column(
         children: [
           _StepHeader(
@@ -569,6 +573,18 @@ class _CarHireCompanyAddVehiclePageState
             operatorId: _operatorId,
             value: _branchId,
             onChanged: (value) => setState(() => _branchId = value),
+          ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      _FormCard(
+        icon: Icons.rule_folder_outlined,
+        title: 'Rental rules',
+        trailing: 'Vero + yours',
+        children: [
+          CarHireListingPoliciesEditor(
+            value: _listingPolicies,
+            onChanged: (next) => setState(() => _listingPolicies = next),
           ),
         ],
       ),
@@ -1025,13 +1041,7 @@ class _LabeledField extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(left: 2, bottom: 5),
-            child: Text(label, style: CarHireType.label),
-          ),
-          child,
-        ],
+        children: [CarHireFieldLabel(label), child],
       ),
     );
   }
@@ -1057,16 +1067,16 @@ class _ChipSelector extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
+          CarHireFieldLabel(
+            label,
             padding: const EdgeInsets.only(left: 2, bottom: 6),
-            child: Text(label, style: CarHireType.label),
           ),
           Wrap(
             spacing: 7,
             runSpacing: 7,
             children: [
               for (final (wire, text) in options)
-                _ChoiceChip(
+                CarHireChoiceChip(
                   label: text,
                   selected: value == wire,
                   onTap: () => onChanged(wire),
@@ -1074,44 +1084,6 @@ class _ChipSelector extends StatelessWidget {
             ],
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _ChoiceChip extends StatelessWidget {
-  const _ChoiceChip({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: CarHireShape.fast,
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
-        decoration: BoxDecoration(
-          color: selected ? CarHirePalette.primary : CarHirePalette.surfaceLow,
-          borderRadius: BorderRadius.circular(CarHireShape.pillRadius),
-          border: Border.all(
-            color: selected ? CarHirePalette.primary : CarHirePalette.hairline,
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 11.5,
-            fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-            color: selected ? Colors.white : CarHirePalette.onSurfaceVariant,
-          ),
-        ),
       ),
     );
   }
@@ -1155,13 +1127,13 @@ class _BranchPicker extends ConsumerWidget {
         spacing: 7,
         runSpacing: 7,
         children: [
-          _ChoiceChip(
+          CarHireChoiceChip(
             label: 'No branch',
             selected: value == null,
             onTap: () => onChanged(null),
           ),
           for (final branch in rows)
-            _ChoiceChip(
+            CarHireChoiceChip(
               label: branch.name,
               selected: value == branch.id,
               onTap: () => onChanged(branch.id),
@@ -1173,9 +1145,9 @@ class _BranchPicker extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Padding(
+        const CarHireFieldLabel(
+          'Pickup branch',
           padding: EdgeInsets.only(left: 2, bottom: 6),
-          child: Text('Pickup branch', style: CarHireType.label),
         ),
         content,
       ],

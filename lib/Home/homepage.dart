@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'package:universal_io/io.dart';
 import 'dart:math' as math;
@@ -16,7 +16,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:vero360_app/Quickservices/social.dart';
 import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodation_mainpage.dart';
-import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_browse_page.dart';
+import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_account_pages.dart';
+import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/bike_ride_share_map_screen.dart';
 import 'package:vero360_app/features/ride_share/ride_share_entry_resolver.dart';
@@ -569,10 +570,10 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
       _openDigitalServices(initialCategory: 'gift_cards');
       return;
     }
-    // Car hire has its own renter journey. Keep this branch ahead of the
-    // ride-share resolver so Vero Ride behaviour is untouched.
+    // Car hire has its own renter journey. Verified partners land on their
+    // company dashboard; everyone else lands on the marketplace.
     if (key == 'car_hire') {
-      CarHireRoutes.openBrowse(context);
+      CarHireRoutes.openHome(context);
       return;
     }
     if (RideShareEntryResolver.isRideShareServiceKey(key)) {
@@ -633,7 +634,7 @@ class _Vero360HomepageState extends ConsumerState<Vero360Homepage>
         page = const CustomerServicePage();
         break;
       case 'car_hire':
-        page = const CarHireBrowsePage();
+        page = const CarHireHomePage();
         break;
       case 'taxi':
       case 'ride':
@@ -1374,14 +1375,14 @@ class _ServicesCard extends StatelessWidget {
 }
 
 /* â”€â”€ Mini icons grid â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-class _MiniIconsGrid extends StatelessWidget {
+class _MiniIconsGrid extends ConsumerWidget {
   final List<Mini>          items;
   final Map<String, GlobalKey> tileKeys;
   final void Function(String) onOpen;
   const _MiniIconsGrid({required this.items, required this.tileKeys, required this.onOpen});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return LayoutBuilder(builder: (ctx, c) {
       final w            = c.maxWidth;
       const crossSpacing = 8.0;
@@ -1421,6 +1422,16 @@ class _MiniIconsGrid extends StatelessWidget {
                 icon: m.icon,
                 label: m.label,
                 onTap: () => onOpen(m.keyId),
+              );
+            }
+            if (m.keyId == 'car_hire') {
+              final carCount = ref.watch(carHireAvailableCountProvider).value ?? 0;
+              return _MiniIconTile(
+                tileKey: tileKeys[m.keyId],
+                icon:    m.icon,
+                label:   m.label,
+                badgeCount: carCount,
+                onTap:   () => onOpen(m.keyId),
               );
             }
             return _MiniIconTile(
@@ -4708,6 +4719,17 @@ class _DigitalProductDetailPageState extends State<DigitalProductDetailPage> {
                           const SizedBox(height: 2),
                           Text(p.subtitle, maxLines: 1, overflow: TextOverflow.ellipsis,
                             style: const TextStyle(color: AppColors.body, fontWeight: FontWeight.w600)),
+                          if ((p.prepaidForgeRegion ?? '').trim().isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              'Redeemable in ${p.prepaidForgeRegion!.trim()}',
+                              style: const TextStyle(
+                                color: AppColors.brandOrange,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 6),
                           Text(
                             _isFixedPrice

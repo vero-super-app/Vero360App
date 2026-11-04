@@ -3,11 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
 import 'package:vero360_app/utils/formatters.dart';
 
-/// Trip search form used inline on the browse page and inside the modal sheet.
+/// Trip date form used inside the browse page's modal sheet.
+///
+/// Pick-up areas are intentionally not part of this form: the marketplace
+/// opens on every verified car, so renters only choose when they need it.
 class CarHireSearchForm extends StatelessWidget {
   const CarHireSearchForm({
     super.key,
-    required this.pickupController,
     required this.startAt,
     required this.endAt,
     required this.onPickStart,
@@ -18,7 +20,6 @@ class CarHireSearchForm extends StatelessWidget {
     this.padding = const EdgeInsets.fromLTRB(16, 8, 16, 14),
   });
 
-  final TextEditingController pickupController;
   final DateTime startAt;
   final DateTime endAt;
   final VoidCallback onPickStart;
@@ -41,29 +42,14 @@ class CarHireSearchForm extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (showHeader) ...[
-              const Text('Where and when?', style: CarHireType.titleLarge),
-              const SizedBox(height: 16),
+              const Text('When do you need a car?', style: CarHireType.titleLarge),
+              const SizedBox(height: 4),
+              const Text(
+                'Every verified car is shown for your dates.',
+                style: CarHireType.bodySmall,
+              ),
+              const SizedBox(height: 14),
             ],
-            TextField(
-              controller: pickupController,
-              textInputAction: TextInputAction.search,
-              onSubmitted: (_) => onSearch(),
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: CarHirePalette.onSurface,
-              ),
-              decoration: carHireInputDecoration(
-                label: 'Pick-up area (optional)',
-                hint: 'City, neighbourhood or airport',
-                prefixIcon: const Icon(
-                  Icons.place_outlined,
-                  size: 20,
-                  color: CarHirePalette.accent,
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
             Row(
               children: [
                 Expanded(
@@ -121,7 +107,7 @@ class CarHireSearchForm extends StatelessWidget {
                       ),
                     )
                   : const Icon(Icons.search_rounded, size: 19),
-              label: Text(searching ? 'Searching…' : 'Search cars'),
+              label: Text(searching ? 'Searching…' : 'Show cars'),
               style: carHirePrimaryButton(),
             ),
           ],

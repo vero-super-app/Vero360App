@@ -199,6 +199,40 @@ Future<bool> _runAction(
   return ok;
 }
 
+Future<void> _confirmEngineCommand(
+  BuildContext context,
+  WidgetRef ref,
+  CarHireBooking booking, {
+  required bool stop,
+}) async {
+  final confirm = stop
+      ? await _askText(
+          context,
+          title: 'Cut the engine?',
+          label: 'Type IMMOBILIZE to confirm. The car must be almost stopped.',
+          confirm: 'Send command',
+          required: true,
+        )
+      : 'ok';
+  if (confirm == null || !context.mounted) return;
+  if (stop && confirm.trim().toUpperCase() != 'IMMOBILIZE') {
+    showCompanySnack(context, 'Type IMMOBILIZE to confirm.', error: true);
+    return;
+  }
+  await _runAction(
+    context,
+    ref,
+    (api) => api.sendEngineCommand(
+      bookingId: booking.id,
+      command: stop ? 'ENGINE_STOP' : 'ENGINE_RESUME',
+      reason: 'SAFETY',
+      confirm: stop ? 'IMMOBILIZE' : null,
+    ),
+    bookingId: booking.id,
+    success: stop ? 'Engine-off command sent.' : 'Engine restore command sent.',
+  );
+}
+
 Future<String?> _askText(
   BuildContext context, {
   required String title,
@@ -340,6 +374,17 @@ class _Actions extends ConsumerWidget {
           success: 'Rental completed.',
         ),
       );
+      if (booking.immobilizeAvailable) {
+        secondary(
+          'Cut engine',
+          () => _confirmEngineCommand(context, ref, booking, stop: true),
+          color: CarHirePalette.error,
+        );
+        secondary(
+          'Restore engine',
+          () => _confirmEngineCommand(context, ref, booking, stop: false),
+        );
+      }
     }
 
     final canSwap =

@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,6 +10,7 @@ import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/car_hire_pawapay.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_policy_block.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_price_breakdown.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_status_badge.dart';
@@ -41,6 +44,7 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage> {
   final TextEditingController _phoneController = TextEditingController();
 
   bool _termsAccepted = false;
+  String? _rentalMode;
   bool _paymentLaunching = false;
   bool _refreshingStatus = false;
   String? _paymentError;
@@ -53,7 +57,23 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage> {
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
+    _prefillPhone();
     Future<void>.microtask(_loadQuote);
+  }
+
+  Future<void> _prefillPhone() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final phone = (prefs.getString('phone') ??
+              prefs.getString('user_phone') ??
+              FirebaseAuth.instance.currentUser?.phoneNumber ??
+              '')
+          .trim();
+      if (!mounted || phone.isEmpty || _phoneController.text.isNotEmpty) return;
+      setState(() {
+        _phoneController.text = phone;
+      });
+    } catch (_) {}
   }
 
   @override
@@ -87,7 +107,13 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage> {
         .submit(
           quoteId: quote.quoteId,
           renterNotes: _notesController.text,
-          driverName: _driverController.text,
+          driverName: _rentalMode == 'WITH_DRIVER'
+              ? null
+              : _driverController.text,
+          rentalMode: _selectedRentalMode(),
+          platformPolicyVersion:
+              widget.car.listingPolicies?.policyVersion ?? '1.0',
+          termsAccepted: _termsAccepted,
         );
     if (!mounted) return;
 
@@ -218,6 +244,7 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage> {
       backgroundColor: CarHirePalette.background,
       appBar: carHireAppBar(
         title: booking == null ? 'Checkout' : 'Your booking',
+        subtitle: 'Secure Vero360 payment',
         actions: [
           if (booking != null)
             CarHireIconButton(
@@ -258,6 +285,17 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage> {
               _paymentCard(booking),
             ],
             if (booking == null) ...[
+              const SizedBox(height: 14),
+              _modeCard(),
+              if (widget.car.listingPolicies != null) ...[
+                const SizedBox(height: 14),
+                CarHireSurface(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+                  child: CarHirePolicyBlock(
+                    policies: widget.car.listingPolicies!,
+                  ),
+                ),
+              ],
               const SizedBox(height: 14),
               _detailsCard(),
               const SizedBox(height: 6),
@@ -687,6 +725,58 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage> {
     );
   }
 
+  String? _selectedRentalMode() {
+    final policies = widget.car.listingPolicies;
+    if (policies == null) return _rentalMode ?? 'SELF_DRIVE';
+    if (policies.offersBoth) return _rentalMode;
+    if (policies.offersWithDriver) return 'WITH_DRIVER';
+    return 'SELF_DRIVE';
+  }
+
+  Widget _modeCard() {
+    final policies = widget.car.listingPolicies;
+    final both = policies?.offersBoth == true;
+    final selected = _selectedRentalMode();
+    return CarHireSurface(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Who drives',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+          ),
+          const SizedBox(height: 8),
+          if (!both)
+            Text(
+              selected == 'WITH_DRIVER'
+                  ? 'A driver supplied by the car hire will operate this vehicle.'
+                  : 'You drive this vehicle. A valid licence is required.',
+              style: CarHireType.bodySmall,
+            )
+          else ...[
+            RadioListTile<String>(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Self-drive'),
+              value: 'SELF_DRIVE',
+              groupValue: selected,
+              onChanged: (value) => setState(() => _rentalMode = value),
+            ),
+            RadioListTile<String>(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: const Text('With driver'),
+              value: 'WITH_DRIVER',
+              groupValue: selected,
+              onChanged: (value) => setState(() => _rentalMode = value),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _detailsCard() {
     return CarHireSurface(
       padding: EdgeInsets.zero,
@@ -710,12 +800,18 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage> {
             style: TextStyle(color: CarRentalColors.grey, fontSize: 11.5),
           ),
           children: [
-            TextField(
-              controller: _driverController,
-              textCapitalization: TextCapitalization.words,
-              decoration: carHireInputDecoration(label: 'Driver name'),
-            ),
-            const SizedBox(height: 10),
+            if (_selectedRentalMode() != 'WITH_DRIVER' &&
+                widget.car.listingPolicies?.extraDriversAllowed == true)
+              TextField(
+                controller: _driverController,
+                textCapitalization: TextCapitalization.words,
+                decoration: carHireInputDecoration(label: 'Extra driver name'),
+              )
+            else
+              const SizedBox.shrink(),
+            if (_selectedRentalMode() != 'WITH_DRIVER' &&
+                widget.car.listingPolicies?.extraDriversAllowed == true)
+              const SizedBox(height: 10),
             TextField(
               controller: _notesController,
               maxLines: 3,
@@ -759,7 +855,7 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage> {
               GestureDetector(
                 onTap: _openTerms,
                 child: const Text(
-                  'rental & cancellation terms',
+                  'Vero360 Car Hire Service Policy and this listing’s rules',
                   style: TextStyle(
                     color: CarRentalColors.brandOrange,
                     fontSize: 12.5,
@@ -783,6 +879,7 @@ class _CarHireCheckoutPageState extends ConsumerState<CarHireCheckoutPage> {
         quote != null &&
         !quote.isExpired &&
         _termsAccepted &&
+        _selectedRentalMode() != null &&
         !submission.submitting &&
         quoteState.error == null;
 

@@ -1,5 +1,10 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
+import 'package:vero360_app/config/api_config.dart';
+import 'package:vero360_app/features/Auth/AuthServices/auth_handler.dart';
 import 'package:vero360_app/features/DigitalServices/digital_product.dart';
 import 'package:vero360_app/features/DigitalServices/presentation/digital_kyc_upload_section.dart';
 import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
@@ -297,6 +302,9 @@ class DigitalServiceOrderService {
     final kind = isCrypto
         ? 'crypto'
         : (isSubscription ? 'subscription' : 'gift_card');
+    final pfSku = selectedUsd == null
+        ? null
+        : product.prepaidForgeSkuForUsd(selectedUsd);
     final doc = _col.doc();
     await doc.set({
       'productKey': product.key,
@@ -320,6 +328,13 @@ class DigitalServiceOrderService {
       'buyerPhone': buyerPhone,
       'platformFeeCredited': false,
       'source': 'app',
+      if (pfSku != null && pfSku.isNotEmpty) ...{
+        'fulfillmentMode': 'auto',
+        'fulfillmentProvider': 'prepaidforge',
+        'prepaidForgeSku': pfSku,
+        'prepaidForgeRegion': product.prepaidForgeRegion,
+        'prepaidForgeCodeType': product.prepaidForgeCodeType,
+      },
       if (payoutKyc != null) 'payoutKyc': {
         ...payoutKyc.toMap(),
         'uploadedAt': FieldValue.serverTimestamp(),
@@ -417,6 +432,36 @@ class DigitalServiceOrderService {
             'We have received your $productName payment. We are processing your order now — you will get your details in My Digital Orders.',
         type: 'digital_order',
       );
+    }
+
+    unawaited(_kickAutoFulfill(orderId, data));
+  }
+
+  /// Fire-and-forget Nest auto-fulfill. Poller retries if this fails.
+  static Future<void> _kickAutoFulfill(
+    String orderId,
+    Map<String, dynamic> data,
+  ) async {
+    final mode = (data['fulfillmentMode'] ?? '').toString().trim().toLowerCase();
+    if (mode != 'auto') return;
+    try {
+      await ApiConfig.readBase();
+      final token = await AuthHandler.getFirebaseTokenForApi();
+      if (token == null || token.isEmpty) return;
+      await http
+          .post(
+            ApiConfig.endpoint(
+              '/digital-services/orders/$orderId/auto-fulfill',
+            ),
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          )
+          .timeout(const Duration(seconds: 3));
+    } catch (_) {
+      // Backend poller retries. Do not fail PawaPay confirm.
     }
   }
 

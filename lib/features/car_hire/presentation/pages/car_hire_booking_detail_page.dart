@@ -6,6 +6,7 @@ import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/car_hire_pawapay.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_policy_block.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_price_breakdown.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skeletons.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_states.dart';
@@ -415,6 +416,13 @@ class _CarHireBookingDetailPageState
                     _extensionsCard(booking, extensions, extensionState),
                   ],
                   const SizedBox(height: 12),
+                  if (booking.listingPolicies != null) ...[
+                    const SizedBox(height: 16),
+                    CarHirePolicyBlock(
+                      title: 'Rules you accepted',
+                      policies: booking.listingPolicies!,
+                    ),
+                  ],
                   _manageCard(booking),
                 ],
               ),

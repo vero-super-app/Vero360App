@@ -10,7 +10,9 @@ import 'package:vero360_app/features/car_hire/data/models/car_hire_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_company_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/providers/car_hire_providers.dart';
 import 'package:vero360_app/features/car_hire/presentation/theme/car_hire_theme.dart';
+import 'package:vero360_app/features/car_hire/data/models/car_hire_policy_models.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_company_widgets.dart';
+import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_listing_policies_editor.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_section_frame.dart';
 import 'package:vero360_app/features/car_hire/presentation/widgets/car_hire_skeletons.dart';
 import 'package:vero360_app/features/car_hire/utils/car_hire_routes.dart';
@@ -1737,6 +1739,7 @@ class _DetailsSheetState extends ConsumerState<_DetailsSheet> {
   String? _branchId;
   bool _saving = false;
   String? _error;
+  late CarHireListingPolicies _listingPolicies;
 
   @override
   void initState() {
@@ -1766,6 +1769,7 @@ class _DetailsSheetState extends ConsumerState<_DetailsSheet> {
     _fuel = (car.fuelType ?? 'PETROL').toUpperCase();
     _body = (car.bodyType ?? 'SEDAN').toUpperCase();
     _branchId = widget.unit.locationId;
+    _listingPolicies = car.listingPolicies ?? const CarHireListingPolicies();
   }
 
   @override
@@ -1824,6 +1828,7 @@ class _DetailsSheetState extends ConsumerState<_DetailsSheet> {
       'maxRentalDays': maxDays,
       'depositAmount': parseMwkInput(_deposit.text) ?? 0,
       'locationId': _branchId,
+      'listingPolicies': _listingPolicies.toPayload(),
     };
 
     try {
@@ -2017,6 +2022,12 @@ class _DetailsSheetState extends ConsumerState<_DetailsSheet> {
             value: _branchId,
             onChanged: (value) => setState(() => _branchId = value),
           ),
+        const SizedBox(height: 12),
+        Text('Rental rules', style: CarHireType.title.copyWith(fontSize: 13.5)),
+        CarHireListingPoliciesEditor(
+          value: _listingPolicies,
+          onChanged: (next) => setState(() => _listingPolicies = next),
+        ),
         if (_error != null) ...[
           const SizedBox(height: 4),
           Text(

@@ -68,6 +68,7 @@ class _CarHireBookingsPageState extends ConsumerState<CarHireBookingsPage> {
       backgroundColor: CarHirePalette.background,
       appBar: carHireAppBar(
         title: 'My bookings',
+        subtitle: 'Your car hire rentals',
         actions: [
           CarHireIconButton(
             icon: Icons.verified_user_outlined,

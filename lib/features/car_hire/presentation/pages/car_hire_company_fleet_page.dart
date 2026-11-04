@@ -22,7 +22,7 @@ class CarHireCompanyFleetPage extends ConsumerWidget {
 
     return Scaffold(
       backgroundColor: CarHirePalette.background,
-      appBar: carHireAppBar(title: 'Fleet'),
+      appBar: carHireAppBar(title: 'Fleet', subtitle: 'Every car you manage'),
       floatingActionButton: access.value?.canManageFleet == true
           ? FloatingActionButton.extended(
               backgroundColor: CarHirePalette.accent,

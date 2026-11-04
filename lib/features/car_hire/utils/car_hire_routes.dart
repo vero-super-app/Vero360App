@@ -16,6 +16,7 @@ import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_compan
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_company_unit_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_detail_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_inspection_page.dart';
+import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_partner_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_report_page.dart';
 import 'package:vero360_app/features/car_hire/presentation/pages/car_hire_verification_page.dart';
 import 'package:vero360_app/settings/Settings.dart' show PolicyPage;
@@ -36,6 +37,14 @@ class CarHireRoutes {
     return Navigator.of(
       context,
     ).push(CupertinoPageRoute<void>(builder: (_) => const CarHireBrowsePage()));
+  }
+
+  /// First-comer landing for owners: explains the programme, then opens the
+  /// application (or the company dashboard for approved partners).
+  static Future<void> openPartner(BuildContext context) {
+    return Navigator.of(context).push(
+      CupertinoPageRoute<void>(builder: (_) => const CarHirePartnerPage()),
+    );
   }
 
   static Future<void> openApply(

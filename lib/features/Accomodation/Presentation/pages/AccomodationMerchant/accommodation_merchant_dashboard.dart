@@ -30,6 +30,8 @@ import 'package:vero360_app/features/Cart/CartService/cart_services.dart';
 import 'package:vero360_app/Gernalproviders/cart_service_provider.dart';
 import 'package:vero360_app/features/BottomnvarBars/BottomNavbar.dart';
 import 'package:vero360_app/features/Marketplace/presentation/MarketplaceMerchant/merchant_wallet.dart';
+import 'package:vero360_app/features/Accomodation/AccomodationService/accommodation_watchers_service.dart';
+import 'package:vero360_app/widgets/listing_views_badge.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_promote_service.dart';
 import 'package:vero360_app/utils/app_wallet_pin.dart';
 import 'package:vero360_app/Home/homepage.dart';
@@ -1452,6 +1454,7 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
   // Services offered (conferences, bar, pool, etc.)
   List<String> _servicesOffered = [];
   List<dynamic> _rooms = [];
+  Map<int, int> _propertyViews = const {};
   List<dynamic> _reviews = [];
   /// Section loading for properties only — never block the whole dashboard chrome.
   bool _roomsLoading = false;
@@ -1729,9 +1732,22 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
         }
         _recomputeAvailableRooms();
       });
+      unawaited(_refreshPropertyViews());
     } catch (e) {
       debugPrint('Error loading properties: $e');
     }
+  }
+
+  Future<void> _refreshPropertyViews() async {
+    final ids = <int>[];
+    for (final raw in _rooms) {
+      if (raw is! Map) continue;
+      final id = _apiAccommodationId(Map<String, dynamic>.from(raw));
+      if (id != null && id > 0) ids.add(id);
+    }
+    final map = await AccommodationWatchersService().fetchTotalViews(ids);
+    if (!mounted) return;
+    setState(() => _propertyViews = map);
   }
 
   List<Accommodation> _ownedFromMemoryCache(String email) {
@@ -6710,16 +6726,30 @@ class _AccommodationMerchantDashboardState extends State<AccommodationMerchantDa
                     SizedBox(
                       width: 112,
                       height: 124,
-                      child: coverUrl.isNotEmpty
-                          ? Image.network(
-                              coverUrl,
-                              fit: BoxFit.cover,
-                              width: 112,
-                              height: 124,
-                              errorBuilder: (_, __, ___) =>
-                                  _propertyThumbPlaceholder(),
-                            )
-                          : _propertyThumbPlaceholder(),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          coverUrl.isNotEmpty
+                              ? Image.network(
+                                  coverUrl,
+                                  fit: BoxFit.cover,
+                                  width: 112,
+                                  height: 124,
+                                  errorBuilder: (_, __, ___) =>
+                                      _propertyThumbPlaceholder(),
+                                )
+                              : _propertyThumbPlaceholder(),
+                          Positioned(
+                            top: 6,
+                            right: 6,
+                            child: ListingViewsBadge(
+                              views: apiId == null
+                                  ? 0
+                                  : (_propertyViews[apiId] ?? 0),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                     Expanded(
                       child: Padding(

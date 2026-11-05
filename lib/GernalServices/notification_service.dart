@@ -340,6 +340,7 @@ class NotificationService {
         final isServiceAlert = type.contains('order') ||
             type.contains('food') ||
             type.contains('digital') ||
+            type.contains('subscription') ||
             type.contains('courier') ||
             type.contains('booking') ||
             type.contains('refund') ||

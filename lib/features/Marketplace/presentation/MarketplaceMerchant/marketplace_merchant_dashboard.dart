@@ -8,7 +8,9 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode, compute;
 import 'package:flutter/material.dart';
 import 'package:vero360_app/GernalServices/buyer_commission.dart';
+import 'package:vero360_app/widgets/listing_views_badge.dart';
 import 'package:vero360_app/widgets/merchant_commission_guide.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_view_service.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -246,6 +248,7 @@ class _MarketplaceMerchantDashboardState
 
   // Items
   List<Map<String, dynamic>> _items = [];
+  Map<String, int> _itemViews = const {};
   bool _loadingItems = true;
   bool _busyRow = false;
 
@@ -1019,6 +1022,14 @@ class _MarketplaceMerchantDashboardState
       _loadingItems = false;
     });
     if (persist) unawaited(_persistItemsCache(list));
+    unawaited(_refreshItemViews(list));
+  }
+
+  Future<void> _refreshItemViews(List<Map<String, dynamic>> items) async {
+    final ids = items.map((e) => (e['id'] ?? '').toString());
+    final map = await MarketplaceViewService.fetchViews(ids);
+    if (!mounted) return;
+    setState(() => _itemViews = map);
   }
 
   @override
@@ -6132,6 +6143,7 @@ class _MarketplaceMerchantDashboardState
               final it = _items[i];
               return _ModernItemMiniCard(
                 item: it,
+                views: _viewsForItem(it),
                 busy: _busyRow,
                 onPromote: () => _promoteItem(it),
               );
@@ -6726,6 +6738,7 @@ class _MarketplaceMerchantDashboardState
                       gridDelegate: _merchantItemsGridDelegate(context),
                       itemBuilder: (_, i) => _ItemCard(
                         item: filtered[i],
+                        views: _viewsForItem(filtered[i]),
                         busy: _busyRow,
                         onDelete: () => _deleteItem(filtered[i]),
                         onEdit: () => _openEditItemSheet(filtered[i]),
@@ -6737,6 +6750,12 @@ class _MarketplaceMerchantDashboardState
         ),
       ],
     );
+  }
+
+  int _viewsForItem(Map<String, dynamic> item) {
+    final id = (item['id'] ?? '').toString().trim();
+    if (id.isEmpty) return 0;
+    return _itemViews[id] ?? 0;
   }
 
   Widget _chip({
@@ -7495,11 +7514,13 @@ String? _coverImageSourceFromItem(Map<String, dynamic> item) {
 
 class _ModernItemMiniCard extends StatelessWidget {
   final Map<String, dynamic> item;
+  final int views;
   final bool busy;
   final VoidCallback? onPromote;
 
   const _ModernItemMiniCard({
     required this.item,
+    this.views = 0,
     this.busy = false,
     this.onPromote,
   });
@@ -7548,6 +7569,11 @@ class _ModernItemMiniCard extends StatelessWidget {
                           child: _ImageAny(_coverImageSourceFromItem(item)),
                         ),
                         if (sold) const _SoldDiagonalBanner(),
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: ListingViewsBadge(views: views),
+                        ),
                       ],
                     ),
                   ),
@@ -7654,7 +7680,7 @@ class _ModernItemMiniCard extends StatelessWidget {
               ),
               if (isBoosted)
                 Positioned(
-                  top: 8,
+                  top: 36,
                   right: 8,
                   child: Container(
                     padding: EdgeInsets.symmetric(
@@ -7685,6 +7711,7 @@ class _ModernItemMiniCard extends StatelessWidget {
 
 class _ItemCard extends StatelessWidget {
   final Map<String, dynamic> item;
+  final int views;
   final bool busy;
   final VoidCallback onDelete;
   final VoidCallback onEdit;
@@ -7692,6 +7719,7 @@ class _ItemCard extends StatelessWidget {
 
   const _ItemCard({
     required this.item,
+    this.views = 0,
     required this.busy,
     required this.onDelete,
     required this.onEdit,
@@ -7752,6 +7780,11 @@ class _ItemCard extends StatelessWidget {
                             child: _ImageAny(_coverImageSourceFromItem(item)),
                           ),
                           if (sold) const _SoldDiagonalBanner(),
+                          Positioned(
+                            top: 8,
+                            right: 8,
+                            child: ListingViewsBadge(views: views),
+                          ),
                         ],
                       ),
                     ),

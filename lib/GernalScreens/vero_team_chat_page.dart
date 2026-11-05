@@ -343,6 +343,7 @@ class _VeroTeamChatPageState extends State<VeroTeamChatPage> {
       if (kind == 'app_update') return _TeamAction.appUpdate;
       return _TeamAction.none;
     }
+    if (typeEarly == 'subscription_reminder') return _TeamAction.none;
 
     final actionHint =
         (payload['action'] ?? '').toString().trim().toLowerCase();

@@ -30,6 +30,8 @@ import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/widgets/kyc_status_card.dart';
 import 'package:vero360_app/widgets/vero_coin_icon_button.dart';
+import 'package:vero360_app/features/Restraurants/RestraurantsService/food_engagement_service.dart';
+import 'package:vero360_app/widgets/listing_views_badge.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_order_model.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_order_number.dart';
 import 'package:vero360_app/GernalServices/order_escrow_service.dart';
@@ -91,6 +93,7 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
 
   List<dynamic> _recentOrders = [];
   List<dynamic> _menuItems = [];
+  Map<String, int> _menuViews = const {};
   List<dynamic> _reviews = [];
   bool _isFetching = false;
   bool _profileBusy = false;
@@ -619,9 +622,28 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
       _menuItems = rows;
 
       if (mounted) setState(() {});
+      unawaited(_refreshMenuViews());
     } catch (e) {
       debugPrint('Error loading menu items: $e');
     }
+  }
+
+  Future<void> _refreshMenuViews() async {
+    final idByKey = <String, String>{};
+    for (final raw in _menuItems) {
+      if (raw is! Map) continue;
+      final id = (raw['id'] ?? '').toString().trim();
+      final key = FoodEngagementService.keyForFirestoreId(id);
+      if (key.isEmpty) continue;
+      idByKey[key] = id;
+    }
+    final byKey = await FoodEngagementService.fetchViews(idByKey.keys);
+    if (!mounted) return;
+    final byId = <String, int>{};
+    idByKey.forEach((key, id) {
+      byId[id] = byKey[key] ?? 0;
+    });
+    setState(() => _menuViews = byId);
   }
 
   Future<void> _loadWalletBalance() async {
@@ -3477,7 +3499,17 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                               Positioned(
                                 top: 6,
                                 right: 6,
-                                child: Material(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    ListingViewsBadge(
+                                      views: _menuViews[(item['id'] ?? '')
+                                              .toString()
+                                              .trim()] ??
+                                          0,
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Material(
                                   color: Colors.white.withValues(alpha: 0.94),
                                   shape: const CircleBorder(),
                                   elevation: 2,
@@ -3495,6 +3527,8 @@ class _FoodMerchantDashboardState extends State<FoodMerchantDashboard>
                                       ),
                                     ),
                                   ),
+                                ),
+                                  ],
                                 ),
                               ),
                               Positioned(

@@ -84,6 +84,7 @@ class AccommodationWatchersService {
       if (!wasActive) {
         await parent.set({
           'activeCount': FieldValue.increment(1),
+          if (!prev.exists) 'totalViews': FieldValue.increment(1),
           'updatedAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
       }
@@ -105,6 +106,29 @@ class AccommodationWatchersService {
       }
       return n;
     });
+  }
+
+  /// Lifetime people who opened the stay (first presence per visit).
+  Future<Map<int, int>> fetchTotalViews(Iterable<int> listingIds) async {
+    final ids = listingIds.where((id) => id > 0).toSet().toList();
+    if (ids.isEmpty) return {};
+    final out = <int, int>{};
+    for (var i = 0; i < ids.length; i += 10) {
+      final chunk = ids.sublist(i, i + 10 > ids.length ? ids.length : i + 10);
+      try {
+        final snap = await _db
+            .collection('accommodation_watchers')
+            .where(FieldPath.documentId, whereIn: chunk.map((e) => '$e').toList())
+            .get();
+        for (final doc in snap.docs) {
+          final id = int.tryParse(doc.id) ?? 0;
+          if (id <= 0) continue;
+          final raw = doc.data()['totalViews'];
+          out[id] = raw is num ? raw.toInt() : int.tryParse('$raw') ?? 0;
+        }
+      } catch (_) {}
+    }
+    return out;
   }
 
   Future<Map<int, int>> fetchCounts(Iterable<int> listingIds) async {

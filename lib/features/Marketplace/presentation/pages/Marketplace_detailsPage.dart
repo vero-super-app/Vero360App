@@ -32,6 +32,7 @@ import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/merchant_review_model.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_review_service.dart';
+import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_view_service.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/merchant_seller_loader.dart';
 import 'package:vero360_app/utils/description_contact_mask.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
@@ -199,6 +200,10 @@ class _DetailsPageState extends State<DetailsPage> {
     });
 
     final it = widget.item;
+    unawaited(MarketplaceViewService.recordView(
+      firestoreDocId: it.firestoreDocId,
+      sqlId: it.id,
+    ));
     final images = it.gallery.where((u) => u.toString().trim().isNotEmpty).toList();
     final videos = it.videos.where((u) => u.toString().trim().isNotEmpty).toList();
     final mainImg = it.image.toString().trim();

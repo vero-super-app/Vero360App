@@ -22,6 +22,12 @@ class FoodEngagementService {
     return 'n_${name.hashCode.abs()}';
   }
 
+  static String keyForFirestoreId(String firestoreId) {
+    final fs = firestoreId.trim();
+    if (fs.isEmpty) return '';
+    return 'fs_$fs';
+  }
+
   static Future<void> recordView(FoodModel item) =>
       _bump(item, field: 'views', weight: 1);
 
@@ -48,6 +54,28 @@ class FoodEngagementService {
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } catch (_) {}
+  }
+
+  /// Map of itemKey → lifetime opens (`views`).
+  static Future<Map<String, int>> fetchViews(Iterable<String> keys) async {
+    final ids = keys.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet().toList();
+    if (ids.isEmpty) return const {};
+    final out = <String, int>{};
+    for (var i = 0; i < ids.length; i += 10) {
+      final end = i + 10 > ids.length ? ids.length : i + 10;
+      final chunk = ids.sublist(i, end);
+      try {
+        final snap = await _db
+            .collection(_col)
+            .where(FieldPath.documentId, whereIn: chunk)
+            .get();
+        for (final doc in snap.docs) {
+          final raw = doc.data()['views'];
+          out[doc.id] = raw is num ? raw.toInt() : int.tryParse('$raw') ?? 0;
+        }
+      } catch (_) {}
+    }
+    return out;
   }
 
   /// Map of itemKey → engagement score (higher = more popular).

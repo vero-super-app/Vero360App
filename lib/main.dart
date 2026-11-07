@@ -1202,10 +1202,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final cartSvc = CartServiceProvider.getInstance();
 
     return ProviderScope(
-      child: ActiveRideResumeListener(
-        child: _DriverStatusBootstrap(
-          child: MaterialApp(
-            navigatorKey: appNavKey,
+      child: _DriverStatusBootstrap(
+        child: MaterialApp(
+          navigatorKey: appNavKey,
           debugShowCheckedModeBanner: false,
           title: 'Vero360',
           color: const Color(0xFFFFFBF6),
@@ -1218,13 +1217,16 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             ),
           ),
 
-          // ✅ Wrap app shell with RideRequestOverlay; show biometric lock when enabled and returning to app
+          // ✅ Resume banner / overlays must sit under MaterialApp (Directionality).
           builder: (context, child) {
-            Widget content = RideRequestOverlay(
-              child: child ?? const SizedBox.shrink(),
+            Widget content = ActiveRideResumeListener(
+              child: RideRequestOverlay(
+                child: child ?? const SizedBox.shrink(),
+              ),
             );
             if (_showBiometricLock) {
               content = Stack(
+                alignment: Alignment.topLeft,
                 children: [
                   content,
                   _BiometricLockOverlay(
@@ -1295,7 +1297,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             }
           },
         ),
-      ),
       ),
     );
   }

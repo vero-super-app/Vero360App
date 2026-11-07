@@ -110,10 +110,9 @@ class ActiveRideController {
           rideId: persisted.rideId,
           taxiId: persisted.taxiId,
         );
-      } else {
-        // Stay on Home — offer a banner; do not auto-push tracking.
-        _offerPassengerResume(persisted.rideId);
       }
+      // Passenger already has a live in-session ride (e.g. tracking open) —
+      // never overlay the resume banner / tooltips on top of it.
       return;
     }
 
@@ -226,6 +225,7 @@ class _ActiveRideResumeListenerState extends ConsumerState<ActiveRideResumeListe
     final resumeRideId = ref.watch(passengerResumeRideIdProvider);
 
     return Stack(
+      alignment: Alignment.topLeft,
       fit: StackFit.expand,
       children: [
         widget.child,
@@ -268,8 +268,9 @@ class _ActiveRideResumeListenerState extends ConsumerState<ActiveRideResumeListe
                           ),
                         ),
                       ),
+                      // No tooltip — this banner sits in MaterialApp.builder
+                      // above Navigator Overlay; RawTooltip would crash.
                       IconButton(
-                        tooltip: 'Dismiss',
                         onPressed: () {
                           ref
                               .read(passengerResumeRideIdProvider.notifier)

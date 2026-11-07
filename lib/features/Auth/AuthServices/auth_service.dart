@@ -21,6 +21,7 @@ import 'package:vero360_app/config/api_config.dart';
 import 'package:vero360_app/GernalServices/api_exception.dart';
 import 'package:vero360_app/GernalServices/backend_chat_service.dart';
 import 'package:vero360_app/GernalServices/backend_messaging_socket.dart';
+import 'package:vero360_app/GernalServices/growth_analytics_service.dart';
 import 'package:vero360_app/GernalServices/notification_service.dart';
 import 'package:vero360_app/utils/session_local_cache.dart';
 import 'package:vero360_app/utils/toasthelper.dart';
@@ -1100,6 +1101,10 @@ class AuthService {
       if (name.trim().isNotEmpty) {
         await user.updateDisplayName(name.trim());
       }
+
+      try {
+        await GrowthAnalyticsService.instance.logSignUp(method: 'password');
+      } catch (_) {}
 
       await _saveFirebaseProfile(
         user,

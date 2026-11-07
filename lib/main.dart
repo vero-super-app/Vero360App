@@ -38,6 +38,7 @@ import 'package:vero360_app/features/Accomodation/Presentation/pages/accomodatio
 import 'package:vero360_app/features/Marketplace/MarkeplaceModel/marketplace_share_link.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/food_share_navigation.dart';
 import 'package:vero360_app/features/Marketplace/MarkeplaceService/marketplace_share_navigation.dart';
+import 'package:vero360_app/GernalServices/growth_analytics_service.dart';
 import 'package:vero360_app/features/Restraurants/Models/food_share_link.dart';
 import 'package:vero360_app/GernalServices/merchant_identity.dart';
 import 'package:vero360_app/GernalServices/role_session_service.dart';
@@ -253,6 +254,7 @@ Future<bool> _ensureFirebaseHealthy({
         }
 
         say('Firebase healthy ✅');
+        unawaited(GrowthAnalyticsService.instance.bootstrap());
         return true;
       } catch (e) {
         say('Firebase heal failed ($attempt): $e');
@@ -849,6 +851,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   void _dispatchDeepLink(Uri uri) {
+    unawaited(GrowthAnalyticsService.instance.captureAttributionFromUri(uri));
     if (_isPasswordResetDeepLink(uri)) {
       _openPasswordResetFromDeepLink(uri);
       return;

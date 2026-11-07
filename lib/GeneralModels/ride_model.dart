@@ -131,6 +131,7 @@ class DriverInfo {
   final double? longitude;
   final String avatar;
   final bool isVerified;
+  final bool backgroundCheckPassed;
 
   DriverInfo({
     required this.id,
@@ -145,7 +146,11 @@ class DriverInfo {
     this.longitude,
     this.avatar = '',
     this.isVerified = false,
+    this.backgroundCheckPassed = false,
   });
+
+  /// Ride-share trust badge: background check or verified driver flag.
+  bool get isRideShareVerified => backgroundCheckPassed || isVerified;
 
   factory DriverInfo.fromJson(Map<String, dynamic> json) {
     // Handle nested user object from backend
@@ -197,20 +202,30 @@ class DriverInfo {
           userData['profilepicture'] as String? ??
           '',
       isVerified: _driverVerified(userData, json),
+      backgroundCheckPassed: _driverBackgroundChecked(userData, json),
     );
+  }
+
+  static bool _flag(dynamic v) =>
+      v == true || v?.toString().trim().toLowerCase() == 'true';
+
+  static bool _driverBackgroundChecked(
+    Map<String, dynamic> userData,
+    Map<String, dynamic> json,
+  ) {
+    return _flag(userData['backgroundCheckPassed']) ||
+        _flag(json['backgroundCheckPassed']);
   }
 
   static bool _driverVerified(
     Map<String, dynamic> userData,
     Map<String, dynamic> json,
   ) {
-    bool flag(dynamic v) =>
-        v == true || v?.toString().trim().toLowerCase() == 'true';
-    if (flag(userData['isVerified']) ||
-        flag(userData['verified']) ||
-        flag(userData['kycVerified']) ||
-        flag(json['isVerified']) ||
-        flag(json['verified'])) {
+    if (_flag(userData['isVerified']) ||
+        _flag(userData['verified']) ||
+        _flag(userData['kycVerified']) ||
+        _flag(json['isVerified']) ||
+        _flag(json['verified'])) {
       return true;
     }
     final status = '${userData['kycStatus'] ?? userData['verificationStatus'] ?? json['status'] ?? ''}'
@@ -235,6 +250,7 @@ class DriverInfo {
         'longitude': longitude,
         'avatar': avatar,
         'isVerified': isVerified,
+        'backgroundCheckPassed': backgroundCheckPassed,
       };
 }
 
@@ -308,9 +324,20 @@ class Ride {
   final double estimatedDistance;
   final double? actualDistance;
   final double estimatedFare;
+  /// Demand/supply surge applied at create (typically 1.0–1.5). Null on older rides.
+  final double? surgeMultiplier;
   final double? actualFare;
   final double? platformFee;
   final double? driverEarnings;
+  /// `actual` (metered) or `estimated` when set by backend complete/cancel.
+  final String? fareBasis;
+  final double? cancellationFee;
+  /// Passenger → driver rating (1–5).
+  final int? passengerRating;
+  /// Driver → passenger rating (1–5).
+  final int? driverRating;
+  final String? disputeReason;
+  final DateTime? disputedAt;
   final String? paymentStatus;
   final String? paymentChannel;
   final String? paymentTxRef;
@@ -346,9 +373,16 @@ class Ride {
     required this.estimatedDistance,
     this.actualDistance,
     required this.estimatedFare,
+    this.surgeMultiplier,
     this.actualFare,
     this.platformFee,
     this.driverEarnings,
+    this.fareBasis,
+    this.cancellationFee,
+    this.passengerRating,
+    this.driverRating,
+    this.disputeReason,
+    this.disputedAt,
     this.paymentStatus,
     this.paymentChannel,
     this.paymentTxRef,
@@ -436,6 +470,9 @@ class Ride {
             ? parseDouble(json['actualDistance'])
             : null,
         estimatedFare: parseDouble(json['estimatedFare']),
+        surgeMultiplier: json['surgeMultiplier'] != null
+            ? parseDouble(json['surgeMultiplier'])
+            : null,
         actualFare:
             json['actualFare'] != null ? parseDouble(json['actualFare']) : null,
         platformFee: json['platformFee'] != null
@@ -443,6 +480,16 @@ class Ride {
             : null,
         driverEarnings: json['driverEarnings'] != null
             ? parseDouble(json['driverEarnings'])
+            : null,
+        fareBasis: (json['fareBasis'] as String?)?.trim(),
+        cancellationFee: json['cancellationFee'] != null
+            ? parseDouble(json['cancellationFee'])
+            : null,
+        passengerRating: parseInt(json['passengerRating']),
+        driverRating: parseInt(json['driverRating']),
+        disputeReason: (json['disputeReason'] as String?)?.trim(),
+        disputedAt: json['disputedAt'] != null
+            ? parseDateTime(json['disputedAt'])
             : null,
         paymentStatus: json['paymentStatus'] as String?,
         paymentChannel: json['paymentChannel'] as String?,
@@ -530,6 +577,20 @@ class Ride {
   bool get isCompleted => status == RideStatus.completed;
   bool get isCancelled => status == RideStatus.cancelled;
 
+  /// Human label for [fareBasis]: Metered (`actual`) vs Estimated.
+  String? get fareBasisLabel {
+    final b = (fareBasis ?? '').trim().toLowerCase();
+    if (b == 'actual') return 'Metered';
+    if (b == 'estimated') return 'Estimated';
+    return null;
+  }
+
+  bool get hasCancellationFee =>
+      cancellationFee != null && cancellationFee! > 0;
+
+  bool get hasDispute =>
+      (disputeReason != null && disputeReason!.isNotEmpty) || disputedAt != null;
+
   /// Completed trip still awaiting passenger digital payment (blocks new bookings).
   /// Cash selected by the passenger does not block — the driver confirms separately.
   bool get needsPayment {
@@ -583,7 +644,11 @@ class Ride {
         'estimatedDistance': estimatedDistance,
         'actualDistance': actualDistance,
         'estimatedFare': estimatedFare,
+        'surgeMultiplier': surgeMultiplier,
         'actualFare': actualFare,
+        'fareBasis': fareBasis,
+        'cancellationFee': cancellationFee,
+        'paymentStatus': paymentStatus,
         'status': status,
         'startTime': startTime?.toIso8601String(),
         'endTime': endTime?.toIso8601String(),
@@ -640,29 +705,113 @@ class PickupOffer {
   }
 }
 
+/// Preview of cancel fee for disclosure before confirm (matches backend defaults).
+class CancelFeePreview {
+  final int rideId;
+  final String status;
+  final double cancellationFee;
+  final String currency;
+
+  const CancelFeePreview({
+    required this.rideId,
+    required this.status,
+    required this.cancellationFee,
+    this.currency = 'MWK',
+  });
+
+  factory CancelFeePreview.fromJson(Map<String, dynamic> json) {
+    double asDouble(dynamic value) {
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value) ?? 0;
+      return 0;
+    }
+
+    int asInt(dynamic value) {
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      return int.tryParse('$value') ?? 0;
+    }
+
+    return CancelFeePreview(
+      rideId: asInt(json['rideId'] ?? json['id']),
+      status: json['status'] as String? ?? '',
+      cancellationFee: asDouble(json['cancellationFee']),
+      currency: (json['currency'] as String?)?.trim().isNotEmpty == true
+          ? json['currency'] as String
+          : 'MWK',
+    );
+  }
+
+  /// Local fallback matching backend env defaults when preview API is unavailable.
+  static double feeForStatus(String? status) {
+    switch ((status ?? '').toUpperCase()) {
+      case 'ACCEPTED':
+        return 500;
+      case 'DRIVER_ARRIVED':
+        return 1500;
+      case 'IN_PROGRESS':
+        return 3000;
+      case 'REQUESTED':
+      default:
+        return 0;
+    }
+  }
+}
+
 class FareEstimate {
   final double estimatedFare;
   final double estimatedDistance;
+  final double surgeMultiplier;
+  final double baseFareBeforeSurge;
   final FareBreakdown breakdown;
 
   FareEstimate({
     required this.estimatedFare,
     required this.estimatedDistance,
+    this.surgeMultiplier = 1.0,
+    double? baseFareBeforeSurge,
     required this.breakdown,
-  });
+  }) : baseFareBeforeSurge = baseFareBeforeSurge ?? estimatedFare;
+
+  bool get hasSurge => surgeMultiplier > 1.0;
 
   factory FareEstimate.fromJson(Map<String, dynamic> json) {
+    double asDouble(dynamic value, [double fallback = 0]) {
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value) ?? fallback;
+      return fallback;
+    }
+
+    final estimatedFare = asDouble(json['estimatedFare']);
+    final surgeMultiplier = asDouble(json['surgeMultiplier'], 1.0);
+    final baseFareBeforeSurge = json['baseFareBeforeSurge'] != null
+        ? asDouble(json['baseFareBeforeSurge'], estimatedFare)
+        : estimatedFare;
+
+    final breakdownRaw = json['breakdown'];
+    final breakdown = breakdownRaw is Map<String, dynamic>
+        ? FareBreakdown.fromJson(breakdownRaw)
+        : FareBreakdown(
+            baseFare: 0,
+            perKmFare: 0,
+            totalFare: baseFareBeforeSurge,
+            distance: asDouble(json['estimatedDistance']),
+          );
+
     return FareEstimate(
-      estimatedFare: (json['estimatedFare'] as num).toDouble(),
-      estimatedDistance: (json['estimatedDistance'] as num).toDouble(),
-      breakdown:
-          FareBreakdown.fromJson(json['breakdown'] as Map<String, dynamic>),
+      estimatedFare: estimatedFare,
+      estimatedDistance: asDouble(json['estimatedDistance']),
+      surgeMultiplier: surgeMultiplier <= 0 ? 1.0 : surgeMultiplier,
+      baseFareBeforeSurge: baseFareBeforeSurge,
+      breakdown: breakdown,
     );
   }
 
   Map<String, dynamic> toJson() => {
         'estimatedFare': estimatedFare,
         'estimatedDistance': estimatedDistance,
+        'surgeMultiplier': surgeMultiplier,
+        'baseFareBeforeSurge': baseFareBeforeSurge,
         'breakdown': breakdown.toJson(),
       };
 }

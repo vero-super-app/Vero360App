@@ -122,21 +122,126 @@ class AvailableVehicle {
   }
 }
 
+/// Driver ride-offers socket connection for UI chrome.
+enum DriverRideOffersConnectionStatus {
+  connected,
+  reconnecting,
+  disconnected,
+}
+
 /// WebSocket service for driver ride requests
 class DriverRideRequestsWebSocketService {
   late IO.Socket socket;
   final _rideRequestsController =
       StreamController<IncomingRideRequest>.broadcast();
-  final _connectionStatusController = StreamController<bool>.broadcast();
+  final _connectionStatusController =
+      StreamController<DriverRideOffersConnectionStatus>.broadcast();
   bool _isConnected = false;
   bool _socketCreated = false;
+  bool _disposed = false;
+  bool _manualDisconnect = false;
+  bool _connecting = false;
+  bool _reconnectScheduled = false;
+  int _reconnectAttempts = 0;
+  Timer? _reconnectTimer;
+
+  /// Mirrors messaging / passenger WS: exponential backoff, owned reconnect loop.
+  static const int _maxReconnectAttempts = 8;
+  static const Duration _baseReconnectDelay = Duration(seconds: 1);
+  static const Duration _maxReconnectDelay = Duration(seconds: 30);
+
+  DriverRideOffersConnectionStatus _status =
+      DriverRideOffersConnectionStatus.disconnected;
 
   Stream<IncomingRideRequest> get rideRequestsStream =>
       _rideRequestsController.stream;
-  Stream<bool> get connectionStatusStream => _connectionStatusController.stream;
+  Stream<DriverRideOffersConnectionStatus> get connectionStatusStream =>
+      _connectionStatusController.stream;
   bool get isConnected => _isConnected;
+  DriverRideOffersConnectionStatus get connectionStatus => _status;
+
+  void _emitStatus(DriverRideOffersConnectionStatus status) {
+    _status = status;
+    if (!_connectionStatusController.isClosed) {
+      _connectionStatusController.add(status);
+    }
+  }
+
+  Duration _backoffDelay(int attempt) {
+    // attempt is 1-based: 1s, 2s, 4s, 8s, … capped at 30s
+    final shift = (attempt - 1).clamp(0, 5);
+    final seconds = _baseReconnectDelay.inSeconds * (1 << shift);
+    return Duration(
+      seconds: seconds.clamp(
+        _baseReconnectDelay.inSeconds,
+        _maxReconnectDelay.inSeconds,
+      ),
+    );
+  }
+
+  void _scheduleReconnect() {
+    if (_disposed || _manualDisconnect || _connecting) return;
+    if (_reconnectScheduled) return;
+    if (_isConnected) return;
+
+    if (_reconnectAttempts >= _maxReconnectAttempts) {
+      if (kDebugMode) {
+        debugPrint('[DriverRideRequests] Max reconnect attempts reached');
+      }
+      _emitStatus(DriverRideOffersConnectionStatus.disconnected);
+      return;
+    }
+
+    _reconnectScheduled = true;
+    _reconnectAttempts++;
+    final delay = _backoffDelay(_reconnectAttempts);
+    _emitStatus(DriverRideOffersConnectionStatus.reconnecting);
+
+    if (kDebugMode) {
+      debugPrint(
+        '[DriverRideRequests] Scheduling reconnect '
+        '(attempt $_reconnectAttempts/$_maxReconnectAttempts) in ${delay.inSeconds}s',
+      );
+    }
+
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(delay, () async {
+      _reconnectScheduled = false;
+      if (_disposed || _manualDisconnect || _isConnected || _connecting) {
+        return;
+      }
+      try {
+        await connect();
+      } catch (_) {
+        // connect() schedules the next attempt when needed
+      }
+    });
+  }
+
+  /// Manual retry from UI after max attempts / lost connection.
+  Future<void> reconnectNow() async {
+    if (_disposed) return;
+    _manualDisconnect = false;
+    _reconnectTimer?.cancel();
+    _reconnectScheduled = false;
+    _reconnectAttempts = 0;
+    _emitStatus(DriverRideOffersConnectionStatus.reconnecting);
+    await connect();
+  }
 
   Future<void> connect() async {
+    if (_disposed) return;
+    if (_connecting) return;
+    if (_isConnected && _socketCreated && socket.connected) return;
+
+    _connecting = true;
+    _manualDisconnect = false;
+    _reconnectTimer?.cancel();
+    _reconnectScheduled = false;
+    if (_status != DriverRideOffersConnectionStatus.connected) {
+      _emitStatus(DriverRideOffersConnectionStatus.reconnecting);
+    }
+
     try {
       // Force-refresh: socket handshake caches the token; stale → id-token-expired.
       final token =
@@ -147,7 +252,9 @@ class DriverRideRequestsWebSocketService {
           debugPrint(
               '[DriverRideRequests] No Firebase ID token - skipping WebSocket');
         }
-        _connectionStatusController.add(false);
+        _isConnected = false;
+        _emitStatus(DriverRideOffersConnectionStatus.disconnected);
+        _scheduleReconnect();
         return;
       }
 
@@ -165,6 +272,7 @@ class DriverRideRequestsWebSocketService {
             .setTransports(['websocket'])
             .disableAutoConnect()
             .enableForceNew()
+            .disableReconnection() // we own reconnect to avoid duplicate loops
             .setExtraHeaders({
               'Authorization': 'Bearer $token',
               ...await AuthDiagnostics.buildHeaders(token: token),
@@ -179,7 +287,9 @@ class DriverRideRequestsWebSocketService {
           debugPrint('[DriverRideRequests] WebSocket connected');
         }
         _isConnected = true;
-        _connectionStatusController.add(true);
+        _reconnectAttempts = 0;
+        _reconnectScheduled = false;
+        _emitStatus(DriverRideOffersConnectionStatus.connected);
         _listenForRideRequests();
         if (kDebugMode) {
           debugPrint('[DriverRideRequests] Ride listeners registered');
@@ -191,7 +301,12 @@ class DriverRideRequestsWebSocketService {
           debugPrint('[DriverRideRequests] WebSocket disconnected');
         }
         _isConnected = false;
-        _connectionStatusController.add(false);
+        if (_manualDisconnect || _disposed) {
+          _emitStatus(DriverRideOffersConnectionStatus.disconnected);
+          return;
+        }
+        _emitStatus(DriverRideOffersConnectionStatus.reconnecting);
+        _scheduleReconnect();
       });
 
       socket.onError((error) {
@@ -199,7 +314,12 @@ class DriverRideRequestsWebSocketService {
           debugPrint('[DriverRideRequests] WebSocket error');
         }
         _isConnected = false;
-        _connectionStatusController.add(false);
+        if (!_manualDisconnect && !_disposed) {
+          _emitStatus(DriverRideOffersConnectionStatus.reconnecting);
+          _scheduleReconnect();
+        } else {
+          _emitStatus(DriverRideOffersConnectionStatus.disconnected);
+        }
       });
 
       socket.onConnectError((error) {
@@ -207,7 +327,12 @@ class DriverRideRequestsWebSocketService {
           debugPrint('[DriverRideRequests] WebSocket connection error');
         }
         _isConnected = false;
-        _connectionStatusController.add(false);
+        if (!_manualDisconnect && !_disposed) {
+          _emitStatus(DriverRideOffersConnectionStatus.reconnecting);
+          _scheduleReconnect();
+        } else {
+          _emitStatus(DriverRideOffersConnectionStatus.disconnected);
+        }
       });
 
       if (kDebugMode) {
@@ -219,11 +344,18 @@ class DriverRideRequestsWebSocketService {
         debugPrint('[DriverRideRequests] Error connecting WebSocket');
       }
       _isConnected = false;
-      _connectionStatusController.add(false);
+      _emitStatus(DriverRideOffersConnectionStatus.disconnected);
+      if (!_manualDisconnect && !_disposed) {
+        _scheduleReconnect();
+      }
+    } finally {
+      _connecting = false;
     }
   }
 
   void _listenForRideRequests() {
+    // Fresh socket after reconnect — attach once per socket instance.
+    socket.off('ride:ride-request');
     socket.on('ride:ride-request', (data) {
       unawaited(Future(() async {
         try {
@@ -263,14 +395,20 @@ class DriverRideRequestsWebSocketService {
   }
 
   void disconnect() {
-    if (_socketCreated && socket.connected) {
-      socket.disconnect();
-    }
+    _manualDisconnect = true;
+    _reconnectTimer?.cancel();
+    _reconnectScheduled = false;
+    try {
+      if (_socketCreated && socket.connected) {
+        socket.disconnect();
+      }
+    } catch (_) {}
     _isConnected = false;
-    _connectionStatusController.add(false);
+    _emitStatus(DriverRideOffersConnectionStatus.disconnected);
   }
 
   void dispose() {
+    _disposed = true;
     disconnect();
     _rideRequestsController.close();
     _connectionStatusController.close();
@@ -302,12 +440,29 @@ final driverRideRequestsStreamProvider =
   return service.rideRequestsStream;
 });
 
-/// Connection status of driver ride requests WebSocket
+/// Connection status of driver ride requests WebSocket (seeds current value).
 final driverRideRequestsConnectionProvider =
-    StreamProvider<bool>((ref) {
+    StreamProvider<DriverRideOffersConnectionStatus>((ref) {
+  final enabled = ref.watch(driverRideNotificationsEnabledProvider);
+  if (!enabled) {
+    return Stream.value(DriverRideOffersConnectionStatus.disconnected);
+  }
   final service = ref.watch(_driverRideRequestsServiceProvider);
-  return service.connectionStatusStream;
+  return Stream<DriverRideOffersConnectionStatus>.multi((controller) {
+    controller.add(service.connectionStatus);
+    final sub = service.connectionStatusStream.listen(
+      controller.add,
+      onError: controller.addError,
+    );
+    controller.onCancel = sub.cancel;
+  });
 });
+
+/// Manual reconnect after "Offers connection lost — retry".
+Future<void> retryDriverRideRequestsConnection(WidgetRef ref) async {
+  final service = ref.read(_driverRideRequestsServiceProvider);
+  await service.reconnectNow();
+}
 
 /// Polling result: rides plus optional error when the pending-rides call fails.
 typedef CombinedDriverRidesState = ({

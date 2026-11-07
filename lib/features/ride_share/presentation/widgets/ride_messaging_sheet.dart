@@ -29,6 +29,7 @@ class _RideMessagingSheetState extends State<RideMessagingSheet> {
   bool _isSending = false;
   String? _error;
   Timer? _refreshTimer;
+  StreamSubscription<List<BackendChatThread>>? _threadsSub;
 
   @override
   void initState() {
@@ -39,6 +40,7 @@ class _RideMessagingSheetState extends State<RideMessagingSheet> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _threadsSub?.cancel();
     if (_chatId != null) {
       BackendChatService.setActiveChatId(null);
     }
@@ -56,9 +58,13 @@ class _RideMessagingSheetState extends State<RideMessagingSheet> {
       _chatId = chat.id;
       BackendChatService.setActiveChatId(_chatId);
       await _loadMessages();
-      // BackendChatService has no per-chat message stream — keep a light poll
-      // (8s) and refresh immediately after send (see _sendMessage).
-      _refreshTimer = Timer.periodic(const Duration(seconds: 8), (_) {
+      // BackendChatService has no per-chat message socket stream.
+      // While this sheet is visible only: poll every 4s, and also refresh when
+      // the threads list updates (best-effort receive signal).
+      _refreshTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+        if (mounted) _loadMessages(silent: true);
+      });
+      _threadsSub = BackendChatService.watchThreads().listen((_) {
         if (mounted) _loadMessages(silent: true);
       });
     } catch (e) {

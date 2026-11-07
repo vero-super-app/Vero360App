@@ -18,6 +18,7 @@ class RideShareHttpService {
   IO.Socket? socket;
   late StreamController<String> _connectionStatusController;
   late StreamController<Map<String, dynamic>> _driverLocationController;
+  late StreamController<Map<String, dynamic>> _driverLocationStaleController;
   late StreamController<Map<String, dynamic>> _rideStatusController;
   late StreamController<Ride> _rideUpdateController;
   late StreamController<Map<String, dynamic>> _flexibleEventController;
@@ -164,6 +165,8 @@ class RideShareHttpService {
     _connectionStatusController = StreamController<String>.broadcast();
     _driverLocationController =
         StreamController<Map<String, dynamic>>.broadcast();
+    _driverLocationStaleController =
+        StreamController<Map<String, dynamic>>.broadcast();
     _rideStatusController = StreamController<Map<String, dynamic>>.broadcast();
     _rideUpdateController = StreamController<Ride>.broadcast();
     _flexibleEventController =
@@ -175,6 +178,9 @@ class RideShareHttpService {
       _connectionStatusController.stream;
   Stream<Map<String, dynamic>> get driverLocationStream =>
       _driverLocationController.stream;
+  /// Emitted when backend pushes `ride:driver-location-stale`.
+  Stream<Map<String, dynamic>> get driverLocationStaleStream =>
+      _driverLocationStaleController.stream;
   Stream<Map<String, dynamic>> get rideStatusStream =>
       _rideStatusController.stream;
   Stream<Ride> get rideUpdateStream => _rideUpdateController.stream;
@@ -320,7 +326,11 @@ class RideShareHttpService {
 
     sock.on('ride:driver-location-stale', (data) {
       print('[RideShareHttpService] Driver location stale: $data');
-      _rideStatusController.add(Map<String, dynamic>.from(data as Map));
+      final map = data is Map
+          ? Map<String, dynamic>.from(data)
+          : <String, dynamic>{};
+      _driverLocationStaleController.add(map);
+      _rideStatusController.add(map);
     });
 
     sock.on('ride:pickup-offer', (data) {
@@ -933,6 +943,24 @@ class RideShareHttpService {
     );
   }
 
+  /// Preview cancellation fee for the ride's current status.
+  Future<CancelFeePreview> getCancelFeePreview(int rideId) async {
+    final response = await _withFirebaseAuth(
+      (headers) => http.get(
+        ApiConfig.endpoint('/ride-share/rides/$rideId/cancel-fee'),
+        headers: headers,
+      ),
+    );
+    if (response.statusCode != 200) {
+      throw _httpError('cancel fee preview', response);
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid cancel fee preview response');
+    }
+    return CancelFeePreview.fromJson(decoded);
+  }
+
   /// Cancel a ride
   Future<Ride> cancelRide(int rideId, {String? reason}) async {
     return _sendRide(
@@ -967,6 +995,37 @@ class RideShareHttpService {
     if (response.statusCode != 200 && response.statusCode != 201) {
       throw _httpError('rate ride', response);
     }
+  }
+
+  /// Driver rates the passenger after COMPLETED (1–5).
+  Future<Ride> ratePassenger(
+    int rideId, {
+    required int rating,
+  }) async {
+    final clamped = rating.clamp(1, 5);
+    return _sendRide(
+      'rate passenger',
+      (headers) => http.post(
+        ApiConfig.endpoint('/ride-share/rides/$rideId/driver-rating'),
+        headers: headers,
+        body: jsonEncode({'rating': clamped}),
+      ),
+    );
+  }
+
+  /// Lite dispute / report a problem on history.
+  Future<Ride> reportRideDispute(
+    int rideId, {
+    required String reason,
+  }) async {
+    return _sendRide(
+      'report ride dispute',
+      (headers) => http.post(
+        ApiConfig.endpoint('/ride-share/rides/$rideId/dispute'),
+        headers: headers,
+        body: jsonEncode({'reason': reason.trim()}),
+      ),
+    );
   }
 
   /// Passenger/driver SOS ping for an active ride.
@@ -1201,6 +1260,12 @@ class RideShareHttpService {
       _driverLocationController.close();
     } catch (e) {
       print('[RideShareHttpService] Error closing driver location controller');
+    }
+    try {
+      _driverLocationStaleController.close();
+    } catch (e) {
+      print(
+          '[RideShareHttpService] Error closing driver location stale controller');
     }
     try {
       _rideStatusController.close();

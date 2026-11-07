@@ -40,6 +40,9 @@ String rideVehicleLabel(Ride ride) {
 String formatRideMoney(num amount, NumberFormat money) =>
     'MK ${money.format(amount)}';
 
+/// Fare basis label for history lists/detail (`Metered` / `Estimated`).
+String? rideFareBasisLabel(Ride ride) => ride.fareBasisLabel;
+
 String formatRideWhen(DateTime when) {
   final now = DateTime.now();
   final local = when.toLocal();
@@ -461,12 +464,12 @@ class RideHistoryTripCard extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        if (ride.driver?.isVerified == true) ...[
+                        if (ride.driver?.isRideShareVerified == true) ...[
                           const SizedBox(width: 4),
                           const MerchantVerifiedBadge(
                             showLabel: false,
                             size: 14,
-                            tooltip: 'Verified Vero Ride driver',
+                            tooltip: 'Background-checked',
                           ),
                         ],
                       ],
@@ -492,6 +495,25 @@ class RideHistoryTripCard extends StatelessWidget {
                   ),
                 ],
               ),
+              if (ride.fareBasisLabel != null || ride.hasCancellationFee) ...[
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    if (ride.fareBasisLabel != null)
+                      _metaChip(
+                        ride.fareBasisLabel!,
+                        RideShareColors.primaryDeep,
+                      ),
+                    if (ride.hasCancellationFee)
+                      _metaChip(
+                        'Cancel fee ${formatRideMoney(ride.cancellationFee!, money)}',
+                        const Color(0xFFC62828),
+                      ),
+                  ],
+                ),
+              ],
               if (pending) ...[
                 const SizedBox(height: 12),
                 SizedBox(
@@ -516,6 +538,24 @@ class RideHistoryTripCard extends StatelessWidget {
               ],
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _metaChip(String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
         ),
       ),
     );
@@ -632,10 +672,11 @@ class RideHistoryTripCard extends StatelessWidget {
                       children: [
                         MerchantNameWithBadge(
                           name: counterpart,
-                          verified: !isDriver && ride.driver?.isVerified == true,
+                          verified:
+                              !isDriver && ride.driver?.isRideShareVerified == true,
                           showLabel: false,
                           badgeSize: 16,
-                          tooltip: 'Verified Vero Ride driver',
+                          tooltip: 'Background-checked',
                           style: const TextStyle(
                             fontWeight: FontWeight.w800,
                             fontSize: 17,
@@ -687,6 +728,25 @@ class RideHistoryTripCard extends StatelessWidget {
                 dropoff: dropoff,
                 compact: true,
               ),
+              if (ride.fareBasisLabel != null || ride.hasCancellationFee) ...[
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    if (ride.fareBasisLabel != null)
+                      _metaChip(
+                        ride.fareBasisLabel!,
+                        RideShareColors.primaryDeep,
+                      ),
+                    if (ride.hasCancellationFee)
+                      _metaChip(
+                        'Cancel fee ${formatRideMoney(ride.cancellationFee!, money)}',
+                        const Color(0xFFC62828),
+                      ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),

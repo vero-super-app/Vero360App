@@ -594,7 +594,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
     }
 
     return SizedBox(
-      height: 164,
+      height: 180,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: vehicles.length,
@@ -609,6 +609,7 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
     final fareData = _estimatedFares[vehicleType.class_];
 
     String displayPrice = '…';
+    String? surgeCaption;
     if (fareData != null) {
       final fareValue = fareData['estimatedFare'];
       double? estimatedFare;
@@ -621,6 +622,17 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
 
       if (estimatedFare != null) {
         displayPrice = _formatMkFare(estimatedFare);
+      }
+
+      final surgeRaw = fareData['surgeMultiplier'];
+      double surge = 1.0;
+      if (surgeRaw is num) {
+        surge = surgeRaw.toDouble();
+      } else if (surgeRaw is String) {
+        surge = double.tryParse(surgeRaw) ?? 1.0;
+      }
+      if (surge > 1.0) {
+        surgeCaption = 'Busy time · fare includes demand';
       }
     }
 
@@ -711,6 +723,21 @@ class _VehicleTypeModalState extends ConsumerState<VehicleTypeModal>
                 textAlign: TextAlign.center,
               ),
             ),
+            if (surgeCaption != null) ...[
+              const SizedBox(height: 3),
+              Text(
+                surgeCaption!,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                  height: 1.15,
+                  color: RideShareColors.onSurfaceVariant.withValues(alpha: 0.9),
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+              ),
+            ],
           ],
         ),
       ),

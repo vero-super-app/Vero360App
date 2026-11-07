@@ -10,6 +10,7 @@ import 'package:vero360_app/GeneralModels/ride_history_model.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_online_session.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/driver_ride_requests_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/map_view_widget.dart';
 import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/utils/vero_map_style.dart';
@@ -225,12 +226,17 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
 
   @override
   Widget build(BuildContext context) {
+    // Keep offers WS alive while the live dashboard is open (HTTP poll remains fallback).
+    ref.watch(driverRideRequestsInitProvider);
+    final offersConn = ref.watch(driverRideRequestsConnectionProvider);
+
     return Scaffold(
       backgroundColor: RideShareColors.background,
       body: SafeArea(
         child: Column(
           children: [
             _buildHeader(),
+            _buildOffersConnectionBanner(offersConn),
             Expanded(
               child: ref.watch(myDriverProfileProvider).when(
                     loading: () => const SingleChildScrollView(
@@ -293,6 +299,8 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
                           padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
                           children: [
                             _buildEarningsRow(),
+                            const SizedBox(height: 10),
+                            _buildCashCommissionBanner(driver),
                             const SizedBox(height: 16),
                             _buildDemandMapSection(driver),
                             const SizedBox(height: 14),
@@ -313,6 +321,145 @@ class _DriverDashboardState extends ConsumerState<DriverDashboard> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildOffersConnectionBanner(
+    AsyncValue<DriverRideOffersConnectionStatus> offersConn,
+  ) {
+    final notificationsOn = ref.watch(driverRideNotificationsEnabledProvider);
+    if (!notificationsOn) return const SizedBox.shrink();
+
+    final status = offersConn.asData?.value;
+    if (status == null ||
+        status == DriverRideOffersConnectionStatus.connected) {
+      return const SizedBox.shrink();
+    }
+
+    final reconnecting =
+        status == DriverRideOffersConnectionStatus.reconnecting;
+    final label = reconnecting
+        ? 'Reconnecting to ride offers…'
+        : 'Offers connection lost — retry';
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: reconnecting
+            ? null
+            : () => unawaited(retryDriverRideRequestsConnection(ref)),
+        child: Container(
+          width: double.infinity,
+          margin: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: reconnecting
+                ? RideShareColors.primarySoft
+                : const Color(0xFFFFE8E0),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: reconnecting
+                  ? RideShareColors.primary.withValues(alpha: 0.35)
+                  : RideShareColors.primaryDeep.withValues(alpha: 0.35),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                reconnecting ? Icons.sync : Icons.wifi_off_rounded,
+                size: 16,
+                color: RideShareColors.primaryDeep,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: RideShareColors.primaryDeep,
+                  ),
+                ),
+              ),
+              if (!reconnecting)
+                const Text(
+                  'Retry',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                    color: RideShareColors.primaryDeep,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCashCommissionBanner(Map<String, dynamic> driver) {
+    final outstanding = outstandingCommissionFromDriver(driver);
+    if (outstanding <= 0) return const SizedBox.shrink();
+
+    final limit = driverCashCommissionLimit;
+    final near = outstanding >= limit * 0.8;
+    final over = outstanding >= limit;
+    final amount = _money.format(outstanding.round());
+    final limitLabel = _money.format(limit.round());
+
+    final Color bg;
+    final Color border;
+    final Color fg;
+    String? warning;
+    if (over) {
+      bg = const Color(0xFFFFE8E0);
+      border = RideShareColors.primaryDeep.withValues(alpha: 0.4);
+      fg = RideShareColors.primaryDeep;
+      warning =
+          'Cash ride accepts are blocked until you settle this balance.';
+    } else if (near) {
+      bg = RideShareColors.primarySoft;
+      border = RideShareColors.primary.withValues(alpha: 0.35);
+      fg = RideShareColors.primaryDeep;
+      warning = 'Approaching the cash commission limit.';
+    } else {
+      bg = RideShareColors.surfaceContainerLow;
+      border = RideShareColors.outlineVariant;
+      fg = RideShareColors.onSurfaceVariant;
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Cash commission outstanding: MK $amount / MK $limitLabel',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: fg,
+            ),
+          ),
+          if (warning != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              warning,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: fg.withValues(alpha: 0.9),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

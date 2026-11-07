@@ -430,12 +430,12 @@ class _RideCompletionScreenState extends ConsumerState<RideCompletionScreen>
                       'Thanks to $_driverName',
                       style: TextStyle(fontSize: 16, color: Colors.grey[600]),
                     ),
-                    if (widget.ride.driver?.isVerified == true) ...[
+                    if (widget.ride.driver?.isRideShareVerified == true) ...[
                       const SizedBox(width: 4),
                       const MerchantVerifiedBadge(
                         showLabel: false,
                         size: 16,
-                        tooltip: 'Verified Vero Ride driver',
+                        tooltip: 'Background-checked',
                       ),
                     ],
                     const SizedBox(width: 8),

@@ -11,6 +11,7 @@ import 'package:vero360_app/features/ride_share/presentation/widgets/ride_bookin
 import 'package:vero360_app/features/ride_share/presentation/widgets/vehicle_type_modal.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/destination_search_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/passenger_ride_tracking_screen.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/ride_share_map_shared.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
@@ -48,17 +49,11 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
   }
 
   void _focusSearchBar() {
-    Future.delayed(const Duration(milliseconds: 50), () {
-      if (mounted && !_searchFocusNode.hasFocus) {
-        _searchFocusNode.requestFocus();
-      }
-    });
+    rideShareScheduleSearchFocus(_searchFocusNode, mounted: () => mounted);
   }
 
   void _unfocusKeyboard() {
-    if (_searchFocusNode.hasFocus) {
-      _searchFocusNode.unfocus();
-    }
+    rideShareUnfocusSearch(_searchFocusNode);
   }
 
   void _clearDropoff() {
@@ -106,15 +101,12 @@ class _RideShareMapScreenState extends ConsumerState<RideShareMapScreen>
           orElse: () => 'Current Location',
         );
 
-    final pickupPlace = _cachedPickupPlace ??
-        Place(
-          id: 'current_location',
-          name: 'Your Location',
-          address: resolvedPickupAddress,
-          latitude: position.latitude,
-          longitude: position.longitude,
-          type: PlaceType.RECENT,
-        );
+    final pickupPlace = rideShareBuildPickupPlace(
+      latitude: position.latitude,
+      longitude: position.longitude,
+      cached: _cachedPickupPlace,
+      address: resolvedPickupAddress,
+    );
 
     _unfocusKeyboard();
 

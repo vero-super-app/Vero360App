@@ -76,5 +76,56 @@ void main() {
       expect(ride.driver!.phone, '+265888000111');
       expect(ride.driver!.avatar, 'https://example.com/avatar.png');
     });
+
+    test('parses fareBasis, cancellationFee, driverRating, and dispute fields',
+        () {
+      final ride = Ride.fromJson({
+        'id': 99,
+        'passengerId': 7,
+        'pickupLatitude': -13.95,
+        'pickupLongitude': 33.79,
+        'dropoffLatitude': -13.98,
+        'dropoffLongitude': 33.82,
+        'estimatedDistance': 4.2,
+        'estimatedFare': 3200,
+        'actualFare': 4100,
+        'fareBasis': 'actual',
+        'cancellationFee': 1500,
+        'driverRating': 4,
+        'disputeReason': 'Wrong drop-off',
+        'disputedAt': '2026-05-13T09:00:00.000Z',
+        'status': 'COMPLETED',
+        'createdAt': '2026-05-13T08:00:00.000Z',
+        'updatedAt': '2026-05-13T09:00:00.000Z',
+      });
+
+      expect(ride.fareBasis, 'actual');
+      expect(ride.fareBasisLabel, 'Metered');
+      expect(ride.cancellationFee, 1500);
+      expect(ride.hasCancellationFee, isTrue);
+      expect(ride.driverRating, 4);
+      expect(ride.disputeReason, 'Wrong drop-off');
+      expect(ride.hasDispute, isTrue);
+    });
+
+    test('maps estimated fareBasis to Estimated label', () {
+      final ride = Ride.fromJson({
+        'id': 100,
+        'passengerId': 7,
+        'pickupLatitude': -13.95,
+        'pickupLongitude': 33.79,
+        'dropoffLatitude': -13.98,
+        'dropoffLongitude': 33.82,
+        'estimatedDistance': 2,
+        'estimatedFare': 2000,
+        'fareBasis': 'estimated',
+        'status': 'COMPLETED',
+        'createdAt': '2026-05-13T08:00:00.000Z',
+        'updatedAt': '2026-05-13T08:30:00.000Z',
+      });
+
+      expect(ride.fareBasisLabel, 'Estimated');
+      expect(ride.hasCancellationFee, isFalse);
+    });
   });
 }

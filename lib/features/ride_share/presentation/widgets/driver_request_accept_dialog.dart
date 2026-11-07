@@ -8,6 +8,7 @@ import 'package:vero360_app/GernalServices/driver_messaging_service.dart';
 import 'package:vero360_app/GernalServices/location_permission_helper.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/driver_ride_execution_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/driver_ride_request_sheet.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 class DriverRequestAcceptDialog extends StatefulWidget {
   final DriverRideRequest request;
@@ -184,7 +185,9 @@ class _DriverRequestAcceptDialogState extends State<DriverRequestAcceptDialog>
         setState(() => _isAccepting = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to accept ride: ${e.toString()}'),
+            content: Text(
+              UserFacingError.from(e, fallback: 'Failed to accept ride'),
+            ),
             backgroundColor: Colors.red.shade600,
             behavior: SnackBarBehavior.floating,
             margin: const EdgeInsets.all(16),

@@ -13,11 +13,32 @@ final driverServiceProvider = Provider<DriverService>((ref) {
 
 // ==================== DRIVER PROFILE ====================
 
+/// Max unpaid cash-ride platform commission (MWK) before cash accepts are blocked.
+/// Keep in sync with backend `DRIVER_CASH_COMMISSION_LIMIT`.
+const double driverCashCommissionLimit = 100000;
+
+/// Outstanding cash commission from `/drivers/me` (`outstandingCommission`).
+double outstandingCommissionFromDriver(Map<String, dynamic>? driver) {
+  if (driver == null) return 0;
+  final v = driver['outstandingCommission'];
+  if (v is num) return v.toDouble();
+  if (v is String) return double.tryParse(v) ?? 0;
+  return 0;
+}
+
 /// Fresh driver profile from the API (never reuse a stale FutureProvider value
 /// for go-online / eligibility gates).
 final myDriverProfileProvider = FutureProvider<Map<String, dynamic>>((ref) async {
   final driverService = ref.watch(driverServiceProvider);
   return await driverService.getMyDriverProfile(forceRefresh: true);
+});
+
+/// Outstanding cash commission for the signed-in driver (MWK).
+final driverOutstandingCommissionProvider = Provider<double>((ref) {
+  return ref.watch(myDriverProfileProvider).maybeWhen(
+        data: outstandingCommissionFromDriver,
+        orElse: () => 0,
+      );
 });
 
 /// Invalidate + await a brand-new /drivers/me (and optional session heal).

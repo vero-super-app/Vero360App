@@ -350,15 +350,7 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
   }
 
   String _fareLabel(String vehicleClass) {
-    final fareData = _estimatedFares[vehicleClass];
-    if (fareData == null) return '…';
-    final fareValue = fareData['estimatedFare'];
-    double? fare;
-    if (fareValue is num) {
-      fare = fareValue.toDouble();
-    } else if (fareValue is String) {
-      fare = double.tryParse(fareValue);
-    }
+    final fare = _estimatedFareAmount(vehicleClass);
     if (fare == null) return '…';
     final digits = fare.round().toString();
     final buffer = StringBuffer();
@@ -368,6 +360,31 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
       buffer.write(digits[i]);
     }
     return 'MK $buffer';
+  }
+
+  double? _estimatedFareAmount(String vehicleClass) {
+    final fareData = _estimatedFares[vehicleClass];
+    if (fareData is! Map) return null;
+    final fareValue = fareData['estimatedFare'];
+    if (fareValue is num) return fareValue.toDouble();
+    if (fareValue is String) return double.tryParse(fareValue);
+    return null;
+  }
+
+  double _surgeMultiplier(String vehicleClass) {
+    final fareData = _estimatedFares[vehicleClass];
+    if (fareData is! Map) return 1.0;
+    final raw = fareData['surgeMultiplier'];
+    if (raw is num) return raw.toDouble();
+    if (raw is String) return double.tryParse(raw) ?? 1.0;
+    return 1.0;
+  }
+
+  String? _surgeCaption(String vehicleClass) {
+    if (_surgeMultiplier(vehicleClass) > 1.0) {
+      return 'Busy time · fare includes demand';
+    }
+    return null;
   }
 
   (DateTime, DateTime)? _pickupWindow() {
@@ -553,7 +570,7 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
                           )
                         else
                           SizedBox(
-                            height: 188,
+                            height: 204,
                             child: ListView.separated(
                               scrollDirection: Axis.horizontal,
                               itemCount: _vehicleTypes.length,
@@ -564,6 +581,7 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
                                 return _VehicleCard(
                                   option: v,
                                   price: _fareLabel(v.class_),
+                                  surgeCaption: _surgeCaption(v.class_),
                                   durationMin: _duration,
                                   pickupLabel: _pickupEtaLabel(),
                                   isSelected:
@@ -973,6 +991,7 @@ class _VehicleOption {
 class _VehicleCard extends StatelessWidget {
   final _VehicleOption option;
   final String price;
+  final String? surgeCaption;
   final int durationMin;
   final String pickupLabel;
   final bool isSelected;
@@ -981,6 +1000,7 @@ class _VehicleCard extends StatelessWidget {
   const _VehicleCard({
     required this.option,
     required this.price,
+    this.surgeCaption,
     required this.durationMin,
     required this.pickupLabel,
     required this.isSelected,
@@ -1090,6 +1110,21 @@ class _VehicleCard extends StatelessWidget {
                 textAlign: TextAlign.center,
               ),
             ),
+            if (surgeCaption != null) ...[
+              const SizedBox(height: 3),
+              Text(
+                surgeCaption!,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                  height: 1.15,
+                  color: RideShareColors.onSurfaceVariant.withValues(alpha: 0.9),
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+              ),
+            ],
           ],
         ),
       ),

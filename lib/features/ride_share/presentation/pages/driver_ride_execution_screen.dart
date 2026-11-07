@@ -148,12 +148,48 @@ class _DriverRideExecutionScreenState
   }
 
   Future<void> _handleCancelRide() async {
+    final lifecycleState = ref.read(rideLifecycleProvider);
+    final Ride? currentRide = switch (lifecycleState) {
+      RideActive(:final ride) => ride,
+      RideCompleted(:final ride) => ride,
+      RideCancelled(:final ride) => ride,
+      _ => null,
+    };
+    final status = currentRide?.status ?? RideStatus.accepted;
+
+    double fee = CancelFeePreview.feeForStatus(status);
+    try {
+      final preview = await ref
+          .read(rideShareHttpServiceProvider)
+          .getCancelFeePreview(widget.rideId);
+      fee = preview.cancellationFee;
+    } catch (_) {
+      // Keep local default table matching backend env defaults.
+    }
+    if (!mounted) return;
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Cancel Ride'),
-        content: const Text(
-          'Are you sure you want to cancel this ride? The passenger will be notified.',
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Are you sure you want to cancel this ride? The passenger will be notified.',
+            ),
+            if (fee > 0) ...[
+              const SizedBox(height: 12),
+              Text(
+                'Cancellation fee: MK ${fee.round()}',
+                style: const TextStyle(
+                  color: RideShareColors.primaryDeep,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ],
         ),
         actions: [
           TextButton(
@@ -608,6 +644,73 @@ class _DriverRideCompletionScreenState
       unawaited(_refreshRide());
     });
     unawaited(_refreshRide());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_maybePromptPassengerRating());
+    });
+  }
+
+  bool _ratingPromptShown = false;
+
+  /// Optional lite dialog: driver rates passenger 1–5 after COMPLETED.
+  Future<void> _maybePromptPassengerRating() async {
+    if (!mounted || _ratingPromptShown) return;
+    final current = _ride ?? widget.ride;
+    if (current.driverRating != null || !current.isCompleted) return;
+    _ratingPromptShown = true;
+
+    int selected = 5;
+    final rating = await showDialog<int>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            return AlertDialog(
+              title: const Text('Rate passenger'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Optional — how was this passenger?'),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: List.generate(5, (i) {
+                      final star = i + 1;
+                      return IconButton(
+                        onPressed: () => setLocal(() => selected = star),
+                        icon: Icon(
+                          star <= selected
+                              ? Icons.star_rounded
+                              : Icons.star_outline_rounded,
+                          color: RideShareColors.primary,
+                        ),
+                      );
+                    }),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Skip'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, selected),
+                  child: const Text('Submit'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (rating == null || !mounted) return;
+    try {
+      final updated = await _http.ratePassenger(widget.ride.id, rating: rating);
+      if (!mounted) return;
+      setState(() => _ride = updated);
+    } catch (_) {
+      // Soft-fail — completion flow should not block on rating.
+    }
   }
 
   @override

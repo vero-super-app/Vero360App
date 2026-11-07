@@ -17,6 +17,7 @@ import 'package:vero360_app/features/ride_share/presentation/services/driver_onl
 import 'package:vero360_app/utils/toasthelper.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_skeleton_loaders.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 import 'package:vero360_app/widgets/merchant_verified_badge.dart';
 import 'package:vero360_app/widgets/resilient_cached_network_image.dart';
 
@@ -272,6 +273,8 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
           _profileHeader(driver, user, isVerified),
           const SizedBox(height: 12),
           _statsRow(driver),
+          const SizedBox(height: 12),
+          _cashCommissionCard(driver),
           const SizedBox(height: 16),
           _infoSection(
             title: 'Driver info',
@@ -658,6 +661,89 @@ class _DriverProfileHubScreenState extends ConsumerState<DriverProfileHubScreen>
           _statCell('Trips', '${_num(driver['totalRides'])}'),
           _divider(),
           _statCell('Completed', '${_num(driver['completedRides'])}'),
+        ],
+      ),
+    );
+  }
+
+  Widget _cashCommissionCard(Map<String, dynamic> driver) {
+    final outstanding = outstandingCommissionFromDriver(driver);
+    final money = NumberFormat('#,##0', 'en');
+    final amount = money.format(outstanding.round());
+    final limitLabel = money.format(driverCashCommissionLimit.round());
+    final near = outstanding >= driverCashCommissionLimit * 0.8;
+    final over = outstanding >= driverCashCommissionLimit;
+
+    final Color border;
+    final Color titleColor;
+    String? warning;
+    if (over) {
+      border = RideShareColors.primaryDeep.withValues(alpha: 0.45);
+      titleColor = RideShareColors.primaryDeep;
+      warning =
+          'Cash ride accepts are blocked until you settle this balance.';
+    } else if (near) {
+      border = RideShareColors.primary.withValues(alpha: 0.4);
+      titleColor = RideShareColors.primaryDeep;
+      warning = 'Approaching the cash commission limit.';
+    } else {
+      border = _cardBorder;
+      titleColor = _ink;
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.payments_outlined, size: 18, color: _muted),
+              const SizedBox(width: 8),
+              Text(
+                'Cash commission',
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: titleColor,
+                  fontSize: 14.5,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Cash commission outstanding: MK $amount / MK $limitLabel',
+            style: TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w700,
+              color: titleColor,
+              height: 1.35,
+            ),
+          ),
+          if (warning != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              warning,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: titleColor.withValues(alpha: 0.9),
+                height: 1.35,
+              ),
+            ),
+          ] else ...[
+            const SizedBox(height: 6),
+            const Text(
+              'Platform fee from cash trips waiting to be settled.',
+              style: TextStyle(fontSize: 12.5, color: _muted, height: 1.35),
+            ),
+          ],
         ],
       ),
     );

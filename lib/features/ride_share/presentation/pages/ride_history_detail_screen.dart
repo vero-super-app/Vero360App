@@ -5,6 +5,7 @@ import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_completion_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_history_ui.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 
 enum RideHistoryPerspective { passenger, driver }
 
@@ -25,6 +26,7 @@ class RideHistoryDetailScreen extends StatefulWidget {
 
 class _RideHistoryDetailScreenState extends State<RideHistoryDetailScreen> {
   late Ride ride;
+  bool _submittingDispute = false;
 
   @override
   void initState() {
@@ -52,6 +54,64 @@ class _RideHistoryDetailScreenState extends State<RideHistoryDetailScreen> {
       if (paid == true && mounted) {
         setState(() {});
       }
+    }
+  }
+
+  Future<void> _reportProblem() async {
+    if (ride.hasDispute || _submittingDispute) return;
+    final controller = TextEditingController();
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Report a problem'),
+        content: TextField(
+          controller: controller,
+          maxLines: 3,
+          maxLength: 500,
+          decoration: const InputDecoration(
+            hintText: 'Briefly describe what went wrong',
+          ),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Submit'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (reason == null || reason.length < 3 || !mounted) return;
+
+    setState(() => _submittingDispute = true);
+    try {
+      final updated = await RideShareHttpService().reportRideDispute(
+        ride.id,
+        reason: reason,
+      );
+      if (!mounted) return;
+      setState(() {
+        ride = updated;
+        _submittingDispute = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Problem reported. Thanks.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _submittingDispute = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            UserFacingError.from(e, fallback: 'Could not submit report'),
+          ),
+        ),
+      );
     }
   }
 
@@ -243,6 +303,8 @@ class _RideHistoryDetailScreenState extends State<RideHistoryDetailScreen> {
                           'Duration',
                           duration > 0 ? '$duration min' : '—',
                         ),
+                        if (ride.fareBasisLabel != null)
+                          _kv('Fare basis', ride.fareBasisLabel!),
                         if (ride.paidAt != null)
                           _kv(
                             'Paid on',
@@ -266,6 +328,11 @@ class _RideHistoryDetailScreenState extends State<RideHistoryDetailScreen> {
                         ),
                         const SizedBox(height: 12),
                         _kv('Trip fare', formatRideMoney(fare, money)),
+                        if (ride.hasCancellationFee)
+                          _kv(
+                            'Cancellation fee',
+                            formatRideMoney(ride.cancellationFee!, money),
+                          ),
                         if (isDriver) ...[
                           _kv(
                             'Platform fee',
@@ -323,6 +390,64 @@ class _RideHistoryDetailScreenState extends State<RideHistoryDetailScreen> {
                             fontSize: 16,
                           ),
                         ),
+                      ),
+                    ),
+                  ],
+                  if ((ride.isCompleted || ride.isCancelled) &&
+                      !ride.hasDispute) ...[
+                    const SizedBox(height: 18),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: OutlinedButton.icon(
+                        onPressed: _submittingDispute ? null : _reportProblem,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: RideShareColors.primaryDeep,
+                          side: const BorderSide(
+                            color: RideShareColors.outlineVariant,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        icon: _submittingDispute
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.flag_outlined, size: 18),
+                        label: Text(
+                          _submittingDispute
+                              ? 'Submitting…'
+                              : 'Report a problem',
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (ride.hasDispute) ...[
+                    const SizedBox(height: 14),
+                    _card(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Problem reported',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 15,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            ride.disputeReason ?? 'Submitted',
+                            style: const TextStyle(
+                              color: RideShareColors.onSurfaceVariant,
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],

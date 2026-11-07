@@ -191,6 +191,12 @@ class _VeroRideDriverProfilePageState extends State<VeroRideDriverProfilePage> {
   }
 
   bool get _verified {
+    bool flag(dynamic v) =>
+        v == true || v?.toString().trim().toLowerCase() == 'true';
+    if (flag(_driver?['backgroundCheckPassed']) ||
+        flag(_userDoc?['backgroundCheckPassed'])) {
+      return true;
+    }
     return MerchantVerification.isVerifiedFromData(_driver) ||
         MerchantVerification.isVerifiedFromData(_userDoc);
   }
@@ -306,7 +312,7 @@ class _VeroRideDriverProfilePageState extends State<VeroRideDriverProfilePage> {
                   verified: _verified,
                   showLabel: false,
                   badgeSize: 18,
-                  tooltip: 'Verified Vero Ride driver',
+                  tooltip: 'Background-checked',
                   style: const TextStyle(
                     fontWeight: FontWeight.w900,
                     fontSize: 18,
@@ -331,7 +337,9 @@ class _VeroRideDriverProfilePageState extends State<VeroRideDriverProfilePage> {
                     borderRadius: BorderRadius.circular(99),
                   ),
                   child: Text(
-                    _verified ? 'Verified Vero Ride driver' : 'Vero Ride driver',
+                    _verified
+                        ? 'Verified Vero Ride driver'
+                        : 'Vero Ride driver',
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w800,

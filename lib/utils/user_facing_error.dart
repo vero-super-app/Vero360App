@@ -78,6 +78,10 @@ class UserFacingError {
 
     final lower = cleaned.toLowerCase();
 
+    if (_isCashCommissionBlocked(lower)) {
+      return 'Cash rides are paused until you settle outstanding commission '
+          '(limit MK 100,000). Settle with Vero, then try again.';
+    }
     if (_isNetworkish(lower)) return offline;
     if (_isTimeout(lower)) return timeout;
     if (_isNotLoggedIn(lower)) return notLoggedIn;
@@ -109,6 +113,15 @@ class UserFacingError {
 
     return cleaned;
   }
+
+  static bool _isCashCommissionBlocked(String s) =>
+      s.contains('outstanding commission') ||
+      (s.contains('cash rides are restricted') && s.contains('commission')) ||
+      (s.contains('cash') &&
+          s.contains('commission') &&
+          (s.contains('restricted') ||
+              s.contains('settle') ||
+              s.contains('limit')));
 
   static bool _isNetworkish(String s) =>
       s.contains('socket') ||

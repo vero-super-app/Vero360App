@@ -43,6 +43,56 @@ class _PassengerRideTrackingScreenState
   bool _hasNavigatedAway = false;
   List<PickupOffer> _offers = const [];
   StreamSubscription<Map<String, dynamic>>? _flexibleSub;
+  StreamSubscription<Map<String, dynamic>>? _staleLocationSub;
+  StreamSubscription<Map<String, dynamic>>? _driverLocationSub;
+  bool _staleBannerDismissed = false;
+
+  void _showDriverLocationStaleBanner() {
+    if (!mounted || _staleBannerDismissed) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger
+      ..clearMaterialBanners()
+      ..showMaterialBanner(
+        MaterialBanner(
+          backgroundColor: RideShareColors.surface,
+          content: const Text(
+            'Driver location may be outdated. Waiting for a fresh GPS update.',
+            style: TextStyle(
+              color: RideShareColors.titleText,
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+            ),
+          ),
+          leading: const Icon(
+            Icons.gps_off_rounded,
+            color: RideShareColors.primaryDeep,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                messenger.hideCurrentMaterialBanner();
+                if (mounted) {
+                  setState(() => _staleBannerDismissed = true);
+                }
+              },
+              child: const Text(
+                'Dismiss',
+                style: TextStyle(
+                  color: RideShareColors.primaryDeep,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+  }
+
+  void _clearDriverLocationStaleBanner() {
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.hideCurrentMaterialBanner();
+  }
 
   @override
   void initState() {
@@ -55,10 +105,8 @@ class _PassengerRideTrackingScreenState
           .read(rideLifecycleProvider.notifier)
           .subscribeToRideAsPassenger(widget.rideId);
       unawaited(_loadOffers());
-      _flexibleSub = ref
-          .read(rideShareHttpServiceProvider)
-          .flexibleEventStream
-          .listen((event) {
+      final http = ref.read(rideShareHttpServiceProvider);
+      _flexibleSub = http.flexibleEventStream.listen((event) {
         if (!mounted) return;
         if ('${event['rideId']}' != '${widget.rideId}') return;
         unawaited(_loadOffers());
@@ -66,12 +114,34 @@ class _PassengerRideTrackingScreenState
           ref.read(rideLifecycleProvider.notifier).refreshActiveRide(),
         );
       });
+      _staleLocationSub = http.driverLocationStaleStream.listen((event) {
+        if (!mounted) return;
+        final eventRideId = event['rideId'];
+        if (eventRideId != null && '${eventRideId}' != '${widget.rideId}') {
+          return;
+        }
+        setState(() => _staleBannerDismissed = false);
+        _showDriverLocationStaleBanner();
+      });
+      _driverLocationSub = http.driverLocationStream.listen((event) {
+        if (!mounted) return;
+        final eventRideId = event['rideId'];
+        if (eventRideId != null && '${eventRideId}' != '${widget.rideId}') {
+          return;
+        }
+        _clearDriverLocationStaleBanner();
+      });
     });
   }
 
   @override
   void dispose() {
     _flexibleSub?.cancel();
+    _staleLocationSub?.cancel();
+    _driverLocationSub?.cancel();
+    try {
+      ScaffoldMessenger.maybeOf(context)?.hideCurrentMaterialBanner();
+    } catch (_) {}
     _mapController?.dispose();
     super.dispose();
   }
@@ -296,15 +366,51 @@ class _PassengerRideTrackingScreenState
     BuildContext context, {
     String reason = 'Passenger cancelled',
   }) async {
+    final lifecycleState = ref.read(rideLifecycleProvider);
+    final Ride? currentRide = switch (lifecycleState) {
+      RideActive(:final ride) => ride,
+      RideCompleted(:final ride) => ride,
+      RideCancelled(:final ride) => ride,
+      _ => null,
+    };
+    final status = currentRide?.status ?? RideStatus.requested;
+
+    double fee = CancelFeePreview.feeForStatus(status);
+    try {
+      final preview = await ref
+          .read(rideShareHttpServiceProvider)
+          .getCancelFeePreview(widget.rideId);
+      fee = preview.cancellationFee;
+    } catch (_) {
+      // Keep local default table matching backend env defaults.
+    }
+    if (!mounted) return;
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Cancel this ride?'),
-        content: Text(
-          reason.contains('stop')
-              ? 'This cancels the trip for you and the driver. '
-                  'Only the driver can complete a ride and set the fare.'
-              : 'Are you sure you want to cancel this ride request?',
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              reason.contains('stop')
+                  ? 'This cancels the trip for you and the driver. '
+                      'Only the driver can complete a ride and set the fare.'
+                  : 'Are you sure you want to cancel this ride request?',
+            ),
+            if (fee > 0) ...[
+              const SizedBox(height: 12),
+              Text(
+                'Cancellation fee: MK ${fee.round()}',
+                style: const TextStyle(
+                  color: RideShareColors.primaryDeep,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ],
         ),
         actions: [
           TextButton(
@@ -525,7 +631,7 @@ class _PassengerRideTrackingScreenState
             const SizedBox(height: 20),
             RidePersonCard(
               name: driver.fullName,
-              verified: driver.isVerified,
+              verified: driver.isRideShareVerified,
               subtitle: ride.taxi != null
                   ? [
                       if (ride.taxi!.model.isNotEmpty) ride.taxi!.model,

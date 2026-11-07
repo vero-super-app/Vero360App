@@ -665,7 +665,7 @@ class RidePersonCard extends StatelessWidget {
                       const MerchantVerifiedBadge(
                         showLabel: false,
                         size: 18,
-                        tooltip: 'Verified Vero Ride driver',
+                        tooltip: 'Background-checked',
                       ),
                     ],
                   ],

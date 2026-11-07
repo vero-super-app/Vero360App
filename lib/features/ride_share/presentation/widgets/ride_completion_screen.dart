@@ -7,7 +7,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:vero360_app/GeneralModels/ride_model.dart';
-import 'package:vero360_app/GernalServices/firebase_wallet_service.dart';
 import 'package:vero360_app/GernalServices/pawapay_payment.dart';
 import 'package:vero360_app/GernalServices/vero_rewards_service.dart';
 import 'package:vero360_app/widgets/vero_spin_reward_prompt.dart';
@@ -41,6 +40,10 @@ class _RideCompletionScreenState extends ConsumerState<RideCompletionScreen>
   _PayMethod _payMethod = _PayMethod.digital;
   String? _pendingTxRef;
   String? _pendingCheckoutUrl;
+  int _selectedRating = 0;
+  final TextEditingController _ratingCommentController = TextEditingController();
+  bool _ratingSubmitted = false;
+  bool _submittingRating = false;
   static const Color primaryColor = Color(0xFFFF8A00);
 
   @override
@@ -60,6 +63,7 @@ class _RideCompletionScreenState extends ConsumerState<RideCompletionScreen>
 
   @override
   void dispose() {
+    _ratingCommentController.dispose();
     _animController.dispose();
     super.dispose();
   }
@@ -95,14 +99,14 @@ class _RideCompletionScreenState extends ConsumerState<RideCompletionScreen>
           reference: 'ride_${widget.ride.id}',
         ),
       );
-      onDone();
-      scaffold.showSnackBar(
-        const SnackBar(
-          content: Text('Pay the driver in cash. You can book another ride now.'),
-          backgroundColor: primaryColor,
-        ),
+      await _promptRatingThenFinish(
+        navigator: navigator,
+        scaffold: scaffold,
+        onDone: onDone,
+        successMessage:
+            'Pay the driver in cash. You can book another ride now.',
+        successColor: primaryColor,
       );
-      if (navigator.canPop()) navigator.pop(true);
     } catch (e) {
       if (mounted) setState(() => _isProcessingPayment = false);
       scaffold.showSnackBar(
@@ -245,14 +249,7 @@ class _RideCompletionScreenState extends ConsumerState<RideCompletionScreen>
     required ScaffoldMessengerState scaffold,
     required VoidCallback onDone,
   }) async {
-    try {
-      await _creditDriverWallet(ride);
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[RidePayment] Wallet credit failed after paid: $e');
-      }
-    }
-    onDone();
+    // Backend settles driver wallet / platform fee after payment confirmation.
     if (!mounted) return;
     unawaited(
       VeroSpinRewardPrompt.grantAndPrompt(
@@ -260,60 +257,129 @@ class _RideCompletionScreenState extends ConsumerState<RideCompletionScreen>
         reference: 'ride_${ride.id}',
       ),
     );
+    await _promptRatingThenFinish(
+      navigator: navigator,
+      scaffold: scaffold,
+      onDone: onDone,
+      successMessage: 'Payment successful!',
+      successColor: Colors.green,
+    );
+  }
+
+  Future<void> _promptRatingThenFinish({
+    required NavigatorState navigator,
+    required ScaffoldMessengerState scaffold,
+    required VoidCallback onDone,
+    required String successMessage,
+    required Color successColor,
+  }) async {
+    if (mounted && !_ratingSubmitted) {
+      await _showRatingDialog();
+    }
+    onDone();
+    if (!mounted) return;
     scaffold.showSnackBar(
-      const SnackBar(
-        content: Text('Payment successful!'),
-        backgroundColor: Colors.green,
+      SnackBar(
+        content: Text(successMessage),
+        backgroundColor: successColor,
       ),
     );
     if (navigator.canPop()) navigator.pop(true);
   }
 
-  Future<void> _creditDriverWallet(Ride ride) async {
-    final driverId = ride.driverId;
-    if (driverId == null) return;
-
-    try {
-      final driverWalletId = driverId.toString();
-      final driverName = ride.driver?.fullName ?? 'Driver $driverId';
-
-      await FirebaseWalletService.getOrCreateWallet(
-        merchantId: driverWalletId,
-        merchantName: driverName,
-      );
-
-      final totalFare = ride.actualFare ?? ride.estimatedFare;
-      final serviceFee = totalFare * FirebaseWalletService.serviceFeeRate;
-      final driverEarnings = totalFare - serviceFee;
-
-      await FirebaseWalletService.creditWallet(
-        merchantId: driverWalletId,
-        amount: driverEarnings,
-        description:
-            'Ride #${ride.id} earnings (${(ride.actualDistance ?? ride.estimatedDistance).toStringAsFixed(1)} km)',
-        reference: 'ride_${ride.id}',
-        type: 'ride_earnings',
-      );
-
-      if (serviceFee > 0) {
-        await FirebaseWalletService.creditPlatformServiceFee(
-          amount: serviceFee,
-          description: 'Service fee from ride #${ride.id}',
-          reference: 'ride_fee_${ride.id}',
-          service: 'ride',
+  Future<void> _showRatingDialog() async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            return AlertDialog(
+              title: const Text('Rate your ride'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      for (var i = 1; i <= 5; i++)
+                        IconButton(
+                          onPressed: () => setDialogState(() {
+                            _selectedRating = i;
+                          }),
+                          icon: Icon(
+                            i <= _selectedRating
+                                ? Icons.star_rounded
+                                : Icons.star_border_rounded,
+                            color: Colors.amber[700],
+                            size: 32,
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _ratingCommentController,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      hintText: 'Optional comment',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Skip'),
+                ),
+                TextButton(
+                  onPressed: _submittingRating || _selectedRating < 1
+                      ? null
+                      : () async {
+                          setDialogState(() => _submittingRating = true);
+                          try {
+                            await ref
+                                .read(rideShareHttpServiceProvider)
+                                .rateRide(
+                                  widget.ride.id,
+                                  rating: _selectedRating,
+                                  comment: _ratingCommentController.text,
+                                );
+                            _ratingSubmitted = true;
+                            if (ctx.mounted) Navigator.pop(ctx);
+                          } catch (e) {
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  UserFacingError.from(
+                                    e,
+                                    fallback: 'Could not submit rating',
+                                  ),
+                                ),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                            setDialogState(() => _submittingRating = false);
+                          }
+                        },
+                  child: _submittingRating
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Submit'),
+                ),
+              ],
+            );
+          },
         );
-      }
-
-      if (kDebugMode) {
-        debugPrint(
-            '[RidePayment] Driver $driverWalletId credited MK${driverEarnings.toStringAsFixed(0)} '
-            '(fee MK${serviceFee.toStringAsFixed(0)})');
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[RidePayment] Failed to credit driver wallet: $e');
-      }
-    }
+      },
+    );
   }
 
   @override

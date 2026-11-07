@@ -1,8 +1,12 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
+import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
+import 'package:vero360_app/utils/user_facing_error.dart';
 import 'package:vero360_app/widgets/merchant_verified_badge.dart';
 
 /// Progress 0–1 for in-ride UI (shared passenger/driver).
@@ -1347,7 +1351,13 @@ class RideMapFab extends StatelessWidget {
   }
 }
 
-void showRideSafetySheet(BuildContext context) {
+/// Passenger/driver safety tools. Pass [ride] + [httpService] for SOS / share link.
+void showRideSafetySheet(
+  BuildContext context, {
+  Ride? ride,
+  RideShareHttpService? httpService,
+  Future<void> Function()? onShareTrip,
+}) {
   showModalBottomSheet(
     context: context,
     backgroundColor: Colors.white,
@@ -1384,10 +1394,25 @@ void showRideSafetySheet(BuildContext context) {
             const SizedBox(height: 16),
             ListTile(
               contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.sos, color: RideShareColors.primary),
-              title: const Text('Emergency contacts'),
-              subtitle: const Text('Call local emergency services if needed'),
-              onTap: () => Navigator.pop(ctx),
+              leading: const Icon(Icons.phone_in_talk,
+                  color: RideShareColors.primary),
+              title: const Text('Emergency'),
+              subtitle: const Text('Call local emergency services (112)'),
+              onTap: () async {
+                Navigator.pop(ctx);
+                final uri = Uri.parse('tel:112');
+                try {
+                  await launchUrl(uri);
+                } catch (_) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Could not open the phone dialer'),
+                      ),
+                    );
+                  }
+                }
+              },
             ),
             ListTile(
               contentPadding: EdgeInsets.zero,
@@ -1395,11 +1420,88 @@ void showRideSafetySheet(BuildContext context) {
                   color: RideShareColors.primaryContainer),
               title: const Text('Share trip status'),
               subtitle: const Text('Let someone know you are on a Vero Ride'),
-              onTap: () => Navigator.pop(ctx),
+              onTap: () async {
+                Navigator.pop(ctx);
+                if (onShareTrip != null) {
+                  await onShareTrip();
+                  return;
+                }
+                await _shareTripFromSafety(context, ride, httpService);
+              },
             ),
+            if (ride != null && httpService != null)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.sos, color: Colors.redAccent),
+                title: const Text('Send SOS'),
+                subtitle: const Text('Alert Vero Ride support for this trip'),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  try {
+                    await httpService.sendRideSos(ride.id);
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('SOS sent. Help is being notified.'),
+                        backgroundColor: RideShareColors.primary,
+                      ),
+                    );
+                  } catch (e) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          UserFacingError.from(
+                            e,
+                            fallback: 'Could not send SOS. Try Emergency call.',
+                          ),
+                        ),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                },
+              ),
           ],
         ),
       ),
+    ),
+  );
+}
+
+Future<void> _shareTripFromSafety(
+  BuildContext context,
+  Ride? ride,
+  RideShareHttpService? httpService,
+) async {
+  final dest = ride?.dropoffAddress?.trim();
+  final pickup = ride?.pickupAddress?.trim();
+  final rideId = ride?.id;
+  String? liveUrl;
+  if (rideId != null && httpService != null) {
+    try {
+      liveUrl = await httpService.fetchRideShareLink(rideId);
+    } catch (_) {}
+  }
+  liveUrl ??=
+      rideId != null ? RideShareHttpService.fallbackTripShareUrl(rideId) : null;
+
+  final buffer = StringBuffer("I'm on a Vero Ride");
+  if (dest != null && dest.isNotEmpty) {
+    buffer.write(' heading to $dest');
+  }
+  if (rideId != null) buffer.write('. Ride #$rideId');
+  if (pickup != null && pickup.isNotEmpty) {
+    buffer.write('\nPickup: $pickup');
+  }
+  if (liveUrl != null) {
+    buffer.write('\nTrack live: $liveUrl');
+  }
+
+  await SharePlus.instance.share(
+    ShareParams(
+      text: buffer.toString(),
+      subject: 'Vero Ride trip',
     ),
   );
 }

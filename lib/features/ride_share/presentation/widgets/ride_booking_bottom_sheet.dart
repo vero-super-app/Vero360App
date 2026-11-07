@@ -21,6 +21,8 @@ class RideBookingBottomSheet extends ConsumerStatefulWidget {
   final VoidCallback? onClearDropoff;
   final VoidCallback? onOpenSavedPlaces;
   final VoidCallback? onSetOnMap;
+  /// When set, only these vehicle classes are offered (e.g. bike-only map).
+  final List<String>? allowedVehicleClasses;
 
   const RideBookingBottomSheet({
     required this.dropoffPlace,
@@ -29,6 +31,7 @@ class RideBookingBottomSheet extends ConsumerStatefulWidget {
     this.onClearDropoff,
     this.onOpenSavedPlaces,
     this.onSetOnMap,
+    this.allowedVehicleClasses,
     super.key,
   });
 
@@ -52,7 +55,13 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
   DateTime? _customPickupStart;
   int? _keepLookingMinutes;
 
-  static const _vehicleTypes = [
+  static const _allVehicleTypes = [
+    _VehicleOption(
+      class_: VehicleClass.bike,
+      name: 'Bike',
+      description: 'Affordable & quick',
+      icon: Icons.two_wheeler,
+    ),
     _VehicleOption(
       class_: VehicleClass.standard,
       name: 'Standard',
@@ -67,6 +76,25 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
       badge: 'Top Rated',
     ),
   ];
+
+  List<_VehicleOption> get _vehicleTypes {
+    final allowed = widget.allowedVehicleClasses;
+    if (allowed == null || allowed.isEmpty) {
+      return _allVehicleTypes
+          .where((v) => v.class_ != VehicleClass.bike)
+          .toList();
+    }
+    final allowedSet = allowed.toSet();
+    return _allVehicleTypes
+        .where((v) => allowedSet.contains(v.class_))
+        .toList();
+  }
+
+  String get _defaultVehicleClass {
+    final types = _vehicleTypes;
+    if (types.isEmpty) return VehicleClass.standard;
+    return types.first.class_;
+  }
 
   @override
   void initState() {
@@ -111,8 +139,9 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
       });
 
       final rideShareService = ref.read(rideShareServiceProvider);
+      final types = _vehicleTypes;
       final results = await Future.wait(
-        _vehicleTypes.map(
+        types.map(
           (v) => rideShareService
               .estimateFare(
                 pickupLatitude: pickup.latitude,
@@ -129,14 +158,14 @@ class _RideBookingBottomSheetState extends ConsumerState<RideBookingBottomSheet>
         setState(() {
           _estimatedFares = Map.fromEntries(results);
           _faresLoaded = true;
-          _selectedVehicleClass ??= VehicleClass.standard;
+          _selectedVehicleClass ??= _defaultVehicleClass;
         });
       }
     } catch (_) {
       if (mounted) {
         setState(() {
           _faresLoaded = true;
-          _selectedVehicleClass ??= VehicleClass.standard;
+          _selectedVehicleClass ??= _defaultVehicleClass;
         });
       }
     }

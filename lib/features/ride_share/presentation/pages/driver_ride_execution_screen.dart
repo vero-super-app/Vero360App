@@ -7,6 +7,7 @@ import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/active_ride_controller.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
@@ -489,13 +490,51 @@ class _DriverRideExecutionScreenState
                     onPressed: state.isLoading ? null : _handleCancelRide,
                   ),
                 ] else if (state.isInProgress) ...[
+                  ValueListenableBuilder<double>(
+                    valueListenable: ref
+                        .read(activeRideControllerProvider)
+                        .tripDistanceKmListenable,
+                    builder: (context, tripKm, _) {
+                      final label = tripKm > 0
+                          ? 'Trip distance · ${tripKm.toStringAsFixed(1)} km'
+                          : 'Trip distance · metering…';
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.straighten,
+                              size: 16,
+                              color: RideShareColors.onSurfaceVariant
+                                  .withValues(alpha: 0.9),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              label,
+                              style: const TextStyle(
+                                color: RideShareColors.onSurfaceVariant,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
                   RideSwipeToComplete(
                     label: 'Swipe to Complete Ride',
                     enabled: !state.isLoading,
                     onCompleted: () async {
+                      final metered = ref
+                          .read(activeRideControllerProvider)
+                          .tripDistanceKm;
                       await ref
                           .read(rideLifecycleProvider.notifier)
-                          .completeRide();
+                          .completeRide(
+                            actualDistance:
+                                metered > 0 ? metered : null,
+                          );
                       final next = ref.read(rideLifecycleProvider);
                       return next is RideCompleted &&
                           next.ride.id == widget.rideId;

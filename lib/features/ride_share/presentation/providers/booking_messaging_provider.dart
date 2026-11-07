@@ -2,6 +2,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart'
     show StateNotifier, StateNotifierProvider, StateProvider;
 
+// @Deprecated — unused by live Ride Share entry points; kept for reference.
+// Prefer ride_messaging_sheet / ride lifecycle messaging instead.
+
 // =============== BOOKING MESSAGING STATE ===============
 
 /// Current booking being discussed

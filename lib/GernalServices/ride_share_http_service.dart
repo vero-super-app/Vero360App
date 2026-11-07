@@ -945,6 +945,80 @@ class RideShareHttpService {
     );
   }
 
+  /// Passenger rates a completed ride (1–5 stars + optional comment).
+  Future<void> rateRide(
+    int rideId, {
+    required int rating,
+    String? comment,
+  }) async {
+    final clamped = rating.clamp(1, 5);
+    final body = <String, dynamic>{'rating': clamped};
+    final trimmed = comment?.trim();
+    if (trimmed != null && trimmed.isNotEmpty) {
+      body['comment'] = trimmed;
+    }
+    final response = await _withFirebaseAuth(
+      (headers) => http.post(
+        ApiConfig.endpoint('/ride-share/rides/$rideId/rating'),
+        headers: headers,
+        body: jsonEncode(body),
+      ),
+    );
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw _httpError('rate ride', response);
+    }
+  }
+
+  /// Passenger/driver SOS ping for an active ride.
+  Future<void> sendRideSos(int rideId, {String? note, String? message}) async {
+    final body = <String, dynamic>{};
+    final trimmed = (message ?? note)?.trim();
+    if (trimmed != null && trimmed.isNotEmpty) {
+      // Backend RideSosDto field is `message`.
+      body['message'] = trimmed;
+    }
+    final response = await _withFirebaseAuth(
+      (headers) => http.post(
+        ApiConfig.endpoint('/ride-share/rides/$rideId/sos'),
+        headers: headers,
+        body: jsonEncode(body),
+      ),
+    );
+    if (response.statusCode != 200 &&
+        response.statusCode != 201 &&
+        response.statusCode != 204) {
+      throw _httpError('send SOS', response);
+    }
+  }
+
+  /// Live trip share URL when backend exposes one; otherwise null.
+  Future<String?> fetchRideShareLink(int rideId) async {
+    try {
+      final response = await _withFirebaseAuth(
+        (headers) => http.get(
+          ApiConfig.endpoint('/ride-share/rides/$rideId/share-link'),
+          headers: headers,
+        ),
+      );
+      if (response.statusCode != 200) return null;
+      final data = jsonDecode(response.body);
+      if (data is Map) {
+        final url = data['url'] ?? data['shareUrl'] ?? data['link'];
+        if (url is String && url.trim().isNotEmpty) return url.trim();
+      }
+      if (data is String && data.trim().isNotEmpty) return data.trim();
+    } catch (e) {
+      print('[RideShareHttpService] share-link fetch failed: $e');
+    }
+    return null;
+  }
+
+  /// Fallback deep / web link for sharing a trip when API has no share-link.
+  static String fallbackTripShareUrl(int rideId) {
+    final web = ApiConfig.siteEndpoint('/ride/$rideId').toString();
+    return web;
+  }
+
   // ============== TAXI MANAGEMENT ==============
   // Note: Taxi management is handled through DriverService
   // This service focuses on ride operations, not vehicle/taxi registration

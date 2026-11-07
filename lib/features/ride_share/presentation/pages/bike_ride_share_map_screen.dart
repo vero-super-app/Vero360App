@@ -3,15 +3,18 @@ import 'package:universal_io/io.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:flutter/foundation.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/map_view_widget.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/place_search_widget.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/bookmarked_places_modal.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_booking_bottom_sheet.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/vehicle_type_modal.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/destination_search_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/pages/passenger_ride_tracking_screen.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
 import 'package:vero360_app/GernalServices/location_permission_helper.dart';
 
@@ -88,40 +91,75 @@ class _BikeRideShareMapScreenState extends ConsumerState<BikeRideShareMapScreen>
 
         _unfocusKeyboard();
 
-        showModalBottomSheet(
-          context: context,
-          isScrollControlled: true,
-          backgroundColor: Colors.transparent,
-          barrierColor: Colors.black.withValues(alpha: 0.3),
-          shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          builder: (_) => VehicleTypeModal(
-            pickupPlace: pickupPlace,
-            dropoffPlace: dropoffPlace,
-            userLat: position.latitude,
-            userLng: position.longitude,
-            // Bike-only services
-            allowedVehicleClasses: const [VehicleClass.bike],
-            onRideRequested: (rideId, lat, lng, vehicleType) {
-              setState(() => _isLoadingRide = true);
-              final rideIdInt = int.tryParse(rideId) ?? 0;
-              if (rideIdInt > 0) {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => _PassengerRideTrackingScreenWrapper(
-                      rideId: rideIdInt,
-                      onRideEnded: () {
-                        setState(() => _isLoadingRide = false);
-                      },
-                    ),
-                  ),
-                );
-              }
-            },
-          ),
-        );
+        void openTracking(int rideIdInt) {
+          if (rideIdInt <= 0) return;
+          setState(() => _isLoadingRide = true);
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => _PassengerRideTrackingScreenWrapper(
+                rideId: rideIdInt,
+                onRideEnded: () {
+                  setState(() => _isLoadingRide = false);
+                  ref.read(rideLifecycleProvider.notifier).reset();
+                  ref.read(cachedRoutePolylineProvider.notifier).state = [];
+                },
+              ),
+            ),
+          );
+        }
+
+        try {
+          showModalBottomSheet(
+            context: context,
+            isScrollControlled: true,
+            backgroundColor: Colors.transparent,
+            barrierColor: Colors.black.withValues(alpha: 0.3),
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            builder: (_) => RideBookingBottomSheet(
+              pickupPlace: pickupPlace,
+              dropoffPlace: dropoffPlace,
+              allowedVehicleClasses: const [VehicleClass.bike],
+              onClearDropoff: () {
+                Navigator.pop(context);
+                _searchController.clear();
+                ref.read(selectedDropoffPlaceProvider.notifier).state = null;
+                ref.read(cachedRoutePolylineProvider.notifier).state = [];
+                _focusSearchBar();
+              },
+              onRideRequested: (rideId) {
+                Navigator.pop(context);
+                openTracking(rideId);
+              },
+            ),
+          );
+        } catch (e) {
+          if (kDebugMode) {
+            debugPrint('[BikeRideMap] booking sheet failed, fallback: $e');
+          }
+          if (!mounted) return;
+          showModalBottomSheet(
+            context: context,
+            isScrollControlled: true,
+            backgroundColor: Colors.transparent,
+            barrierColor: Colors.black.withValues(alpha: 0.3),
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            builder: (_) => VehicleTypeModal(
+              pickupPlace: pickupPlace,
+              dropoffPlace: dropoffPlace,
+              userLat: position.latitude,
+              userLng: position.longitude,
+              allowedVehicleClasses: const [VehicleClass.bike],
+              onRideRequested: (rideId, _, __, ___) {
+                openTracking(int.tryParse(rideId) ?? 0);
+              },
+            ),
+          );
+        }
       }
     });
   }

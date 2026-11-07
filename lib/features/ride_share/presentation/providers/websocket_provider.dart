@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter_riverpod/flutter_riverpod.dart'
     show StreamProvider, FutureProvider;
 import 'package:flutter_riverpod/legacy.dart' show StateProvider;
@@ -21,6 +23,8 @@ class DriverLocation {
   final double latitude;
   final double longitude;
   final DateTime timestamp;
+  /// Optional ETA minutes from socket payload when the backend sends it.
+  final int? etaMinutes;
 
   DriverLocation({
     required this.driverId,
@@ -28,10 +32,18 @@ class DriverLocation {
     required this.latitude,
     required this.longitude,
     required this.timestamp,
+    this.etaMinutes,
   });
 
   factory DriverLocation.fromJson(Map<String, dynamic> json) {
     try {
+      final rawEta = json['etaMinutes'] ?? json['eta'];
+      int? eta;
+      if (rawEta is num) {
+        eta = rawEta.round();
+      } else if (rawEta is String) {
+        eta = int.tryParse(rawEta);
+      }
       return DriverLocation(
         driverId: json['driverId'] as int? ?? 0,
         vehicleId: json['vehicleId'] as int? ?? 0,
@@ -40,6 +52,7 @@ class DriverLocation {
         timestamp: json['timestamp'] != null
             ? DateTime.parse(json['timestamp'] as String)
             : DateTime.now(),
+        etaMinutes: eta,
       );
     } catch (e) {
       throw Exception('Failed to parse driver location: $e');
@@ -48,8 +61,35 @@ class DriverLocation {
 
   @override
   String toString() =>
-      'DriverLocation(id: $driverId, lat: $latitude, lng: $longitude)';
+      'DriverLocation(id: $driverId, lat: $latitude, lng: $longitude, eta: $etaMinutes)';
 }
+
+/// Rough passenger-facing ETA from remaining road distance.
+/// Uses ~2.5 min/km when the socket does not provide [DriverLocation.etaMinutes].
+int? estimateEtaMinutesFromKm(double distanceKm) {
+  if (distanceKm <= 0) return null;
+  return (distanceKm * 2.5).ceil().clamp(1, 180);
+}
+
+double haversineDistanceKm(
+  double lat1,
+  double lon1,
+  double lat2,
+  double lon2,
+) {
+  const earthRadiusKm = 6371.0;
+  final dLat = _toRad(lat2 - lat1);
+  final dLon = _toRad(lon2 - lon1);
+  final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+      math.cos(_toRad(lat1)) *
+          math.cos(_toRad(lat2)) *
+          math.sin(dLon / 2) *
+          math.sin(dLon / 2);
+  final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+  return earthRadiusKm * c;
+}
+
+double _toRad(double deg) => deg * math.pi / 180.0;
 
 /// Stream of driver location updates
 final driverLocationProvider = StreamProvider<DriverLocation?>((ref) {

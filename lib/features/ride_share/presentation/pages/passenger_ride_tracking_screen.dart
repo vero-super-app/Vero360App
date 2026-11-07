@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:vero360_app/GeneralModels/place_model.dart';
 import 'package:vero360_app/GeneralModels/ride_model.dart';
 import 'package:vero360_app/features/Auth/AuthServices/auth_storage.dart';
+import 'package:vero360_app/features/ride_share/presentation/providers/active_ride_controller.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
@@ -18,6 +19,7 @@ import 'package:vero360_app/features/ride_share/presentation/widgets/ride_in_rid
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_messaging_sheet.dart';
 import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 import 'package:vero360_app/features/ride_share/ride_share_no_driver_help.dart';
+import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
 import 'package:vero360_app/utils/user_facing_error.dart';
 
 class PassengerRideTrackingScreen extends ConsumerStatefulWidget {
@@ -47,6 +49,8 @@ class _PassengerRideTrackingScreenState
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      // Hide cold-start resume banner while tracking is already open.
+      ref.read(passengerResumeRideIdProvider.notifier).state = null;
       ref
           .read(rideLifecycleProvider.notifier)
           .subscribeToRideAsPassenger(widget.rideId);
@@ -99,17 +103,52 @@ class _PassengerRideTrackingScreenState
     );
   }
 
-  String _headline(RideActive state) {
-    if (state.isRequested) return 'Finding your ride';
-    if (state.isDriverArrived) return 'Driver is here';
-    if (state.isInProgress) return 'On the way';
-    return 'Driver en route';
+  String _headline(RideActive state, {int? etaMinutes}) {
+    final base = state.isRequested
+        ? 'Finding your ride'
+        : state.isDriverArrived
+            ? 'Driver is here'
+            : state.isInProgress
+                ? 'On the way'
+                : 'Driver en route';
+    if (etaMinutes != null &&
+        etaMinutes > 0 &&
+        !state.isRequested &&
+        !state.isDriverArrived) {
+      return '$base · ~$etaMinutes min';
+    }
+    return base;
   }
 
   String _subtitle(Ride ride) {
     final dest = ride.dropoffAddress?.trim();
     if (dest != null && dest.isNotEmpty) return 'Heading to $dest';
     return 'Tracking your Vero Ride';
+  }
+
+  int? _passengerEtaMinutes({
+    required RideActive state,
+    required DriverLocation? liveDriver,
+    required LatLng? driverLatLng,
+  }) {
+    if (liveDriver?.etaMinutes != null && liveDriver!.etaMinutes! > 0) {
+      return liveDriver.etaMinutes;
+    }
+    if (driverLatLng == null) return null;
+    final ride = state.ride;
+    final targetLat = state.isInProgress
+        ? ride.dropoffLatitude
+        : ride.pickupLatitude;
+    final targetLng = state.isInProgress
+        ? ride.dropoffLongitude
+        : ride.pickupLongitude;
+    final km = haversineDistanceKm(
+      driverLatLng.latitude,
+      driverLatLng.longitude,
+      targetLat,
+      targetLng,
+    );
+    return estimateEtaMinutesFromKm(km);
   }
 
   Future<void> _recenter(LatLng? target) async {
@@ -156,10 +195,28 @@ class _PassengerRideTrackingScreenState
   }
 
   Future<void> _shareTrip(Ride ride) async {
-    final dest = ride.dropoffAddress ?? 'my destination';
+    final dest = ride.dropoffAddress?.trim();
+    final pickup = ride.pickupAddress?.trim();
+    String? liveUrl;
+    try {
+      liveUrl =
+          await ref.read(rideShareHttpServiceProvider).fetchRideShareLink(ride.id);
+    } catch (_) {}
+    liveUrl ??= RideShareHttpService.fallbackTripShareUrl(ride.id);
+
+    final buffer = StringBuffer("I'm on a Vero Ride");
+    if (dest != null && dest.isNotEmpty) {
+      buffer.write(' heading to $dest');
+    }
+    buffer.write('. Ride #${ride.id}');
+    if (pickup != null && pickup.isNotEmpty) {
+      buffer.write('\nPickup: $pickup');
+    }
+    buffer.write('\nTrack live: $liveUrl');
+
     await SharePlus.instance.share(
       ShareParams(
-        text: 'I\'m on a Vero Ride heading to $dest. Ride #${ride.id}',
+        text: buffer.toString(),
         subject: 'Vero Ride trip',
       ),
     );
@@ -425,23 +482,36 @@ class _PassengerRideTrackingScreenState
           ),
         ),
         bottomSheet: lifecycleState is RideActive
-            ? _buildSheet(lifecycleState)
+            ? _buildSheet(
+                lifecycleState,
+                liveDriverLocation: liveDriverLocation,
+                driverLatLng: driverLatLng,
+              )
             : const SizedBox.shrink(),
       ),
     );
   }
 
-  Widget _buildSheet(RideActive state) {
+  Widget _buildSheet(
+    RideActive state, {
+    DriverLocation? liveDriverLocation,
+    LatLng? driverLatLng,
+  }) {
     final ride = state.ride;
     final driver = ride.driver;
     final showDriver = driver != null && !state.isRequested;
+    final etaMinutes = _passengerEtaMinutes(
+      state: state,
+      liveDriver: liveDriverLocation,
+      driverLatLng: driverLatLng,
+    );
 
     return RideLightSheet(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           RideStatusHeadline(
-            title: _headline(state),
+            title: _headline(state, etaMinutes: etaMinutes),
             badge: rideStatusBadge(ride.status),
             subtitle: _subtitle(ride),
           ),
@@ -557,7 +627,12 @@ class _PassengerRideTrackingScreenState
                 ),
               ),
             RidePassengerActionGrid(
-              onSafety: () => showRideSafetySheet(context),
+              onSafety: () => showRideSafetySheet(
+                context,
+                ride: ride,
+                httpService: ref.read(rideShareHttpServiceProvider),
+                onShareTrip: () => _shareTrip(ride),
+              ),
               onShare: () => _shareTrip(ride),
             ),
             const SizedBox(height: 12),

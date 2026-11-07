@@ -39,6 +39,9 @@ class _RideMessagingSheetState extends State<RideMessagingSheet> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    if (_chatId != null) {
+      BackendChatService.setActiveChatId(null);
+    }
     _inputController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -51,10 +54,12 @@ class _RideMessagingSheetState extends State<RideMessagingSheet> {
         peerName: widget.otherUserName,
       );
       _chatId = chat.id;
+      BackendChatService.setActiveChatId(_chatId);
       await _loadMessages();
-      // Start polling for new messages every 3 seconds
-      _refreshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-        if (mounted) _loadMessages();
+      // BackendChatService has no per-chat message stream — keep a light poll
+      // (8s) and refresh immediately after send (see _sendMessage).
+      _refreshTimer = Timer.periodic(const Duration(seconds: 8), (_) {
+        if (mounted) _loadMessages(silent: true);
       });
     } catch (e) {
       if (mounted) {
@@ -66,19 +71,21 @@ class _RideMessagingSheetState extends State<RideMessagingSheet> {
     }
   }
 
-  Future<void> _loadMessages() async {
+  Future<void> _loadMessages({bool silent = false}) async {
     if (_chatId == null) return;
     try {
       final messages = await BackendChatService.getMessages(_chatId!);
       if (mounted) {
+        final grew = messages.length > _messages.length;
         setState(() {
           _messages = messages;
           _isLoading = false;
+          if (!silent) _error = null;
         });
-        _scrollToBottom();
+        if (grew || !silent) _scrollToBottom();
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && !silent) {
         setState(() {
           _error = 'Failed to load messages';
           _isLoading = false;
@@ -108,6 +115,8 @@ class _RideMessagingSheetState extends State<RideMessagingSheet> {
           _isSending = false;
         });
         _scrollToBottom();
+        // Immediate refresh so peer replies / server ordering stay in sync.
+        unawaited(_loadMessages(silent: true));
       }
     } catch (e) {
       if (mounted) {

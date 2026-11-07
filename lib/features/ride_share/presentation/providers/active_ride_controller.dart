@@ -1,14 +1,19 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:vero360_app/GernalServices/driver_service.dart';
-import 'package:vero360_app/GernalServices/ride_share_http_service.dart';
+import 'package:flutter_riverpod/legacy.dart' show StateProvider;
+import 'package:vero360_app/app_nav_key.dart';
+import 'package:vero360_app/features/ride_share/presentation/pages/passenger_ride_tracking_screen.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/driver_provider.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_notifier.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_lifecycle_state.dart';
 import 'package:vero360_app/features/ride_share/presentation/providers/ride_share_provider.dart';
+import 'package:vero360_app/features/ride_share/presentation/widgets/ride_share_ui_constants.dart';
 import 'package:vero360_app/features/ride_share/services/active_ride_location_tracker.dart';
 import 'package:vero360_app/features/ride_share/services/active_ride_storage.dart';
+
+/// When set, [ActiveRideResumeListener] shows a "Continue your ride" banner.
+final passengerResumeRideIdProvider = StateProvider<int?>((ref) => null);
 
 /// Coordinates persistence, location tracking, and cold-start resume for active rides.
 class ActiveRideController {
@@ -18,6 +23,12 @@ class ActiveRideController {
   final ActiveRideLocationTracker _locationTracker = ActiveRideLocationTracker();
 
   bool get hasActiveRideSession => _locationTracker.isTracking;
+
+  /// GPS-metered trip distance while IN_PROGRESS (driver).
+  double get tripDistanceKm => _locationTracker.tripDistanceKm;
+
+  ValueListenable<double> get tripDistanceKmListenable =>
+      _locationTracker.tripDistanceKmListenable;
 
   Future<bool> hasPersistedActiveRide() async {
     return (await ActiveRideStorage.load()) != null;
@@ -38,12 +49,20 @@ class ActiveRideController {
 
     if (role == ActiveRideRole.driver) {
       await _startDriverLocation(rideId: rideId, taxiId: taxiId);
+      final normalized = status.trim().toUpperCase().replaceAll('-', '_');
+      _locationTracker.setMeteringEnabled(normalized == 'IN_PROGRESS');
     }
   }
 
   Future<void> onRideEnded() async {
+    _locationTracker.setMeteringEnabled(false);
     await _locationTracker.stop();
     await ActiveRideStorage.clear();
+    _ref.read(passengerResumeRideIdProvider.notifier).state = null;
+  }
+
+  void _offerPassengerResume(int rideId) {
+    _ref.read(passengerResumeRideIdProvider.notifier).state = rideId;
   }
 
   Future<void> _startDriverLocation({
@@ -91,6 +110,9 @@ class ActiveRideController {
           rideId: persisted.rideId,
           taxiId: persisted.taxiId,
         );
+      } else {
+        // Stay on Home — offer a banner; do not auto-push tracking.
+        _offerPassengerResume(persisted.rideId);
       }
       return;
     }
@@ -131,7 +153,8 @@ class ActiveRideController {
         await _ref
             .read(rideLifecycleProvider.notifier)
             .subscribeToRideAsPassenger(persisted.rideId);
-        // Stay on Home — user opens tracking from Ride Share when they want it.
+        // Stay on Home — user opens tracking from the resume banner.
+        _offerPassengerResume(persisted.rideId);
       }
     } catch (e) {
       if (kDebugMode) {
@@ -187,6 +210,81 @@ class _ActiveRideResumeListenerState extends ConsumerState<ActiveRideResumeListe
     }
   }
 
+  void _openPassengerTracking(int rideId) {
+    ref.read(passengerResumeRideIdProvider.notifier).state = null;
+    final nav = appNavKey.currentState;
+    if (nav == null) return;
+    nav.push(
+      MaterialPageRoute(
+        builder: (_) => PassengerRideTrackingScreen(rideId: rideId),
+      ),
+    );
+  }
+
   @override
-  Widget build(BuildContext context) => widget.child;
+  Widget build(BuildContext context) {
+    final resumeRideId = ref.watch(passengerResumeRideIdProvider);
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        widget.child,
+        if (resumeRideId != null)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: SafeArea(
+              bottom: false,
+              child: Material(
+                elevation: 4,
+                color: RideShareColors.primarySoft,
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.local_taxi_rounded,
+                        color: RideShareColors.primaryDeep,
+                      ),
+                      const SizedBox(width: 10),
+                      const Expanded(
+                        child: Text(
+                          'Continue your ride',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: RideShareColors.titleText,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => _openPassengerTracking(resumeRideId),
+                        child: const Text(
+                          'Open',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            color: RideShareColors.primaryDeep,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Dismiss',
+                        onPressed: () {
+                          ref
+                              .read(passengerResumeRideIdProvider.notifier)
+                              .state = null;
+                        },
+                        icon: const Icon(Icons.close, size: 18),
+                        color: RideShareColors.onSurfaceVariant,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
 }
